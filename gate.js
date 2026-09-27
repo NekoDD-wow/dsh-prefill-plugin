@@ -712,7 +712,45 @@ export function onInboxInserted(api, agent, message) {
     api.note({ prefill: 'no-cached-prompt', id: agent.id })
     return
   }
-  writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id))
+  const turns = writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id))
+  // 物化成功 ⇒ 顺手把会话标题钉到**这次的真实提问**上（F18 收尾）。
+  if (typeof turns === 'number' && turns > 0) pinTitle(api, agent, session, message)
+}
+
+/**
+ * F18 收尾：把会话标题**钉到真实提问**上。
+ *
+ * 为什么需要：`dsh-session-title/lib/index.js:91` 判定"人说的话"只看
+ * `event.data.source.kind === 'user'`；而 F16 之后预填装的 user 消息**也必须是**
+ * `kind:'user'`（否则客户端把它归为不可见的 Context 行）⇒ 标题被预填装的第一条劫持
+ * （实测标题变成 `U1：读一下 a.js`）。那个判定在官方包里，我们改不了。
+ *
+ * 官方给了正当解法：`sessionTitle.rename(session, title)` 写一条 `source.kind === 'user'`
+ * 的 `session/title` —— 它是**钉住**语义：在途的自动生成被取代，之后的 user 消息也不再
+ * 触发自动生成（源码注释原文："pins the title"）。于是在物化那一刻，用触发本次物化的
+ * **真实提问**去钉标题。
+ */
+function pinTitle(api, agent, session, message) {
+  const blocks = Array.isArray(message?.content) ? message.content : []
+  const text = blocks
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (text === '') return
+  const title = text.slice(0, 24)
+  const service = typeof api.rootCtx?.get === 'function' ? api.rootCtx.get('sessionTitle') : undefined
+  if (service === undefined || typeof service.rename !== 'function') {
+    api.note({ prefill: 'no-title-service', id: agent.id })
+    return
+  }
+  try {
+    service.rename(session, title)
+    api.note({ prefill: 'title-pinned', id: agent.id, title })
+  } catch (error) {
+    api.note({ prefill: 'title-pin-failed', id: agent.id, error: String(error?.message ?? error) })
+  }
 }
 
 /**
@@ -917,4 +955,6 @@ export function writeSyntheticTurns(api, agent, session, rendered, items) {
     }
     console.error('[prefill] instrumented agent.followup / whenIdle / send / inject')
   }
+
+  return turnNo
 }
