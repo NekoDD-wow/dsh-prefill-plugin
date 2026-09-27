@@ -894,6 +894,9 @@ window.__ModuleLoader__.load({
           ),
           // 工具放行（全局）：同样只管"能不能用"。
           h('div', { style: S.note }, t('toolsLabel')),
+          envelope !== null && envelope !== undefined && envelope.tools === undefined
+            ? h('div', { style: S.injectStale ?? S.note }, t('injectStaleHost'))
+            : null,
           h(
             'div',
             { style: S.chipRow },
@@ -1851,6 +1854,23 @@ window.__ModuleLoader__.load({
         if (sessionId !== '' && draft !== null) injectionDrafts.set(sessionId, draft)
       }, [draft, sessionId])
 
+      // ⚠️ 清单（`injections.catalog` / `tools.catalog`）是**后来才填满**的：工具注册表在
+      // `agent/created` 登记、段/上下文名在装配时才知道。只在挂载时取一次的话，
+      // 用户会看到"工具一个都没有"（实测反馈）。所以定期只刷新 **envelope**、不动 draft。
+      React.useEffect(() => {
+        const refresh = () => {
+          void call(undefined)
+            .then((data) => setEnvelope(data))
+            .catch(() => {})
+        }
+        const timer = setInterval(refresh, 2500)
+        window.addEventListener(STATE_EVENT, refresh)
+        return () => {
+          clearInterval(timer)
+          window.removeEventListener(STATE_EVENT, refresh)
+        }
+      }, [call])
+
       // 改完 800ms 落盘（写 state.json 的 overrides）。
       React.useEffect(() => {
         if (draft === null || !dirty.current) return undefined
@@ -1970,8 +1990,11 @@ window.__ModuleLoader__.load({
           .catch(() => setStatus('error'))
       }
 
-      // 后台若是旧壳（返回的形状里没有 catalog），明说一句，别让用户以为是空清单。
-      const staleHost = envelope?.injections !== undefined && envelope.injections.catalog === undefined
+      // 后台若是旧壳（返回的形状里没有 catalog，或根本没有 tools 字段），明说一句，
+      // 别让用户以为是"清单是空的"。实测这个症状最容易被误判成功能没做。
+      const staleHost =
+        (envelope?.injections !== undefined && envelope.injections.catalog === undefined) ||
+        (envelope !== null && envelope !== undefined && envelope.tools === undefined)
       const statusLine =
         status === 'idle'
           ? null
