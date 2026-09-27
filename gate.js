@@ -41,6 +41,31 @@ function keeper(state, message) {
 }
 
 /**
+ * Q17：取该会话的注入改写配置。
+ *
+ * 形状（存在 state.json 顶层 `overrides`，由 UI / 脚本写）：
+ * ```jsonc
+ * "overrides": {
+ *   "session-xxx": {
+ *     "messages": { "runtime-context": "改写后的正文" },   // 按 source.kind 改写消息内容
+ *     "sections": { "harness:identity": "改写后的段" },     // 同名遮蔽（scoped 覆盖 global）
+ *     "contexts": { "some:context": "改写后的上下文" },
+ *     "sectionOrders": { "harness:identity": -1000 }        // 可选：保住原来的排序落点
+ *   },
+ *   "*": { ... }                                            // 通配，探针用
+ * }
+ * ```
+ * 「仅在单个会话生效」由 key 就是会话 id 保证；`*` 只是给无头探针省事。
+ */
+function overridesFor(state, agentId) {
+  const all = state?.overrides
+  if (all === null || typeof all !== 'object') return undefined
+  const exact = typeof agentId === 'string' ? all[agentId] : undefined
+  const entry = exact !== undefined && exact !== null && typeof exact === 'object' ? exact : all['*']
+  return entry !== undefined && entry !== null && typeof entry === 'object' ? entry : undefined
+}
+
+/**
  * 解析服务：显式三级回退，并记录命中哪一级。
  * `agent.ctx` 属性 → `agent.ctx.get()` → 插件根 ctx。
  */
@@ -202,6 +227,28 @@ function mountLevers(agent, state, api, sink) {
   if (state.levers.blockTools && typeof toolService?.restrict === 'function') {
     push(toolService.restrict({ allow: [] }))
   }
+
+  // ── Q17：段 / 上下文的"同名遮蔽"────────────────────────────────────────────
+  // 官方机制（`dsh-system-prompt` 的 `ScopedLayers.merge`）：**同名的 scoped 项
+  // 覆盖 global 项**。所以只要在 agent scope 里用同名注册一段，就等价于"改写"了
+  // 全局那段 —— 不需要、也不允许去动 `system-prompt/assemble`（practices P2）。
+  const overrides = overridesFor(state, agent?.id)
+  if (overrides !== undefined) {
+    const orders = overrides.sectionOrders !== null && typeof overrides.sectionOrders === 'object' ? overrides.sectionOrders : {}
+    if (overrides.sections !== null && typeof overrides.sections === 'object' && typeof sp?.section === 'function') {
+      for (const [name, text] of Object.entries(overrides.sections)) {
+        const order = Number.isFinite(orders[name]) ? orders[name] : 1000
+        push(sp.section({ name, order, text: String(text) }))
+      }
+    }
+    if (overrides.contexts !== null && typeof overrides.contexts === 'object' && typeof sp?.context === 'function') {
+      for (const [name, text] of Object.entries(overrides.contexts)) {
+        const order = Number.isFinite(orders[name]) ? orders[name] : 1000
+        push(sp.context({ name, order, text: String(text) }))
+      }
+    }
+  }
+
   ensureToolsBlocker(api)
 
   return {
@@ -232,7 +279,7 @@ function mountLevers(agent, state, api, sink) {
 export function prime(api, agent) {
   if (typeof agent?.id !== 'string') return
   const state = effectiveStateFor(api.readState(), agent.id)
-  if (!state.armed.includes(agent.id)) return
+  if (!state.armed.includes(agent.id) && !state.armed.includes('*')) return
   const disposers = []
   let error = ''
   try {
@@ -253,7 +300,8 @@ export async function step(api, payload, decision) {
   const agent = payload?.agent
   // M2：`state` 已经是"折算过按会话闸门"的有效状态（见 effectiveStateFor）。
   const state0 = effectiveStateFor(readState(), payload?.agent?.id)
-  const armed = typeof agent?.id === 'string' && state0.armed.includes(agent.id)
+  // `'*'` = 对所有会话生效：**只给无头探针用**（会话 id 事先不知道），UI 永远写具体 id。
+  const armed = typeof agent?.id === 'string' && (state0.armed.includes(agent.id) || state0.armed.includes('*'))
 
   if (!armed) {
     note({
@@ -299,19 +347,38 @@ export async function step(api, payload, decision) {
   const state = { ...state0, levers: entry?.frozenLevers ?? state0.levers }
 
   const droppedKinds = []
+  const overrode = []
   // 记录这一步**实际进入**的消息种类：④ 通道要看"有没有东西可丢"，
   // 否则 droppedKinds 为空会被误读成"过滤器失效"（实测 turn 6 就是这种情形）。
   const seenKinds = Array.isArray(decision?.messages)
     ? decision.messages.map((message) => message?.source?.kind ?? '(none)')
     : []
   let next = decision
-  if (state.levers.blockMessages && decision?.kind === 'enter' && Array.isArray(decision.messages)) {
-    for (const message of decision.messages) {
+
+  // ── Q17：单会话注入改写（"劫持注入"）────────────────────────────────────────
+  // 作用点选在 `agent/pre-step` 的 `decision.messages` —— 这是**唯一**能改到
+  // "已经生产出来、即将进模型"的消息的地方（运行时上下文由 `runtimeContext.project()`
+  // 在装配前生成，改这里等价于改它的产物）。改写必须在过滤**之前**：先改内容，
+  // 再决定放不放行。
+  // practices P4：必须 spread，否则丢 `startsRequestSeries`。
+  const overrides = overridesFor(state, agent.id)
+  if (overrides?.messages !== undefined && decision?.kind === 'enter' && Array.isArray(decision.messages)) {
+    const rewrites = overrides.messages
+    const messages = decision.messages.map((message) => {
+      const kind = message?.source?.kind
+      if (typeof kind !== 'string' || !Object.hasOwn(rewrites, kind)) return message
+      overrode.push(kind)
+      return { ...message, content: [{ type: 'text', text: String(rewrites[kind]) }] }
+    })
+    if (overrode.length > 0) next = { ...next, messages }
+  }
+
+  if (state.levers.blockMessages && decision?.kind === 'enter' && Array.isArray(next.messages)) {
+    for (const message of next.messages) {
       if (!keeper(state, message)) droppedKinds.push(message?.source?.kind ?? '(none)')
     }
     if (droppedKinds.length > 0) {
-      // practices P4：必须 spread，否则丢 startsRequestSeries。
-      next = { ...decision, messages: decision.messages.filter((message) => keeper(state, message)) }
+      next = { ...next, messages: next.messages.filter((message) => keeper(state, message)) }
     }
   }
 
@@ -344,6 +411,7 @@ export async function step(api, payload, decision) {
     remounted,
     mounted,
     droppedKinds,
+    overrode,
     seenKinds,
     mountError,
     selfCheck,
