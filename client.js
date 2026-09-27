@@ -118,6 +118,11 @@ window.__ModuleLoader__.load({
       syncSaved: '已同步',
       syncFailed: '同步失败（检查 host 路由）',
       countSuffix: ' 条',
+      // ── Q9 角标 ──
+      statePure: '纯净',
+      statePass: '全放行',
+      stateFilter: '白名单',
+      badgeTip: '本轮生效的闸门快照（本轮已冻结；改开关只影响下一轮）',
     }
 
     const en = {
@@ -186,6 +191,11 @@ window.__ModuleLoader__.load({
       syncSaved: 'synced',
       syncFailed: 'sync failed (check the host route)',
       countSuffix: ' rows',
+      // ── Q9 badge ──
+      statePure: 'Pure',
+      statePass: 'Admit all',
+      stateFilter: 'Allow-list',
+      badgeTip: 'Effective gate snapshot for this turn (frozen for the turn; toggling affects the next one)',
     }
 
     const S = {
@@ -393,6 +403,23 @@ window.__ModuleLoader__.load({
             : kind === 'saved'
               ? 'var(--dsw-alias-brand-primary)'
               : 'var(--dsw-alias-label-tertiary)',
+      }),
+      // ── Q9：本轮闸门快照角标 ──
+      gateWrap: { display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto' },
+      badge: (state) => ({
+        display: 'inline-flex',
+        alignItems: 'center',
+        height: 20,
+        padding: '0 7px',
+        borderRadius: 10,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background:
+          state === 'pure' ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent)' : 'transparent',
+        color: 'var(--dsw-alias-label-tertiary)',
+        fontSize: 11,
+        lineHeight: 1,
+        whiteSpace: 'nowrap',
+        flex: '0 0 auto',
       }),
     }
 
@@ -649,8 +676,9 @@ window.__ModuleLoader__.load({
     function GateToggle(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      const [state, setState] = React.useState(null)
+      const [envelope, setEnvelope] = React.useState(null)
       const [confirming, setConfirming] = React.useState(false)
+      const state = envelope?.state ?? null
 
       const call = React.useCallback(async (body) => {
         const response = await fetch(STATE_ROUTE, {
@@ -664,12 +692,16 @@ window.__ModuleLoader__.load({
 
       const refresh = React.useCallback(() => {
         void call(undefined)
-          .then((data) => setState(data.state))
+          .then((data) => setEnvelope(data))
           .catch(() => {})
       }, [call])
 
+      // Q9 角标要显示**本轮**的生效快照，而快照是插件私有的宿主状态 ——
+      // 没有推送通道，所以轻量轮询（2.5s，随组件卸载即停）。
       React.useEffect(() => {
         refresh()
+        const timer = setInterval(refresh, 2500)
+        return () => clearInterval(timer)
       }, [refresh, sessionId])
 
       if (sessionId === '') return null
@@ -680,7 +712,7 @@ window.__ModuleLoader__.load({
         const patch = { gate: { ...gate, [sessionId]: mode } }
         if (markSeen === true) patch.noticeSeen = true
         void call(patch)
-          .then((data) => setState(data.state))
+          .then((data) => setEnvelope(data))
           .catch(() => {})
       }
 
@@ -707,27 +739,51 @@ window.__ModuleLoader__.load({
         )
       }
 
+      // Q9 角标：本轮生效的三态 + 被丢弃的 kind 计数（数据来自宿主 `snapshots`）。
+      const snap = envelope?.snapshots?.[sessionId]
+      const dropped = Array.isArray(snap?.droppedKinds) ? snap.droppedKinds : []
+      const badgeLabel =
+        snap?.state === 'pure' ? t('statePure') : snap?.state === 'filter' ? t('stateFilter') : t('statePass')
+      const badge =
+        snap === undefined
+          ? null
+          : h(
+              'span',
+              {
+                style: S.badge(snap.state),
+                title: `${t('badgeTip')}\nturn ${String(snap.turn ?? '?')} · step ${String(snap.step ?? '?')}${
+                  dropped.length > 0 ? `\ndropped: ${dropped.join(', ')}` : ''
+                }`,
+              },
+              `${badgeLabel}${dropped.length > 0 ? ` · 丢${dropped.length}` : ''}`,
+            )
+
       return h(
-        'button',
-        {
-          type: 'button',
-          'aria-pressed': on ? 'true' : 'false',
-          title: on ? t('gateTitleOn') : t('gateTitleOff'),
-          style: S.gatePill(on),
-          onClick: () => {
-            if (on) {
-              write('pass')
-              return
-            }
-            if (state?.noticeSeen === true) {
-              write('pure', true)
-              return
-            }
-            setConfirming(true)
+        'div',
+        { style: S.gateWrap },
+        h(
+          'button',
+          {
+            type: 'button',
+            'aria-pressed': on ? 'true' : 'false',
+            title: on ? t('gateTitleOn') : t('gateTitleOff'),
+            style: S.gatePill(on),
+            onClick: () => {
+              if (on) {
+                write('pass')
+                return
+              }
+              if (state?.noticeSeen === true) {
+                write('pure', true)
+                return
+              }
+              setConfirming(true)
+            },
           },
-        },
-        h('span', { style: S.gateDot(on) }),
-        on ? t('gateOn') : t('gateOff'),
+          h('span', { style: S.gateDot(on) }),
+          on ? t('gateOn') : t('gateOff'),
+        ),
+        badge,
       )
     }
 

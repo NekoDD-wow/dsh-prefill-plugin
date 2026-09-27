@@ -65,6 +65,32 @@ function overridesFor(state, agentId) {
   return entry !== undefined && entry !== null && typeof entry === 'object' ? entry : undefined
 }
 
+/** 每会话**最近一轮**的闸门快照（Q9 角标）。挂 globalThis Symbol 以穿过内核热换。 */
+const SNAPSHOTS = (globalThis[Symbol.for('dsh-prefill.snapshots')] ??= new Map())
+
+/**
+ * 由**本轮冻结的** lever 集合推出三态（规划 §3.5）：
+ *   pure   = 四通道全关（闸门 ON）
+ *   filter = 只开了消息过滤（白名单生效）
+ *   pass   = 什么都没关（全放行）
+ */
+function gateStateOf(levers) {
+  if (levers.blockSections && levers.blockContexts && levers.blockTools && levers.blockMessages) return 'pure'
+  if (levers.blockMessages) return 'filter'
+  return 'pass'
+}
+
+/** 读全部会话快照（UI / 诊断出口）。 */
+export function snapshots() {
+  return Object.fromEntries(SNAPSHOTS)
+}
+
+/** 记录本轮快照。 */
+function recordSnapshot(agentId, entry) {
+  if (typeof agentId !== 'string') return
+  SNAPSHOTS.set(agentId, { ...entry, at: Date.now() })
+}
+
 /**
  * 解析服务：显式三级回退，并记录命中哪一级。
  * `agent.ctx` 属性 → `agent.ctx.get()` → 插件根 ctx。
@@ -312,6 +338,15 @@ export async function step(api, payload, decision) {
       armed: false,
       armedList: state0.armed,
     })
+    // 未武装 = 完全不干预 ⇒ 角标显示"全放行"。
+    recordSnapshot(agent?.id, {
+      turn: payload?.turn,
+      step: payload?.step,
+      state: 'pass',
+      armed: false,
+      droppedKinds: [],
+      allowed: state0.allowKinds,
+    })
     return decision
   }
 
@@ -401,6 +436,17 @@ export async function step(api, payload, decision) {
       selfCheck = { failed: String(error?.message ?? error) }
     }
   }
+
+  // Q9：把本轮的生效快照记下来（客户端角标读它）。
+  recordSnapshot(agent.id, {
+    turn: payload?.turn,
+    step: payload?.step,
+    state: gateStateOf(state.levers),
+    armed: true,
+    droppedKinds,
+    overrode,
+    allowed: state.allowKinds,
+  })
 
   note({
     seat: payload?.__seat,

@@ -390,6 +390,8 @@ export function apply(ctx) {
       stateFile: STATE_FILE,
       state: readState(),
       drafts: typeof gateCache.module?.draftIds === 'function' ? gateCache.module.draftIds() : [],
+      // Q9 角标：每会话最近一轮的生效快照（三态 + 被丢弃的 kind）。
+      snapshots: typeof gateCache.module?.snapshots === 'function' ? gateCache.module.snapshots() : {},
       diagnostics: {
         seen: diagnostics.seen,
         mounted: diagnostics.mounted,
