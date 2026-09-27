@@ -82,6 +82,14 @@ window.__ModuleLoader__.load({
       gateCancel: '取消',
       prefillOff: '预填装',
       prefillOn: '预填装·开',
+      // 会话开跑后自动改名：预填装（写进历史）→ **预注入**（每轮注入，且必须手动触发）。
+      injectOff: '预注入',
+      injectOn: '预注入 · 待点注入',
+      injectDone: '预注入 · 已注入',
+      injectTitleOff:
+        '本会话已开跑 ⇒ 内容不会再写进历史。注意：**不会自动注入** —— 要点面板里的「注入」，内容才会在下一轮带上（这里只是启用）。',
+      injectTitleOn:
+        '已启用预注入。但**不会自动生效**：还需点面板里的「注入」，把内容写进本会话配置（下一轮请求生效）。',
       prefillTitleOff: '本会话还没用预填装——点一下开启，编辑区会出现在输入框上方',
       prefillTitleOn: '本会话已用预填装——你发第一条消息时，这些内容会变成真实对话历史。点一下关掉',
       title: '预填装 · 注入控制',
@@ -153,7 +161,8 @@ window.__ModuleLoader__.load({
       modeHistory: '写入历史',
       modeHistoryTip: '首轮发出时，这些内容会变成真实对话历史（持久、省 token、模型当成自己的记忆）',
       modeInject: '每轮注入',
-      modeInjectTip: '会话已开跑，无法再写入历史 ⇒ 改成每轮注入（不进历史、每轮都要花 token）',
+      modeInjectTip:
+        '会话已开跑，无法再写入历史 ⇒ 内容改为**每轮注入**。注意：**不会自动生效** —— 点「注入」才会在下一轮请求里带上（不进历史、每轮花 token）。',
       injectNow: '注入',
       injectNowTip: '把当前内容与注入改写写成"本会话配置"，不产生任何消息；下一轮请求就带上',
       injectedNext: '已注入 · 下一轮生效',
@@ -206,6 +215,14 @@ window.__ModuleLoader__.load({
       gateCancel: 'Cancel',
       prefillOff: 'Prefill',
       prefillOn: 'Prefill·on',
+      // Renamed automatically once the session has run: prefill (history) → pre-inject (per turn, manual).
+      injectOff: 'Pre-inject',
+      injectOn: 'Pre-inject · click Inject',
+      injectDone: 'Pre-inject · injected',
+      injectTitleOff:
+        'This session has already run, so nothing is written to history. Nothing is injected automatically — press "Inject" in the panel to carry it into the next turn (this only enables the mode).',
+      injectTitleOn:
+        'Pre-injection is enabled, but it is NOT automatic: press "Inject" in the panel to write the content into this session config (effective next turn).',
       prefillTitleOff: 'This session does not use prefill — click to enable; the editor shows up above the composer',
       prefillTitleOn: 'Prefill is on — this content becomes real history on your first send. Click to turn off',
       title: 'Prefill · injection control',
@@ -277,7 +294,8 @@ window.__ModuleLoader__.load({
       modeHistory: 'Write to history',
       modeHistoryTip: 'On your first send these become real conversation history (durable, cheap, owned by the model)',
       modeInject: 'Inject every turn',
-      modeInjectTip: 'This session has already run, so history is out of reach — the content is injected on every turn instead (not history, costs tokens each turn)',
+      modeInjectTip:
+        'This session has already run, so history is out of reach — the content is injected on every turn instead. Note: it is NOT automatic — press "Inject" to carry it into the next request (not history, costs tokens each turn).',
       injectNow: 'Inject',
       injectNowTip: 'Write the current content and injection rewrites into this session config — no message is produced; the next turn carries it',
       injectedNext: 'Injected · next turn',
@@ -967,7 +985,9 @@ window.__ModuleLoader__.load({
     function PrefillToggle(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      const [state, setState] = React.useState(null)
+      // 存**整封信**而不是 `data.state`：模式判定要 `turns`、注入状态要 `injects`，
+      // 这两个都在 envelope 上（不在插件状态里）。
+      const [envelope, setEnvelope] = React.useState(null)
 
       const call = React.useCallback(async (body) => {
         const response = await fetch(STATE_ROUTE, {
@@ -981,32 +1001,73 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => {
         void call(undefined)
-          .then((data) => setState(data.state))
+          .then((data) => setEnvelope(data))
           .catch(() => {})
       }, [call, sessionId])
 
+      // ⚠️ 光在挂载时取一次是不够的：**跑完一轮**要自动改名（预填装 → 预注入），
+      // 而"跑了一轮"这件事不会产生状态事件。所以照角标的做法轻量轮询（2.5s），
+      // 外加插件内部状态事件用于即时刷新。
+      React.useEffect(() => {
+        const refresh = () => {
+          void call(undefined)
+            .then((data) => setEnvelope(data))
+            .catch(() => {})
+        }
+        const timer = setInterval(refresh, 2500)
+        window.addEventListener(STATE_EVENT, refresh)
+        return () => {
+          clearInterval(timer)
+          window.removeEventListener(STATE_EVENT, refresh)
+        }
+      }, [call, sessionId])
+
       if (sessionId === '') return null
+      const state = envelope?.state ?? null
       const map = state?.prefill !== null && typeof state?.prefill === 'object' ? state.prefill : {}
       const on = typeof map[sessionId] === 'string' && map[sessionId] !== ''
+      // 会话开跑过就没有"写进历史"这条路了 ⇒ 同一颗键自动改叫「预注入」，并要求手动触发。
+      const injected = (envelope?.injects?.[sessionId] ?? 0) > 0
+      const injectMode = (envelope?.turns?.[sessionId] ?? 0) > 0
+      const pending = injectMode && on && !injected
+      const label = injectMode
+        ? pending
+          ? t('injectOn')
+          : injected
+            ? t('injectDone')
+            : t('injectOff')
+        : on
+          ? t('prefillOn')
+          : t('prefillOff')
+      const title = injectMode
+        ? on
+          ? t('injectTitleOn')
+          : t('injectTitleOff')
+        : on
+          ? t('prefillTitleOn')
+          : t('prefillTitleOff')
 
       return h(
         'button',
         {
           type: 'button',
           'aria-pressed': on ? 'true' : 'false',
-          title: on ? t('prefillTitleOn') : t('prefillTitleOff'),
-          style: S.gatePill(on),
+          title,
+          // 待触发时用警示色描边：**不点「注入」就不会生效**，这个状态必须刺眼。
+          style: pending
+            ? { ...S.gatePill(on), borderColor: 'var(--dsw-alias-state-warn-primary)' }
+            : S.gatePill(on),
           onClick: () => {
             void call({ prefill: { ...map, [sessionId]: on ? '' : 'default' } })
               .then((data) => {
-                setState(data.state)
+                setEnvelope(data)
                 notifyStateChanged()
               })
               .catch(() => {})
           },
         },
         h('span', { style: S.gateDot(on) }),
-        on ? t('prefillOn') : t('prefillOff'),
+        label,
       )
     }
 
@@ -1544,9 +1605,23 @@ window.__ModuleLoader__.load({
             injectMode ? `${t('modeInject')}${injectCount > 0 ? ` · ${injectCount}` : ''}` : t('modeHistory'),
           ),
           // 一键注入：写成本会话配置，不产生任何消息。
+          // 「待注入」时用警示色 + 加粗：**不点它就不会生效**，这个提示必须够显眼。
           h(
             'button',
-            { type: 'button', style: S.gateBtn, title: t('injectNowTip'), onClick: oneClickInject },
+            {
+              type: 'button',
+              style:
+                injectMode && injectCount === 0 && items.length > 0
+                  ? {
+                      ...S.gateBtn,
+                      borderColor: 'var(--dsw-alias-state-warn-primary)',
+                      color: 'var(--dsw-alias-state-warn-primary)',
+                      fontWeight: 600,
+                    }
+                  : S.gateBtn,
+              title: t('injectNowTip'),
+              onClick: oneClickInject,
+            },
             t('injectNow'),
           ),
           injectStatus === 'idle'
