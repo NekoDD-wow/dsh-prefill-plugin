@@ -342,7 +342,7 @@ export function apply(ctx) {
     if (typeof gate?.prime !== 'function') return
     try {
       unlatch(agent.id)
-      gate.prime({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, agent)
+      await gate.prime({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, agent)
       note({ reprime: label, id: agent.id })
     } catch (error) {
       note({ reprime: label, id: agent.id, error: String(error?.message ?? error) })
@@ -399,7 +399,10 @@ export function apply(ctx) {
     const gate = await loadGate()
     if (typeof gate?.prime === 'function') {
       try {
-        gate.prime({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, agent)
+        // prime 现在是 async：它内部要**立刻**探一次"complete 段是否撞车"
+        // （harness 在 agent/created 之后、首轮之前就会装配一次，那次抛错的话
+        //  pre-step 根本不会跑，只能在这里当场换方案）。
+        await gate.prime({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, agent)
       } catch (error) {
         note({ seat: 'agent/created', error: String(error?.message ?? error) })
       }

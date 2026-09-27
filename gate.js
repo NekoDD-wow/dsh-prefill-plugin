@@ -77,6 +77,64 @@ function restrictableToolNames(toolService, agent) {
   return []
 }
 
+/**
+ * **`complete:true` 撞过车的会话**（撞上 `pure` preset 的 persona 段）。
+ *
+ * 为什么需要"记住"：冲突只能在 `assemble()` 时发现（注册时不报错），发现一次就要花
+ * 一次失败的装配。记下来之后，这个会话后续每轮**直接走逐名清空**，不再试探。
+ * 挂 Symbol 以穿过内核热换。
+ */
+const COMPLETE_CONFLICTS = (globalThis[Symbol.for('dsh-prefill.complete-conflicts')] ??= new Set())
+
+/**
+ * "逐名清空"：把 harness **已知的**段逐条清空（跳过我方要改写的那几条）。
+ *
+ * 与 `complete:true` 的分工：
+ *   · `complete:true` = **绝对接管**整份段列表（连不认识的段也清掉），但同 scope 只能有一个，
+ *     撞上 `pure` preset 的 persona 段会让 `assemble()` **直接抛错**（§9.3 的 R14，活的危险）。
+ *   · 逐名清空 = 只清已知名字，安全但可能漏掉未见过的作用域局部段。
+ * 默认用前者（更强），一旦探测到占用就当场换成后者（见 `step()` 的自检 + `swapToPerNameWipe`）。
+ */
+function mountPerNameWipe(sp, rootCtx, agentId, overrideSectionNames, push) {
+  const known = new Set([
+    ...entryNames(globalPromptLayer(rootCtx)?.sections),
+    ...(ASSEMBLIES.get(agentId)?.sections ?? []),
+  ])
+  let count = 0
+  for (const name of known) {
+    if (overrideSectionNames.includes(name)) continue
+    push(sp.section({ name, order: globalOrderOf(rootCtx, 'sections', name) ?? 1000, text: '' }))
+    count += 1
+  }
+  return count
+}
+
+/**
+ * 撞上 `complete:true` 占用时的**救场**：撤掉我方那条、换成"逐名清空"，并记住这个会话。
+ *
+ * 调用点只在 `step()` 的自检探针 catch 里 —— 因为冲突**只在 `assemble()` 抛错**，
+ * 注册处不会报错，"注册时 try/catch"这条路根本不成立。自检跑的正是同 scope、
+ * 同一条装配路径，它抛什么循环里就会抛什么 ⇒ 在这里换掉，本轮就照常跑。
+ * 返回 `{ok, wiped}` / `{ok:false, reason}`；不抛。
+ */
+function swapToPerNameWipe(agent, state, api, entry, completeDisposer) {
+  try {
+    if (typeof completeDisposer === 'function') completeDisposer()
+    if (typeof agent?.id === 'string') COMPLETE_CONFLICTS.add(agent.id)
+    const { systemPrompt } = resolveServices(agent, api.rootCtx)
+    const sp = systemPrompt?.service
+    if (typeof sp?.section !== 'function') return { ok: false, reason: 'no-section-api' }
+    const overrideSectionNames = Object.keys(overridesFor(state, agent?.id)?.sections ?? {})
+    const disposers = entry?.disposers ?? []
+    const wiped = mountPerNameWipe(sp, api.rootCtx, agent?.id, overrideSectionNames, (disposer) => {
+      if (typeof disposer === 'function') disposers.push(disposer)
+    })
+    return { ok: true, wiped }
+  } catch (error) {
+    return { ok: false, reason: String(error?.message ?? error) }
+  }
+}
+
 /** 一条消息是否放行：自有 prefill:* 与用户原话恒放行，其余按（会话级优先的）白名单。 */
 function keeper(state, message, sessionId) {
   const kind = message?.source?.kind
@@ -487,20 +545,17 @@ function mountLevers(agent, state, api, sink) {
   // 实测：PURE 下 `system chars=0`、`runtime-context` 的改写消息被丢 —— 也就是
   // "开着拦注入时，改写静默失效"。现在改成**逐名清空 harness 自己的段**，
   // 留下我们要改写的那几条。
+  let completeDisposer
   if (state.levers.blockSections && typeof sp?.section === 'function') {
-    if (overrideSectionNames.length === 0) {
-      // 没有我方改写：沿用"一条清空"（保证 0 字符，也不怕漏名字）。
-      push(sp.section({ name: 'prefill:pure', order: 0, text: '', complete: true }))
+    // 撞过车的会话直接走逐名清空：不再试探，省掉一次注定失败的装配。
+    if (overrideSectionNames.length > 0 || COMPLETE_CONFLICTS.has(agent?.id)) {
+      mountPerNameWipe(sp, rootCtx, agent?.id, overrideSectionNames, push)
     } else {
-      const known = new Set([
-        ...entryNames(globalPromptLayer(rootCtx)?.sections),
-        ...(ASSEMBLIES.get(agent?.id)?.sections ?? []),
-      ])
-      for (const name of known) {
-        // 我方要改写的那条留着（下面会用同名遮蔽装上改写文本）。
-        if (overrideSectionNames.includes(name)) continue
-        push(sp.section({ name, order: globalOrderOf(rootCtx, 'sections', name) ?? 1000, text: '' }))
-      }
+      // 没有我方改写、也没撞过车：先用"一条清空"（最强：绝对接管整份段列表）。
+      // ⚠️ 它同 scope 只能有一个：撞上 `pure` preset 会在 assemble() 抛错 ⇒
+      // `step()` 的自检探针抓到后会当场换成逐名清空（见 swapToPerNameWipe）。
+      completeDisposer = sp.section({ name: 'prefill:pure', order: 0, text: '', complete: true })
+      push(completeDisposer)
     }
   }
   if (state.levers.probeContext && typeof sp?.context === 'function') {
@@ -565,6 +620,8 @@ function mountLevers(agent, state, api, sink) {
 
   return {
     disposers,
+    // 交给 step()：一旦自检探针发现 `complete` 段撞车，就靠它撤掉再换逐名清空。
+    completeDisposer,
     ui: {
       systemPromptVia: systemPrompt.via,
       toolsVia: tools.via,
@@ -588,7 +645,7 @@ function mountLevers(agent, state, api, sink) {
  * 挂上后把闩锁标记为 `turn:'pending'`，让紧随其后的第一个 pre-step **沿用它**而不是重挂
  * （重挂会因同名段已注册而抛错）。
  */
-export function prime(api, agent) {
+export async function prime(api, agent) {
   if (typeof agent?.id !== 'string') return
   // 工具清单在**武装判定之前**登记：清单与"放不放行"无关，且这样"开会话就有"，
   // 不必先跑一轮（拦注入开着的会话也一样能扫到）。
@@ -602,13 +659,48 @@ export function prime(api, agent) {
   if (!state.armed.includes(agent.id) && !state.armed.includes('*')) return
   const disposers = []
   let error = ''
+  let primedComplete
   try {
-    mountLevers(agent, state, api, disposers)
+    primedComplete = mountLevers(agent, state, api, disposers).completeDisposer
   } catch (thrown) {
     error = String(thrown?.message ?? thrown)
   }
-  api.latches.set(agent.id, { turn: 'pending', disposers, ui: {}, frozenLevers: state.levers })
+  api.latches.set(agent.id, {
+    turn: 'pending',
+    disposers,
+    ui: {},
+    frozenLevers: state.levers,
+    completeDisposer: primedComplete,
+  })
   api.note({ prime: 'agent/created', id: agent.id, mounted: disposers.length, error })
+
+  // ★ R14 探测（**必须在这里**）：harness 在 `agent/created` 之后、轮次开始之前就会装配
+  // 一次系统提示。如果我的 `complete:true` 段撞上别人（`pure` preset 的 persona），
+  // **那次装配**就会抛错，而 `agent/pre-step` 根本没机会跑 —— 实测：step 一行日志都没有、
+  // 直接 `turn/end error`，所以"在 step 的自检里换方案"救不到。
+  // 这里抛错就当场撤掉 complete 段、换成逐名清空，再装配一次（顺便把渲染结果烧进缓存）。
+  if (typeof primedComplete === 'function') {
+    try {
+      await computeRendered(agent)
+    } catch (thrown) {
+      const message = String(thrown?.message ?? thrown)
+      if (message.includes('multiple complete prompt sections')) {
+        const entry = api.latches.get(agent.id)
+        const swapped = swapToPerNameWipe(agent, state, api, entry, primedComplete)
+        if (entry !== undefined) entry.completeDisposer = undefined
+        api.note({ complete_conflict: 'at-created', fell_back: swapped, id: agent.id })
+        if (swapped?.ok === true) {
+          try {
+            await computeRendered(agent)
+          } catch (second) {
+            api.note({ complete_conflict: 'after-fallback-failed', error: String(second?.message ?? second) })
+          }
+        }
+      } else {
+        api.note({ prime: 'probe-failed', id: agent.id, error: message })
+      }
+    }
+  }
 }
 
 /**
@@ -670,19 +762,27 @@ export async function step(api, payload, decision) {
   let mounted = entry?.disposers.length ?? 0
   let ui = entry?.ui
   let mountError = ''
+  let completeDisposer = entry?.completeDisposer
   if (remounted) {
     unlatch(agent.id)
     const disposers = []
     try {
       const result = mountLevers(agent, state0, api, disposers)
       ui = result.ui
+      completeDisposer = result.completeDisposer
     } catch (error) {
       mountError = String(error?.message ?? error)
       ui = { mountError }
     }
     // 无论成功失败都存下来：partial 也要能清，否则泄漏成永久死锁。
     mounted = disposers.length
-    latches.set(agent.id, { turn: payload?.turn, disposers, ui, frozenLevers: state0.levers })
+    latches.set(agent.id, {
+      turn: payload?.turn,
+      disposers,
+      ui,
+      frozenLevers: state0.levers,
+      completeDisposer,
+    })
   }
   // 本轮所有判定都用冻结值，不再读实时状态。
   const state = { ...state0, levers: entry?.frozenLevers ?? state0.levers }
@@ -792,17 +892,46 @@ export async function step(api, payload, decision) {
   // 装配器返回值才是权威。代价：多跑一次装配（provider 会被再求值一次），因此只在
   // 测阻断通道的那两轮（blockTools / blockSections）里、每轮重挂时测一次。
   let selfCheck
-  if (remounted && (state.levers.blockTools || state.levers.blockSections)) {
-    try {
+  // 探针跑的条件：老的"重挂那两轮"，**外加**"本轮挂了 complete 段"（要验它没撞车）。
+  const needsProbe =
+    (remounted && (state.levers.blockTools || state.levers.blockSections)) ||
+    typeof completeDisposer === 'function'
+  if (needsProbe) note({ probe: 'start', remounted, complete: typeof completeDisposer === 'function', id: agent?.id })
+  if (needsProbe) {
+    const probe = async () => {
       const { systemPrompt } = resolveServices(agent, rootCtx)
-      const probe = await systemPrompt?.assemble?.({ agent, scope: agent })
+      return await systemPrompt?.assemble?.({ agent, scope: agent })
+    }
+    try {
+      const result = await probe()
       selfCheck = {
-        sections: (probe?.sections ?? []).map((entry) => `${entry.name}(${entry.text.length})`),
-        contexts: (probe?.contexts ?? []).length,
-        tools: (probe?.tools ?? []).length,
+        sections: (result?.sections ?? []).map((probed) => `${probed.name}(${probed.text.length})`),
+        contexts: (result?.contexts ?? []).length,
+        tools: (result?.tools ?? []).length,
       }
     } catch (error) {
-      selfCheck = { failed: String(error?.message ?? error) }
+      const message = String(error?.message ?? error)
+      // ★ R14：`pure` preset 的 persona 已经占了 `complete:true` ⇒ 当场换方案，本轮不炸。
+      if (message.includes('multiple complete prompt sections')) {
+        const swapped = swapToPerNameWipe(agent, state, api, entry, completeDisposer)
+        completeDisposer = undefined
+        note({ complete_conflict: 'pure-preset', fell_back: swapped, id: agent?.id })
+        selfCheck = { failed: message, fallback: swapped }
+        if (swapped?.ok === true) {
+          try {
+            const result = await probe()
+            selfCheck.afterFallback = {
+              sections: (result?.sections ?? []).map((probed) => `${probed.name}(${probed.text.length})`),
+              contexts: (result?.contexts ?? []).length,
+              tools: (result?.tools ?? []).length,
+            }
+          } catch (error2) {
+            selfCheck.afterFallback = { failed: String(error2?.message ?? error2) }
+          }
+        }
+      } else {
+        selfCheck = { failed: message }
+      }
     }
   }
 
