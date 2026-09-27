@@ -185,6 +185,22 @@ function writePacks(workspace, packs) {
   return file
 }
 
+/** 校验注入改写：只留 `{messages, sections, contexts}` 三张「名字 → 文本」表。 */
+function sanitizeOverrides(raw) {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const out = {}
+  for (const group of ['messages', 'sections', 'contexts']) {
+    const source = raw[group]
+    if (source === null || typeof source !== 'object') continue
+    const table = {}
+    for (const [key, value] of Object.entries(source)) {
+      if (key !== '' && typeof value === 'string') table[key] = value
+    }
+    out[group] = table
+  }
+  return out
+}
+
 /** 选择器需要的轻量摘要（不把 items 全丢给下拉框）。 */
 function packSummaries(packs) {
   return packs.map((pack) => ({
@@ -569,8 +585,14 @@ export function apply(ctx) {
             let packs = readPacks(workspace)
             let reason = ''
 
-            const upsert = (name, items) => {
-              const pack = { name, updatedAt: new Date().toISOString(), items }
+            const upsert = (name, items, overrides) => {
+              // 预设 = 预填装内容 + 注入改写（用户要求绑在一起）。
+              const pack = {
+                name,
+                updatedAt: new Date().toISOString(),
+                items,
+                ...(overrides === undefined ? {} : { overrides }),
+              }
               const at = packs.findIndex((entry) => entry.name === name)
               if (at >= 0) packs[at] = pack
               else packs = [...packs, pack]
@@ -587,9 +609,10 @@ export function apply(ctx) {
             } else if (op === 'save') {
               const name = typeof body?.name === 'string' ? body.name.trim() : ''
               const items = sanitizeItems(body?.items)
+              const overrides = sanitizeOverrides(body?.overrides)
               if (name === '') reason = 'missing name'
               else if (items === undefined) reason = 'invalid items[]'
-              else upsert(name, items)
+              else upsert(name, items, overrides)
             } else if (op === 'delete') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const next = packs.filter((entry) => entry.name !== name)
@@ -608,10 +631,11 @@ export function apply(ctx) {
               }
               if (parsed !== undefined) {
                 const items = sanitizeItems(parsed?.items ?? parsed)
+                const overrides = sanitizeOverrides(parsed?.overrides)
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
                 if (items === undefined || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items)
+                else upsert(name, items, overrides)
               }
             } else {
               reason = `unknown op "${op}"`

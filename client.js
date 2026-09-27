@@ -44,6 +44,21 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 每个会话**当前的注入改写草稿**（`{messages, sections, contexts}`）。
+     *
+     * 为什么要有这个模块级表：注入改写现在是**预填装面板里的一节**，而"预设"要把它
+     * 和预填装内容一起存/取（用户要求"跟预设绑在一起"）。面板里的编辑器更新它，
+     * 面板的预设按钮读写它，两者同模块共享即可。
+     */
+    const injectionDrafts = new Map()
+
+    /** 读某会话的注入改写草稿（没有就空对象）。 */
+    function injectionDraftOf(sessionId) {
+      const draft = injectionDrafts.get(sessionId)
+      return draft === undefined || draft === null ? { messages: {}, sections: {}, contexts: {} } : draft
+    }
+
     /** 面板上的开关清单（顺序即展示顺序）。 */
     const LEVERS = [
       { key: 'probeSection', tone: 'write' },
@@ -145,6 +160,8 @@ window.__ModuleLoader__.load({
       injectSections: '系统提示里的段落',
       injectContexts: '运行时上下文',
       injectAdd: '＋ 加',
+      injectToggle: '注入改写',
+      injectToggleTip: '改写 harness 送进去的默认注入（只在本会话生效）',
       injectAddLabel: '添加条目',
       injectAddPick: '从清单选，或直接输入自定义名字',
       injectAddPlaceholder: '名字：来源 kind / 段名 / 上下文名',
@@ -245,6 +262,8 @@ window.__ModuleLoader__.load({
       injectSections: 'System prompt sections',
       injectContexts: 'Runtime contexts',
       injectAdd: '+ Add',
+      injectToggle: 'Rewrite',
+      injectToggleTip: 'Rewrite the default injections the harness feeds in (this session only)',
       injectAddLabel: 'Add a row',
       injectAddPick: 'pick from the list, or type a custom name',
       injectAddPlaceholder: 'name: source kind / section / context',
@@ -987,6 +1006,8 @@ window.__ModuleLoader__.load({
       const [packName, setPackName] = React.useState('')
       const [ioOpen, setIoOpen] = React.useState(false)
       const [ioText, setIoText] = React.useState('')
+      // 注入改写不再单独占一行：它是本面板里的一节（用户要求：放进预填装窗口、跟预设绑在一起）。
+      const [injectOpen, setInjectOpen] = React.useState(false)
       const dirty = React.useRef(false)
       const staged = React.useRef(false)
 
@@ -1110,10 +1131,19 @@ window.__ModuleLoader__.load({
       const loadPack = () => {
         if (selected === '') return
         void packsCall({ op: 'get', name: selected })
-          .then((data) => {
+          .then(async (data) => {
             const next = Array.isArray(data?.pack?.items) ? data.pack.items : []
             edit(next)
             setPackName(selected)
+            // 预设里的注入改写也一并套用（"跟预设绑在一起"）：先登记草稿，再落 state.json。
+            const overrides = data?.pack?.overrides
+            if (overrides !== undefined && overrides !== null) {
+              injectionDrafts.set(sessionId, overrides)
+              const fresh = await post(STATE_ROUTE, undefined)
+              await post(STATE_ROUTE, {
+                overrides: { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides },
+              })
+            }
           })
           .catch(() => setStatus('error'))
       }
@@ -1123,7 +1153,8 @@ window.__ModuleLoader__.load({
           setStatus('error')
           return
         }
-        void packsCall({ op: 'save', name, items })
+        // 存预设 = 预填装内容 + 注入改写（用户要求绑在一起）。
+        void packsCall({ op: 'save', name, items, overrides: injectionDraftOf(sessionId) })
           .then((data) => {
             adoptPacks(data)
             setSelected(name)
@@ -1335,22 +1366,36 @@ window.__ModuleLoader__.load({
             t('addAssistant'),
           ),
         ),
+
+        // 注入改写：**本面板里的一节**（不是常驻横条），和预设一起存/取。
+        h(
+          'div',
+          { style: S.dockHead },
+          h(
+            'button',
+            { type: 'button', style: S.gateBtn, onClick: () => setInjectOpen(!injectOpen) },
+            `${injectOpen ? '▾' : '▸'} ${t('injectTitle')}`,
+          ),
+          h('span', { style: S.injectHintText }, t('injectHint')),
+        ),
+        injectOpen ? h(InjectionSection, { t, sessionId }) : null,
       )
     }
 
     /**
-     * Q17：**改写注入内容**（只在本会话生效）。
+     * 预填装面板里的**注入改写**一节（Q17）：改写 harness 默认注入的内容，只在本会话生效。
      *
-     * 可改的三类由宿主给（`envelope.injections[sessionId]`）：
-     *   · messages —— 按 `source.kind` 改注入消息的正文（runtime-context / skill-catalog / …）
-     *   · sections / contexts —— 按名字改写系统提示的某一段 / 某条运行时上下文
-     * 留空 = 该条不修改。写回 state.json 的 `overrides[sessionId]`，宿主在 `agent/pre-step`
-     * 与同名遮蔽里生效（§14.8）。
+     * 它是"预填装窗口"的一部分（用户要求：放进预填装窗口、跟预设绑在一起）——
+     * 所以**没有自己的折叠条**：是否展开由外层的预填装面板决定；它的当前草稿会登记到
+     * 模块级的 `injectionDrafts`，供预设一并存/取。
+     *
+     * 清单来自宿主 `envelope.injections`：`catalog`（全局 prompt 层的真实注册名 + 已知 kind）
+     * ∪ 本会话已发现 ∪ 手加 ∪ 已有改写的键 ⇒ **某条注入还没出现过也能先改**（命中即生效）。
      */
-    function InjectionEditor(props) {
+    function InjectionSection(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      const [open, setOpen] = React.useState(false)
+      const onCount = props.onCount
       const [envelope, setEnvelope] = React.useState(null)
       const [draft, setDraft] = React.useState(null)
       const [status, setStatus] = React.useState('idle')
@@ -1376,14 +1421,12 @@ window.__ModuleLoader__.load({
           .then((data) => {
             if (!alive) return
             setEnvelope(data)
-            if (open) {
-              const current = data?.state?.overrides?.[sessionId] ?? {}
-              setDraft({
-                messages: { ...(current.messages ?? {}) },
-                sections: { ...(current.sections ?? {}) },
-                contexts: { ...(current.contexts ?? {}) },
-              })
-            }
+            const current = data?.state?.overrides?.[sessionId] ?? {}
+            setDraft({
+              messages: { ...(current.messages ?? {}) },
+              sections: { ...(current.sections ?? {}) },
+              contexts: { ...(current.contexts ?? {}) },
+            })
           })
           .catch(() => {
             if (alive) setStatus('error')
@@ -1391,11 +1434,16 @@ window.__ModuleLoader__.load({
         return () => {
           alive = false
         }
-      }, [call, open, sessionId])
+      }, [call, sessionId])
+
+      // 把当前草稿登记到模块级表：预设存/取时要用它（"跟预设绑在一起"）。
+      React.useEffect(() => {
+        if (sessionId !== '' && draft !== null) injectionDrafts.set(sessionId, draft)
+      }, [draft, sessionId])
 
       // 改完 800ms 落盘（写 state.json 的 overrides）。
       React.useEffect(() => {
-        if (!open || draft === null || !dirty.current) return undefined
+        if (draft === null || !dirty.current) return undefined
         const timer = setTimeout(() => {
           dirty.current = false
           setStatus('saving')
@@ -1407,7 +1455,7 @@ window.__ModuleLoader__.load({
             .catch(() => setStatus('error'))
         }, 800)
         return () => clearTimeout(timer)
-      }, [call, draft, envelope, open, sessionId])
+      }, [call, draft, envelope, sessionId])
 
       if (sessionId === '') return null
       // 清单 = 预置 catalog ∪ 本会话已发现 ∪ 手加的 ∪ 已有改写的键。
@@ -1505,29 +1553,13 @@ window.__ModuleLoader__.load({
         ),
       )
 
-      if (!open) {
-        return h(
-          'div',
-          { style: S.gateWrap },
-          h(
-            'button',
-            { type: 'button', style: S.gateBtn, onClick: () => setOpen(true) },
-            `▸ ${t('injectTitle')}（${count}）`,
-          ),
-        )
-      }
-
       return h(
         'div',
         { style: S.injectCard },
         h(
           'div',
           { style: S.injectHead },
-          h(
-            'button',
-            { type: 'button', style: S.gateBtn, onClick: () => setOpen(false) },
-            `▾ ${t('injectTitle')}`,
-          ),
+          h('span', { style: S.injectTitleText }, t('injectTitle')),
           h('span', { style: S.label }, `${count}`),
           h('span', { style: S.injectHintText }, t('injectHint')),
           h('span', { style: { flex: '1 1 auto' } }),
@@ -1632,18 +1664,7 @@ window.__ModuleLoader__.load({
             PrefillDock,
           ),
         )
-        // Q17：注入内容改写（会话内，默认折叠）。
-        ctx.slots.inject('conversation.input.dock', () =>
-          ctx.slots.register(
-            {
-              name: 'conversation.input.dock',
-              id: 'prefill-injections',
-              order: 25,
-              locale: NS,
-            },
-            InjectionEditor,
-          ),
-        )
+        // Q17 的注入改写不再是独立槽位：它是预填装面板里的一节（见 InjectionSection）。
       },
     }
   },
