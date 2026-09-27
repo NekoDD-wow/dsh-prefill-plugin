@@ -201,6 +201,13 @@ function sanitizeOverrides(raw) {
   return out
 }
 
+/** 校验"工具放行清单"：`['read','edit']`（只放这些）或 `[]`（一个都不给）；`null`/缺省 = 全部放行。 */
+function sanitizeTools(raw) {
+  if (raw === null) return null
+  if (!Array.isArray(raw)) return undefined
+  return raw.filter((name) => typeof name === 'string' && name !== '')
+}
+
 /** 选择器需要的轻量摘要（不把 items 全丢给下拉框）。 */
 function packSummaries(packs) {
   return packs.map((pack) => ({
@@ -604,13 +611,14 @@ export function apply(ctx) {
             let packs = readPacks(workspace)
             let reason = ''
 
-            const upsert = (name, items, overrides) => {
-              // 预设 = 预填装内容 + 注入改写（用户要求绑在一起）。
+            const upsert = (name, items, overrides, tools) => {
+              // 预设 = 预填装内容 + 注入改写 + **工具放行**（§4-M5：换包=换权限）。
               const pack = {
                 name,
                 updatedAt: new Date().toISOString(),
                 items,
                 ...(overrides === undefined ? {} : { overrides }),
+                ...(tools === undefined ? {} : { tools }),
               }
               const at = packs.findIndex((entry) => entry.name === name)
               if (at >= 0) packs[at] = pack
@@ -629,9 +637,10 @@ export function apply(ctx) {
               const name = typeof body?.name === 'string' ? body.name.trim() : ''
               const items = sanitizeItems(body?.items)
               const overrides = sanitizeOverrides(body?.overrides)
+              const tools = sanitizeTools(body?.tools)
               if (name === '') reason = 'missing name'
               else if (items === undefined) reason = 'invalid items[]'
-              else upsert(name, items, overrides)
+              else upsert(name, items, overrides, tools)
             } else if (op === 'delete') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const next = packs.filter((entry) => entry.name !== name)
@@ -651,10 +660,11 @@ export function apply(ctx) {
               if (parsed !== undefined) {
                 const items = sanitizeItems(parsed?.items ?? parsed)
                 const overrides = sanitizeOverrides(parsed?.overrides)
+                const tools = sanitizeTools(parsed?.tools)
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
                 if (items === undefined || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides)
+                else upsert(name, items, overrides, tools)
               }
             } else {
               reason = `unknown op "${op}"`

@@ -752,6 +752,25 @@ window.__ModuleLoader__.load({
         border: '1px dashed var(--dsw-alias-border-l2)',
         color: 'var(--dsw-alias-label-tertiary)',
       },
+      // ── 与会话头部的模式徽标（回答"顶上那颗芯片为什么不跟着变"）──
+      headerBadge: (gate) => ({
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '1px 8px',
+        borderRadius: 999,
+        fontSize: 11,
+        whiteSpace: 'nowrap',
+        border: `1px solid ${
+          gate === 'pure'
+            ? 'var(--dsw-alias-state-warn-primary)'
+            : gate === 'filter'
+              ? 'var(--dsw-alias-brand-primary)'
+              : 'var(--dsw-alias-border-l2)'
+        }`,
+        color: 'var(--dsw-alias-label-secondary)',
+        background: 'transparent',
+      }),
       // ── 与其他插件的冲突横幅（**明说**，不悄悄降级）──
       conflictBanner: {
         display: 'flex',
@@ -1583,14 +1602,23 @@ window.__ModuleLoader__.load({
             const next = Array.isArray(data?.pack?.items) ? data.pack.items : []
             edit(next)
             setPackName(selected)
-            // 预设里的注入改写也一并套用（"跟预设绑在一起"）：先登记草稿，再落 state.json。
+            // 预设里的注入改写与**工具权限**也一并套用（"跟预设绑在一起"；§4-M5）。
             const overrides = data?.pack?.overrides
+            const packTools = data?.pack?.tools
             if (overrides !== undefined && overrides !== null) {
               injectionDrafts.set(sessionId, overrides)
+            }
+            if (overrides !== undefined || packTools !== undefined) {
               const fresh = await post(STATE_ROUTE, undefined)
-              await post(STATE_ROUTE, {
-                overrides: { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides },
-              })
+              const patch = {}
+              if (overrides !== undefined && overrides !== null) {
+                patch.overrides = { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides }
+              }
+              if (packTools !== undefined) {
+                // `null` = 全部放行；数组 = 只放这些。
+                patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: packTools }
+              }
+              await post(STATE_ROUTE, patch)
             }
           })
           .catch(() => setStatus('error'))
@@ -1601,9 +1629,9 @@ window.__ModuleLoader__.load({
           setStatus('error')
           return
         }
-        // 存预设 = 预填装内容 + 注入改写（用户要求绑在一起）。
-        void currentOverrides()
-          .then((overrides) => packsCall({ op: 'save', name, items, overrides }))
+        // 存预设 = 预填装内容 + 注入改写 + 工具放行（用户要求绑在一起；§4-M5 换包=换权限）。
+        void Promise.all([currentOverrides(), currentTools()])
+          .then(([overrides, tools]) => packsCall({ op: 'save', name, items, overrides, tools }))
           .then((data) => {
             adoptPacks(data)
             setSelected(name)
@@ -1685,10 +1713,28 @@ window.__ModuleLoader__.load({
           .catch(() => setInjectStatus('error'))
       }
 
+      /** 取本会话"当前生效的工具放行清单"（`array`=只放这些 / `[]`=一个都不给 / `null`=全部放行）。 */
+      const currentTools = async () => {
+        try {
+          const envelope = await post(STATE_ROUTE, undefined)
+          const stored = envelope?.state?.sessionTools?.[sessionId]
+          return Array.isArray(stored) ? stored : null
+        } catch {
+          return null
+        }
+      }
+
       const exportFile = async () => {
         const explicit = (packName.trim() === '' ? selected : packName).trim()
         const name = explicit === '' ? 'prefill' : explicit
-        const payload = { version: 1, name, items, overrides: await currentOverrides() }
+        const payload = {
+          version: 1,
+          name,
+          items,
+          overrides: await currentOverrides(),
+          // §4-M5：包 = 内容 + 注入改写 + **工具权限**（换包=换权限）。
+          tools: await currentTools(),
+        }
         const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
         // 游离的 <a> 触发下载：不写别人的 DOM（守 P9）。
@@ -1709,13 +1755,22 @@ window.__ModuleLoader__.load({
             const next = Array.isArray(parsed) ? parsed : parsed?.items
             if (Array.isArray(next)) edit(next)
             const overrides = parsed?.overrides
+            const importedTools = parsed?.tools
             if (overrides !== undefined && overrides !== null && typeof overrides === 'object') {
               injectionDrafts.set(sessionId, overrides)
-              void post(STATE_ROUTE, undefined).then((fresh) =>
-                post(STATE_ROUTE, {
-                  overrides: { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides },
-                }),
-              )
+            }
+            // 导入也带上工具权限（包 = 内容 + 改写 + 工具；§4-M5）。
+            if (overrides !== undefined || importedTools !== undefined) {
+              void post(STATE_ROUTE, undefined).then((fresh) => {
+                const patch = {}
+                if (overrides !== undefined && overrides !== null && typeof overrides === 'object') {
+                  patch.overrides = { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides }
+                }
+                if (importedTools !== undefined) {
+                  patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: importedTools }
+                }
+                return post(STATE_ROUTE, patch)
+              })
             }
             if (typeof parsed?.name === 'string' && parsed.name !== '') setPackName(parsed.name)
             setStatus('saved')
@@ -2380,6 +2435,77 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 会话头部的位置说明（`conversation.session.header.utilities`）。
+     *
+     * 为什么要它：顶上的 `标准模式` 是 DSH 的 **agent preset**，与本插件的闸门 / 预注入模式
+     * 是两套东西 —— 我们不注册 preset，所以切到纯净态时它仍写着"标准模式"，会误导人
+     * （用户实拍问过这点）。这里把**本插件这边实际生效的模式**贴在同一个头部行里，
+     * 让顶栏说的是真话；等日后做了"每包一个 preset"（§15 第 ⑥ 项）再让那颗芯片自己变。
+     */
+    function SessionModeBadge(props) {
+      const t = props.t ?? ((key) => key)
+      const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+      const [envelope, setEnvelope] = React.useState(null)
+
+      const call = React.useCallback(async () => {
+        const response = await fetch(STATE_ROUTE, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return await response.json()
+      }, [])
+
+      React.useEffect(() => {
+        if (sessionId === '') return undefined
+        const refresh = () => {
+          void call()
+            .then((data) => setEnvelope(data))
+            .catch(() => {})
+        }
+        refresh()
+        const timer = setInterval(refresh, 2500)
+        window.addEventListener(STATE_EVENT, refresh)
+        return () => {
+          clearInterval(timer)
+          window.removeEventListener(STATE_EVENT, refresh)
+        }
+      }, [call, sessionId])
+
+      if (sessionId === '') return null
+      // 读**当前配置**而不是"上一轮快照"：模式徽标要跟着开关立刻变，
+      // 而快照只在跑过一轮之后才更新（Q9 的语义是"本轮生效值"）。
+      const levers = envelope?.state?.levers ?? {}
+      const armedList = Array.isArray(envelope?.state?.armed) ? envelope.state.armed : []
+      const armed = armedList.includes(sessionId) || armedList.includes('*')
+      const pureOn =
+        armed === true &&
+        levers.blockSections === true &&
+        levers.blockContexts === true &&
+        levers.blockTools === true &&
+        levers.blockMessages === true
+      const filterOn = armed === true && levers.blockMessages === true
+      const gate = pureOn ? 'pure' : filterOn ? 'filter' : 'pass'
+      const turns = envelope?.turns?.[sessionId] ?? 0
+      const injected = (envelope?.injects?.[sessionId] ?? 0) > 0
+      const tools = envelope?.state?.sessionTools?.[sessionId]
+      const gateText = gate === 'pure' ? t('statePure') : gate === 'filter' ? t('stateFilter') : t('statePass')
+      const modeText = turns > 0 ? t('modeInject') : t('modeHistory')
+      const toolsText = Array.isArray(tools) ? (tools.length === 0 ? t('toolsNone') : `${tools.length} 工具`) : ''
+      const summary = [gateText, modeText, toolsText].filter((part) => part !== '').join(' · ')
+
+      return h(
+        'span',
+        {
+          style: S.headerBadge(gate),
+          title: `${t('nav')}：${summary}`,
+        },
+        `${t('nav')} · ${summary}`,
+      )
+    }
+
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
@@ -2440,6 +2566,36 @@ window.__ModuleLoader__.load({
           ),
         )
         // Q17 的注入改写不再是独立槽位：它是预填装面板里的一节（见 InjectionSection）。
+        // 会话头部：把本插件**实际生效的模式**贴在顶栏（顶上的 agent preset 芯片不归我们
+        // 管，但不能让它一家之言 —— 用户实拍问过"切了模式顶上那颗为什么不跟着变"）。
+        // ⚠️ 这个槽位由 `@deepseek-ai/dsh-client-ui-conversation` 渲染，实测里它没生效
+        // （可能还要更精确的客户端包注入）；所以**再挂一份**到输入框左侧 —— 那里是我们
+        // 自己的座位、一定可见。等"每包一个 preset"（§15 第 ⑥ 项）做完，顶栏芯片会自己变。
+        ctx.slots.inject('conversation.input.left', () =>
+          ctx.slots.register(
+            {
+              name: 'conversation.input.left',
+              id: 'prefill-mode-badge',
+              order: 17,
+              locale: NS,
+            },
+            SessionModeBadge,
+          ),
+        )
+        ctx.slots.inject('conversation.session.header.utilities', () =>
+          ctx.slots.register(
+            {
+              name: 'conversation.session.header.utilities',
+              id: 'prefill-mode-badge',
+              order: 30,
+              // 该槽位声明为 `{kind:'list', scope:'session'}`：必须显式声明作用域，
+              // 框架才会把 `sessionId` 注入 props。
+              scope: 'session',
+              locale: NS,
+            },
+            SessionModeBadge,
+          ),
+        )
       },
     }
   },
