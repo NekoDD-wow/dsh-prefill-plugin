@@ -401,6 +401,59 @@ export const PREFILL_PROBE_ANSWER = probeText(
   '【prefill:probe】预填装回答：这段内容由 @local/dsh-prefill 以真实 durable 事件写入，不是注入，也不是模型生成的。',
 )
 
+/** 预填装包标识：**放 `source.prefill`，不放 `source.kind`**（见 F16）。 */
+export const PREFILL_PACK_ID = probeText('PREFILL_PACK_ID', 'probe')
+
+/**
+ * 多轮预填装的内容模型。
+ *
+ * 一条 item 只有两种形态，**思维链是 ai 那一部分里的一个字段**：
+ *   { role:'user',      text }
+ *   { role:'assistant', reasoning?, text }
+ * 列表本身**不要求 user/ai 交替**：连续多条 user、连续多条 assistant 都合法。
+ *
+ * 默认（未设 `PREFILL_PROBE_ITEMS`）= 一问一答，保持 P1 原行为。
+ */
+export function resolveProbeItems() {
+  const raw = process.env.PREFILL_PROBE_ITEMS
+  if (typeof raw === 'string' && raw.length > 0) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+    } catch {
+      // 解析失败就落回默认，别让探针整条挂掉。
+    }
+  }
+  return [
+    { role: 'user', text: PREFILL_PROBE_QUESTION },
+    { role: 'assistant', reasoning: PREFILL_PROBE_REASONING, text: PREFILL_PROBE_ANSWER },
+  ]
+}
+
+/**
+ * 造一条形状与真流一致的紧凑流（不含 usage 块 ⇒ token-meter 自然忽略该事件）。
+ * @see assistant/message 必须带 stream —— 见 materializePrefill 顶部注释（F13）。
+ */
+export function buildStream(reasoning, text) {
+  const at = Date.now()
+  const records = []
+  let index = 0
+  if (typeof reasoning === 'string' && reasoning.length > 0) {
+    records.push(
+      { type: 'chunk', time: at, chunk: { type: 'block-start', index, blockType: 'reasoning' } },
+      { type: 'chunk', time: at, chunk: { type: 'block-end', index, block: { type: 'reasoning', text: reasoning } } },
+    )
+    index += 1
+  }
+  records.push(
+    { type: 'chunk', time: at, chunk: { type: 'block-start', index, blockType: 'text' } },
+    { type: 'text-chunks', time0: at, index, dt: [], texts: [text] },
+    { type: 'chunk', time: at, chunk: { type: 'block-end', index, block: { type: 'text', text } } },
+    { type: 'chunk', time: at, chunk: { type: 'finish', reason: { kind: 'stop' } } },
+  )
+  return records
+}
+
 // ── 渲染系统提示：语义逐字复制自 @deepseek-ai/dsh-system-prompt/lib/index.js:104-177 ──
 // 为什么必须自己渲染：合成轮要**先写 system 节点**（约束 4），而节点的文本必须与
 // 循环稍后在 `agent-loop:1032 renderPrompt(assembly)` 算出的**完全一致**，否则
@@ -510,87 +563,103 @@ export async function materializePrefill(api, agent) {
     return
   }
 
-  const turn = 1
-  const step = 1
+  // ── 多轮预填装：items = 有序消息列表，**不强制 user/ai 交替** ────────────────
+  // 落盘映射受 DSH 的 turn/step 结构约束：
+  //   · 连续 user 项 → 放进**同一个 turn/step**（每条各自一个 user/message 节点 ⇒
+  //     客户端各画一个气泡；wire 上连续同角色会被适配器合并，无妨）
+  //   · 每个 assistant 项 → **独占一个 turn**（客户端 assistant-step 节点 id 是
+  //     `${turn}:${step}`，同一 turn 里多条 assistant/message 会被并成一个节点）
+  //   · 尾部没有 assistant 承接的 user 项 → 自己开一轮
+  const items = resolveProbeItems()
   const written = []
+  let turnNo = 0
 
-  // ⚠️ 【P1 实测·必须】assistant/message **必须带 `stream`（紧凑流）**，否则会炸。
-  // 实测栈（PREFILL_DIAG=1 抓到）：
-  //   dsh-token-meter/lib/index.js:392 usageOf()
-  //     → `event.data.usage === undefined` 时无条件 `lastAssistantStreamChunk(event.data.stream,'usage')`
-  //     → dsh-llm/lib/index.js:1412 `stream.length` ← stream 为 undefined ⇒ TypeError
-  //   ⇒ 整条 agent.followup() 直接抛，会话卡死。
-  // 同一处缺口客户端也有：`dsh-client-ui-chat/lib/client.js:10265` 的
-  //   `streamUsage(event.data.stream) ?? state.sample` **没有短路**，stream 缺失同样会炸。
-  // 注意 `dsh-session-format-v3-to-v4` 用 `Array.isArray(data.stream)` 包着（不强制），
-  // 所以"没流"能写进去、也能读回来，但**读的时候**会炸在投影里 —— 这类"写时不管、读时炸"
-  // 的字段正是 P1 要提前钉住的。
-  // 故这里造一条形状与真流一致的紧凑流（不含 usage 块 ⇒ token-meter 自然忽略该事件，
-  // 不会把预填装算成真实 token 消耗）。
-  const at = Date.now()
-  const stream = [
-    { type: 'chunk', time: at, chunk: { type: 'block-start', index: 0, blockType: 'reasoning' } },
-    { type: 'chunk', time: at, chunk: { type: 'block-end', index: 0, block: { type: 'reasoning', text: PREFILL_PROBE_REASONING } } },
-    { type: 'chunk', time: at, chunk: { type: 'block-start', index: 1, blockType: 'text' } },
-    { type: 'text-chunks', time0: at, index: 1, dt: [], texts: [PREFILL_PROBE_ANSWER] },
-    { type: 'chunk', time: at, chunk: { type: 'block-end', index: 1, block: { type: 'text', text: PREFILL_PROBE_ANSWER } } },
-    { type: 'chunk', time: at, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-  ]
+  /** 写一个完整合成轮。 */
+  const writeTurn = (turn, users, assistant) => {
+    session.append('turn/start', { turn })
+    session.append('step/start', { turn, step: 1 })
+    // 顺序即语义：system 必须是**第一条**（F14）。
+    if (turn === 1) {
+      session.append(
+        'system/message',
+        {
+          turn,
+          step: 1,
+          message: {
+            role: 'system',
+            content: [{ type: 'text', text: rendered }],
+            source: { kind: 'system-prompt' },
+            id: randomUUID(),
+          },
+        },
+        { surfaceOp: 'append' },
+      )
+      written.push('system/message')
+    }
+    for (const user of users) {
+      session.append(
+        'user/message',
+        {
+          role: 'user',
+          content: [{ type: 'text', text: user.text }],
+          // ⚠️ F16：这里**必须**是 kind:'user'。客户端的渲染分类器就用它
+          // （`dsh-client-ui-chat/lib/client.js:9208`：kind !== 'user' ⇒ 归为普通 Context 行；
+          // 而 `isVisibleChatNode`（:7651）把普通 Context 行**排除在可见聊天行之外**
+          // ⇒ 预填装提问在 GUI 里根本不显示）。包标识因此改放 `prefill` 字段。
+          source: { kind: 'user', prefill: PREFILL_PACK_ID },
+          id: randomUUID(),
+        },
+        { surfaceOp: 'append' },
+      )
+      written.push('user/message')
+    }
+    if (assistant !== undefined) {
+      session.append(
+        'assistant/message',
+        {
+          turn,
+          step: 1,
+          message: {
+            role: 'assistant',
+            content: [
+              ...(typeof assistant.reasoning === 'string' && assistant.reasoning.length > 0
+                ? [{ type: 'reasoning', text: assistant.reasoning }]
+                : []),
+              { type: 'text', text: assistant.text },
+            ],
+            // 约束：assistant/message 的 source 必须是 kind:'model' 且带 provider+model
+            // （dsh-session/lib/index.js:1169-1172）。刻意**不带** replayState —— 合成内容
+            // 没有可原生回放的 provider 签名。
+            source: { kind: 'model', provider: 'prefill-probe', model: 'prefill-probe' },
+            id: randomUUID(),
+          },
+          stream: buildStream(assistant.reasoning, assistant.text),
+        },
+        { surfaceOp: 'append' },
+      )
+      written.push('assistant/message')
+    }
+    session.append('step/end', { turn, step: 1 })
+    session.append('turn/end', { turn, reason: { kind: 'completed' } })
+  }
 
   try {
-    // 顺序即语义：system 必须是**第一条**（约束 4）。
-    session.append('turn/start', { turn })
-    session.append('step/start', { turn, step })
-    session.append(
-      'system/message',
-      {
-        turn,
-        step,
-        message: {
-          role: 'system',
-          content: [{ type: 'text', text: rendered }],
-          source: { kind: 'system-prompt' },
-          id: randomUUID(),
-        },
-      },
-      { surfaceOp: 'append' },
-    )
-    session.append(
-      'user/message',
-      {
-        role: 'user',
-        content: [{ type: 'text', text: PREFILL_PROBE_QUESTION }],
-        source: { kind: 'prefill:probe' },
-        id: randomUUID(),
-      },
-      { surfaceOp: 'append' },
-    )
-    session.append(
-      'assistant/message',
-      {
-        turn,
-        step,
-        message: {
-          role: 'assistant',
-          content: [
-            { type: 'reasoning', text: PREFILL_PROBE_REASONING },
-            { type: 'text', text: PREFILL_PROBE_ANSWER },
-          ],
-          // 约束：assistant/message 的 source 必须是 kind:'model' 且带 provider+model
-          // （dsh-session/lib/index.js:1169-1172）。刻意**不带** replayState —— 合成内容
-          // 没有可原生回放的 provider 签名。
-          source: { kind: 'model', provider: 'prefill-probe', model: 'prefill-probe' },
-          id: randomUUID(),
-        },
-        stream,
-      },
-      { surfaceOp: 'append' },
-    )
-    session.append('step/end', { turn, step })
-    session.append('turn/end', { turn, reason: { kind: 'completed' } })
-    written.push(...['turn/start', 'step/start', 'system/message', 'user/message', 'assistant/message', 'step/end', 'turn/end'])
+    let pending = []
+    for (const item of items) {
+      if (item?.role === 'user') {
+        pending.push({ text: String(item.text ?? '') })
+        continue
+      }
+      turnNo += 1
+      writeTurn(turnNo, pending, { reasoning: item?.reasoning, text: String(item?.text ?? '') })
+      pending = []
+    }
+    if (pending.length > 0) {
+      turnNo += 1
+      writeTurn(turnNo, pending, undefined)
+    }
   } catch (error) {
-    api.note({ prefill: 'append-failed', id: agent.id, written, error: String(error?.message ?? error) })
+    api.note({ prefill: 'append-failed', id: agent.id, written, turnNo, error: String(error?.message ?? error) })
     return
   }
 
@@ -605,8 +674,8 @@ export async function materializePrefill(api, agent) {
     const phase = agent.phase
     if (phase !== null && typeof phase === 'object') {
       const was = String(phase.kind)
-      phase.lastTurn = turn
-      turnAdjusted = `${was}->lastTurn=1`
+      phase.lastTurn = turnNo
+      turnAdjusted = `${was}->lastTurn=${turnNo}`
     }
   } catch (error) {
     turnAdjusted = `error:${String(error?.message ?? error)}`
@@ -617,7 +686,9 @@ export async function materializePrefill(api, agent) {
     id: agent.id,
     seq: session.seq,
     headChars: rendered.length,
-    written,
+    turns: turnNo,
+    items: items.length,
+    writes: written.length,
     turnAdjusted,
   })
 
