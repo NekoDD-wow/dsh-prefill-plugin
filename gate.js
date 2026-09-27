@@ -627,15 +627,27 @@ export function draftIds() {
   return [...DRAFTS.keys()]
 }
 
-/** 该 agent 是否需要预填装：探针开关打开，或这个会话有草稿。 */
+/** 该 agent 是否需要预填装：探针开关 / 已有草稿 / 会话开关（`prefill[sessionId]`）打开。 */
 function prefillWanted(state, agentId) {
-  return state?.levers?.prefillProbe === true || DRAFTS.has(agentId)
+  if (state?.levers?.prefillProbe === true) return true
+  if (DRAFTS.has(agentId)) return true
+  const toggle = state?.prefill
+  return (
+    toggle !== null && typeof toggle === 'object' && typeof toggle[agentId] === 'string' && toggle[agentId] !== ''
+  )
 }
 
-/** 内容来源：优先客户端草稿，其次探针内容。 */
-function resolveItems(agentId) {
-  const staged = DRAFTS.get(agentId)
-  return Array.isArray(staged) && staged.length > 0 ? staged : resolveProbeItems()
+/**
+ * 内容来源，三级优先：
+ *   ① **客户端草稿** —— 注意**空数组也算数**："开关打开但还没加内容" = 不预填装任何东西，
+ *      而不是回落到探针内容。
+ *   ② 探针开关打开 → 探针内容。
+ *   ③ 都没有 → 空。
+ */
+function resolveItems(state, agentId) {
+  if (DRAFTS.has(agentId)) return DRAFTS.get(agentId)
+  if (state?.levers?.prefillProbe === true) return resolveProbeItems()
+  return []
 }
 
 /** 会话里是否已经有轮次（幂等守卫）。读不出来就当有，宁可不动。 */
@@ -688,7 +700,8 @@ export async function preparePrefillPrompt(api, agent) {
  */
 export function onInboxInserted(api, agent, message) {
   if (typeof agent?.id !== 'string') return
-  if (!prefillWanted(api.readState(), agent.id)) return
+  const state = api.readState()
+  if (!prefillWanted(state, agent.id)) return
   // 只在**用户原话**上物化；注入（runtime-context / skill-catalog 等）不算"发出"。
   if (message?.source?.kind !== 'user') return
   const session = agent.session
@@ -699,7 +712,7 @@ export function onInboxInserted(api, agent, message) {
     api.note({ prefill: 'no-cached-prompt', id: agent.id })
     return
   }
-  writeSyntheticTurns(api, agent, session, rendered, resolveItems(agent.id))
+  writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id))
 }
 
 /**
@@ -708,7 +721,8 @@ export function onInboxInserted(api, agent, message) {
  */
 export async function materializePrefill(api, agent) {
   if (typeof agent?.id !== 'string') return
-  if (!prefillWanted(api.readState(), agent.id)) return
+  const state = api.readState()
+  if (!prefillWanted(state, agent.id)) return
   const session = agent.session
   if (session === null || typeof session?.append !== 'function') {
     api.note({ prefill: 'no-session', id: agent.id })
@@ -728,7 +742,7 @@ export async function materializePrefill(api, agent) {
       return
     }
   }
-  writeSyntheticTurns(api, agent, session, rendered, resolveItems(agent.id))
+  writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id))
 }
 
 /**
@@ -743,6 +757,12 @@ export async function materializePrefill(api, agent) {
  *   · 尾部没有 assistant 承接的 user 项 → 自己开一轮
  */
 export function writeSyntheticTurns(api, agent, session, rendered, items) {
+  // 空草稿 = "开关开了但还没写内容" ⇒ 什么都不物化，也把草稿消费掉。
+  if (!Array.isArray(items) || items.length === 0) {
+    api.note({ prefill: 'empty-draft', id: agent.id })
+    clearDraft(agent.id)
+    return
+  }
   const written = []
   let turnNo = 0
 

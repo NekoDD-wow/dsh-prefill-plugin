@@ -25,6 +25,22 @@ window.__ModuleLoader__.load({
     /** 自有路由。 */
     const PING_ROUTE = '/api/dsh-prefill/ping'
     const STATE_ROUTE = '/api/dsh-prefill/state'
+    /** 草稿路由：读/写本会话的多轮 items（发送前可编辑的载体）。 */
+    const DRAFT_ROUTE = '/api/dsh-prefill/draft'
+
+    /**
+     * 同页两个组件之间的状态同步：输入框里的「预填装」开关写完之后广播一次，
+     * 草稿区（`conversation.input.dock`）收到就重读状态 ⇒ 开关一翻，草稿区**立刻**出现。
+     * 不轮询、不读别人的 DOM（P9）。
+     */
+    const STATE_EVENT = 'dsh-prefill:state-changed'
+    function notifyStateChanged() {
+      try {
+        window.dispatchEvent(new CustomEvent(STATE_EVENT))
+      } catch {
+        // 广播失败不该拖垮 UI。
+      }
+    }
 
     /** 面板上的开关清单（顺序即展示顺序）。 */
     const LEVERS = [
@@ -79,6 +95,29 @@ window.__ModuleLoader__.load({
       idle: '未探测',
       m1Note:
         'M1 验收：四通道各自可写可关，且能按轮次闩锁、中途插话不重置。状态文件可被外部脚本直接改写，便于在不污染当前会话的前提下做端到端验证。',
+      // ── 草稿区（conversation.input.dock）──
+      dockTitle: '预填装草稿',
+      dockHint:
+        '按顺序任意写：用户消息与 AI 回答都可以连续出现，思维链挂在 AI 回答里（不是单独一轮）。首轮发出时它们会变成真实会话历史。',
+      dockEmpty: '还没有内容——点下面的按钮加一条。',
+      addUser: '＋ 用户消息',
+      addAssistant: '＋ AI 回答',
+      dockClear: '清空',
+      roleUser: '用户',
+      roleAssistant: 'AI',
+      textUser: '用户消息',
+      textAssistant: 'AI 回答',
+      reasoning: '思维链（可选）',
+      toUser: '改成用户消息',
+      toAssistant: '改成 AI 回答',
+      moveUp: '上移',
+      moveDown: '下移',
+      removeItem: '删除这条',
+      syncIdle: '未改动',
+      syncSaving: '同步中…',
+      syncSaved: '已同步',
+      syncFailed: '同步失败（检查 host 路由）',
+      countSuffix: ' 条',
     }
 
     const en = {
@@ -124,6 +163,29 @@ window.__ModuleLoader__.load({
       idle: 'not probed',
       m1Note:
         'M1 acceptance: each of the four channels can be written and blocked, latched per turn, with mid-turn interjections not resetting the latch. The state file can be edited by external scripts, so end-to-end verification needs no session pollution.',
+      // ── draft dock (conversation.input.dock) ──
+      dockTitle: 'Prefill draft',
+      dockHint:
+        'Write rounds in any order: consecutive user messages and consecutive AI answers are both fine, and reasoning belongs to the AI answer (not a round of its own). They become real history on the first send.',
+      dockEmpty: 'Nothing yet — add a row with the buttons below.',
+      addUser: '+ User message',
+      addAssistant: '+ AI answer',
+      dockClear: 'Clear',
+      roleUser: 'User',
+      roleAssistant: 'AI',
+      textUser: 'User message',
+      textAssistant: 'AI answer',
+      reasoning: 'Reasoning (optional)',
+      toUser: 'Make it a user message',
+      toAssistant: 'Make it an AI answer',
+      moveUp: 'Move up',
+      moveDown: 'Move down',
+      removeItem: 'Remove this row',
+      syncIdle: 'unchanged',
+      syncSaving: 'syncing…',
+      syncSaved: 'synced',
+      syncFailed: 'sync failed (check the host route)',
+      countSuffix: ' rows',
     }
 
     const S = {
@@ -256,6 +318,82 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
       },
       warn: { color: 'var(--dsw-alias-state-warn-primary)', fontSize: 12 },
+      // ── 草稿区（输入框上方的会话级面板）──
+      dock: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        padding: '10px 12px',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        borderRadius: 12,
+        background: 'var(--dsw-alias-bg-layer-1)',
+        fontSize: 12,
+      },
+      dockHead: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+      dockTitle: { fontWeight: 600, fontSize: 13 },
+      dockHint: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, lineHeight: 1.5 },
+      dockRow: { display: 'flex', gap: 8, alignItems: 'flex-start' },
+      dockRole: (assistant) => ({
+        flex: '0 0 auto',
+        height: 22,
+        padding: '0 8px',
+        borderRadius: 11,
+        border: `1px solid ${assistant ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'}`,
+        background: assistant ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent)' : 'transparent',
+        color: assistant ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-secondary)',
+        fontSize: 11,
+        lineHeight: '20px',
+        cursor: 'pointer',
+      }),
+      dockBody: { flex: '1 1 auto', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 },
+      dockText: {
+        width: '100%',
+        boxSizing: 'border-box',
+        minHeight: 40,
+        padding: '6px 9px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-base)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        resize: 'vertical',
+      },
+      dockThink: {
+        width: '100%',
+        boxSizing: 'border-box',
+        minHeight: 32,
+        padding: '5px 9px',
+        borderRadius: 8,
+        border: '1px dashed var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 11,
+        fontFamily: 'inherit',
+        resize: 'vertical',
+      },
+      dockMini: {
+        flex: '0 0 auto',
+        width: 22,
+        height: 22,
+        padding: 0,
+        borderRadius: 6,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 11,
+        lineHeight: 1,
+        cursor: 'pointer',
+      },
+      dockStatus: (kind) => ({
+        fontSize: 11,
+        color:
+          kind === 'error'
+            ? 'var(--dsw-alias-state-warn-primary)'
+            : kind === 'saved'
+              ? 'var(--dsw-alias-brand-primary)'
+              : 'var(--dsw-alias-label-tertiary)',
+      }),
     }
 
     /** 自绘开关（不 require 官方 Switch，P1）。 */
@@ -486,7 +624,10 @@ window.__ModuleLoader__.load({
           style: S.gatePill(on),
           onClick: () => {
             void call({ prefill: { ...map, [sessionId]: on ? '' : 'default' } })
-              .then((data) => setState(data.state))
+              .then((data) => {
+                setState(data.state)
+                notifyStateChanged()
+              })
               .catch(() => {})
           },
         },
@@ -590,6 +731,227 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 预填装草稿区（`conversation.input.dock` —— 输入框上方的会话级面板）。
+     *
+     * 编辑模型（用户定，§14.3）：
+     *   items = 有序列表，每项 `{ role:'user'|'assistant', text, reasoning? }`
+     *   · 思维链是 **AI 那一项里的一个字段**，不是单独一轮；
+     *   · **不强制 user/ai 交替** —— 连续多条 user、连续多条 assistant 都合法。
+     * 落盘规则由 host 侧负责（连续 user 同轮 / 每个 assistant 独占一轮 / 尾部 user 自开一轮），
+     * 客户端只管"编辑 → debounce 推到 `POST /api/dsh-prefill/draft`"。
+     *
+     * 会话 id 来自**槽位下发的 `props.sessionId`**（`scope: 'session'` 的槽位由框架注入），
+     * 不读 DOM、不碰 document.body（P9）；控件全部自绘（P1）。
+     */
+    function PrefillDock(props) {
+      const t = props.t ?? ((key) => key)
+      const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+      const [items, setItems] = React.useState(null)
+      const [enabled, setEnabled] = React.useState(false)
+      const [status, setStatus] = React.useState('idle')
+      const [revision, setRevision] = React.useState(0)
+      const dirty = React.useRef(false)
+      const staged = React.useRef(false)
+
+      // 输入框里的开关翻动后广播 ⇒ 这里重读状态，草稿区立刻出现 / 消失。
+      React.useEffect(() => {
+        const onChanged = () => setRevision((value) => value + 1)
+        window.addEventListener(STATE_EVENT, onChanged)
+        return () => window.removeEventListener(STATE_EVENT, onChanged)
+      }, [])
+
+      const post = React.useCallback(async (path, body) => {
+        const response = await fetch(path, {
+          method: 'POST',
+          headers: body === undefined ? {} : { 'content-type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return await response.json()
+      }, [])
+
+      React.useEffect(() => {
+        if (sessionId === '') return undefined
+        let alive = true
+        void (async () => {
+          try {
+            const snapshot = await post(STATE_ROUTE, undefined)
+            if (!alive) return
+            const map = snapshot?.state?.prefill
+            const on =
+              map !== null && typeof map === 'object' && typeof map[sessionId] === 'string' && map[sessionId] !== ''
+            setEnabled(on)
+            if (!on) {
+              setItems(null)
+              return
+            }
+            const draft = await post(DRAFT_ROUTE, { sessionId })
+            if (!alive) return
+            setItems(Array.isArray(draft?.draft) ? draft.draft : [])
+          } catch {
+            if (alive) setStatus('error')
+          }
+        })()
+        return () => {
+          alive = false
+        }
+      }, [post, sessionId, revision])
+
+      // 开关打开、host 还没有草稿 ⇒ 先登记一份空的：既声明"本会话启用预填装"，
+      // 也让 host 顺手把系统提示**预热**好（物化时要用，见 §14.5 的两条硬约束）。
+      React.useEffect(() => {
+        if (!enabled || items === null || staged.current || sessionId === '') return
+        staged.current = true
+        if (items.length === 0) {
+          void post(DRAFT_ROUTE, { sessionId, items: [] }).catch(() => setStatus('error'))
+        }
+      }, [enabled, items, post, sessionId])
+
+      const save = React.useCallback(
+        (next) => {
+          setStatus('saving')
+          void post(DRAFT_ROUTE, { sessionId, items: next })
+            .then(() => setStatus('saved'))
+            .catch(() => setStatus('error'))
+        },
+        [post, sessionId],
+      )
+
+      // 编辑后 700ms 落盘（debounce）。
+      React.useEffect(() => {
+        if (!enabled || items === null || !dirty.current) return undefined
+        const timer = setTimeout(() => {
+          dirty.current = false
+          save(items)
+        }, 700)
+        return () => clearTimeout(timer)
+      }, [items, enabled, save])
+
+      if (sessionId === '' || !enabled || items === null) return null
+
+      const edit = (next) => {
+        dirty.current = true
+        setItems(next)
+      }
+      const patchAt = (index, patch) => edit(items.map((item, at) => (at === index ? { ...item, ...patch } : item)))
+      const move = (index, delta) => {
+        const target = index + delta
+        if (target < 0 || target >= items.length) return
+        const next = [...items]
+        const [moved] = next.splice(index, 1)
+        next.splice(target, 0, moved)
+        edit(next)
+      }
+
+      const statusKind = status === 'error' ? 'error' : status === 'saved' ? 'saved' : 'idle'
+      const statusText =
+        status === 'error' ? t('syncFailed') : status === 'saving' ? t('syncSaving') : status === 'saved' ? t('syncSaved') : t('syncIdle')
+
+      return h(
+        'div',
+        { style: S.dock },
+        h(
+          'div',
+          { style: S.dockHead },
+          h('span', { style: S.dockTitle }, t('dockTitle')),
+          h('span', { style: S.label }, `${items.length}${t('countSuffix')}`),
+          h('span', { style: S.dockStatus(statusKind) }, statusText),
+          h('span', { style: { flex: '1 1 auto' } }),
+          h(
+            'button',
+            { type: 'button', style: S.gateBtn, onClick: () => edit([]) },
+            t('dockClear'),
+          ),
+        ),
+        h('div', { style: S.dockHint }, t('dockHint')),
+
+        items.length === 0 ? h('div', { style: S.dockHint }, t('dockEmpty')) : null,
+
+        ...items.map((item, index) => {
+          const isAssistant = item?.role === 'assistant'
+          return h(
+            'div',
+            { key: index, style: S.dockRow },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: S.dockRole(isAssistant),
+                title: isAssistant ? t('toUser') : t('toAssistant'),
+                onClick: () =>
+                  patchAt(
+                    index,
+                    isAssistant ? { role: 'user', reasoning: undefined } : { role: 'assistant', reasoning: '' },
+                  ),
+              },
+              isAssistant ? t('roleAssistant') : t('roleUser'),
+            ),
+            h(
+              'div',
+              { style: S.dockBody },
+              h('textarea', {
+                style: S.dockText,
+                value: item?.text ?? '',
+                spellCheck: false,
+                placeholder: isAssistant ? t('textAssistant') : t('textUser'),
+                onChange: (event) => patchAt(index, { text: event.target.value }),
+              }),
+              // 思维链**只挂在 AI 那一项里**（用户定的模型）。
+              isAssistant
+                ? h('textarea', {
+                    style: S.dockThink,
+                    value: item?.reasoning ?? '',
+                    spellCheck: false,
+                    placeholder: t('reasoning'),
+                    onChange: (event) => patchAt(index, { reasoning: event.target.value }),
+                  })
+                : null,
+            ),
+            h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+              h('button', { type: 'button', style: S.dockMini, title: t('moveUp'), onClick: () => move(index, -1) }, '↑'),
+              h(
+                'button',
+                { type: 'button', style: S.dockMini, title: t('moveDown'), onClick: () => move(index, 1) },
+                '↓',
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: S.dockMini,
+                  title: t('removeItem'),
+                  onClick: () => edit(items.filter((_unused, at) => at !== index)),
+                },
+                '✕',
+              ),
+            ),
+          )
+        }),
+
+        h(
+          'div',
+          { style: { display: 'flex', gap: 8 } },
+          h(
+            'button',
+            { type: 'button', style: S.gateBtn, onClick: () => edit([...items, { role: 'user', text: '' }]) },
+            t('addUser'),
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              style: S.gateBtn,
+              onClick: () => edit([...items, { role: 'assistant', reasoning: '', text: '' }]),
+            },
+            t('addAssistant'),
+          ),
+        ),
+      )
+    }
+
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
@@ -633,6 +995,20 @@ window.__ModuleLoader__.load({
               locale: NS,
             },
             GateToggle,
+          ),
+        )
+
+        // M3 主交付：输入框**上方**的预填装草稿区（会话级常驻面板）。
+        // 只有该会话的「预填装」开关打开时才渲染；编辑内容 debounce 后推到 host。
+        ctx.slots.inject('conversation.input.dock', () =>
+          ctx.slots.register(
+            {
+              name: 'conversation.input.dock',
+              id: 'prefill-draft',
+              order: 20,
+              locale: NS,
+            },
+            PrefillDock,
           ),
         )
       },

@@ -447,10 +447,17 @@ export function apply(ctx) {
             const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
             const items = Array.isArray(body?.items) ? body.items : undefined
             const gate = await loadGate()
+
+            // 读形态：只给 sessionId ⇒ 回当前草稿（客户端编辑器首次打开时用）。
+            if (items === undefined) {
+              const draft =
+                sessionId !== '' && typeof gate?.readDraft === 'function' ? (gate.readDraft(sessionId) ?? null) : null
+              return Response.json({ ok: true, sessionId, draft, staged: false, ...envelope() }, noStore)
+            }
+
             let staged = false
             let reason = ''
             if (sessionId === '') reason = 'missing sessionId'
-            else if (items === undefined) reason = 'missing items[]'
             else if (typeof gate?.stageDraft !== 'function') reason = 'gate.stageDraft unavailable'
             else staged = gate.stageDraft(sessionId, items) === true
 
