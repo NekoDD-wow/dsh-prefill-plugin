@@ -144,8 +144,11 @@ window.__ModuleLoader__.load({
       injectMessages: '消息类注入',
       injectSections: '系统提示里的段落',
       injectContexts: '运行时上下文',
-      injectAdd: '＋ 加一条',
+      injectAdd: '＋ 加',
+      injectAddLabel: '添加条目',
+      injectAddPick: '从清单选，或直接输入自定义名字',
       injectAddPlaceholder: '名字：来源 kind / 段名 / 上下文名',
+      injectStaleHost: '后台是旧版本，没返回清单——重启一次 DSH 即可',
       injectSaved: '已保存',
       injectFailed: '保存失败',
     }
@@ -241,8 +244,11 @@ window.__ModuleLoader__.load({
       injectMessages: 'Injected messages',
       injectSections: 'System prompt sections',
       injectContexts: 'Runtime contexts',
-      injectAdd: '+ Add a row',
+      injectAdd: '+ Add',
+      injectAddLabel: 'Add a row',
+      injectAddPick: 'pick from the list, or type a custom name',
       injectAddPlaceholder: 'name: source kind / section / context',
+      injectStaleHost: 'Host half is an older build and returned no catalog — restart DSH once',
       injectSaved: 'saved',
       injectFailed: 'save failed',
     }
@@ -444,45 +450,87 @@ window.__ModuleLoader__.load({
         overflowY: 'auto',
         paddingRight: 4,
       },
-      // ── Q17：注入内容改写 ──
-      injectBar: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-      injectPanel: {
+      // ── Q17：注入内容改写（排版按"卡片 + 分组 + 网格行"来，不再是裸文本框堆叠）──
+      injectCard: {
         display: 'flex',
         flexDirection: 'column',
-        gap: 6,
-        padding: '8px 10px',
-        borderRadius: 10,
-        border: '1px dashed var(--dsw-alias-border-l2)',
+        gap: 0,
+        borderRadius: 12,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        overflow: 'hidden',
+      },
+      injectHead: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap',
+        padding: '8px 12px',
         background: 'var(--dsw-alias-bg-layer-2)',
-        maxHeight: '30vh',
+        borderBottom: '1px solid var(--dsw-alias-border-l1)',
+      },
+      injectTitleText: { fontWeight: 600, fontSize: 12.5 },
+      injectHintText: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11 },
+      injectStale: { color: 'var(--dsw-alias-state-warn-primary)', fontSize: 11 },
+      injectBody: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        padding: '10px 12px',
+        maxHeight: '34vh',
         overflowY: 'auto',
       },
-      injectGroup: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, marginTop: 2 },
-      injectRow: { display: 'flex', gap: 8, alignItems: 'flex-start' },
+      injectGroupHead: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 11,
+      },
+      injectRule: { flex: '1 1 auto', height: 1, background: 'var(--dsw-alias-border-l2)' },
+      injectRows: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 },
+      injectRow: {
+        display: 'grid',
+        gridTemplateColumns: 'minmax(110px, 24%) 1fr',
+        gap: 8,
+        alignItems: 'start',
+      },
       injectKey: {
-        flex: '0 0 32%',
         fontFamily: 'ui-monospace, Menlo, monospace',
         fontSize: 11,
         color: 'var(--dsw-alias-label-secondary)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        borderRadius: 6,
+        padding: '3px 6px',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
-        paddingTop: 6,
       },
       injectBox: {
-        flex: '1 1 auto',
-        minHeight: 30,
+        width: '100%',
+        minHeight: 34,
         maxHeight: '14vh',
         boxSizing: 'border-box',
-        padding: '5px 8px',
+        padding: '6px 9px',
         borderRadius: 8,
         border: '1px solid var(--dsw-alias-border-l2)',
         background: 'var(--dsw-alias-bg-base)',
         color: 'var(--dsw-alias-label-primary)',
-        fontSize: 11,
+        fontSize: 12,
         fontFamily: 'inherit',
         resize: 'vertical',
       },
+      injectAddRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap',
+        padding: '8px 12px',
+        borderTop: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+      },
+      injectAddLabel: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11 },
       dockMini: {
         flex: '0 0 auto',
         width: 22,
@@ -1404,82 +1452,124 @@ window.__ModuleLoader__.load({
         setDraft(next)
       }
 
-      return h(
-        'div',
-        { style: S.injectBar },
-        h(
-          'button',
-          { type: 'button', style: S.gateBtn, onClick: () => setOpen(!open) },
-          `${open ? '▾' : '▸'} ${t('injectTitle')}（${count}）`,
-        ),
-        open ? h('span', { style: S.dockHint }, t('injectHint')) : null,
-        open && status !== 'idle'
-          ? h(
+      // 后台若是旧壳（返回的形状里没有 catalog），明说一句，别让用户以为是空清单。
+      const staleHost = envelope?.injections !== undefined && envelope.injections.catalog === undefined
+      const statusLine =
+        status === 'idle'
+          ? null
+          : h(
               'span',
               { style: S.dockStatus(status === 'error' ? 'error' : status === 'saved' ? 'saved' : 'idle') },
               status === 'error' ? t('injectFailed') : status === 'saving' ? t('syncSaving') : t('injectSaved'),
             )
-          : null,
-        open
-          ? h(
+      const addRow = h(
+        'div',
+        { style: S.injectAddRow },
+        h('span', { style: S.injectAddLabel }, t('injectAddLabel')),
+        h(
+          'select',
+          { style: S.dockSelect, value: addGroup, onChange: (event) => setAddGroup(event.target.value) },
+          h('option', { value: 'messages' }, t('injectMessages')),
+          h('option', { value: 'sections' }, t('injectSections')),
+          h('option', { value: 'contexts' }, t('injectContexts')),
+        ),
+        // 名字控件 = **可选的下拉（datalist）**，手输只是兜底。
+        h('input', {
+          list: `prefill-inject-names-${addGroup}`,
+          style: S.dockName,
+          value: addName,
+          placeholder: t('injectAddPick'),
+          spellCheck: false,
+          onChange: (event) => setAddName(event.target.value),
+        }),
+        h(
+          'datalist',
+          { id: `prefill-inject-names-${addGroup}` },
+          ...(groups.find((group) => group.key === addGroup)?.names ?? []).map((name) =>
+            h('option', { key: name, value: name }),
+          ),
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            style: S.gateBtn,
+            onClick: () => {
+              const name = addName.trim()
+              if (name === '') return
+              setCustom((current) => ({ ...current, [addGroup]: [...(current[addGroup] ?? []), name] }))
+              setAddName('')
+            },
+          },
+          t('injectAdd'),
+        ),
+      )
+
+      if (!open) {
+        return h(
+          'div',
+          { style: S.gateWrap },
+          h(
+            'button',
+            { type: 'button', style: S.gateBtn, onClick: () => setOpen(true) },
+            `▸ ${t('injectTitle')}（${count}）`,
+          ),
+        )
+      }
+
+      return h(
+        'div',
+        { style: S.injectCard },
+        h(
+          'div',
+          { style: S.injectHead },
+          h(
+            'button',
+            { type: 'button', style: S.gateBtn, onClick: () => setOpen(false) },
+            `▾ ${t('injectTitle')}`,
+          ),
+          h('span', { style: S.label }, `${count}`),
+          h('span', { style: S.injectHintText }, t('injectHint')),
+          h('span', { style: { flex: '1 1 auto' } }),
+          staleHost ? h('span', { style: S.injectStale }, t('injectStaleHost')) : null,
+          statusLine,
+        ),
+        h(
+          'div',
+          { style: S.injectBody },
+          count === 0 ? h('div', { style: S.injectGroupHead }, t('injectNone')) : null,
+          ...groups.map((group) =>
+            h(
               'div',
-              { style: S.injectPanel },
-              count === 0 ? h('div', { style: S.injectGroup }, t('injectNone')) : null,
-              // 手加一条：清单之外的来源（自定义 kind / 段名）也能先写好改写。
+              { key: `g-${group.key}` },
               h(
                 'div',
-                { key: 'add-row', style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
-                h(
-                  'select',
-                  { style: S.dockSelect, value: addGroup, onChange: (event) => setAddGroup(event.target.value) },
-                  h('option', { value: 'messages' }, t('injectMessages')),
-                  h('option', { value: 'sections' }, t('injectSections')),
-                  h('option', { value: 'contexts' }, t('injectContexts')),
-                ),
-                h('input', {
-                  style: S.dockName,
-                  value: addName,
-                  placeholder: t('injectAddPlaceholder'),
-                  spellCheck: false,
-                  onChange: (event) => setAddName(event.target.value),
-                }),
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    style: S.gateBtn,
-                    onClick: () => {
-                      const name = addName.trim()
-                      if (name === '') return
-                      setCustom((current) => ({ ...current, [addGroup]: [...(current[addGroup] ?? []), name] }))
-                      setAddName('')
-                    },
-                  },
-                  t('injectAdd'),
+                { style: S.injectGroupHead },
+                h('span', null, group.label),
+                h('span', { style: S.label }, String(group.names.length)),
+                h('span', { style: S.injectRule }),
+              ),
+              h(
+                'div',
+                { style: S.injectRows },
+                ...group.names.map((name) =>
+                  h(
+                    'div',
+                    { key: `${group.key}-${name}`, style: S.injectRow },
+                    h('span', { style: S.injectKey, title: name }, name),
+                    h('textarea', {
+                      style: S.injectBox,
+                      value: draft?.[group.key]?.[name] ?? '',
+                      spellCheck: false,
+                      onChange: (event) => setField(group.key, name, event.target.value),
+                    }),
+                  ),
                 ),
               ),
-              ...groups.flatMap((group) =>
-                group.names.length === 0
-                  ? []
-                  : [
-                      h('div', { key: `g-${group.key}`, style: S.injectGroup }, `${group.label}（${group.names.length}）`),
-                      ...group.names.map((name) =>
-                        h(
-                          'div',
-                          { key: `${group.key}-${name}`, style: S.injectRow },
-                          h('span', { style: S.injectKey, title: name }, name),
-                          h('textarea', {
-                            style: S.injectBox,
-                            value: draft?.[group.key]?.[name] ?? '',
-                            spellCheck: false,
-                            onChange: (event) => setField(group.key, name, event.target.value),
-                          }),
-                        ),
-                      ),
-                    ],
-              ),
-            )
-          : null,
+            ),
+          ),
+        ),
+        addRow,
       )
     }
 
