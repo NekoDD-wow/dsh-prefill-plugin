@@ -406,6 +406,10 @@ window.__ModuleLoader__.load({
         flexDirection: 'column',
         gap: 8,
         padding: '10px 12px',
+        // 宽度要和输入框那张卡片**外沿对齐**，所以 padding 必须算进宽度。
+        boxSizing: 'border-box',
+        // 不加这句，显式 height 会被 flex 压缩（实测给了 683px 仍只渲染 321px）。
+        flexShrink: 0,
         border: '1px solid var(--dsw-alias-border-l1)',
         borderRadius: 12,
         background: 'var(--dsw-alias-bg-layer-1)',
@@ -459,11 +463,14 @@ window.__ModuleLoader__.load({
         resize: 'vertical',
       },
       // ── 预填装内容列表：**自己滚**（轮次多时只滚这一块，头部/预设行始终可见）──
+      // 高度不写死：外层按"输入框上沿 → 顶栏下沿"算出的可用高度当上限，
+      // 内容短就自然撑开，长到接近顶栏才开始内滚（用户要求）。
       dockList: {
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
-        maxHeight: '34vh',
+        flex: '1 1 auto',
+        minHeight: 0,
         overflowY: 'auto',
         paddingRight: 4,
       },
@@ -472,6 +479,8 @@ window.__ModuleLoader__.load({
         display: 'flex',
         flexDirection: 'column',
         gap: 0,
+        flex: '1 1 auto',
+        minHeight: 0,
         borderRadius: 12,
         border: '1px solid var(--dsw-alias-border-l1)',
         background: 'var(--dsw-alias-bg-layer-1)',
@@ -494,7 +503,8 @@ window.__ModuleLoader__.load({
         flexDirection: 'column',
         gap: 10,
         padding: '10px 12px',
-        maxHeight: '34vh',
+        flex: '1 1 auto',
+        minHeight: 0,
         overflowY: 'auto',
       },
       injectGroupHead: {
@@ -1009,6 +1019,62 @@ window.__ModuleLoader__.load({
       /** 导入文件用的隐藏 input（hook 必须在提前 return 之前）。 */
       const fileRef = React.useRef(null)
 
+      /**
+       * 让面板**真的长到上限**：dock 在宿主的 flex 列里是默认项（`flex: 0 1 auto`），
+       * 内容一多它就被压扁 —— 实测 maxHeight 算出 803px，实际只渲染 462px。
+       * 所以内容装不下时显式给一个 height；装得下就交回 auto（不来回抖）。
+       */
+      const listRef = React.useRef(null)
+      const [panelHeight, setPanelHeight] = React.useState(undefined)
+      React.useEffect(() => {
+        const list = listRef.current
+        if (!(list instanceof HTMLElement) || bounds?.maxHeight === undefined) return
+        const panel = list.closest('[data-prefill-dock]')
+        if (!(panel instanceof HTMLElement)) return
+        const chrome = panel.clientHeight - list.clientHeight
+        const needed = list.scrollHeight + chrome
+        const target = needed >= bounds.maxHeight ? bounds.maxHeight : undefined
+        setPanelHeight((current) => (current === target ? current : target))
+      })
+
+      /**
+       * 面板尺寸跟着输入框走（用户要求：宽度一致；高度先自动伸展，快到顶部栏再内滚）：
+       *   · 宽度 = 输入框那张**圆角卡片**的宽度（往上找第一个够宽且有圆角的自绘容器）
+       *   · 高度上限 = 输入框上沿 − 顶栏下沿 ⇒ 内容短就自然撑开，长到接近顶栏才内滚
+       * 只**读**别人的几何信息，不写 DOM（守 P9）。
+       */
+      const [bounds, setBounds] = React.useState(null)
+      React.useEffect(() => {
+        const measure = () => {
+          const input = document.querySelector('[contenteditable="true"]')
+          if (!(input instanceof HTMLElement)) return
+          let width
+          let node = input
+          for (let depth = 0; depth < 8 && node instanceof HTMLElement; depth += 1) {
+            const rect = node.getBoundingClientRect()
+            const radius = Number.parseFloat(window.getComputedStyle(node).borderTopLeftRadius || '0')
+            if (rect.width > 300 && Number.isFinite(radius) && radius > 4) {
+              width = Math.round(rect.width)
+              break
+            }
+            node = node.parentElement
+          }
+          const pane = document.querySelector('[data-conversation-session]')
+          const ceiling = pane === null ? 56 : pane.getBoundingClientRect().top + 52
+          setBounds({
+            width,
+            maxHeight: Math.max(220, Math.round(input.getBoundingClientRect().top - ceiling)),
+          })
+        }
+        measure()
+        window.addEventListener('resize', measure)
+        const timer = setInterval(measure, 1200)
+        return () => {
+          window.removeEventListener('resize', measure)
+          clearInterval(timer)
+        }
+      }, [])
+
       // 输入框里的开关翻动后广播 ⇒ 这里重读状态，草稿区立刻出现 / 消失。
       React.useEffect(() => {
         const onChanged = () => setRevision((value) => value + 1)
@@ -1244,7 +1310,17 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { style: S.dock },
+        {
+          'data-prefill-dock': '1',
+          style: {
+            ...S.dock,
+            width: bounds?.width === undefined ? '100%' : `${bounds.width}px`,
+            maxWidth: '100%',
+            maxHeight: bounds?.maxHeight === undefined ? '62vh' : `${bounds.maxHeight}px`,
+            ...(panelHeight === undefined ? {} : { height: `${panelHeight}px` }),
+            margin: '0 auto',
+          },
+        },
         h(
           'div',
           { style: S.dockHead },
@@ -1300,7 +1376,7 @@ window.__ModuleLoader__.load({
         // 内容列表自己滚：轮次多时只滚这一块，头部/预设行始终可见。
         h(
           'div',
-          { style: S.dockList },
+          { ref: listRef, style: S.dockList },
           ...items.map((item, index) => {
             const isAssistant = item?.role === 'assistant'
           return h(
