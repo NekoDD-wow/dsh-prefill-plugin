@@ -476,6 +476,9 @@ export function apply(ctx) {
         // Q17：可改的注入清单 = **预置 catalog**（全局 prompt 层的真实注册名）+ 每会话已发现的条目。
         // 有 catalog，用户就能在某条注入还没出现过时先写好改写（"直接劫持"）。
         injections: typeof gateCache.module?.injections === 'function' ? gateCache.module.injections(rootCtxRef) : {},
+        // 工具放行：catalog = 扫到的工具名（装配看到的）+ 官方可限制名单；sessions = 每会话装配到的工具。
+        // 注意：**不改工具说明**（工具类注入一律忽略），这里只管"能不能用"。
+        tools: typeof gateCache.module?.tools === 'function' ? gateCache.module.tools(rootCtxRef) : { catalog: [], sessions: {} },
         // 有"延后到下一轮"的重挂请求 ⇒ 客户端角标要明说"下一轮生效"，
         // 否则用户在**轮内**翻开关会以为没生效（它会一直跑到本轮结束 —— Q18 的轮次冻结）。
         pendingReprime: [...pendingReprime],

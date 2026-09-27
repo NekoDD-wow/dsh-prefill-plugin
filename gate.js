@@ -46,6 +46,50 @@ function allowKindsFor(state, sessionId) {
   return Array.isArray(state?.allowKinds) ? state.allowKinds : ['user']
 }
 
+/**
+ * 工具放行的清单与策略（"不改工具说明，只管能不能用"）。
+ *
+ * 为什么不能直接把用户勾的名字丢给 `tools.restrict({allow})`：
+ * 官方实现遇到**未知名字会抛错**（`dsh-tools:2908`），一个过期/拼错的名字就会让
+ * 该会话的整条挂载链挂掉。所以先用 `view(scope).restrictableNames` 求交集。
+ */
+export function tools(rootCtx) {
+  const catalog = new Set()
+  const sessions = {}
+  for (const [id, assembly] of ASSEMBLIES) {
+    const names = Array.isArray(assembly.toolNames) ? assembly.toolNames : []
+    sessions[id] = names
+    for (const name of names) catalog.add(name)
+  }
+  let restrictable = []
+  try {
+    const service = typeof rootCtx?.get === 'function' ? rootCtx.get('tools') : rootCtx?.tools
+    if (typeof service?.view === 'function') {
+      // 根 ctx 没有 agent 作用域，能拿到多少算多少（拿不到就退回"装配看到的"）。
+      const view = service.view(rootCtx)
+      const names = view?.restrictableNames
+      if (names instanceof Set) restrictable = [...names]
+      else if (Array.isArray(names)) restrictable = names
+    }
+  } catch {
+    // 忽略：catalog 仍可用。
+  }
+  return { catalog: [...new Set([...catalog, ...restrictable])].sort(), sessions }
+}
+
+/** 该 agent 允许放行的全局工具名（官方 restrict 的白名单；拿不到就返回空=不设限）。 */
+function restrictableToolNames(toolService, agent) {
+  try {
+    const view = typeof toolService?.view === 'function' ? toolService.view(agent) : undefined
+    const names = view?.restrictableNames
+    if (names instanceof Set) return [...names]
+    if (Array.isArray(names)) return names
+  } catch {
+    // 忽略。
+  }
+  return []
+}
+
 /** 一条消息是否放行：自有 prefill:* 与用户原话恒放行，其余按（会话级优先的）白名单。 */
 function keeper(state, message, sessionId) {
   const kind = message?.source?.kind
@@ -331,6 +375,10 @@ function ensureToolsBlocker(api) {
           sections: (result?.sections ?? []).map((section) => section.name),
           contexts: (result?.contexts ?? []).map((entry) => entry.name),
           tools: (result?.tools ?? []).length,
+          // 工具名也存下来：它是"放行哪些工具"UI 的清单来源（Assembly 看到的即模型看到的）。
+          toolNames: (result?.tools ?? [])
+            .map((tool) => tool?.name)
+            .filter((name) => typeof name === 'string'),
           at: Date.now(),
         })
       }
@@ -425,7 +473,24 @@ function mountLevers(agent, state, api, sink) {
   ) {
     push(sp.suppressRuntimeContext())
   }
-  if (state.levers.blockTools && typeof toolService?.restrict === 'function') {
+  // ── 工具放行：**不改工具说明，只管"能不能用"**（用户要求）──────────────────
+  //   · 配了放行清单（会话级优先于全局）⇒ `restrict({ allow: 清单 })`
+  //   · 没配但 lever 打开 ⇒ `restrict({ allow: [] })`（一个都不给）
+  //   · 都没配 ⇒ 不干预
+  // 清单先与官方 `restrictableNames` 求交集：`restrict()` 遇到未知名字会**抛错**，
+  // 一个过期名字就能把该会话的挂载链搞挂（`dsh-tools:2908`）。
+  // 会话级映射统一支持 `'*'` 通配（无头探针用），别只按键精确查——这个坑踩过一次。
+  const wantedTools = state?.sessionTools?.[agent?.id] ?? state?.sessionTools?.['*'] ?? state?.tools
+  if (Array.isArray(wantedTools) && typeof toolService?.restrict === 'function') {
+    const known = new Set(restrictableToolNames(toolService, agent))
+    const allow = known.size === 0
+      ? wantedTools.filter((name) => typeof name === 'string')
+      : wantedTools.filter((name) => typeof name === 'string' && known.has(name))
+    const dropped = known.size === 0 ? [] : wantedTools.filter((name) => !known.has(name))
+    push(toolService.restrict({ allow }))
+    if (dropped.length > 0) api.note({ tools_unknown_ignored: dropped, id: agent?.id })
+    if (allow.length === 0) api.note({ tools_policy: 'none', id: agent?.id })
+  } else if (state.levers.blockTools && typeof toolService?.restrict === 'function') {
     push(toolService.restrict({ allow: [] }))
   }
 

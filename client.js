@@ -100,6 +100,12 @@ window.__ModuleLoader__.load({
       allowLabel: '放行哪些来源（点标签加入白名单；再点一次移除）',
       allowLocked: 'user（恒定放行）',
       allowSessionLabel: '本会话放行来源（只影响这个会话）',
+      // ── 工具放行（不改工具说明，只管能不能用）──
+      toolsLabel: '放行哪些工具（全局）',
+      toolsSessionLabel: '本会话放行的工具（只管能不能用，不改工具说明）',
+      toolsAll: '全部放行',
+      toolsNone: '一个都不给',
+      toolsEmpty: '还没扫到工具（先跑一轮）',
       allowSessionInherit: '继承全局',
       sessionClear: '清除本会话注入配置',
       sessionClearTip: '删掉这个会话的注入改写、每轮注入内容与独立白名单（回到全局默认）',
@@ -218,6 +224,12 @@ window.__ModuleLoader__.load({
       allowLabel: 'Sources to admit (click a tag to allow it; click again to remove)',
       allowLocked: 'user (always allowed)',
       allowSessionLabel: 'Sources admitted in this session (this session only)',
+      // ── tool admission (does not rewrite tool descriptions) ──
+      toolsLabel: 'Tools to admit (global)',
+      toolsSessionLabel: 'Tools admitted in this session (availability only; descriptions are never rewritten)',
+      toolsAll: 'All tools',
+      toolsNone: 'No tools',
+      toolsEmpty: 'no tools discovered yet (run one turn first)',
       allowSessionInherit: 'inherit global',
       sessionClear: 'Clear this session\u2019s injection config',
       sessionClearTip: 'Drop this session\u2019s injection rewrites, per-turn injected content and its own allow-list',
@@ -727,12 +739,16 @@ window.__ModuleLoader__.load({
       const [note, setNote] = React.useState('')
       const [armedDraft, setArmedDraft] = React.useState('')
       const [allowDraft, setAllowDraft] = React.useState('')
+      // 工具放行的草稿：`''` = 全部放行（null），`' '` = 一个都不给（[]）。
+      const [toolsDraft, setToolsDraft] = React.useState('')
 
       const adopt = React.useCallback((next) => {
         setEnvelope(next)
         setState(next?.state ?? null)
         setArmedDraft((next?.state?.armed ?? []).join(' '))
         setAllowDraft((next?.state?.allowKinds ?? []).join(', '))
+        const toolList = next?.state?.tools
+        setToolsDraft(Array.isArray(toolList) ? (toolList.length === 0 ? ' ' : toolList.join(',')) : '')
       }, [])
 
       const call = React.useCallback(async (body) => {
@@ -857,6 +873,56 @@ window.__ModuleLoader__.load({
               ),
             ),
             h('span', { style: S.chipStatic }, t('allowLocked')),
+          ),
+          // 工具放行（全局）：同样只管"能不能用"。
+          h('div', { style: S.note }, t('toolsLabel')),
+          h(
+            'div',
+            { style: S.chipRow },
+            ...(envelope?.tools?.catalog ?? []).map((name) =>
+              h(
+                'button',
+                {
+                  key: `gtool-${name}`,
+                  type: 'button',
+                  style: S.chip(splitList(toolsDraft).includes(name)),
+                  title: name,
+                  onClick: () => {
+                    const current = splitList(toolsDraft)
+                    const next = current.includes(name)
+                      ? current.filter((entry) => entry !== name)
+                      : [...current, name]
+                    setToolsDraft(next.join(','))
+                    void mutate({ tools: next })
+                  },
+                },
+                name,
+              ),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: S.chip(toolsDraft === ''),
+                onClick: () => {
+                  setToolsDraft('')
+                  void mutate({ tools: null })
+                },
+              },
+              t('toolsAll'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: S.chip(toolsDraft === ' '),
+                onClick: () => {
+                  setToolsDraft(' ')
+                  void mutate({ tools: [] })
+                },
+              },
+              t('toolsNone'),
+            ),
           ),
           note === '' ? null : h('div', { style: S.note }, note),
         ),
@@ -1783,7 +1849,23 @@ window.__ModuleLoader__.load({
           .catch(() => setStatus('error'))
       }
 
-      /** 清除本会话的注入配置（改写 / 每轮注入内容 / 独立白名单）——删除功能之一。 */
+      // ── 工具放行（只管能不能用，不改工具说明）──────────────────────────────
+      const toolCatalog = envelope?.tools?.catalog ?? []
+      const toolsRaw = envelope?.state?.sessionTools?.[sessionId]
+      const toolsValue = Array.isArray(toolsRaw) ? toolsRaw : null // null = 全部放行
+      const writeTools = (list) => {
+        void call({ sessionTools: { ...(envelope?.state?.sessionTools ?? {}), [sessionId]: list } })
+          .then((data) => setEnvelope(data))
+          .catch(() => setStatus('error'))
+      }
+      const toggleTool = (name) => {
+        // 从"全部放行"点某一条 ⇒ 变成"除了它都放行"，直觉上更符合"取消这个工具"。
+        const current = Array.isArray(toolsValue) ? toolsValue : toolCatalog
+        const next = current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name]
+        writeTools(next)
+      }
+
+      /** 清除本会话的注入配置（改写 / 每轮注入内容 / 独立白名单 / 工具放行）——删除功能之一。 */
       const clearSessionConfig = () => {
         // 同样两步确认（不用 window.confirm：可能被屏蔽 ⇒ 静默失败）。
         if (!confirmClear) {
@@ -1797,10 +1879,12 @@ window.__ModuleLoader__.load({
             const overrides = { ...(env?.state?.overrides ?? {}) }
             const injects = { ...(env?.state?.injects ?? {}) }
             const sessionAllowKinds = { ...(env?.state?.sessionAllowKinds ?? {}) }
+            const sessionTools = { ...(env?.state?.sessionTools ?? {}) }
             delete overrides[sessionId]
             delete injects[sessionId]
             delete sessionAllowKinds[sessionId]
-            return call({ overrides, injects, sessionAllowKinds })
+            delete sessionTools[sessionId]
+            return call({ overrides, injects, sessionAllowKinds, sessionTools })
           })
           .then((data) => {
             setEnvelope(data)
@@ -1915,6 +1999,53 @@ window.__ModuleLoader__.load({
               ),
             ),
             h('span', { style: S.chipStatic }, t('allowLocked')),
+          ),
+          // 工具放行：**不改工具说明**（工具类注入一律忽略），这里只管"能不能用"。
+          h(
+            'div',
+            { style: S.injectGroupHead },
+            h('span', null, t('toolsSessionLabel')),
+            h(
+              'span',
+              { style: S.chipStatic },
+              toolCatalog.length === 0
+                ? t('toolsEmpty')
+                : toolsValue === null
+                  ? t('toolsAll')
+                  : `${toolsValue.length}/${toolCatalog.length}`,
+            ),
+            h('span', { style: S.injectRule }),
+          ),
+          h(
+            'div',
+            { style: S.chipRow },
+            h(
+              'button',
+              { type: 'button', style: S.chip(toolsValue === null), onClick: () => writeTools(null) },
+              t('toolsAll'),
+            ),
+            ...toolCatalog.map((name) =>
+              h(
+                'button',
+                {
+                  key: `tool-${name}`,
+                  type: 'button',
+                  style: S.chip(Array.isArray(toolsValue) && toolsValue.includes(name)),
+                  title: name,
+                  onClick: () => toggleTool(name),
+                },
+                name,
+              ),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: S.chip(Array.isArray(toolsValue) && toolsValue.length === 0),
+                onClick: () => writeTools([]),
+              },
+              t('toolsNone'),
+            ),
           ),
           ...groups.map((group) =>
             h(
