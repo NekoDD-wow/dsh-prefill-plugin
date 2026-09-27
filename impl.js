@@ -392,6 +392,9 @@ export function apply(ctx) {
       drafts: typeof gateCache.module?.draftIds === 'function' ? gateCache.module.draftIds() : [],
       // Q9 角标：每会话最近一轮的生效快照（三态 + 被丢弃的 kind）。
       snapshots: typeof gateCache.module?.snapshots === 'function' ? gateCache.module.snapshots() : {},
+      // 有"延后到下一轮"的重挂请求 ⇒ 客户端角标要明说"下一轮生效"，
+      // 否则用户在**轮内**翻开关会以为没生效（它会一直跑到本轮结束 —— Q18 的轮次冻结）。
+      pendingReprime: [...pendingReprime],
       diagnostics: {
         seen: diagnostics.seen,
         mounted: diagnostics.mounted,

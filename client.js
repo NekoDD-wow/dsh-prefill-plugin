@@ -122,6 +122,7 @@ window.__ModuleLoader__.load({
       statePure: '纯净',
       statePass: '全放行',
       stateFilter: '白名单',
+      nextTurn: '下一轮生效',
       badgeTip: '本轮生效的闸门快照（本轮已冻结；改开关只影响下一轮）',
     }
 
@@ -195,6 +196,7 @@ window.__ModuleLoader__.load({
       statePure: 'Pure',
       statePass: 'Admit all',
       stateFilter: 'Allow-list',
+      nextTurn: 'next turn',
       badgeTip: 'Effective gate snapshot for this turn (frozen for the turn; toggling affects the next one)',
     }
 
@@ -740,7 +742,11 @@ window.__ModuleLoader__.load({
       }
 
       // Q9 角标：本轮生效的三态 + 被丢弃的 kind 计数（数据来自宿主 `snapshots`）。
+      // ⚠️ 轮内翻开关**不会**影响正在跑的这一轮（Q18：本轮 levers 已冻结，重挂延后到
+      // `agent/turn-stopping`）—— 所以当宿主报"该会话有待生效的重挂"时，角标必须明说，
+      // 否则用户会以为"纯净没关掉工具"（实测踩过：轮内点纯净，本轮仍带工具跑到结束）。
       const snap = envelope?.snapshots?.[sessionId]
+      const pending = Array.isArray(envelope?.pendingReprime) && envelope.pendingReprime.includes(sessionId)
       const dropped = Array.isArray(snap?.droppedKinds) ? snap.droppedKinds : []
       const badgeLabel =
         snap?.state === 'pure' ? t('statePure') : snap?.state === 'filter' ? t('stateFilter') : t('statePass')
@@ -755,7 +761,7 @@ window.__ModuleLoader__.load({
                   dropped.length > 0 ? `\ndropped: ${dropped.join(', ')}` : ''
                 }`,
               },
-              `${badgeLabel}${dropped.length > 0 ? ` · 丢${dropped.length}` : ''}`,
+              `${badgeLabel}${dropped.length > 0 ? ` · 丢${dropped.length}` : ''}${pending ? ` · ${t('nextTurn')}` : ''}`,
             )
 
       return h(
