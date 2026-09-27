@@ -47,6 +47,8 @@ const BOOT_FILE = join(DATA_DIR, 'boot.json')
 /** 自有路由（必须落在认证过的 `/api` 栅栏下）。 */
 const PING_ROUTE = '/api/dsh-prefill/ping'
 const STATE_ROUTE = '/api/dsh-prefill/state'
+/** 客户端草稿入口：编辑好的多轮 items 在这里暂存，等用户"发出"时物化。 */
+const DRAFT_ROUTE = '/api/dsh-prefill/draft'
 
 /** 热插拔内核的位置。 */
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -230,6 +232,9 @@ export function apply(ctx) {
     'dsh-prefill: dispose every agent latch',
   )
 
+  /** 交给内核的能力包（每次现取，保证 rootCtx 指向最新一代）。 */
+  const api = () => ({ readState, note, latches, unlatch, rootCtx: rootCtxRef })
+
   // ── 座位 1（主）：根级 agent/pre-step，agent 直接来自 payload ──
   // 顺带维护"轮是否开着"，供轮次规则判断（见 reprimeAll）。
   ctx.on(
@@ -327,19 +332,40 @@ export function apply(ctx) {
       }
     }
 
-    // 【P1 探针】合成预填装轮：agent/created 是串行的、且早于首个轮次，
-    // 正好是"把预填装写成真实 durable 事件"的合法窗口（详见 gate.js 顶部说明）。
-    if (typeof gate?.materializePrefill === 'function') {
-      try {
-        await gate.materializePrefill({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, agent)
-      } catch (error) {
-        note({ seat: 'agent/created', prefill: 'threw', error: String(error?.message ?? error) })
+    // 【预填装：两条触发路径，共用内核的 writeSyntheticTurns】────────────────
+    //  · 默认（产品路径）—— 这里只**异步预热系统提示缓存**；真正的物化留到
+    //    `agent/inbox/inserted`，那是"用户真发话、但轮次还没开始"的唯一窗口
+    //    （`dsh-agent-loop:206` 发事件 → `:803-804` 才 wakeDriver）。
+    //    这样"发送前可编辑、发出即物化"才成立。
+    //  · 对照（PREFILL_PROBE_TRIGGER=created）—— 仍在 created 当场物化。
+    const trigger = process.env.PREFILL_PROBE_TRIGGER ?? 'inbox'
+    try {
+      if (trigger === 'created') {
+        if (typeof gate?.materializePrefill === 'function') await gate.materializePrefill(api(), agent)
+      } else if (typeof gate?.preparePrefillPrompt === 'function') {
+        await gate.preparePrefillPrompt(api(), agent)
       }
+    } catch (error) {
+      note({ seat: 'agent/created', prefill: 'threw', error: String(error?.message ?? error) })
     }
   })
 
   ctx.on('agent/disposed', ({ agent }) => {
     if (typeof agent?.id === 'string') liveAgents.delete(agent.id)
+  })
+
+  // ── 预填装物化：用户真发话、轮次还没开始的那个窗口 ──
+  // ⚠️ 这是**同步 emit**（`dsh-agent:242-263`：payload 融合 agent、逐监听器 try/catch
+  // 只 warn），所以这里**不能 await** —— 一旦 await，写入就晚于 `wakeDriver()`，
+  // `turn/start` 已经落地，合成轮再也插不进去（F11/F12）。内核为此把异步的
+  // `assemble()` 前移到了 `agent/created` 的 `preparePrefillPrompt`。
+  ctx.on('agent/inbox/inserted', ({ agent, message }) => {
+    try {
+      const gate = gateCache.module
+      if (typeof gate?.onInboxInserted === 'function') gate.onInboxInserted(api(), agent, message)
+    } catch (error) {
+      note({ seat: 'agent/inbox/inserted', prefill: 'threw', error: String(error?.message ?? error) })
+    }
   })
 
   // ── 自有路由（运输层 + 诊断出口）──
@@ -363,6 +389,7 @@ export function apply(ctx) {
       gateStage: gateCache.module?.STAGE ?? null,
       stateFile: STATE_FILE,
       state: readState(),
+      drafts: typeof gateCache.module?.draftIds === 'function' ? gateCache.module.draftIds() : [],
       diagnostics: {
         seen: diagnostics.seen,
         mounted: diagnostics.mounted,
@@ -399,6 +426,53 @@ export function apply(ctx) {
           },
         }),
       'dsh-prefill: state route',
+    )
+
+    // 草稿入口：客户端编辑好的多轮 items 先暂存在这里（内存注册表），
+    // 等用户真的发出第一条消息时，`agent/inbox/inserted` 才把它物化成 durable 事件。
+    // —— 这就是"发送前可编辑、发出即固定"（Q15）的传输层。
+    scope.effect(
+      () =>
+        register({
+          path: DRAFT_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body
+            try {
+              body = await request?.json?.()
+            } catch {
+              body = undefined
+            }
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+            const items = Array.isArray(body?.items) ? body.items : undefined
+            const gate = await loadGate()
+            let staged = false
+            let reason = ''
+            if (sessionId === '') reason = 'missing sessionId'
+            else if (items === undefined) reason = 'missing items[]'
+            else if (typeof gate?.stageDraft !== 'function') reason = 'gate.stageDraft unavailable'
+            else staged = gate.stageDraft(sessionId, items) === true
+
+            // 草稿登记后立刻预热系统提示：会话已存在时 `agent/created` 早就过去了。
+            if (staged) {
+              for (const [, live] of liveAgents) {
+                if (live.id !== sessionId) continue
+                try {
+                  if (typeof gate?.preparePrefillPrompt === 'function') await gate.preparePrefillPrompt(api(), live)
+                } catch (error) {
+                  note({ seat: 'draft-route', prefill: 'prewarm-failed', error: String(error?.message ?? error) })
+                }
+              }
+            }
+            note({ seat: 'draft-route', staged, sessionId, items: items?.length ?? 0, reason })
+            return Response.json(
+              { ok: true, staged, sessionId, items: items?.length ?? 0, reason, ...envelope() },
+              noStore,
+            )
+          },
+        }),
+      'dsh-prefill: draft route',
     )
 
     ctx.logger?.info?.(`dsh-prefill: host half applied (${STAGE}), state at ${STATE_FILE}`)

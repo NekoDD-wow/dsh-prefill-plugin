@@ -531,46 +531,150 @@ function systemPromptOf(agent) {
  * @param agent - `agent/created` 给的 agent（就是 AgentLoop 实例）。
  * @returns 无；一切结果都写进 note() 诊断。
  */
-export async function materializePrefill(api, agent) {
-  const state = api.readState()
-  if (state.levers?.prefillProbe !== true) return
-  const session = agent?.session
-  if (session === null || typeof session?.append !== 'function') {
-    api.note({ prefill: 'no-session', id: agent?.id })
-    return
-  }
+// ── 跨热换存活的注册表（挂 globalThis 的 Symbol，理由同 tools-blockers）──────
+/** agentId → 已渲染好的系统提示文本（在 agent/created 时算好，供同步物化使用）。 */
+const PROMPTS = (globalThis[Symbol.for('dsh-prefill.prompts')] ??= new Map())
+/** sessionId(=agentId) → 客户端草稿 items（"发送前可编辑"的载体）。 */
+const DRAFTS = (globalThis[Symbol.for('dsh-prefill.drafts')] ??= new Map())
 
-  // 幂等：已经有轮次（或已经有 system 节点）就不再写。
-  let events
+/** 登记一份客户端草稿（由自有路由写入）。 */
+export function stageDraft(sessionId, items) {
+  if (typeof sessionId !== 'string' || sessionId === '' || !Array.isArray(items)) return false
+  DRAFTS.set(sessionId, items)
+  return true
+}
+
+/** 读一份草稿（诊断用）。 */
+export function readDraft(sessionId) {
+  return DRAFTS.get(sessionId)
+}
+
+/** 丢弃草稿（物化后调用，避免同一会话重复物化）。 */
+export function clearDraft(sessionId) {
+  return DRAFTS.delete(sessionId)
+}
+
+/** 已登记的草稿会话 id（诊断用）。 */
+export function draftIds() {
+  return [...DRAFTS.keys()]
+}
+
+/** 该 agent 是否需要预填装：探针开关打开，或这个会话有草稿。 */
+function prefillWanted(state, agentId) {
+  return state?.levers?.prefillProbe === true || DRAFTS.has(agentId)
+}
+
+/** 内容来源：优先客户端草稿，其次探针内容。 */
+function resolveItems(agentId) {
+  const staged = DRAFTS.get(agentId)
+  return Array.isArray(staged) && staged.length > 0 ? staged : resolveProbeItems()
+}
+
+/** 会话里是否已经有轮次（幂等守卫）。读不出来就当有，宁可不动。 */
+function hasTurn(session) {
   try {
-    events = session.snapshotEvents()
+    return session.snapshotEvents().some((event) => event.type === 'turn/start')
+  } catch {
+    return true
+  }
+}
+
+/** 组装 + 渲染系统提示（异步）。 */
+async function computeRendered(agent) {
+  const systemPrompt = systemPromptOf(agent)
+  const assembly = await systemPrompt.assemble({ agent, scope: agent })
+  return renderPrompt(assembly)
+}
+
+/**
+ * 【第一步 · 异步】`agent/created` 时把渲染好的系统提示**缓存**下来。
+ *
+ * 为什么必须先缓存：真正的物化触发点 `agent/inbox/inserted` 是**同步 emit**
+ * （`dsh-agent/lib/index.js:242-263`：payload 融合 `agent`、逐监听器 try/catch 只 warn），
+ * 而 `assemble()` 是异步的。若在 emit 里 `await`，写入就会晚于 `wakeDriver()`
+ * （`dsh-agent-loop:803-804`）—— 那时 `turn/start` 已经落地，合成轮再也插不进去（F11/F12）。
+ * ⇒ 异步的部分前移到 created，物化本身保持纯同步。
+ */
+export async function preparePrefillPrompt(api, agent) {
+  if (typeof agent?.id !== 'string') return
+  if (!prefillWanted(api.readState(), agent.id)) return
+  try {
+    const rendered = await computeRendered(agent)
+    PROMPTS.set(agent.id, rendered)
+    api.note({ prefill: 'prompt-cached', id: agent.id, chars: rendered.length })
   } catch (error) {
-    api.note({ prefill: 'snapshot-failed', error: String(error?.message ?? error) })
+    api.note({ prefill: 'assemble-failed', id: agent.id, error: String(error?.message ?? error) })
+  }
+}
+
+/**
+ * 【第二步 · 同步】`agent/inbox/inserted` —— **用户真发了话、但轮次还没开始**的唯一窗口。
+ *
+ * 时序（实测/源码）：`send()` → `inbox.splice()` → `session.append('agent/inbox/spliced')`
+ * → `dispatch.emit('agent/inbox/inserted')`（`dsh-agent-loop:206`）→ 返回 → `wakeDriver()`
+ * （`:803-804`）。所以此刻：① 还没有任何 `turn/start`；② 我们写完合成轮后立刻改
+ * `phase.lastTurn`，紧接着的 `wakeDriver` 就会把真实轮开在 N+1 上。
+ *
+ * 这也正是"发送前可编辑、发出即物化"的落点：草稿留在客户端/本注册表，只有用户
+ * 真的发出第一条消息时才变成 durable 事件。
+ */
+export function onInboxInserted(api, agent, message) {
+  if (typeof agent?.id !== 'string') return
+  if (!prefillWanted(api.readState(), agent.id)) return
+  // 只在**用户原话**上物化；注入（runtime-context / skill-catalog 等）不算"发出"。
+  if (message?.source?.kind !== 'user') return
+  const session = agent.session
+  if (session === null || typeof session?.append !== 'function') return
+  if (hasTurn(session)) return
+  const rendered = PROMPTS.get(agent.id)
+  if (rendered === undefined) {
+    api.note({ prefill: 'no-cached-prompt', id: agent.id })
     return
   }
-  if (events.some((event) => event.type === 'turn/start')) {
+  writeSyntheticTurns(api, agent, session, rendered, resolveItems(agent.id))
+}
+
+/**
+ * 旧的触发点（`agent/created`）：探针保留一条对照路径。
+ * 产品路径用 `onInboxInserted`；两者都收敛到 `writeSyntheticTurns`。
+ */
+export async function materializePrefill(api, agent) {
+  if (typeof agent?.id !== 'string') return
+  if (!prefillWanted(api.readState(), agent.id)) return
+  const session = agent.session
+  if (session === null || typeof session?.append !== 'function') {
+    api.note({ prefill: 'no-session', id: agent.id })
+    return
+  }
+  if (hasTurn(session)) {
     api.note({ prefill: 'skip-has-turn', id: agent.id, seq: session.seq })
     return
   }
-
-  let rendered = ''
-  try {
-    const systemPrompt = systemPromptOf(agent)
-    const assembly = await systemPrompt.assemble({ agent, scope: agent })
-    rendered = renderPrompt(assembly)
-  } catch (error) {
-    api.note({ prefill: 'assemble-failed', id: agent.id, error: String(error?.message ?? error) })
-    return
+  let rendered = PROMPTS.get(agent.id)
+  if (rendered === undefined) {
+    try {
+      rendered = await computeRendered(agent)
+      PROMPTS.set(agent.id, rendered)
+    } catch (error) {
+      api.note({ prefill: 'assemble-failed', id: agent.id, error: String(error?.message ?? error) })
+      return
+    }
   }
+  writeSyntheticTurns(api, agent, session, rendered, resolveItems(agent.id))
+}
 
-  // ── 多轮预填装：items = 有序消息列表，**不强制 user/ai 交替** ────────────────
-  // 落盘映射受 DSH 的 turn/step 结构约束：
-  //   · 连续 user 项 → 放进**同一个 turn/step**（每条各自一个 user/message 节点 ⇒
-  //     客户端各画一个气泡；wire 上连续同角色会被适配器合并，无妨）
-  //   · 每个 assistant 项 → **独占一个 turn**（客户端 assistant-step 节点 id 是
-  //     `${turn}:${step}`，同一 turn 里多条 assistant/message 会被并成一个节点）
-  //   · 尾部没有 assistant 承接的 user 项 → 自己开一轮
-  const items = resolveProbeItems()
+/**
+ * 同步写入多轮合成轮，并推进循环轮号。
+ *
+ * ── 多轮预填装：items = 有序消息列表，**不强制 user/ai 交替** ────────────────
+ * 落盘映射受 DSH 的 turn/step 结构约束：
+ *   · 连续 user 项 → 放进**同一个 turn/step**（每条各自一个 user/message 节点 ⇒
+ *     客户端各画一个气泡；wire 上连续同角色会被适配器合并，无妨）
+ *   · 每个 assistant 项 → **独占一个 turn**（客户端 assistant-step 节点 id 是
+ *     `${turn}:${step}`，同一 turn 里多条 assistant/message 会被并成一个节点）
+ *   · 尾部没有 assistant 承接的 user 项 → 自己开一轮
+ */
+export function writeSyntheticTurns(api, agent, session, rendered, items) {
   const written = []
   let turnNo = 0
 
@@ -691,6 +795,9 @@ export async function materializePrefill(api, agent) {
     writes: written.length,
     turnAdjusted,
   })
+
+  // 草稿是"一次性"的：物化完成即消费掉（Q15：发出即固定）。探针路径下是 no-op。
+  clearDraft(agent.id)
 
   // ── 诊断脚手架（只在 PREFILL_DIAG=1 时装）──────────────────────────────────
   // 用途：无头 runner（`dsh-headless` 的 run()）在 create 之后依次调
