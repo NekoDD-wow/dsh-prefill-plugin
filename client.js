@@ -69,6 +69,68 @@ window.__ModuleLoader__.load({
       { key: 'blockMessages', tone: 'block' },
     ]
 
+    /**
+     * 注入来源的说明（中/英）——"中文友好"：光看 `runtime-context` 这种 id 不知道是什么。
+     *
+     * 按当前语言挑一份：用一个已知 key 反查即可，不依赖 `t` 能否返回非字符串。
+     */
+    const INJECTION_DOCS = {
+      zh: {
+        'runtime-context': '运行时上下文：每轮由 harness 生成的当前环境信息（工作目录、时间、沙箱等）',
+        'skill-catalog': '技能清单：可用 skill 的名字与一句说明',
+        'agent-instructions': 'Agent 说明：当前 agent 预设 / 人设的补充说明',
+        'time-context': '时间上下文：当前日期与时间',
+        'session-reference': '会话引用：被 @ 提到的会话内容',
+        'tmux-context': '终端上下文：tmux 会话状态',
+        'model-notice': '模型提示：当前模型与能力说明',
+        'compact-checkpoint': '压缩检查点：上下文被压缩后的摘要',
+        'harness:identity': '身份段：模型是谁、基本行为准则（通常是最前面一段）',
+        'harness:source': '源码位置：harness 的代码在哪里',
+        'deployment:persona-prefix': '人设前缀：拼在身份段之前',
+        'deployment:persona-suffix': '人设后缀：拼在身份段之后',
+        'app:web-surface': '界面能力：Web 端能做什么',
+        'ui:deliverable-file-references': '交付文件：怎么引用产出的文件',
+        'mcp-resource-servers': 'MCP 资源服务器：外接工具服务的清单',
+        'sandbox:policy': '沙箱策略：命令能在什么范围内跑',
+        'approval:policy': '审批策略：哪些操作需要用户点头',
+        __tool: '工具说明：这个工具怎么用。**改说明不影响调用格式**（参数 schema 不在这里），但删干净模型就不知道有这个工具',
+        __custom: '自定义来源（原文见右框）',
+        __empty: '留空 / 改回原文 = 不修改',
+      },
+      en: {
+        'runtime-context': 'Runtime context: environment info the harness generates each turn (cwd, time, sandbox…)',
+        'skill-catalog': 'Skill catalog: available skills and one-line descriptions',
+        'agent-instructions': 'Agent instructions: extra notes for the current agent preset/persona',
+        'time-context': 'Time context: current date and time',
+        'session-reference': 'Session reference: content of sessions you @-mentioned',
+        'tmux-context': 'Terminal context: tmux session state',
+        'model-notice': 'Model notice: current model and capability notes',
+        'compact-checkpoint': 'Compact checkpoint: summary after context compaction',
+        'harness:identity': 'Identity: who the model is and its basic rules (usually the first section)',
+        'harness:source': 'Source location: where the harness code lives',
+        'deployment:persona-prefix': 'Persona prefix: prepended to the identity section',
+        'deployment:persona-suffix': 'Persona suffix: appended to the identity section',
+        'app:web-surface': 'Web surface: what the web UI can do',
+        'ui:deliverable-file-references': 'Deliverable files: how to reference produced files',
+        'mcp-resource-servers': 'MCP resource servers: external tool services',
+        'sandbox:policy': 'Sandbox policy: where commands may run',
+        'approval:policy': 'Approval policy: which actions need user confirmation',
+        __tool: 'Tool description: how to use this tool. Editing it does NOT change the call format (the parameter schema lives elsewhere), but deleting it hides the tool from the model',
+        __custom: 'Custom source (see the box on the right)',
+        __empty: 'empty or unchanged = leave it alone',
+      },
+    }
+
+    /** 当前语言的那份说明。 */
+    function docsFor(t) {
+      return t('dockTitle') === '预填装内容' ? INJECTION_DOCS.zh : INJECTION_DOCS.en
+    }
+
+    /** 名字像不像"工具说明"（只影响标注，不影响能不能改）。 */
+    function looksLikeTool(name) {
+      return typeof name === 'string' && /^(tool|tools|mcp)/i.test(name)
+    }
+
     const zh = {
       nav: '预填装',
       // 两个开关：① 用不用预填装 ② 拦不拦 harness 的默认注入
@@ -184,6 +246,8 @@ window.__ModuleLoader__.load({
       importFile: '从文件导入',
       fileHint: '预设文件 = 完整预对话记录 + 预注入改写',
       injectIgnored: '工具类注入已忽略（改了会让工具失效）',
+      injectToolHint: '工具说明也可改：不影响调用格式（schema 不在这里），但别删干净',
+      injectOriginalHint: '框里显示的是**当前原文**；改动即覆盖，改回原文 / 留空 = 不修改',
       // ── 注入内容改写（Q17，只在本会话生效）──
       injectTitle: '改写注入内容',
       injectHint: '把 harness 送进去的内容改掉，只在本会话生效；留空＝不修改。下面列的是默认注入清单，还没出现过的也能先改（命中即生效）。',
@@ -317,6 +381,8 @@ window.__ModuleLoader__.load({
       importFile: 'Import from file',
       fileHint: 'A preset file = the full pre-conversation plus the injection rewrites',
       injectIgnored: 'Tool-related injections are ignored (editing them would break tools)',
+      injectToolHint: 'Tool descriptions are editable too: the call format (schema) is not here, but do not wipe them',
+      injectOriginalHint: 'The box shows the CURRENT original text; edit it to override, or match the original / clear it to leave it alone',
       // ── rewrite injections (Q17, this session only) ──
       injectTitle: 'Rewrite injections',
       injectHint:
@@ -584,9 +650,19 @@ window.__ModuleLoader__.load({
       injectRows: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 },
       injectRow: {
         display: 'grid',
-        gridTemplateColumns: 'minmax(110px, 24%) 1fr',
+        gridTemplateColumns: 'minmax(150px, 30%) 1fr',
         gap: 8,
         alignItems: 'start',
+      },
+      injectKeyCell: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 },
+      injectDoc: {
+        color: 'var(--dsw-alias-label-tertiary)',
+        fontSize: 10.5,
+        lineHeight: 1.35,
+        overflow: 'hidden',
+        display: '-webkit-box',
+        WebkitLineClamp: 3,
+        WebkitBoxOrient: 'vertical',
       },
       injectKey: {
         fontFamily: 'ui-monospace, Menlo, monospace',
@@ -1920,12 +1996,23 @@ window.__ModuleLoader__.load({
         },
       ]
       const count = groups.reduce((sum, group) => sum + group.names.length, 0)
+      const docs = docsFor(t)
+
+      // ── 注入原文：UI 要把**原文**显示出来，否则用户只能盲写改写 ──────────────
+      // 来源是宿主观察到的原文（消息在 pre-step、段/上下文在装配时记录）。
+      const originals = envelope?.injections?.sessions?.[sessionId]?.texts ?? {
+        messages: {},
+        sections: {},
+        contexts: {},
+      }
+      const originalOf = (group, name) => originals?.[group]?.[name] ?? ''
 
       const setField = (group, name, value) => {
         if (draft === null) return
         dirty.current = true
         const next = { ...draft, [group]: { ...draft[group] } }
-        if (value === '') delete next[group][name]
+        // 留空、或改回与原文一字不差 ⇒ 视为"不修改"（不留无意义的覆盖）。
+        if (value === '' || value === originalOf(group, name)) delete next[group][name]
         else next[group][name] = value
         setDraft(next)
       }
@@ -2056,8 +2143,8 @@ window.__ModuleLoader__.load({
           h('span', { style: S.label }, `${count}`),
           h('span', { style: S.injectHintText }, t('injectHint')),
           h('span', { style: { flex: '1 1 auto' } }),
-          (envelope?.injections?.catalog?.ignored ?? []).length > 0
-            ? h('span', { style: S.injectHintText }, t('injectIgnored'))
+          (envelope?.injections?.catalog?.sections ?? []).some((name) => looksLikeTool(name))
+            ? h('span', { style: S.injectHintText }, t('injectToolHint'))
             : null,
           staleHost ? h('span', { style: S.injectStale }, t('injectStaleHost')) : null,
           statusLine,
@@ -2159,19 +2246,38 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { style: S.injectRows },
-                ...group.names.map((name) =>
-                  h(
+                ...group.names.map((name) => {
+                  const original = originalOf(group.key, name)
+                  const changed = draft?.[group.key]?.[name] !== undefined
+                  return h(
                     'div',
                     { key: `${group.key}-${name}`, style: S.injectRow },
-                    h('span', { style: S.injectKey, title: name }, name),
+                    h(
+                      'div',
+                      { style: S.injectKeyCell },
+                      h(
+                        'span',
+                        {
+                          style: changed
+                            ? { ...S.injectKey, borderColor: 'var(--dsw-alias-state-warn-primary)' }
+                            : S.injectKey,
+                          title: name,
+                        },
+                        name,
+                      ),
+                      // 中文说明：让人一眼知道这条注入是什么（用户要求"中文友好"）。
+                      h('span', { style: S.injectDoc }, docs[name] ?? (looksLikeTool(name) ? docs.__tool : docs.__custom)),
+                    ),
                     h('textarea', {
                       style: S.injectBox,
-                      value: draft?.[group.key]?.[name] ?? '',
+                      // **显示原文**：未改写时显示宿主给的原文，改过就显示改写。
+                      value: changed ? draft[group.key][name] : original,
+                      placeholder: docs.__empty,
                       spellCheck: false,
                       onChange: (event) => setField(group.key, name, event.target.value),
                     }),
-                  ),
-                ),
+                  )
+                }),
               ),
             ),
           ),

@@ -121,6 +121,30 @@ function overridesFor(state, agentId) {
  */
 const TOOL_REGISTRY = (globalThis[Symbol.for('dsh-prefill.tools')] ??= new Set())
 
+/**
+ * **每会话的"注入原文"**：UI 要把原文显示出来（否则用户只能盲写改写）。
+ *
+ * 形状：`{ [sessionId]: { messages: {kind: text}, sections: {name: text}, contexts: {name: text} } }`
+ * 来源：`step()` 里记 `decision.messages`（注意是**改写之前**的那份）、
+ * `assemble` 监听器里记各段/各上下文的 `text`。挂 Symbol 以穿过内核热换。
+ */
+const ORIGINALS = (globalThis[Symbol.for('dsh-prefill.originals')] ??= new Map())
+
+/** 单条原文的最大长度（避免 envelope 被超长段撑爆）。 */
+const ORIGINAL_MAX = 20000
+
+/** 记一条原文。 */
+function rememberOriginal(sessionId, group, name, text) {
+  if (typeof sessionId !== 'string' || sessionId === '' || typeof name !== 'string' || name === '') return
+  if (typeof text !== 'string') return
+  let entry = ORIGINALS.get(sessionId)
+  if (entry === undefined) {
+    entry = { messages: {}, sections: {}, contexts: {} }
+    ORIGINALS.set(sessionId, entry)
+  }
+  entry[group][name] = text.length > ORIGINAL_MAX ? text.slice(0, ORIGINAL_MAX) : text
+}
+
 /** 往注册表里记名字。 */
 function rememberToolNames(names) {
   for (const name of names ?? []) {
@@ -155,17 +179,18 @@ export function snapshots() {
 }
 
 /**
- * **不提供改写**的注入名：工具类（含 MCP 这类工具来源）。
+ * 工具类注入名的判定 —— **只用于 UI 标注**，不再用于"禁止改写"。
  *
- * 理由（用户定）：工具相关的段被改掉，模型就失去了"有哪些工具、怎么用"的说明，
- * 工具实际等于失效 ⇒ 直接忽略，不列进清单、也不应用。
- * 前缀匹配即可（`tool-*` / `tools*` / `mcp*`）。
+ * 早期版本（用户当时的要求）是"工具类一律忽略"。后来用户修订了：
+ * 把**原文显示出来**之后改说明是安全的 —— 参数 schema 走 `request.header.tools`，
+ * 不由这些文本决定，所以改说明不会破坏调用格式。UI 用它标注"工具说明"，
+ * 提醒别把说明删干净（删了模型就不知道有这个工具了）。
  */
-const IGNORED_INJECTION = /^(tool|tools|mcp)/i
+const TOOL_INJECTION = /^(tool|tools|mcp)/i
 
-/** 这个名字能不能改。 */
-export function isEditableInjection(name) {
-  return typeof name === 'string' && name !== '' && !IGNORED_INJECTION.test(name)
+/** 这个名字是不是"工具说明"。 */
+export function isToolInjection(name) {
+  return typeof name === 'string' && TOOL_INJECTION.test(name)
 }
 
 /** 消息类注入的常见来源（**预置清单**：即使某条还没出现过，也能先写好改写）。 */
@@ -231,32 +256,34 @@ function globalOrderOf(rootCtx, entriesKey, name) {
  */
 export function injections(rootCtx) {
   const layer = globalPromptLayer(rootCtx)
-  const keep = (names) => (names ?? []).filter((name) => isEditableInjection(name))
+  // 工具类名字**不再排除**（用户修订）：那些段只是"说明文字"，改它不会破坏调用格式 ——
+  // 真正决定调用的是 `request.header.tools` 里的参数 schema，那个我们从不碰。
+  // UI 会给工具类条目标注"工具说明"，提醒别把说明删干净（删了模型就不知道有这工具）。
   const catalog = {
-    messages: keep(KNOWN_MESSAGE_KINDS),
-    sections: keep(entryNames(layer?.sections).sort()),
-    contexts: keep(entryNames(layer?.contexts).sort()),
-    // 被忽略的名字一并回给 UI，好让它说明"为什么少了几个"。
-    ignored: [...entryNames(layer?.sections), ...entryNames(layer?.contexts), ...KNOWN_MESSAGE_KINDS].filter(
-      (name) => !isEditableInjection(name),
-    ),
+    messages: [...KNOWN_MESSAGE_KINDS],
+    sections: entryNames(layer?.sections).sort(),
+    contexts: entryNames(layer?.contexts).sort(),
   }
 
+  const textsOf = (id) => ORIGINALS.get(id) ?? { messages: {}, sections: {}, contexts: {} }
   const sessions = {}
   for (const [id, snap] of SNAPSHOTS) {
     sessions[id] = {
-      messages: keep(snap.seenKinds),
+      messages: Array.isArray(snap.seenKinds) ? snap.seenKinds : [],
       sections: [],
       contexts: [],
       tools: 0,
+      texts: textsOf(id),
     }
   }
   for (const [id, assembly] of ASSEMBLIES) {
     sessions[id] = {
       messages: sessions[id]?.messages ?? [],
-      sections: keep(assembly.sections),
-      contexts: keep(assembly.contexts),
+      sections: assembly.sections,
+      contexts: assembly.contexts,
       tools: assembly.tools,
+      // 原文（给 UI 显示）：消息类来自 pre-step 观察，段/上下文来自装配。
+      texts: textsOf(id),
     }
   }
   return { catalog, sessions }
@@ -381,6 +408,14 @@ function ensureToolsBlocker(api) {
         // 忽略。
       }
       rememberToolNames((result?.tools ?? []).map((tool) => tool?.name))
+      // 段的原文（UI 要显示出来给用户改；工具类段的 text 也只是"说明文字"，
+      // 真正决定调用格式的 schema 走 request.header.tools，不在这里）。
+      for (const section of result?.sections ?? []) {
+        rememberOriginal(id, 'sections', section?.name, section?.text)
+      }
+      for (const entry of result?.contexts ?? []) {
+        rememberOriginal(id, 'contexts', entry?.name, entry?.text)
+      }
       // Q17：顺手记下这次装配里有哪些段 / 上下文（UI 靠它列出"可改的注入"）。
       if (typeof id === 'string') {
         ASSEMBLIES.set(id, {
@@ -507,16 +542,12 @@ function mountLevers(agent, state, api, sink) {
   }
 
   // ── Q17：段 / 上下文改写的挂载（同名遮蔽）──────────────────────────────────
+  // 工具类段**现在也允许改写**（用户修订）：段的 text 只是"说明文字"，
+  // 参数 schema 走 `request.header.tools`，不由这里决定 ⇒ 改说明不会破坏调用格式。
   if (overrides !== undefined) {
     const orders = overrides.sectionOrders !== null && typeof overrides.sectionOrders === 'object' ? overrides.sectionOrders : {}
-    // 工具类注入一律不应用（防御性第二道：清单里已经不列了）。
-    const ignoredOverrides = []
     if (overrides.sections !== null && typeof overrides.sections === 'object' && typeof sp?.section === 'function') {
       for (const [name, text] of Object.entries(overrides.sections)) {
-        if (!isEditableInjection(name)) {
-          ignoredOverrides.push(name)
-          continue
-        }
         // 优先显式给的 order，其次沿用全局那段的原 order，最后才默认 1000。
         const order = Number.isFinite(orders[name]) ? orders[name] : (globalOrderOf(rootCtx, 'sections', name) ?? 1000)
         push(sp.section({ name, order, text: String(text) }))
@@ -524,15 +555,10 @@ function mountLevers(agent, state, api, sink) {
     }
     if (overrides.contexts !== null && typeof overrides.contexts === 'object' && typeof sp?.context === 'function') {
       for (const [name, text] of Object.entries(overrides.contexts)) {
-        if (!isEditableInjection(name)) {
-          ignoredOverrides.push(name)
-          continue
-        }
         const order = Number.isFinite(orders[name]) ? orders[name] : (globalOrderOf(rootCtx, 'contexts', name) ?? 1000)
         push(sp.context({ name, order, text: String(text) }))
       }
     }
-    if (ignoredOverrides.length > 0) api.note({ overrides_ignored: ignoredOverrides, id: agent?.id })
   }
 
   ensureToolsBlocker(api)
@@ -668,6 +694,18 @@ export async function step(api, payload, decision) {
   const seenKinds = Array.isArray(decision?.messages)
     ? decision.messages.map((message) => message?.source?.kind ?? '(none)')
     : []
+  // 记下**注入原文**（取自改写之前）：UI 要把原文显示出来，用户才知道自己在改什么。
+  if (Array.isArray(decision?.messages)) {
+    for (const message of decision.messages) {
+      const kind = message?.source?.kind
+      const text = Array.isArray(message?.content)
+        ? message.content.map((part) => part?.text ?? '').join('')
+        : ''
+      if (typeof kind === 'string' && kind !== '' && !kind.startsWith('prefill')) {
+        rememberOriginal(agent.id, 'messages', kind, text)
+      }
+    }
+  }
   let next = decision
 
   // ── Q17：单会话注入改写（"劫持注入"）────────────────────────────────────────
