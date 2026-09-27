@@ -91,17 +91,78 @@ export function snapshots() {
   return Object.fromEntries(SNAPSHOTS)
 }
 
+/** 消息类注入的常见来源（**预置清单**：即使某条还没出现过，也能先写好改写）。 */
+const KNOWN_MESSAGE_KINDS = [
+  'runtime-context',
+  'skill-catalog',
+  'agent-instructions',
+  'time-context',
+  'session-reference',
+  'tmux-context',
+  'model-notice',
+  'compact-checkpoint',
+]
+
+/** 取全局 prompt 层（段 / 上下文 / 变量的真实注册名都在这里）。 */
+function globalPromptLayer(rootCtx) {
+  try {
+    const service = typeof rootCtx?.get === 'function' ? rootCtx.get('systemPrompt') : rootCtx?.systemPrompt
+    return service?.layers?.global
+  } catch {
+    return undefined
+  }
+}
+
+/** NamedEntries → 名字数组（拿不到就空）。 */
+function entryNames(entries) {
+  if (entries === null || entries === undefined) return []
+  try {
+    if (typeof entries.keys === 'function') return [...entries.keys()]
+    if (typeof entries.entries === 'function') return [...entries.entries()].map(([name]) => name)
+  } catch {
+    // 取不到就算了。
+  }
+  return []
+}
+
 /**
- * Q17 的"可改注入"清单：每会话 →
- *   `{ messages: [source.kind…], sections: [段名…], contexts: [上下文名…], tools: n }`
- *
- * 来源：`messages` 取最近一轮实际进入 pre-step 的 kind（`step()` 记录）；
- * `sections`/`contexts` 取最近一次装配的名字（`system-prompt/assemble` 监听器记录）。
+ * 覆盖某个全局段 / 上下文时，尽量**沿用它原本的 order**。
+ * 否则 scoped 注册会用自己的 order（默认 1000），把这段挪到列表末尾 ——
+ * 实测踩到：改写 `harness:identity`（order -1000）后，它跑到了 persona 后面，首段不再是它。
  */
-export function injections() {
-  const out = {}
+function globalOrderOf(rootCtx, entriesKey, name) {
+  const layer = globalPromptLayer(rootCtx)
+  const entries = layer?.[entriesKey]
+  if (entries === undefined || entries === null || typeof entries.entries !== 'function') return undefined
+  try {
+    for (const [key, value] of entries.entries()) {
+      if (key === name && Number.isFinite(value?.order)) return value.order
+    }
+  } catch {
+    // 拿不到就用默认值。
+  }
+  return undefined
+}
+
+/**
+ * Q17 的"可改注入"清单：`{ catalog, sessions }`。
+ *
+ *   catalog —— **预置清单**：消息 kind 用已知常见值；段 / 上下文取全局 prompt 层的
+ *              **真实注册名**。有它，用户就能在"某条注入还没出现过"时先写好改写
+ *              ⇒ 这就是"直接劫持"，不必等会话先被干扰一轮。
+ *   sessions —— 每个会话**已发现**的条目（最近一轮实际进入的 kind；最近一次装配的段 / 上下文名）。
+ */
+export function injections(rootCtx) {
+  const layer = globalPromptLayer(rootCtx)
+  const catalog = {
+    messages: [...KNOWN_MESSAGE_KINDS],
+    sections: entryNames(layer?.sections).sort(),
+    contexts: entryNames(layer?.contexts).sort(),
+  }
+
+  const sessions = {}
   for (const [id, snap] of SNAPSHOTS) {
-    out[id] = {
+    sessions[id] = {
       messages: Array.isArray(snap.seenKinds) ? snap.seenKinds : [],
       sections: [],
       contexts: [],
@@ -109,14 +170,14 @@ export function injections() {
     }
   }
   for (const [id, assembly] of ASSEMBLIES) {
-    out[id] = {
-      messages: out[id]?.messages ?? [],
+    sessions[id] = {
+      messages: sessions[id]?.messages ?? [],
       sections: assembly.sections,
       contexts: assembly.contexts,
       tools: assembly.tools,
     }
   }
-  return out
+  return { catalog, sessions }
 }
 
 /** 记录本轮快照。 */
@@ -306,13 +367,14 @@ function mountLevers(agent, state, api, sink) {
     const orders = overrides.sectionOrders !== null && typeof overrides.sectionOrders === 'object' ? overrides.sectionOrders : {}
     if (overrides.sections !== null && typeof overrides.sections === 'object' && typeof sp?.section === 'function') {
       for (const [name, text] of Object.entries(overrides.sections)) {
-        const order = Number.isFinite(orders[name]) ? orders[name] : 1000
+        // 优先显式给的 order，其次沿用全局那段的原 order，最后才默认 1000。
+        const order = Number.isFinite(orders[name]) ? orders[name] : (globalOrderOf(rootCtx, 'sections', name) ?? 1000)
         push(sp.section({ name, order, text: String(text) }))
       }
     }
     if (overrides.contexts !== null && typeof overrides.contexts === 'object' && typeof sp?.context === 'function') {
       for (const [name, text] of Object.entries(overrides.contexts)) {
-        const order = Number.isFinite(orders[name]) ? orders[name] : 1000
+        const order = Number.isFinite(orders[name]) ? orders[name] : (globalOrderOf(rootCtx, 'contexts', name) ?? 1000)
         push(sp.context({ name, order, text: String(text) }))
       }
     }

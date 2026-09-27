@@ -139,11 +139,13 @@ window.__ModuleLoader__.load({
       ioImportDraft: '覆盖当前内容',
       // ── 注入内容改写（Q17，只在本会话生效）──
       injectTitle: '改写注入内容',
-      injectHint: '把 harness 送进去的内容改掉，只在本会话生效；留空＝不修改。',
-      injectNone: '（本会话还没见到可改的注入——先发一条消息让它们出现）',
+      injectHint: '把 harness 送进去的内容改掉，只在本会话生效；留空＝不修改。下面列的是默认注入清单，还没出现过的也能先改（命中即生效）。',
+      injectNone: '（没拿到可改清单）',
       injectMessages: '消息类注入',
       injectSections: '系统提示里的段落',
       injectContexts: '运行时上下文',
+      injectAdd: '＋ 加一条',
+      injectAddPlaceholder: '名字：来源 kind / 段名 / 上下文名',
       injectSaved: '已保存',
       injectFailed: '保存失败',
     }
@@ -233,11 +235,14 @@ window.__ModuleLoader__.load({
       ioImportDraft: 'Overwrite content',
       // ── rewrite injections (Q17, this session only) ──
       injectTitle: 'Rewrite injections',
-      injectHint: 'Override what the harness feeds in — this session only. Empty means leave it alone.',
-      injectNone: '(nothing injectable seen yet — send a message first so they show up)',
+      injectHint:
+        'Override what the harness feeds in — this session only. Empty means leave it alone. The rows below are the default injection catalog: you can pre-set an override before it ever appears.',
+      injectNone: '(no catalog available)',
       injectMessages: 'Injected messages',
       injectSections: 'System prompt sections',
       injectContexts: 'Runtime contexts',
+      injectAdd: '+ Add a row',
+      injectAddPlaceholder: 'name: source kind / section / context',
       injectSaved: 'saved',
       injectFailed: 'save failed',
     }
@@ -1301,6 +1306,9 @@ window.__ModuleLoader__.load({
       const [envelope, setEnvelope] = React.useState(null)
       const [draft, setDraft] = React.useState(null)
       const [status, setStatus] = React.useState('idle')
+      const [custom, setCustom] = React.useState({ messages: [], sections: [], contexts: [] })
+      const [addGroup, setAddGroup] = React.useState('sections')
+      const [addName, setAddName] = React.useState('')
       const dirty = React.useRef(false)
 
       const call = React.useCallback(async (body) => {
@@ -1354,11 +1362,36 @@ window.__ModuleLoader__.load({
       }, [call, draft, envelope, open, sessionId])
 
       if (sessionId === '') return null
-      const injectables = envelope?.injections?.[sessionId] ?? { messages: [], sections: [], contexts: [] }
+      // 清单 = 预置 catalog ∪ 本会话已发现 ∪ 手加的 ∪ 已有改写的键。
+      // 有预置 catalog，用户就能在"某条注入还没出现过"时先写好改写 —— 命中即生效（直接劫持）。
+      const catalog = envelope?.injections?.catalog ?? {}
+      const discovered = envelope?.injections?.sessions?.[sessionId] ?? {}
+      const merge = (...lists) => {
+        const out = []
+        for (const list of lists) {
+          for (const name of list ?? []) {
+            if (typeof name !== 'string' || name === '') continue
+            if (!out.includes(name)) out.push(name)
+          }
+        }
+        return out
+      }
       const groups = [
-        { key: 'messages', label: t('injectMessages'), names: injectables.messages ?? [] },
-        { key: 'sections', label: t('injectSections'), names: injectables.sections ?? [] },
-        { key: 'contexts', label: t('injectContexts'), names: injectables.contexts ?? [] },
+        {
+          key: 'messages',
+          label: t('injectMessages'),
+          names: merge(catalog.messages, discovered.messages, custom.messages, Object.keys(draft?.messages ?? {})),
+        },
+        {
+          key: 'sections',
+          label: t('injectSections'),
+          names: merge(catalog.sections, discovered.sections, custom.sections, Object.keys(draft?.sections ?? {})),
+        },
+        {
+          key: 'contexts',
+          label: t('injectContexts'),
+          names: merge(catalog.contexts, discovered.contexts, custom.contexts, Object.keys(draft?.contexts ?? {})),
+        },
       ]
       const count = groups.reduce((sum, group) => sum + group.names.length, 0)
 
@@ -1392,6 +1425,39 @@ window.__ModuleLoader__.load({
               'div',
               { style: S.injectPanel },
               count === 0 ? h('div', { style: S.injectGroup }, t('injectNone')) : null,
+              // 手加一条：清单之外的来源（自定义 kind / 段名）也能先写好改写。
+              h(
+                'div',
+                { key: 'add-row', style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
+                h(
+                  'select',
+                  { style: S.dockSelect, value: addGroup, onChange: (event) => setAddGroup(event.target.value) },
+                  h('option', { value: 'messages' }, t('injectMessages')),
+                  h('option', { value: 'sections' }, t('injectSections')),
+                  h('option', { value: 'contexts' }, t('injectContexts')),
+                ),
+                h('input', {
+                  style: S.dockName,
+                  value: addName,
+                  placeholder: t('injectAddPlaceholder'),
+                  spellCheck: false,
+                  onChange: (event) => setAddName(event.target.value),
+                }),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: S.gateBtn,
+                    onClick: () => {
+                      const name = addName.trim()
+                      if (name === '') return
+                      setCustom((current) => ({ ...current, [addGroup]: [...(current[addGroup] ?? []), name] }))
+                      setAddName('')
+                    },
+                  },
+                  t('injectAdd'),
+                ),
+              ),
               ...groups.flatMap((group) =>
                 group.names.length === 0
                   ? []
