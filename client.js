@@ -147,11 +147,10 @@ window.__ModuleLoader__.load({
       savePack: '保存为预设',
       deletePack: '删除预设',
       packNamePlaceholder: '预设名',
-      io: '导出 / 导入',
-      ioHint: '这里显示当前内容的 JSON；把一段 JSON 粘进来也能导入。',
-      ioExport: '导出到这里',
-      ioImportPack: '存成预设',
-      ioImportDraft: '覆盖当前内容',
+      exportFile: '导出为文件',
+      importFile: '从文件导入',
+      fileHint: '预设文件 = 完整预对话记录 + 预注入改写',
+      injectIgnored: '工具类注入已忽略（改了会让工具失效）',
       // ── 注入内容改写（Q17，只在本会话生效）──
       injectTitle: '改写注入内容',
       injectHint: '把 harness 送进去的内容改掉，只在本会话生效；留空＝不修改。下面列的是默认注入清单，还没出现过的也能先改（命中即生效）。',
@@ -248,11 +247,10 @@ window.__ModuleLoader__.load({
       savePack: 'Save as preset',
       deletePack: 'Delete preset',
       packNamePlaceholder: 'preset name',
-      io: 'Export / import',
-      ioHint: 'This box shows the current content as JSON; paste JSON here to import.',
-      ioExport: 'Export here',
-      ioImportPack: 'Save as preset',
-      ioImportDraft: 'Overwrite content',
+      exportFile: 'Export to file',
+      importFile: 'Import from file',
+      fileHint: 'A preset file = the full pre-conversation plus the injection rewrites',
+      injectIgnored: 'Tool-related injections are ignored (editing them would break tools)',
       // ── rewrite injections (Q17, this session only) ──
       injectTitle: 'Rewrite injections',
       injectHint:
@@ -1004,12 +1002,12 @@ window.__ModuleLoader__.load({
       const [packs, setPacks] = React.useState([])
       const [selected, setSelected] = React.useState('')
       const [packName, setPackName] = React.useState('')
-      const [ioOpen, setIoOpen] = React.useState(false)
-      const [ioText, setIoText] = React.useState('')
       // 注入改写不再单独占一行：它是本面板里的一节（用户要求：放进预填装窗口、跟预设绑在一起）。
       const [injectOpen, setInjectOpen] = React.useState(false)
       const dirty = React.useRef(false)
       const staged = React.useRef(false)
+      /** 导入文件用的隐藏 input（hook 必须在提前 return 之前）。 */
+      const fileRef = React.useRef(null)
 
       // 输入框里的开关翻动后广播 ⇒ 这里重读状态，草稿区立刻出现 / 消失。
       React.useEffect(() => {
@@ -1172,27 +1170,48 @@ window.__ModuleLoader__.load({
           })
           .catch(() => setStatus('error'))
       }
-      const importPack = () => {
-        void packsCall({ op: 'import', json: ioText })
-          .then((data) => {
-            adoptPacks(data)
-            setStatus(data?.reason ? 'error' : 'saved')
-          })
-          .catch(() => setStatus('error'))
+      // ── 导出 / 导入：**走文件**（用户要求），文件名 = 预设名 ──
+      // 预设文件内容 = 完整预对话记录（items） + 预注入改写（overrides）。
+      // ⚠️ fileRef 必须和其他 hook 一起放在**提前 return 之前**（hook 数量不能随渲染变化）。
+      const exportFile = () => {
+        const explicit = (packName.trim() === '' ? selected : packName).trim()
+        const name = explicit === '' ? 'prefill' : explicit
+        const payload = { version: 1, name, items, overrides: injectionDraftOf(sessionId) }
+        const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        // 游离的 <a> 触发下载：不写别人的 DOM（守 P9）。
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = explicit === '' ? 'prefill.json' : `${name}.prefill.json`
+        anchor.click()
+        setTimeout(() => URL.revokeObjectURL(url), 4000)
+        setStatus('saved')
       }
-      const importDraft = () => {
-        try {
-          const parsed = JSON.parse(ioText)
-          const next = Array.isArray(parsed) ? parsed : parsed?.items
-          if (!Array.isArray(next)) {
+      const importFile = (event) => {
+        const file = event?.target?.files?.[0]
+        if (file === undefined) return
+        const reader = new FileReader()
+        reader.onload = () => {
+          try {
+            const parsed = JSON.parse(String(reader.result))
+            const next = Array.isArray(parsed) ? parsed : parsed?.items
+            if (Array.isArray(next)) edit(next)
+            const overrides = parsed?.overrides
+            if (overrides !== undefined && overrides !== null && typeof overrides === 'object') {
+              injectionDrafts.set(sessionId, overrides)
+              void post(STATE_ROUTE, undefined).then((fresh) =>
+                post(STATE_ROUTE, {
+                  overrides: { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides },
+                }),
+              )
+            }
+            if (typeof parsed?.name === 'string' && parsed.name !== '') setPackName(parsed.name)
+            setStatus('saved')
+          } catch {
             setStatus('error')
-            return
           }
-          edit(next)
-          setStatus('saved')
-        } catch {
-          setStatus('error')
         }
+        reader.readAsText(file)
       }
 
       const statusKind = status === 'error' ? 'error' : status === 'saved' ? 'saved' : 'idle'
@@ -1238,43 +1257,17 @@ window.__ModuleLoader__.load({
           }),
           h('button', { type: 'button', style: S.gateBtn, onClick: savePack }, t('savePack')),
           h('button', { type: 'button', style: S.gateBtn, onClick: deletePack }, t('deletePack')),
-          h('button', { type: 'button', style: S.gateBtn, onClick: () => setIoOpen(!ioOpen) }, t('io')),
+          h('button', { type: 'button', style: S.gateBtn, onClick: exportFile }, t('exportFile')),
+          h('button', { type: 'button', style: S.gateBtn, onClick: () => fileRef.current?.click() }, t('importFile')),
+          h('input', {
+            ref: fileRef,
+            type: 'file',
+            accept: '.json,application/json',
+            style: { display: 'none' },
+            onChange: importFile,
+          }),
+          h('span', { style: S.dockHint }, t('fileHint')),
         ),
-        ioOpen
-          ? h(
-              'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-              h('textarea', {
-                style: S.dockThink,
-                value: ioText,
-                placeholder: t('ioHint'),
-                spellCheck: false,
-                onChange: (event) => setIoText(event.target.value),
-              }),
-              h(
-                'div',
-                { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    style: S.gateBtn,
-                    onClick: () =>
-                      setIoText(
-                        JSON.stringify(
-                          { name: (packName.trim() === '' ? selected : packName) || 'untitled', items },
-                          null,
-                          2,
-                        ),
-                      ),
-                  },
-                  t('ioExport'),
-                ),
-                h('button', { type: 'button', style: S.gateBtn, onClick: importPack }, t('ioImportPack')),
-                h('button', { type: 'button', style: S.gateBtn, onClick: importDraft }, t('ioImportDraft')),
-              ),
-            )
-          : null,
 
         h('div', { style: S.dockHint }, t('dockHint')),
 
@@ -1563,6 +1556,9 @@ window.__ModuleLoader__.load({
           h('span', { style: S.label }, `${count}`),
           h('span', { style: S.injectHintText }, t('injectHint')),
           h('span', { style: { flex: '1 1 auto' } }),
+          (envelope?.injections?.catalog?.ignored ?? []).length > 0
+            ? h('span', { style: S.injectHintText }, t('injectIgnored'))
+            : null,
           staleHost ? h('span', { style: S.injectStale }, t('injectStaleHost')) : null,
           statusLine,
         ),

@@ -91,6 +91,20 @@ export function snapshots() {
   return Object.fromEntries(SNAPSHOTS)
 }
 
+/**
+ * **不提供改写**的注入名：工具类（含 MCP 这类工具来源）。
+ *
+ * 理由（用户定）：工具相关的段被改掉，模型就失去了"有哪些工具、怎么用"的说明，
+ * 工具实际等于失效 ⇒ 直接忽略，不列进清单、也不应用。
+ * 前缀匹配即可（`tool-*` / `tools*` / `mcp*`）。
+ */
+const IGNORED_INJECTION = /^(tool|tools|mcp)/i
+
+/** 这个名字能不能改。 */
+export function isEditableInjection(name) {
+  return typeof name === 'string' && name !== '' && !IGNORED_INJECTION.test(name)
+}
+
 /** 消息类注入的常见来源（**预置清单**：即使某条还没出现过，也能先写好改写）。 */
 const KNOWN_MESSAGE_KINDS = [
   'runtime-context',
@@ -154,16 +168,21 @@ function globalOrderOf(rootCtx, entriesKey, name) {
  */
 export function injections(rootCtx) {
   const layer = globalPromptLayer(rootCtx)
+  const keep = (names) => (names ?? []).filter((name) => isEditableInjection(name))
   const catalog = {
-    messages: [...KNOWN_MESSAGE_KINDS],
-    sections: entryNames(layer?.sections).sort(),
-    contexts: entryNames(layer?.contexts).sort(),
+    messages: keep(KNOWN_MESSAGE_KINDS),
+    sections: keep(entryNames(layer?.sections).sort()),
+    contexts: keep(entryNames(layer?.contexts).sort()),
+    // 被忽略的名字一并回给 UI，好让它说明"为什么少了几个"。
+    ignored: [...entryNames(layer?.sections), ...entryNames(layer?.contexts), ...KNOWN_MESSAGE_KINDS].filter(
+      (name) => !isEditableInjection(name),
+    ),
   }
 
   const sessions = {}
   for (const [id, snap] of SNAPSHOTS) {
     sessions[id] = {
-      messages: Array.isArray(snap.seenKinds) ? snap.seenKinds : [],
+      messages: keep(snap.seenKinds),
       sections: [],
       contexts: [],
       tools: 0,
@@ -172,8 +191,8 @@ export function injections(rootCtx) {
   for (const [id, assembly] of ASSEMBLIES) {
     sessions[id] = {
       messages: sessions[id]?.messages ?? [],
-      sections: assembly.sections,
-      contexts: assembly.contexts,
+      sections: keep(assembly.sections),
+      contexts: keep(assembly.contexts),
       tools: assembly.tools,
     }
   }
@@ -365,8 +384,14 @@ function mountLevers(agent, state, api, sink) {
   const overrides = overridesFor(state, agent?.id)
   if (overrides !== undefined) {
     const orders = overrides.sectionOrders !== null && typeof overrides.sectionOrders === 'object' ? overrides.sectionOrders : {}
+    // 工具类注入一律不应用（防御性第二道：清单里已经不列了）。
+    const ignoredOverrides = []
     if (overrides.sections !== null && typeof overrides.sections === 'object' && typeof sp?.section === 'function') {
       for (const [name, text] of Object.entries(overrides.sections)) {
+        if (!isEditableInjection(name)) {
+          ignoredOverrides.push(name)
+          continue
+        }
         // 优先显式给的 order，其次沿用全局那段的原 order，最后才默认 1000。
         const order = Number.isFinite(orders[name]) ? orders[name] : (globalOrderOf(rootCtx, 'sections', name) ?? 1000)
         push(sp.section({ name, order, text: String(text) }))
@@ -374,10 +399,15 @@ function mountLevers(agent, state, api, sink) {
     }
     if (overrides.contexts !== null && typeof overrides.contexts === 'object' && typeof sp?.context === 'function') {
       for (const [name, text] of Object.entries(overrides.contexts)) {
+        if (!isEditableInjection(name)) {
+          ignoredOverrides.push(name)
+          continue
+        }
         const order = Number.isFinite(orders[name]) ? orders[name] : (globalOrderOf(rootCtx, 'contexts', name) ?? 1000)
         push(sp.context({ name, order, text: String(text) }))
       }
     }
+    if (ignoredOverrides.length > 0) api.note({ overrides_ignored: ignoredOverrides, id: agent?.id })
   }
 
   ensureToolsBlocker(api)
@@ -433,8 +463,14 @@ export async function step(api, payload, decision) {
   ensureToolsBlocker(api)
   // M2：`state` 已经是"折算过按会话闸门"的有效状态（见 effectiveStateFor）。
   const state0 = effectiveStateFor(readState(), payload?.agent?.id)
-  // `'*'` = 对所有会话生效：**只给无头探针用**（会话 id 事先不知道），UI 永远写具体 id。
-  const armed = typeof agent?.id === 'string' && (state0.armed.includes(agent.id) || state0.armed.includes('*'))
+  // 三种情况都算"要接管这个会话"：
+  //   ① 显式列进 armed；② 通配 `*`（探针）；③ **该会话配了注入改写** ——
+  // ③ 是必需的：用户要的是"预填装留空、只改系统提示"，那种情况下没有任何 lever，
+  // 光靠 armed 永远进不来，改写就静默不生效了。
+  const hasOverrides = overridesFor(state0, agent?.id) !== undefined
+  const armed =
+    typeof agent?.id === 'string' &&
+    (state0.armed.includes(agent.id) || state0.armed.includes('*') || hasOverrides)
 
   if (!armed) {
     note({
