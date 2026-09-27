@@ -97,7 +97,16 @@ window.__ModuleLoader__.load({
       blockTools: '不给工具',
       blockMessages: '拦掉注入消息',
       armedLabel: '生效会话（会话 id，空格或逗号分隔；留空＝不干预任何会话）',
-      allowLabel: '放行哪些来源（来源标识 kind，逗号分隔；用户自己发的话永远放行）',
+      allowLabel: '放行哪些来源（点标签加入白名单；再点一次移除）',
+      allowLocked: 'user（恒定放行）',
+      allowSessionLabel: '本会话放行来源（只影响这个会话）',
+      allowSessionInherit: '继承全局',
+      sessionClear: '清除本会话注入配置',
+      sessionClearTip: '删掉这个会话的注入改写、每轮注入内容与独立白名单（回到全局默认）',
+      clearDone: '已清除',
+      confirmDeletePreset: '删除这个预设？再点一次确认',
+      confirmClearSession: '清除本会话的注入配置？再点一次确认',
+      confirmYes: '确认？',
       apply: '保存',
       applyArmed: '保存生效会话',
       saved: '已保存',
@@ -206,7 +215,16 @@ window.__ModuleLoader__.load({
       blockTools: 'No tools',
       blockMessages: 'Block injected messages',
       armedLabel: 'Affected sessions (session ids, space/comma separated; empty touches nothing)',
-      allowLabel: 'Sources to admit (kind, comma separated; your own words always pass)',
+      allowLabel: 'Sources to admit (click a tag to allow it; click again to remove)',
+      allowLocked: 'user (always allowed)',
+      allowSessionLabel: 'Sources admitted in this session (this session only)',
+      allowSessionInherit: 'inherit global',
+      sessionClear: 'Clear this session\u2019s injection config',
+      sessionClearTip: 'Drop this session\u2019s injection rewrites, per-turn injected content and its own allow-list',
+      clearDone: 'cleared',
+      confirmDeletePreset: 'Delete this preset? Click again to confirm',
+      confirmClearSession: 'Clear this session\u2019s injection config? Click again to confirm',
+      confirmYes: 'Confirm?',
       apply: 'Save',
       applyArmed: 'Save affected sessions',
       saved: 'Saved',
@@ -589,6 +607,26 @@ window.__ModuleLoader__.load({
         lineHeight: 1,
         cursor: 'pointer',
       },
+      // ── 标签（放行来源 / 白名单）：来源 id 能直接扫出来，所以点选比手打逗号靠谱 ──
+      chipRow: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
+      chip: (active) => ({
+        padding: '2px 9px',
+        borderRadius: 999,
+        fontSize: 11,
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        border: `1px solid ${active ? 'var(--dsw-alias-state-success-primary, var(--dsw-alias-border-l1))' : 'var(--dsw-alias-border-l2)'}`,
+        color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
+        background: active ? 'var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2))' : 'transparent',
+      }),
+      chipStatic: {
+        padding: '2px 9px',
+        borderRadius: 999,
+        fontSize: 11,
+        whiteSpace: 'nowrap',
+        border: '1px dashed var(--dsw-alias-border-l2)',
+        color: 'var(--dsw-alias-label-tertiary)',
+      },
       // ── 模式标签（写入历史 / 每轮注入）──
       modeChip: (injectMode) => ({
         flex: '0 0 auto',
@@ -683,15 +721,18 @@ window.__ModuleLoader__.load({
     function PrefillSection(props) {
       const t = props.t ?? ((key) => key)
       const [state, setState] = React.useState(null)
+      // envelope（整封信）也留一份：清单（`injections.catalog`）在它上面，不在 `state` 上。
+      const [envelope, setEnvelope] = React.useState(null)
       const [ping, setPing] = React.useState({ phase: 'idle' })
       const [note, setNote] = React.useState('')
       const [armedDraft, setArmedDraft] = React.useState('')
       const [allowDraft, setAllowDraft] = React.useState('')
 
       const adopt = React.useCallback((next) => {
-        setState(next)
-        setArmedDraft((next?.armed ?? []).join(' '))
-        setAllowDraft((next?.allowKinds ?? []).join(', '))
+        setEnvelope(next)
+        setState(next?.state ?? null)
+        setArmedDraft((next?.state?.armed ?? []).join(' '))
+        setAllowDraft((next?.state?.allowKinds ?? []).join(', '))
       }, [])
 
       const call = React.useCallback(async (body) => {
@@ -707,7 +748,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         void call(undefined)
           .then((data) => {
-            adopt(data.state)
+            adopt(data)
             setPing({ phase: 'ok', data })
           })
           .catch((error) => setPing({ phase: 'error', message: String(error) }))
@@ -717,7 +758,7 @@ window.__ModuleLoader__.load({
         async (body) => {
           try {
             const data = await call(body)
-            adopt(data.state)
+            adopt(data)
             setNote(t('saved'))
           } catch (error) {
             setNote(`${t('saveFailed')}: ${String(error)}`)
@@ -789,19 +830,33 @@ window.__ModuleLoader__.load({
             },
             t('applyArmed'),
           ),
-          h(Field, {
-            label: t('allowLabel'),
-            value: allowDraft,
-            onChange: setAllowDraft,
-          }),
+          // 放行来源：**标签式**。来源 id（source.kind）本来就能从注入清单里直接扫出来，
+          // 让人凭记忆手打一串逗号既容易错、也不知道有哪些可选。点标签 = 加入白名单，再点 = 移除。
+          h('div', { style: S.note }, t('allowLabel')),
           h(
-            'button',
-            {
-              type: 'button',
-              style: S.button,
-              onClick: () => void mutate({ allowKinds: splitList(allowDraft) }),
-            },
-            t('apply'),
+            'div',
+            { style: S.chipRow },
+            ...(envelope?.injections?.catalog?.messages ?? []).map((kind) =>
+              h(
+                'button',
+                {
+                  key: kind,
+                  type: 'button',
+                  style: S.chip(splitList(allowDraft).includes(kind)),
+                  title: kind,
+                  onClick: () => {
+                    const current = splitList(allowDraft)
+                    const next = current.includes(kind)
+                      ? current.filter((entry) => entry !== kind)
+                      : [...current, kind]
+                    setAllowDraft(next.join(', '))
+                    void mutate({ allowKinds: next })
+                  },
+                },
+                kind,
+              ),
+            ),
+            h('span', { style: S.chipStatic }, t('allowLocked')),
           ),
           note === '' ? null : h('div', { style: S.note }, note),
         ),
@@ -1043,6 +1098,9 @@ window.__ModuleLoader__.load({
       const [packName, setPackName] = React.useState('')
       // 注入改写不再单独占一行：它是本面板里的一节（用户要求：放进预填装窗口、跟预设绑在一起）。
       const [injectOpen, setInjectOpen] = React.useState(false)
+      // ⚠️ hooks 一律放**提前 return 之前**：放后面会随渲染次数变化 ⇒ React 直接抛错、
+      // 整个面板白屏（这个坑踩过两次，记在 §14.19）。
+      const [confirming, setConfirming] = React.useState('')
       const dirty = React.useRef(false)
       const staged = React.useRef(false)
       /** 导入文件用的隐藏 input（hook 必须在提前 return 之前）。 */
@@ -1275,8 +1333,21 @@ window.__ModuleLoader__.load({
           })
           .catch(() => setStatus('error'))
       }
+      /**
+       * 删除类动作统一用**两步确认**，不用 `window.confirm`：
+       * 浏览器可以屏蔽反复弹的对话框（返回 false）⇒ 删除会**静默失败**，最坑。
+       * 第一次点变成"确认？"，再点才真删；换别的操作就自动复位。
+       */
+      const armConfirm = (key) => {
+        if (confirming === key) return true
+        setConfirming(key)
+        setTimeout(() => setConfirming((current) => (current === key ? '' : current)), 4000)
+        return false
+      }
       const deletePack = () => {
         if (selected === '') return
+        if (!armConfirm('preset')) return
+        setConfirming('')
         void packsCall({ op: 'delete', name: selected })
           .then((data) => {
             adoptPacks(data)
@@ -1448,7 +1519,18 @@ window.__ModuleLoader__.load({
             onChange: (event) => setPackName(event.target.value),
           }),
           h('button', { type: 'button', style: S.gateBtn, onClick: savePack }, t('savePack')),
-          h('button', { type: 'button', style: S.gateBtn, onClick: deletePack }, t('deletePack')),
+          // 两步确认：第一次点变"确认删除？"，再点才真删（避免误删，也避开被屏蔽的 window.confirm）。
+          h(
+            'button',
+            {
+              type: 'button',
+              style: S.gateBtn,
+              title: t('confirmDeletePreset'),
+              onClick: deletePack,
+              disabled: selected === '',
+            },
+            confirming === 'preset' ? t('confirmYes') : t('deletePack'),
+          ),
           h('button', { type: 'button', style: S.gateBtn, onClick: exportFile }, t('exportFile')),
           h('button', { type: 'button', style: S.gateBtn, onClick: () => fileRef.current?.click() }, t('importFile')),
           h('input', {
@@ -1587,6 +1669,8 @@ window.__ModuleLoader__.load({
       const [custom, setCustom] = React.useState({ messages: [], sections: [], contexts: [] })
       const [addGroup, setAddGroup] = React.useState('sections')
       const [addName, setAddName] = React.useState('')
+      // 同上：hooks 必须在提前 return 之前。
+      const [confirmClear, setConfirmClear] = React.useState(false)
       const dirty = React.useRef(false)
 
       const call = React.useCallback(async (body) => {
@@ -1685,6 +1769,48 @@ window.__ModuleLoader__.load({
         setDraft(next)
       }
 
+      // ── 本会话白名单（放行来源）────────────────────────────────────────────
+      // 与设置页那张全局表分开：这里是**会话级**的，只影响本会话。
+      const globalAllow = Array.isArray(envelope?.state?.allowKinds) ? envelope.state.allowKinds : ['user']
+      const sessionAllowRaw = envelope?.state?.sessionAllowKinds?.[sessionId]
+      const sessionAllow = Array.isArray(sessionAllowRaw) ? sessionAllowRaw : globalAllow
+      const inheritsGlobal = !Array.isArray(sessionAllowRaw)
+      const toggleAllow = (kind) => {
+        const current = sessionAllow.filter((entry) => entry !== 'user')
+        const next = current.includes(kind) ? current.filter((entry) => entry !== kind) : [...current, kind]
+        void call({ sessionAllowKinds: { ...(envelope?.state?.sessionAllowKinds ?? {}), [sessionId]: next } })
+          .then((data) => setEnvelope(data))
+          .catch(() => setStatus('error'))
+      }
+
+      /** 清除本会话的注入配置（改写 / 每轮注入内容 / 独立白名单）——删除功能之一。 */
+      const clearSessionConfig = () => {
+        // 同样两步确认（不用 window.confirm：可能被屏蔽 ⇒ 静默失败）。
+        if (!confirmClear) {
+          setConfirmClear(true)
+          setTimeout(() => setConfirmClear(false), 4000)
+          return
+        }
+        setConfirmClear(false)
+        void call(undefined)
+          .then((env) => {
+            const overrides = { ...(env?.state?.overrides ?? {}) }
+            const injects = { ...(env?.state?.injects ?? {}) }
+            const sessionAllowKinds = { ...(env?.state?.sessionAllowKinds ?? {}) }
+            delete overrides[sessionId]
+            delete injects[sessionId]
+            delete sessionAllowKinds[sessionId]
+            return call({ overrides, injects, sessionAllowKinds })
+          })
+          .then((data) => {
+            setEnvelope(data)
+            setDraft({ messages: {}, sections: {}, contexts: {} })
+            injectionDrafts.delete(sessionId)
+            setStatus('saved')
+          })
+          .catch(() => setStatus('error'))
+      }
+
       // 后台若是旧壳（返回的形状里没有 catalog），明说一句，别让用户以为是空清单。
       const staleHost = envelope?.injections !== undefined && envelope.injections.catalog === undefined
       const statusLine =
@@ -1753,11 +1879,43 @@ window.__ModuleLoader__.load({
             : null,
           staleHost ? h('span', { style: S.injectStale }, t('injectStaleHost')) : null,
           statusLine,
+          // 删除功能：一键清掉本会话的注入配置（改写 / 每轮注入 / 独立白名单）。
+          h(
+            'button',
+            { type: 'button', style: S.gateBtn, title: t('sessionClearTip'), onClick: clearSessionConfig },
+            confirmClear ? t('confirmYes') : t('sessionClear'),
+          ),
         ),
         h(
           'div',
           { style: S.injectBody },
           count === 0 ? h('div', { style: S.injectGroupHead }, t('injectNone')) : null,
+          // 本会话白名单：点标签即生效（会话级，不动全局那张表）。
+          h(
+            'div',
+            { style: S.injectGroupHead },
+            h('span', null, t('allowSessionLabel')),
+            inheritsGlobal ? h('span', { style: S.chipStatic }, `${t('allowSessionInherit')}：${globalAllow.join(', ')}`) : null,
+            h('span', { style: S.injectRule }),
+          ),
+          h(
+            'div',
+            { style: S.chipRow },
+            ...(catalog.messages ?? []).map((kind) =>
+              h(
+                'button',
+                {
+                  key: `allow-${kind}`,
+                  type: 'button',
+                  style: S.chip(sessionAllow.includes(kind)),
+                  title: kind,
+                  onClick: () => toggleAllow(kind),
+                },
+                kind,
+              ),
+            ),
+            h('span', { style: S.chipStatic }, t('allowLocked')),
+          ),
           ...groups.map((group) =>
             h(
               'div',

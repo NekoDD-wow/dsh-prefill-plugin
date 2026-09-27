@@ -31,13 +31,28 @@ export const PROBE_SECTION_TEXT =
 export const PROBE_CONTEXT_TEXT =
   '[prefill:probe-context] M1 探针上下文：由 @local/dsh-prefill 注册，用于证明 contexts 通道「能写」。'
 
-/** 一条消息是否放行：自有 prefill:* 与用户原话恒放行，其余按 allowKinds。 */
-function keeper(state, message) {
+/**
+ * 该会话**实际生效**的放行来源清单。
+ *
+ * 优先 `state.sessionAllowKinds[sessionId]`（会话级，UI 里按标签勾选写进去），
+ * 支持 `'*'` 通配（探针用）；没配就回落到全局 `state.allowKinds`。
+ */
+function allowKindsFor(state, sessionId) {
+  const perSession = state?.sessionAllowKinds
+  if (perSession !== null && typeof perSession === 'object') {
+    const list = (typeof sessionId === 'string' ? perSession[sessionId] : undefined) ?? perSession['*']
+    if (Array.isArray(list)) return list.filter((kind) => typeof kind === 'string')
+  }
+  return Array.isArray(state?.allowKinds) ? state.allowKinds : ['user']
+}
+
+/** 一条消息是否放行：自有 prefill:* 与用户原话恒放行，其余按（会话级优先的）白名单。 */
+function keeper(state, message, sessionId) {
   const kind = message?.source?.kind
   if (kind === 'user') return true
   if (typeof kind !== 'string') return false
   if (kind.startsWith('prefill:')) return true
-  return state.allowKinds.includes(kind)
+  return allowKindsFor(state, sessionId).includes(kind)
 }
 
 /**
@@ -525,7 +540,7 @@ export async function step(api, payload, decision) {
       armed: false,
       droppedKinds: [],
       seenKinds: idleKinds,
-      allowed: state0.allowKinds,
+      allowed: allowKindsFor(state0, agent?.id),
     })
     return decision
   }
@@ -594,7 +609,7 @@ export async function step(api, payload, decision) {
   const keepMessage = (message) => {
     const kind = message?.source?.kind
     if (typeof kind === 'string' && overriddenKinds.has(kind)) return true
-    return keeper(state, message)
+    return keeper(state, message, agent.id)
   }
   if (state.levers.blockMessages && decision?.kind === 'enter' && Array.isArray(next.messages)) {
     for (const message of next.messages) {
@@ -677,7 +692,7 @@ export async function step(api, payload, decision) {
     droppedKinds,
     seenKinds,
     overrode,
-    allowed: state.allowKinds,
+    allowed: allowKindsFor(state, agent.id),
   })
 
   note({
