@@ -1152,7 +1152,8 @@ window.__ModuleLoader__.load({
           return
         }
         // 存预设 = 预填装内容 + 注入改写（用户要求绑在一起）。
-        void packsCall({ op: 'save', name, items, overrides: injectionDraftOf(sessionId) })
+        void currentOverrides()
+          .then((overrides) => packsCall({ op: 'save', name, items, overrides }))
           .then((data) => {
             adoptPacks(data)
             setSelected(name)
@@ -1173,10 +1174,33 @@ window.__ModuleLoader__.load({
       // ── 导出 / 导入：**走文件**（用户要求），文件名 = 预设名 ──
       // 预设文件内容 = 完整预对话记录（items） + 预注入改写（overrides）。
       // ⚠️ fileRef 必须和其他 hook 一起放在**提前 return 之前**（hook 数量不能随渲染变化）。
-      const exportFile = () => {
+      /**
+       * 取本会话"当前生效的注入改写"。
+       *
+       * ⚠️ 必须**从宿主拉一次**，不能只读模块级的 `injectionDrafts`：那个表只有在
+       * "注入改写"章节**被展开挂载过**才有内容 —— 否则用户没点开过它，
+       * 导出的预设文件就会**悄悄丢掉改写**（实测踩到）。
+       * 两边的都有时，以面板里正在编辑的草稿为准。
+       */
+      const currentOverrides = async () => {
+        const fresh = injectionDraftOf(sessionId)
+        try {
+          const envelope = await post(STATE_ROUTE, undefined)
+          const stored = envelope?.state?.overrides?.[sessionId] ?? {}
+          return {
+            messages: { ...(stored.messages ?? {}), ...(fresh.messages ?? {}) },
+            sections: { ...(stored.sections ?? {}), ...(fresh.sections ?? {}) },
+            contexts: { ...(stored.contexts ?? {}), ...(fresh.contexts ?? {}) },
+          }
+        } catch {
+          return fresh
+        }
+      }
+
+      const exportFile = async () => {
         const explicit = (packName.trim() === '' ? selected : packName).trim()
         const name = explicit === '' ? 'prefill' : explicit
-        const payload = { version: 1, name, items, overrides: injectionDraftOf(sessionId) }
+        const payload = { version: 1, name, items, overrides: await currentOverrides() }
         const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
         // 游离的 <a> 触发下载：不写别人的 DOM（守 P9）。
