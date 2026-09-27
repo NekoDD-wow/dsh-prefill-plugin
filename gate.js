@@ -363,25 +363,58 @@ function mountLevers(agent, state, api, sink) {
       }),
     )
   }
-  // complete:true 的段在同 scope 内必须唯一；每轮先撤后挂，故至多一个。
+  // ── Q17：段 / 上下文的"同名遮蔽"先算出来（下面的"拦注入"要用它）────────────
+  // 官方机制（`dsh-system-prompt` 的 `ScopedLayers.merge`）：**同名的 scoped 项覆盖
+  // global 项**。所以只要在 agent scope 里用同名注册一段，就等价于"改写"了全局那段 ——
+  // 不需要、也不允许去动 `system-prompt/assemble`（practices P2）。
+  const overrides = overridesFor(state, agent?.id)
+  const overrideSectionNames = Object.keys(overrides?.sections ?? {})
+  const overrideContextNames = Object.keys(overrides?.contexts ?? {})
+
+  // ── 拦注入 = **只拦"非本插件"的注入**（用户定的语义）───────────────────────
+  // 旧实现是一条 `complete:true` 的空中段；它的语义是"整份段列表替换成我自己这一条"
+  // （`dsh-system-prompt:335-359`）⇒ **连带把本插件的改写也清掉了**。
+  // 实测：PURE 下 `system chars=0`、`runtime-context` 的改写消息被丢 —— 也就是
+  // "开着拦注入时，改写静默失效"。现在改成**逐名清空 harness 自己的段**，
+  // 留下我们要改写的那几条。
   if (state.levers.blockSections && typeof sp?.section === 'function') {
-    push(sp.section({ name: 'prefill:pure', order: 0, text: '', complete: true }))
+    if (overrideSectionNames.length === 0) {
+      // 没有我方改写：沿用"一条清空"（保证 0 字符，也不怕漏名字）。
+      push(sp.section({ name: 'prefill:pure', order: 0, text: '', complete: true }))
+    } else {
+      const known = new Set([
+        ...entryNames(globalPromptLayer(rootCtx)?.sections),
+        ...(ASSEMBLIES.get(agent?.id)?.sections ?? []),
+      ])
+      for (const name of known) {
+        // 我方要改写的那条留着（下面会用同名遮蔽装上改写文本）。
+        if (overrideSectionNames.includes(name)) continue
+        push(sp.section({ name, order: globalOrderOf(rootCtx, 'sections', name) ?? 1000, text: '' }))
+      }
+    }
   }
   if (state.levers.probeContext && typeof sp?.context === 'function') {
     push(sp.context({ name: 'prefill:probe-context', order: 1000, text: PROBE_CONTEXT_TEXT }))
   }
-  if (state.levers.blockContexts && typeof sp?.suppressRuntimeContext === 'function') {
+  // 有上下文改写时不整体 suppress：否则会连我方那条一起丢。
+  // 另外：如果用户**改写了 `runtime-context` 这条消息**，也要取消整体抑制 ——
+  // `suppressRuntimeContext` 是在装配层把它抹掉，抹掉之后 pre-step 根本见不到它，
+  // 改写就永远无从下手（实测：`overrode:[]`、消息整条消失）。
+  // 用户的意思很清楚："这条我自己发我的版本"，那就别在源头把它删了。
+  const messageOverrideKinds = Object.keys(overrides?.messages ?? {})
+  if (
+    state.levers.blockContexts &&
+    overrideContextNames.length === 0 &&
+    !messageOverrideKinds.includes('runtime-context') &&
+    typeof sp?.suppressRuntimeContext === 'function'
+  ) {
     push(sp.suppressRuntimeContext())
   }
   if (state.levers.blockTools && typeof toolService?.restrict === 'function') {
     push(toolService.restrict({ allow: [] }))
   }
 
-  // ── Q17：段 / 上下文的"同名遮蔽"────────────────────────────────────────────
-  // 官方机制（`dsh-system-prompt` 的 `ScopedLayers.merge`）：**同名的 scoped 项
-  // 覆盖 global 项**。所以只要在 agent scope 里用同名注册一段，就等价于"改写"了
-  // 全局那段 —— 不需要、也不允许去动 `system-prompt/assemble`（practices P2）。
-  const overrides = overridesFor(state, agent?.id)
+  // ── Q17：段 / 上下文改写的挂载（同名遮蔽）──────────────────────────────────
   if (overrides !== undefined) {
     const orders = overrides.sectionOrders !== null && typeof overrides.sectionOrders === 'object' ? overrides.sectionOrders : {}
     // 工具类注入一律不应用（防御性第二道：清单里已经不列了）。
@@ -555,12 +588,20 @@ export async function step(api, payload, decision) {
     if (overrode.length > 0) next = { ...next, messages }
   }
 
+  // "拦注入"只拦**非本插件**的注入：我方改写过的 kind 照发（发的是我们的版本）。
+  // 否则会出现"开着拦注入、改写就静默失效"的怪状（实测 PURE 下 runtime-context 被丢）。
+  const overriddenKinds = new Set(overrode)
+  const keepMessage = (message) => {
+    const kind = message?.source?.kind
+    if (typeof kind === 'string' && overriddenKinds.has(kind)) return true
+    return keeper(state, message)
+  }
   if (state.levers.blockMessages && decision?.kind === 'enter' && Array.isArray(next.messages)) {
     for (const message of next.messages) {
-      if (!keeper(state, message)) droppedKinds.push(message?.source?.kind ?? '(none)')
+      if (!keepMessage(message)) droppedKinds.push(message?.source?.kind ?? '(none)')
     }
     if (droppedKinds.length > 0) {
-      next = { ...next, messages: next.messages.filter((message) => keeper(state, message)) }
+      next = { ...next, messages: next.messages.filter((message) => keepMessage(message)) }
     }
   }
 
