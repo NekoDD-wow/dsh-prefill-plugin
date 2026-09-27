@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Prefill (dsh-prefill)",
+    "description": "Session prefill and injection gate: turn one request's ordered skeleton into an editable, importable preset, and decide per turn which injections are admitted."
+  }
+}

@@ -1,0 +1,10 @@
+# @local/dsh-prefill —— 会话预填装 + 注入闸门
+#
+# M0 骨架：只挂 host 半一行。client 半不走 patch，由 package.json 的
+# exports["./client"] + dsh.client.platform=web 交给浏览器模块表。
+#
+# 命名空间约定（规划 §3.2）：本插件产生的一切 section / context / 注入消息
+# 统一带 `prefill:` 前缀，闸门恒放行该命名空间。
+- insert:
+    - id: dsh-prefill
+      name: '@local/dsh-prefill'

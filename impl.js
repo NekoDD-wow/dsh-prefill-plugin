@@ -1,0 +1,406 @@
+/**
+ * @local/dsh-prefill —— host 半「壳」（M1.2）。**只有改本文件才需要重启 dsh。**
+ *
+ * 职责划分：
+ *   壳（本文件）—— 启动标记、状态文件读写、自有路由、两个 pre-step 座位、
+ *                  闩锁容器、诊断缓冲，以及**热插拔加载器**。
+ *   核（gate.js）—— 四通道怎么挂、消息怎么过滤。每次 pre-step 按 mtime 带
+ *                  `?rev=` 动态 import ⇒ 改闸门逻辑**免重启**。
+ *
+ * 为什么要有"壳/核"这层拆法（实测依据）：
+ *   · 规划 §9.2-F3：替换已安装包后 `set_bundle` 关→开**不换模块代**（ESM 缓存
+ *     按行/包名命中）。本轮又实测一次：把 bundle 从 profile 列表摘掉 → 路由立刻
+ *     404（reconciler 确实生效），放回后**仍是旧代**、新字段为空。
+ *     ⇒ 改壳必须重启，一次。
+ *   · 而动态 import 的 URL 由我控制 `?rev=`，不受该缓存约束 ⇒ 核可以真热换。
+ *     这让 M2–M5 的闸门迭代不再需要重启。
+ *
+ * 三条设计红线：默认零干预（armed 为空即不碰任何会话）；不碰
+ * `system-prompt/assemble`（practices P2）；per-step 改写必须 spread（P4）。
+ *
+ * @module @local/dsh-prefill
+ */
+
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+/** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
+const STAGE = 'M1.2-shell'
+
+/** Cordis 插件名。 */
+export const name = 'dsh-prefill'
+
+/** 家目录：宿主进程里 DSH_HOME 未必注入，兜底到 ~/.dsh。 */
+const HOME = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+
+/** 本插件的数据目录（规划 §3.3）。 */
+const DATA_DIR = join(HOME, 'prefill')
+
+/** 闸门状态文件。 */
+const STATE_FILE = join(DATA_DIR, 'state.json')
+
+/** 启动标记：每次 apply 覆盖写，记录当前活着的 JS 模块代。 */
+const BOOT_FILE = join(DATA_DIR, 'boot.json')
+
+/** 自有路由（必须落在认证过的 `/api` 栅栏下）。 */
+const PING_ROUTE = '/api/dsh-prefill/ping'
+const STATE_ROUTE = '/api/dsh-prefill/state'
+
+/** 热插拔内核的位置。 */
+const HERE = dirname(fileURLToPath(import.meta.url))
+const GATE_FILE = join(HERE, 'gate.js')
+
+/** 六个开关的默认值。 */
+const DEFAULT_LEVERS = {
+  probeSection: false,
+  probeContext: false,
+  blockSections: false,
+  blockContexts: false,
+  blockTools: false,
+  blockMessages: false,
+  // P1 探针（加法路线）：为每个新建 agent 写一个「合成预填装轮」。
+  // ⚠️ 这是探针专用开关，全局生效 —— 只能在隔离的 DSH_HOME 里打开。
+  prefillProbe: false,
+}
+
+/** 默认放行集合：用户原话恒放行，其余注入按白名单。 */
+const DEFAULT_ALLOW_KINDS = ['user']
+
+/** 默认状态：`armed` 为空 = 不干预任何会话。 */
+const DEFAULT_STATE = {
+  version: 1,
+  armed: [],
+  levers: { ...DEFAULT_LEVERS },
+  allowKinds: [...DEFAULT_ALLOW_KINDS],
+}
+
+/** 诊断环形缓冲：让插件能自证"卡在哪一步"。 */
+const diagnostics = { seen: 0, mounted: 0, gateLoads: 0, gateError: '', last: [] }
+
+function note(entry) {
+  diagnostics.seen += 1
+  diagnostics.last.push(entry)
+  if (diagnostics.last.length > 12) diagnostics.last.shift()
+  // 诊断出口之二：无头/CLI 环境下没有 /api 路由可读，用环境变量开 stderr 打印。
+  if (process.env.PREFILL_DIAG === '1') {
+    try {
+      console.error(`[prefill] ${JSON.stringify(entry)}`)
+    } catch {
+      // 诊断不该拖垮插件。
+    }
+  }
+}
+
+function normalizeState(raw) {
+  const source = raw !== null && typeof raw === 'object' ? raw : {}
+  const levers = source.levers !== null && typeof source.levers === 'object' ? source.levers : {}
+  return {
+    // 先摊开原始对象：**保留未知字段**。M2 的按会话闸门映射 `gate`、
+    // Q9 的 `noticeSeen` 都靠这一行才不至于被规范化抹掉（否则 UI 写进去就没了）。
+    ...source,
+    version: 2,
+    armed: Array.isArray(source.armed) ? source.armed.filter((id) => typeof id === 'string') : [],
+    levers: Object.fromEntries(Object.keys(DEFAULT_LEVERS).map((key) => [key, levers[key] === true])),
+    allowKinds: Array.isArray(source.allowKinds)
+      ? source.allowKinds.filter((kind) => typeof kind === 'string')
+      : [...DEFAULT_ALLOW_KINDS],
+  }
+}
+
+let cache = { state: null, mtimeMs: -1 }
+
+function readState() {
+  let mtimeMs = -1
+  try {
+    mtimeMs = statSync(STATE_FILE).mtimeMs
+  } catch {
+    // 文件缺失 = 默认状态。
+  }
+  if (cache.state !== null && cache.mtimeMs === mtimeMs) return cache.state
+  let state = DEFAULT_STATE
+  if (mtimeMs >= 0) {
+    try {
+      state = normalizeState(JSON.parse(readFileSync(STATE_FILE, 'utf8')))
+    } catch {
+      state = DEFAULT_STATE
+    }
+  }
+  cache = { state, mtimeMs }
+  return state
+}
+
+function writeState(next) {
+  mkdirSync(DATA_DIR, { recursive: true })
+  writeFileSync(STATE_FILE, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  cache = { state: null, mtimeMs: -1 }
+  return readState()
+}
+
+function patchState(patch) {
+  const current = readState()
+  return writeState(
+    normalizeState({
+      ...current,
+      ...patch,
+      levers: { ...current.levers, ...(patch?.levers ?? {}) },
+    }),
+  )
+}
+
+/** 每 agent 的轮次闩锁容器（放壳里，跨内核热换存活）。 */
+const latches = new Map()
+
+function unlatch(agentId) {
+  const entry = latches.get(agentId)
+  if (entry === undefined) return
+  for (const dispose of entry.disposers) {
+    try {
+      dispose()
+    } catch {
+      // 已随 agent scope 释放的 disposer 会抛，忽略。
+    }
+  }
+  latches.delete(agentId)
+}
+
+// ── 热插拔加载器：按 gate.js 的 mtime 决定是否重新 import ──
+let gateCache = { mtimeMs: -1, module: null }
+
+async function loadGate() {
+  let mtimeMs = 0
+  try {
+    mtimeMs = statSync(GATE_FILE).mtimeMs
+  } catch (error) {
+    diagnostics.gateError = `stat gate.js: ${String(error?.message ?? error)}`
+    return gateCache.module
+  }
+  if (gateCache.module !== null && gateCache.mtimeMs === mtimeMs) return gateCache.module
+  try {
+    const url = new URL('./gate.js', import.meta.url)
+    const module = await import(`${url.href}?rev=${mtimeMs}`)
+    gateCache = { mtimeMs, module }
+    diagnostics.gateLoads += 1
+    diagnostics.gateError = ''
+    note({ gate: 'reloaded', rev: mtimeMs, stage: module.STAGE ?? '(no STAGE)' })
+  } catch (error) {
+    diagnostics.gateError = String(error?.message ?? error)
+    note({ gate: 'load-failed', error: diagnostics.gateError })
+  }
+  return gateCache.module
+}
+
+/** 插件根 ctx 的引用：内核的服务解析第三级回退要用它。 */
+let rootCtxRef = null
+
+/** 两个座位共用的处理：先拿内核，再委托；任何异常都不许打断这一轮。 */
+async function handle(payload, decision, seat) {
+  const gate = await loadGate()
+  if (gate === null || typeof gate.step !== 'function') {
+    note({ seat, error: diagnostics.gateError || 'gate.step 不可用' })
+    return decision
+  }
+  try {
+    const next = await gate.step({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, { ...payload, __seat: seat }, decision)
+    return next ?? decision
+  } catch (error) {
+    note({ seat, error: String(error?.message ?? error) })
+    return decision
+  }
+}
+
+export function apply(ctx) {
+  rootCtxRef = ctx
+  try {
+    mkdirSync(DATA_DIR, { recursive: true })
+    writeFileSync(
+      BOOT_FILE,
+      `${JSON.stringify({ stage: STAGE, pid: process.pid, at: new Date().toISOString() }, null, 2)}\n`,
+      'utf8',
+    )
+  } catch {
+    // 标记写不进去不该拖垮插件。
+  }
+
+  ctx.effect(
+    () => () => {
+      for (const agentId of [...latches.keys()]) unlatch(agentId)
+    },
+    'dsh-prefill: dispose every agent latch',
+  )
+
+  // ── 座位 1（主）：根级 agent/pre-step，agent 直接来自 payload ──
+  // 顺带维护"轮是否开着"，供轮次规则判断（见 reprimeAll）。
+  ctx.on(
+    'agent/pre-step',
+    async (payload, next) => {
+      if (typeof payload?.agent?.id === 'string') openTurn.add(payload.agent.id)
+      return handle(payload, await next(), 'root')
+    },
+    { prepend: true },
+  )
+
+  // 轮即将结束：此刻 flush 延后的重挂 —— 本轮装配已成过去、下一轮装配尚未发生。
+  ctx.on('agent/turn-stopping', async (payload) => {
+    const id = payload?.agent?.id
+    if (typeof id !== 'string') return
+    openTurn.delete(id)
+    if (pendingReprime.has(id)) await flushPendingReprime()
+  })
+
+  // 活跃 agent 表：状态变化时要能立刻对它们**当场重新挂载**。
+  const liveAgents = new Map()
+
+  /** 当前是否有轮正在开（由 pre-step 置真、turn-stopping 置假）。 */
+  const openTurn = new Set()
+
+  /** 轮内点击时暂存的重挂请求 —— 等该轮结束再执行（用户定的轮次规则）。 */
+  const pendingReprime = new Set()
+
+  /** 立刻对单个 agent 重挂（撤旧 → 按当前状态挂上，latch 标记 pending）。 */
+  const reprimeOne = async (agent, label) => {
+    const gate = await loadGate()
+    if (typeof gate?.prime !== 'function') return
+    try {
+      unlatch(agent.id)
+      gate.prime({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, agent)
+      note({ reprime: label, id: agent.id })
+    } catch (error) {
+      note({ reprime: label, id: agent.id, error: String(error?.message ?? error) })
+    }
+  }
+
+  /**
+   * 【轮次规则】按当前状态对所有活跃 agent 重新挂载。
+   *
+   * 规则（用户定）：**点击时的轮次号是基线，效果只在轮次号增加后生效**。
+   *   · 会话空闲时点 → 当场挂 ⇒ 紧随的那一轮（turn = N+1）沿用，装配时已就位；
+   *   · 一轮进行中点 → 该轮后续 step 的 turn 仍是 N，**不得生效** ⇒ 延后到
+   *     `agent/turn-stopping`（本轮的装配已成过去、下一轮的装配还没发生）再挂。
+   *
+   * 这条规则补的正是"点即挂载"唯一的缝：轮内点击会渗进当前轮的后半段。
+   */
+  const reprimeAll = async (label) => {
+    for (const [id, agent] of liveAgents) {
+      if (openTurn.has(id)) {
+        pendingReprime.add(id)
+        continue
+      }
+      await reprimeOne(agent, label)
+    }
+    note({ reprime: label, agents: liveAgents.size, deferred: pendingReprime.size })
+  }
+
+  /** 轮结束时：本轮的装配已成过去，此刻重挂对下一轮才是"装配前就位"。 */
+  const flushPendingReprime = async () => {
+    for (const id of [...pendingReprime]) {
+      pendingReprime.delete(id)
+      const agent = liveAgents.get(id)
+      if (agent !== undefined) await reprimeOne(agent, 'turn-closed')
+    }
+  }
+
+  // ── 座位 2（次）：per-agent 最外层（改写最外层位置需要 per-agent 注册）──
+  ctx.on('agent/created', async ({ agent }) => {
+    if (typeof agent?.id === 'string') liveAgents.set(agent.id, agent)
+    if (typeof agent?.ctx?.on === 'function') {
+      agent.ctx.on(
+        'agent/pre-step',
+        async (payload, next) => handle(payload, await next(), 'agent'),
+        { prepend: true },
+      )
+    } else {
+      note({ seat: 'agent/created', problem: 'agent.ctx.on 不可用' })
+    }
+
+    // 【急切挂载】必须在**任何请求装配之前**把 lever / 阻断器挂上。
+    // 实测：只在 pre-step 挂载时，会话首个请求的装配抢在挂载之前发生
+    // （诊断里出现过 `{blocker:…, frozen:false, hit:false}`），表现为
+    // "首轮不生效、第二轮才生效"。所以这里按当前状态先挂一次。
+    const gate = await loadGate()
+    if (typeof gate?.prime === 'function') {
+      try {
+        gate.prime({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, agent)
+      } catch (error) {
+        note({ seat: 'agent/created', error: String(error?.message ?? error) })
+      }
+    }
+
+    // 【P1 探针】合成预填装轮：agent/created 是串行的、且早于首个轮次，
+    // 正好是"把预填装写成真实 durable 事件"的合法窗口（详见 gate.js 顶部说明）。
+    if (typeof gate?.materializePrefill === 'function') {
+      try {
+        await gate.materializePrefill({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, agent)
+      } catch (error) {
+        note({ seat: 'agent/created', prefill: 'threw', error: String(error?.message ?? error) })
+      }
+    }
+  })
+
+  ctx.on('agent/disposed', ({ agent }) => {
+    if (typeof agent?.id === 'string') liveAgents.delete(agent.id)
+  })
+
+  // ── 自有路由（运输层 + 诊断出口）──
+  ctx.inject(['connection'], (scope) => {
+    const connection = scope.get('connection')
+    const register =
+      typeof connection?.fetch?.register === 'function'
+        ? connection.fetch.register.bind(connection.fetch)
+        : undefined
+
+    if (register === undefined) {
+      note({ seat: 'routes', problem: 'connection.fetch.register 不可用' })
+      return
+    }
+
+    const noStore = { headers: { 'cache-control': 'no-store' } }
+    const envelope = () => ({
+      ok: true,
+      plugin: '@local/dsh-prefill',
+      stage: STAGE,
+      gateStage: gateCache.module?.STAGE ?? null,
+      stateFile: STATE_FILE,
+      state: readState(),
+      diagnostics: {
+        seen: diagnostics.seen,
+        mounted: diagnostics.mounted,
+        gateLoads: diagnostics.gateLoads,
+        gateError: diagnostics.gateError,
+        last: diagnostics.last.slice(-8),
+      },
+    })
+
+    scope.effect(
+      () => register({ path: PING_ROUTE, methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(envelope(), noStore) }),
+      'dsh-prefill: ping route',
+    )
+
+    scope.effect(
+      () =>
+        register({
+          path: STATE_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let patch
+            try {
+              patch = await request?.json?.()
+            } catch {
+              patch = undefined
+            }
+            if (patch !== null && typeof patch === 'object' && Object.keys(patch).length > 0) {
+              patchState(patch)
+              // 【关键】写状态后当场重新挂载：让"点完开关再发"在该轮装配之前就位。
+              await reprimeAll('state-write')
+            }
+            return Response.json(envelope(), noStore)
+          },
+        }),
+      'dsh-prefill: state route',
+    )
+
+    ctx.logger?.info?.(`dsh-prefill: host half applied (${STAGE}), state at ${STATE_FILE}`)
+  })
+}
