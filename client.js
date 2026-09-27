@@ -27,6 +27,8 @@ window.__ModuleLoader__.load({
     const STATE_ROUTE = '/api/dsh-prefill/state'
     /** 草稿路由：读/写本会话的多轮 items（发送前可编辑的载体）。 */
     const DRAFT_ROUTE = '/api/dsh-prefill/draft'
+    /** 包路由：预填装包按工作区存取（M4）。 */
+    const PACKS_ROUTE = '/api/dsh-prefill/packs'
 
     /**
      * 同页两个组件之间的状态同步：输入框里的「预填装」开关写完之后广播一次，
@@ -124,6 +126,18 @@ window.__ModuleLoader__.load({
       stateFilter: '白名单',
       nextTurn: '下一轮生效',
       badgeTip: '本轮生效的闸门快照（本轮已冻结；改开关只影响下一轮）',
+      // ── M4：包 ──
+      packs: '包',
+      packsEmpty: '（还没有包）',
+      loadPack: '载入到草稿',
+      savePack: '存为包',
+      deletePack: '删除包',
+      packNamePlaceholder: '包名字',
+      io: '导入 / 导出',
+      ioHint: '导出后这里是包的 JSON；粘贴一个 { name, items[] } 或纯 items 数组也能导入。',
+      ioExport: '导出到文本框',
+      ioImportPack: '从文本框存为包',
+      ioImportDraft: '从文本框载入草稿',
     }
 
     const en = {
@@ -198,6 +212,18 @@ window.__ModuleLoader__.load({
       stateFilter: 'Allow-list',
       nextTurn: 'next turn',
       badgeTip: 'Effective gate snapshot for this turn (frozen for the turn; toggling affects the next one)',
+      // ── M4: packs ──
+      packs: 'Pack',
+      packsEmpty: '(no packs yet)',
+      loadPack: 'Load into draft',
+      savePack: 'Save as pack',
+      deletePack: 'Delete pack',
+      packNamePlaceholder: 'pack name',
+      io: 'Import / export',
+      ioHint: 'After export this holds the pack JSON; paste { name, items[] } or a bare items array to import.',
+      ioExport: 'Export to box',
+      ioImportPack: 'Save box as pack',
+      ioImportDraft: 'Load box into draft',
     }
 
     const S = {
@@ -396,6 +422,27 @@ window.__ModuleLoader__.load({
         fontSize: 11,
         lineHeight: 1,
         cursor: 'pointer',
+      },
+      dockSelect: {
+        height: 24,
+        padding: '0 6px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-base)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: 12,
+        maxWidth: 200,
+      },
+      dockName: {
+        height: 24,
+        boxSizing: 'border-box',
+        width: 120,
+        padding: '0 8px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-base)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: 12,
       },
       dockStatus: (kind) => ({
         fontSize: 11,
@@ -813,6 +860,12 @@ window.__ModuleLoader__.load({
       const [enabled, setEnabled] = React.useState(false)
       const [status, setStatus] = React.useState('idle')
       const [revision, setRevision] = React.useState(0)
+      // M4：包（按工作区存在 host 侧）
+      const [packs, setPacks] = React.useState([])
+      const [selected, setSelected] = React.useState('')
+      const [packName, setPackName] = React.useState('')
+      const [ioOpen, setIoOpen] = React.useState(false)
+      const [ioText, setIoText] = React.useState('')
       const dirty = React.useRef(false)
       const staged = React.useRef(false)
 
@@ -870,6 +923,30 @@ window.__ModuleLoader__.load({
         }
       }, [enabled, items, post, sessionId])
 
+      // ── M4：包 ────────────────────────────────────────────────────────────────
+      const packsCall = React.useCallback(
+        async (payload) => {
+          const response = await fetch(PACKS_ROUTE, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId, ...payload }),
+          })
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          return await response.json()
+        },
+        [sessionId],
+      )
+
+      const refreshPacks = React.useCallback(() => {
+        void packsCall({ op: 'list' })
+          .then((data) => setPacks(Array.isArray(data?.packs) ? data.packs : []))
+          .catch(() => setStatus('error'))
+      }, [packsCall])
+
+      React.useEffect(() => {
+        if (enabled && sessionId !== '') refreshPacks()
+      }, [enabled, refreshPacks, sessionId])
+
       const save = React.useCallback(
         (next) => {
           setStatus('saving')
@@ -906,6 +983,66 @@ window.__ModuleLoader__.load({
         edit(next)
       }
 
+      const adoptPacks = (data) => {
+        setPacks(Array.isArray(data?.packs) ? data.packs : [])
+      }
+      const loadPack = () => {
+        if (selected === '') return
+        void packsCall({ op: 'get', name: selected })
+          .then((data) => {
+            const next = Array.isArray(data?.pack?.items) ? data.pack.items : []
+            edit(next)
+            setPackName(selected)
+          })
+          .catch(() => setStatus('error'))
+      }
+      const savePack = () => {
+        const name = (packName.trim() === '' ? selected : packName).trim()
+        if (name === '') {
+          setStatus('error')
+          return
+        }
+        void packsCall({ op: 'save', name, items })
+          .then((data) => {
+            adoptPacks(data)
+            setSelected(name)
+            setStatus('saved')
+          })
+          .catch(() => setStatus('error'))
+      }
+      const deletePack = () => {
+        if (selected === '') return
+        void packsCall({ op: 'delete', name: selected })
+          .then((data) => {
+            adoptPacks(data)
+            setSelected('')
+            setStatus('saved')
+          })
+          .catch(() => setStatus('error'))
+      }
+      const importPack = () => {
+        void packsCall({ op: 'import', json: ioText })
+          .then((data) => {
+            adoptPacks(data)
+            setStatus(data?.reason ? 'error' : 'saved')
+          })
+          .catch(() => setStatus('error'))
+      }
+      const importDraft = () => {
+        try {
+          const parsed = JSON.parse(ioText)
+          const next = Array.isArray(parsed) ? parsed : parsed?.items
+          if (!Array.isArray(next)) {
+            setStatus('error')
+            return
+          }
+          edit(next)
+          setStatus('saved')
+        } catch {
+          setStatus('error')
+        }
+      }
+
       const statusKind = status === 'error' ? 'error' : status === 'saved' ? 'saved' : 'idle'
       const statusText =
         status === 'error' ? t('syncFailed') : status === 'saving' ? t('syncSaving') : status === 'saved' ? t('syncSaved') : t('syncIdle')
@@ -926,6 +1063,67 @@ window.__ModuleLoader__.load({
             t('dockClear'),
           ),
         ),
+        // M4：包行 —— 选择 / 载入 / 存为 / 删除 / 导入导出
+        h(
+          'div',
+          { style: S.dockHead },
+          h('span', { style: S.label }, t('packs')),
+          h(
+            'select',
+            { style: S.dockSelect, value: selected, onChange: (event) => setSelected(event.target.value) },
+            h('option', { value: '' }, t('packsEmpty')),
+            ...packs.map((pack) =>
+              h('option', { key: pack.name, value: pack.name }, `${pack.name} (${pack.count})`),
+            ),
+          ),
+          h('button', { type: 'button', style: S.gateBtn, onClick: loadPack }, t('loadPack')),
+          h('input', {
+            style: S.dockName,
+            value: packName,
+            placeholder: t('packNamePlaceholder'),
+            spellCheck: false,
+            onChange: (event) => setPackName(event.target.value),
+          }),
+          h('button', { type: 'button', style: S.gateBtn, onClick: savePack }, t('savePack')),
+          h('button', { type: 'button', style: S.gateBtn, onClick: deletePack }, t('deletePack')),
+          h('button', { type: 'button', style: S.gateBtn, onClick: () => setIoOpen(!ioOpen) }, t('io')),
+        ),
+        ioOpen
+          ? h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+              h('textarea', {
+                style: S.dockThink,
+                value: ioText,
+                placeholder: t('ioHint'),
+                spellCheck: false,
+                onChange: (event) => setIoText(event.target.value),
+              }),
+              h(
+                'div',
+                { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: S.gateBtn,
+                    onClick: () =>
+                      setIoText(
+                        JSON.stringify(
+                          { name: (packName.trim() === '' ? selected : packName) || 'untitled', items },
+                          null,
+                          2,
+                        ),
+                      ),
+                  },
+                  t('ioExport'),
+                ),
+                h('button', { type: 'button', style: S.gateBtn, onClick: importPack }, t('ioImportPack')),
+                h('button', { type: 'button', style: S.gateBtn, onClick: importDraft }, t('ioImportDraft')),
+              ),
+            )
+          : null,
+
         h('div', { style: S.dockHint }, t('dockHint')),
 
         items.length === 0 ? h('div', { style: S.dockHint }, t('dockEmpty')) : null,

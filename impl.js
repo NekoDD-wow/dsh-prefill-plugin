@@ -49,6 +49,8 @@ const PING_ROUTE = '/api/dsh-prefill/ping'
 const STATE_ROUTE = '/api/dsh-prefill/state'
 /** 客户端草稿入口：编辑好的多轮 items 在这里暂存，等用户"发出"时物化。 */
 const DRAFT_ROUTE = '/api/dsh-prefill/draft'
+/** 预填装包的读写入口（M4）。 */
+const PACKS_ROUTE = '/api/dsh-prefill/packs'
 
 /** 热插拔内核的位置。 */
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -153,6 +155,61 @@ function patchState(patch) {
 
 /** 每 agent 的轮次闩锁容器（放壳里，跨内核热换存活）。 */
 const latches = new Map()
+
+// ── 预填装包（M4）────────────────────────────────────────────────────────────
+// 按工作区一份（规划 §3.3 / Q7）：`<workspace>/.dsh-prefill/packs.json`；
+// 会话不在册或没有 cwd 时落到 `<DSH_HOME>/prefill/global/.dsh-prefill/packs.json`。
+// 一个包 = `{ id, name, updatedAt, items[] }`，items 与草稿同形（§14.3）。
+
+/** 包文件路径。 */
+function packFileFor(workspace) {
+  const root = typeof workspace === 'string' && workspace !== '' ? workspace : join(DATA_DIR, 'global')
+  return join(root, '.dsh-prefill', 'packs.json')
+}
+
+/** 读一个工作区的全部包（坏文件当空，不抛）。 */
+function readPacks(workspace) {
+  try {
+    const raw = JSON.parse(readFileSync(packFileFor(workspace), 'utf8'))
+    return Array.isArray(raw?.packs) ? raw.packs.filter((pack) => typeof pack?.name === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/** 写回一个工作区的全部包，返回文件路径。 */
+function writePacks(workspace, packs) {
+  const file = packFileFor(workspace)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, `${JSON.stringify({ version: 1, packs }, null, 2)}\n`, 'utf8')
+  return file
+}
+
+/** 选择器需要的轻量摘要（不把 items 全丢给下拉框）。 */
+function packSummaries(packs) {
+  return packs.map((pack) => ({
+    name: pack.name,
+    count: Array.isArray(pack.items) ? pack.items.length : 0,
+    updatedAt: pack.updatedAt ?? null,
+  }))
+}
+
+/** 校验一个 items 数组：只留 user / assistant 两形，字段做最小清洗。 */
+function sanitizeItems(raw) {
+  if (!Array.isArray(raw)) return undefined
+  return raw
+    .map((item) => {
+      if (item === null || typeof item !== 'object') return undefined
+      const role = item.role === 'assistant' ? 'assistant' : item.role === 'user' ? 'user' : undefined
+      if (role === undefined) return undefined
+      const text = typeof item.text === 'string' ? item.text : ''
+      if (role === 'assistant') {
+        return { role, text, reasoning: typeof item.reasoning === 'string' ? item.reasoning : '' }
+      }
+      return { role, text }
+    })
+    .filter((item) => item !== undefined)
+}
 
 function unlatch(agentId) {
   const entry = latches.get(agentId)
@@ -485,6 +542,86 @@ export function apply(ctx) {
           },
         }),
       'dsh-prefill: draft route',
+    )
+
+    // 预填装包：按工作区存取（Q7）。op = list | get | save | delete | import
+    scope.effect(
+      () =>
+        register({
+          path: PACKS_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body
+            try {
+              body = await request?.json?.()
+            } catch {
+              body = undefined
+            }
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+            // 工作区取自在册 agent 的 session header（会话不在册就落全局目录）。
+            const workspace = liveAgents.get(sessionId)?.session?.header?.cwd
+            const op = typeof body?.op === 'string' ? body.op : 'list'
+            const file = packFileFor(workspace)
+            let packs = readPacks(workspace)
+            let reason = ''
+
+            const upsert = (name, items) => {
+              const pack = { name, updatedAt: new Date().toISOString(), items }
+              const at = packs.findIndex((entry) => entry.name === name)
+              if (at >= 0) packs[at] = pack
+              else packs = [...packs, pack]
+              writePacks(workspace, packs)
+            }
+
+            if (op === 'list') {
+              // 无操作，直接回列表。
+            } else if (op === 'get') {
+              const name = typeof body?.name === 'string' ? body.name : ''
+              const found = packs.find((entry) => entry.name === name)
+              note({ seat: 'packs-route', op, name, hit: found !== undefined })
+              return Response.json({ ok: true, op, name, pack: found ?? null, file, ...envelope() }, noStore)
+            } else if (op === 'save') {
+              const name = typeof body?.name === 'string' ? body.name.trim() : ''
+              const items = sanitizeItems(body?.items)
+              if (name === '') reason = 'missing name'
+              else if (items === undefined) reason = 'invalid items[]'
+              else upsert(name, items)
+            } else if (op === 'delete') {
+              const name = typeof body?.name === 'string' ? body.name : ''
+              const next = packs.filter((entry) => entry.name !== name)
+              if (next.length === packs.length) reason = 'not found'
+              else {
+                packs = next
+                writePacks(workspace, packs)
+              }
+            } else if (op === 'import') {
+              let parsed
+              try {
+                parsed = typeof body?.json === 'string' ? JSON.parse(body.json) : body?.json
+              } catch (error) {
+                parsed = undefined
+                reason = `bad json: ${String(error?.message ?? error)}`
+              }
+              if (parsed !== undefined) {
+                const items = sanitizeItems(parsed?.items ?? parsed)
+                const raw = parsed?.name ?? body?.name
+                const name = typeof raw === 'string' ? raw.trim() : ''
+                if (items === undefined || name === '') reason = 'import needs { name, items[] }'
+                else upsert(name, items)
+              }
+            } else {
+              reason = `unknown op "${op}"`
+            }
+
+            note({ seat: 'packs-route', op, sessionId, workspace: workspace ?? '(global)', count: packs.length, reason })
+            return Response.json(
+              { ok: true, op, packs: packSummaries(packs), file, reason, ...envelope() },
+              noStore,
+            )
+          },
+        }),
+      'dsh-prefill: packs route',
     )
 
     ctx.logger?.info?.(`dsh-prefill: host half applied (${STAGE}), state at ${STATE_FILE}`)
