@@ -605,6 +605,49 @@ export async function step(api, payload, decision) {
     }
   }
 
+  // ── 会话内注入（模式 B · "首轮之后再预填装"）──────────────────────────────
+  // 首轮之后"写进历史"这条路已经被物理约束关死了（F11：`session.append` 禁止在系统节点与
+  // 首条用户消息之间重入插入；F12：assistant/message 必须在已开的 turn+step 内），
+  // 所以改成**每轮注入**：把预填装内容渲染成一条注入消息，插在真实用户消息**之前**
+  // （位置与 harness 自己的 runtime-context 一致），既不写 session、也不是历史。
+  //
+  // 只在 `turn > 1` 生效：首轮仍然走物化 —— 那才是"变成真实历史"。
+  const injectItems = Array.isArray(state?.injects?.[agent.id]) ? state.injects[agent.id] : []
+  if (
+    injectItems.length > 0 &&
+    Number.isFinite(payload?.turn) &&
+    payload.turn > 1 &&
+    decision?.kind === 'enter' &&
+    Array.isArray(next.messages)
+  ) {
+    const messages = [...next.messages]
+    // 借用 harness 自己那条注入消息的形状（省得猜字段），只换 kind 和正文。
+    const template = messages.find((message) => message?.source?.kind === 'runtime-context') ?? {
+      role: 'user',
+      source: {},
+    }
+    const text = renderInjectBlock(injectItems)
+    const injected = {
+      ...template,
+      id: `prefill-inject-${payload.turn}-${payload.step ?? 0}`,
+      role: 'user',
+      source: { ...(template.source ?? {}), kind: 'prefill', prefill: 'inject' },
+      content: [{ type: 'text', text }],
+    }
+    // 插在**最后一条真实用户消息之前**（没有就追加）。
+    let at = -1
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.source?.kind === 'user') {
+        at = index
+        break
+      }
+    }
+    if (at >= 0) messages.splice(at, 0, injected)
+    else messages.push(injected)
+    next = { ...next, messages }
+    note({ inject: 'done', id: agent.id, turn: payload.turn, chars: text.length, items: injectItems.length })
+  }
+
   // ── 自检：直接向装配器要一份"此刻到底装配成什么"的真相 ──────────────────
   // 为什么需要它：`system/message` 是**投影提交**的结果（round A 的探针段直到 step 2
   // 才落地），而单 step 的回合根本不提交 —— 只看日志会把"没提交"误判成"没生效"。
@@ -885,9 +928,29 @@ function resolveItems(state, agentId) {
   return []
 }
 
+/**
+ * 把预填装条目渲染成"会话内注入"的正文（模式 B）。
+ *
+ * 与模式 A（物化成真实消息）的区别：这里是**一整块文本**塞进一条注入消息，
+ * 不写 session、不进历史、每轮都要重新注入（所以要花 token）。
+ */
+function renderInjectBlock(items) {
+  const lines = ['【预填装 · 会话内注入】以下内容视为本会话开始前就已存在的背景：']
+  for (const item of items) {
+    const text = typeof item?.text === 'string' ? item.text : ''
+    if (item?.role === 'assistant') {
+      const reasoning =
+        typeof item?.reasoning === 'string' && item.reasoning !== '' ? `（思维链：${item.reasoning}）` : ''
+      lines.push(`AI：${text}${reasoning}`)
+    } else {
+      lines.push(`用户：${text}`)
+    }
+  }
+  return lines.join('\n')
+}
+
 /** 会话里是否已经有轮次（幂等守卫）。读不出来就当有，宁可不动。 */
-function hasTurn(session) {
-  try {
+function hasTurn(session) {  try {
     return session.snapshotEvents().some((event) => event.type === 'turn/start')
   } catch {
     return true

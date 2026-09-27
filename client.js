@@ -134,6 +134,15 @@ window.__ModuleLoader__.load({
       syncSaved: '已保存',
       syncFailed: '保存失败（后台接口不通？）',
       countSuffix: ' 条',
+      // ── 模式（首轮前=写入历史；会话已开跑=每轮注入）──
+      modeHistory: '写入历史',
+      modeHistoryTip: '首轮发出时，这些内容会变成真实对话历史（持久、省 token、模型当成自己的记忆）',
+      modeInject: '每轮注入',
+      modeInjectTip: '会话已开跑，无法再写入历史 ⇒ 改成每轮注入（不进历史、每轮都要花 token）',
+      injectNow: '注入',
+      injectNowTip: '把当前内容与注入改写写成"本会话配置"，不产生任何消息；下一轮请求就带上',
+      injectedNext: '已注入 · 下一轮生效',
+      injectFailed: '注入失败',
       // ── Q9 角标 ──
       statePure: '只留预填装',
       statePass: '注入照旧',
@@ -234,6 +243,15 @@ window.__ModuleLoader__.load({
       syncSaved: 'saved',
       syncFailed: 'save failed (host route?)',
       countSuffix: ' rows',
+      // ── mode (before first turn = write history; after = inject every turn) ──
+      modeHistory: 'Write to history',
+      modeHistoryTip: 'On your first send these become real conversation history (durable, cheap, owned by the model)',
+      modeInject: 'Inject every turn',
+      modeInjectTip: 'This session has already run, so history is out of reach — the content is injected on every turn instead (not history, costs tokens each turn)',
+      injectNow: 'Inject',
+      injectNowTip: 'Write the current content and injection rewrites into this session config — no message is produced; the next turn carries it',
+      injectedNext: 'Injected · next turn',
+      injectFailed: 'Inject failed',
       // ── Q9 badge ──
       statePure: 'Prefill only',
       statePass: 'Injections normal',
@@ -571,6 +589,17 @@ window.__ModuleLoader__.load({
         lineHeight: 1,
         cursor: 'pointer',
       },
+      // ── 模式标签（写入历史 / 每轮注入）──
+      modeChip: (injectMode) => ({
+        flex: '0 0 auto',
+        padding: '1px 8px',
+        borderRadius: 999,
+        fontSize: 11,
+        whiteSpace: 'nowrap',
+        border: `1px solid ${injectMode ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-border-l2)'}`,
+        color: injectMode ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-label-secondary)',
+        background: 'transparent',
+      }),
       dockSelect: {
         height: 24,
         padding: '0 6px',
@@ -1153,6 +1182,25 @@ window.__ModuleLoader__.load({
         if (enabled && sessionId !== '') refreshPacks()
       }, [enabled, refreshPacks, sessionId])
 
+      // 模式判定：`turns[sessionId]` —— 首轮前 = 写入历史；会话已开跑 = 每轮注入。
+      // 这不是偏好问题：首轮之后"写进历史"这条路被 F11/F12 关死了，继续显示
+      // "将变成真实历史"就是在骗人，所以自动切换并**明写**当前模式。
+      const [envelope, setEnvelope] = React.useState(null)
+      const [injectStatus, setInjectStatus] = React.useState('idle')
+      const refreshEnvelope = React.useCallback(() => {
+        void post(STATE_ROUTE, undefined)
+          .then((data) => setEnvelope(data))
+          .catch(() => {
+            // 拿不到就维持当前显示。
+          })
+      }, [])
+      React.useEffect(() => {
+        if (enabled && sessionId !== '') refreshEnvelope()
+      }, [enabled, refreshEnvelope, sessionId])
+      const turns = envelope?.turns?.[sessionId] ?? 0
+      const injectCount = envelope?.injects?.[sessionId] ?? 0
+      const injectMode = turns > 0
+
       const save = React.useCallback(
         (next) => {
           setStatus('saving')
@@ -1263,6 +1311,31 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /**
+       * **一键注入**：把"当前内容 + 注入改写"写成**本会话配置**，不产生任何消息。
+       *
+       * 为什么不要"手输一句话触发"：注入是宿主侧配置，写完下一轮请求就带上了；拿一句
+       * 废话当触发器会把那句废话永久留在历史里、还烧一次钱，也把"改配置"和"问正事"耦合了。
+       */
+      const oneClickInject = () => {
+        setInjectStatus('idle')
+        void currentOverrides()
+          .then(async (overrides) => {
+            const fresh = await post(STATE_ROUTE, undefined)
+            const patch = {
+              overrides: { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides },
+            }
+            // 只有"已开跑"的会话才写每轮注入；首轮前交给物化（那才是真的写入历史）。
+            if (injectMode && items.length > 0) {
+              patch.injects = { ...(fresh?.state?.injects ?? {}), [sessionId]: items }
+            }
+            await post(STATE_ROUTE, patch)
+            setInjectStatus('done')
+            refreshEnvelope()
+          })
+          .catch(() => setInjectStatus('error'))
+      }
+
       const exportFile = async () => {
         const explicit = (packName.trim() === '' ? selected : packName).trim()
         const name = explicit === '' ? 'prefill' : explicit
@@ -1327,6 +1400,25 @@ window.__ModuleLoader__.load({
           h('span', { style: S.dockTitle }, t('dockTitle')),
           h('span', { style: S.label }, `${items.length}${t('countSuffix')}`),
           h('span', { style: S.dockStatus(statusKind) }, statusText),
+          // 模式标签：把"现在是写入历史还是每轮注入"明写出来（说明见 title）。
+          h(
+            'span',
+            { style: S.modeChip(injectMode), title: injectMode ? t('modeInjectTip') : t('modeHistoryTip') },
+            injectMode ? `${t('modeInject')}${injectCount > 0 ? ` · ${injectCount}` : ''}` : t('modeHistory'),
+          ),
+          // 一键注入：写成本会话配置，不产生任何消息。
+          h(
+            'button',
+            { type: 'button', style: S.gateBtn, title: t('injectNowTip'), onClick: oneClickInject },
+            t('injectNow'),
+          ),
+          injectStatus === 'idle'
+            ? null
+            : h(
+                'span',
+                { style: S.dockStatus(injectStatus === 'error' ? 'error' : 'saved') },
+                injectStatus === 'error' ? t('injectFailed') : t('injectedNext'),
+              ),
           h('span', { style: { flex: '1 1 auto' } }),
           h(
             'button',
@@ -1369,7 +1461,7 @@ window.__ModuleLoader__.load({
           h('span', { style: S.dockHint }, t('fileHint')),
         ),
 
-        h('div', { style: S.dockHint }, t('dockHint')),
+        h('div', { style: S.dockHint }, injectMode ? t('modeInjectTip') : t('dockHint')),
 
         items.length === 0 ? h('div', { style: S.dockHint }, t('dockEmpty')) : null,
 

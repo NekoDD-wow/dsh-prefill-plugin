@@ -455,30 +455,40 @@ export function apply(ctx) {
     }
 
     const noStore = { headers: { 'cache-control': 'no-store' } }
-    const envelope = () => ({
-      ok: true,
-      plugin: '@local/dsh-prefill',
-      stage: STAGE,
-      gateStage: gateCache.module?.STAGE ?? null,
-      stateFile: STATE_FILE,
-      state: readState(),
-      drafts: typeof gateCache.module?.draftIds === 'function' ? gateCache.module.draftIds() : [],
-      // Q9 角标：每会话最近一轮的生效快照（三态 + 被丢弃的 kind）。
-      snapshots: typeof gateCache.module?.snapshots === 'function' ? gateCache.module.snapshots() : {},
-      // Q17：可改的注入清单 = **预置 catalog**（全局 prompt 层的真实注册名）+ 每会话已发现的条目。
-      // 有 catalog，用户就能在某条注入还没出现过时先写好改写（"直接劫持"）。
-      injections: typeof gateCache.module?.injections === 'function' ? gateCache.module.injections(rootCtxRef) : {},
-      // 有"延后到下一轮"的重挂请求 ⇒ 客户端角标要明说"下一轮生效"，
-      // 否则用户在**轮内**翻开关会以为没生效（它会一直跑到本轮结束 —— Q18 的轮次冻结）。
-      pendingReprime: [...pendingReprime],
-      diagnostics: {
-        seen: diagnostics.seen,
-        mounted: diagnostics.mounted,
-        gateLoads: diagnostics.gateLoads,
-        gateError: diagnostics.gateError,
-        last: diagnostics.last.slice(-8),
-      },
-    })
+    const envelope = () => {
+      const snapshots = typeof gateCache.module?.snapshots === 'function' ? gateCache.module.snapshots() : {}
+      const state = readState()
+      const injects = state?.injects !== null && typeof state?.injects === 'object' ? state.injects : {}
+      return {
+        ok: true,
+        plugin: '@local/dsh-prefill',
+        stage: STAGE,
+        gateStage: gateCache.module?.STAGE ?? null,
+        stateFile: STATE_FILE,
+        state,
+        drafts: typeof gateCache.module?.draftIds === 'function' ? gateCache.module.draftIds() : [],
+        // Q9 角标：每会话最近一轮的生效快照（三态 + 被丢弃的 kind）。
+        snapshots,
+        // 每会话"已跑到第几轮"：面板据此自动切换「写入历史」/「每轮注入」两种模式。
+        turns: Object.fromEntries(Object.entries(snapshots).map(([id, snap]) => [id, snap?.turn ?? 0])),
+        // 每会话"每轮注入"的条目数（模式 B；0 表示没配）。
+        injects: Object.fromEntries(Object.entries(injects).map(([id, items]) => [id, Array.isArray(items) ? items.length : 0])),
+        // Q17：可改的注入清单 = **预置 catalog**（全局 prompt 层的真实注册名）+ 每会话已发现的条目。
+        // 有 catalog，用户就能在某条注入还没出现过时先写好改写（"直接劫持"）。
+        injections: typeof gateCache.module?.injections === 'function' ? gateCache.module.injections(rootCtxRef) : {},
+        // 有"延后到下一轮"的重挂请求 ⇒ 客户端角标要明说"下一轮生效"，
+        // 否则用户在**轮内**翻开关会以为没生效（它会一直跑到本轮结束 —— Q18 的轮次冻结）。
+        pendingReprime: [...pendingReprime],
+        // 诊断（给脚本/排查用）。
+        diagnostics: {
+          seen: diagnostics.seen,
+          mounted: diagnostics.mounted,
+          gateLoads: diagnostics.gateLoads,
+          gateError: diagnostics.gateError,
+          last: diagnostics.last.slice(-8),
+        },
+      }
+    }
 
     scope.effect(
       () => register({ path: PING_ROUTE, methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(envelope(), noStore) }),
