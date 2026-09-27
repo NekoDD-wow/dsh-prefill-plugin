@@ -53,6 +53,9 @@ window.__ModuleLoader__.load({
      */
     const injectionDrafts = new Map()
 
+    /** 内置「纯净模式」预设的名字（不是文件里的预设，套用时写闸门配置）。 */
+    const BUILTIN_PURE = '纯净模式'
+
     /** 读某会话的注入改写草稿（没有就空对象）。 */
     function injectionDraftOf(sessionId) {
       const draft = injectionDrafts.get(sessionId)
@@ -180,6 +183,14 @@ window.__ModuleLoader__.load({
       sessionClear: '清除本会话注入配置',
       sessionClearTip: '删掉这个会话的注入改写、每轮注入内容与独立白名单（回到全局默认）',
       clearDone: '已清除',
+      // ── 内置「纯净模式」预设（接管 pure preset 的语义）──
+      purePresetName: '纯净模式（内置，接管 pure preset）',
+      pureApplied: '纯净模式已生效',
+      purePresetTip:
+        '一键把本会话切到纯净态：清空系统提示与运行时上下文、不给工具、丢掉除你自己以外的注入。pure preset 已不再需要。',
+      // ── 与其他插件的冲突 ──
+      conflictTitle: '检测到注入冲突',
+      conflictCompleteSection: '有插件占用了 complete 段（纯净态），已自动退化为逐名清空',
       confirmDeletePreset: '删除这个预设？再点一次确认',
       confirmClearSession: '清除本会话的注入配置？再点一次确认',
       confirmYes: '确认？',
@@ -315,6 +326,14 @@ window.__ModuleLoader__.load({
       sessionClear: 'Clear this session\u2019s injection config',
       sessionClearTip: 'Drop this session\u2019s injection rewrites, per-turn injected content and its own allow-list',
       clearDone: 'cleared',
+      // ── built-in "pure mode" preset (takes over the pure preset semantics) ──
+      purePresetName: 'Pure mode (built-in; replaces the pure preset)',
+      pureApplied: 'Pure mode active',
+      purePresetTip:
+        'Switches this session to pure: empty system prompt, no runtime context, no tools, only your own words pass. The pure preset is no longer needed.',
+      // ── conflicts with other plugins ──
+      conflictTitle: 'Injection conflict detected',
+      conflictCompleteSection: 'another plugin occupies the complete section (pure state); fell back to per-name wipe',
       confirmDeletePreset: 'Delete this preset? Click again to confirm',
       confirmClearSession: 'Clear this session\u2019s injection config? Click again to confirm',
       confirmYes: 'Confirm?',
@@ -732,6 +751,17 @@ window.__ModuleLoader__.load({
         whiteSpace: 'nowrap',
         border: '1px dashed var(--dsw-alias-border-l2)',
         color: 'var(--dsw-alias-label-tertiary)',
+      },
+      // ── 与其他插件的冲突横幅（**明说**，不悄悄降级）──
+      conflictBanner: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 3,
+        padding: '7px 10px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-state-error-primary, #d94a4a)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        fontSize: 11.5,
       },
       // ── 模式标签（写入历史 / 每轮注入）──
       modeChip: (injectMode) => ({
@@ -1462,6 +1492,8 @@ window.__ModuleLoader__.load({
         if (enabled && sessionId !== '') refreshEnvelope()
       }, [enabled, refreshEnvelope, sessionId])
       const turns = envelope?.turns?.[sessionId] ?? 0
+      // 与其他插件的冲突（host 记在 envelope.conflicts[会话]，UI 要明说）
+      const conflict = envelope?.conflicts?.[sessionId]
       const injectCount = envelope?.injects?.[sessionId] ?? 0
       const injectMode = turns > 0
 
@@ -1504,8 +1536,48 @@ window.__ModuleLoader__.load({
       const adoptPacks = (data) => {
         setPacks(Array.isArray(data?.packs) ? data.packs : [])
       }
+      /**
+       * **内置「纯净模式」**：一键把本会话切到纯净态（= pure preset 的五条腿语义）。
+       *
+       * 为什么要有它（用户定）：pure preset 不再使用，纯净态由本插件**完全接管** ——
+       * 这样同一作用域里恒只有本插件一个生产者，§9.3 的 R14 冲突从根上不存在。
+       * 五条腿的对应：① 段清空 → blockSections；② 上下文清空 → blockContexts；
+       * ③④ 工具清空（restrict + wire 级）→ blockTools；⑤ 只放行 user → blockMessages
+       * + 本会话白名单 ['user']。
+       */
+      const applyBuiltinPure = async () => {
+        const fresh = await post(STATE_ROUTE, undefined)
+        const clean = (map) => {
+          const next = { ...(map ?? {}) }
+          delete next[sessionId]
+          return next
+        }
+        await post(STATE_ROUTE, {
+          armed: [...new Set([...(fresh?.state?.armed ?? []), sessionId])],
+          levers: {
+            ...(fresh?.state?.levers ?? {}),
+            blockSections: true,
+            blockContexts: true,
+            blockTools: true,
+            blockMessages: true,
+          },
+          allowKinds: ['user'],
+          sessionAllowKinds: { ...(fresh?.state?.sessionAllowKinds ?? {}), [sessionId]: ['user'] },
+          sessionTools: { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: [] },
+          // 纯净态不注入任何自有内容：清掉该会话的改写与每轮注入。
+          overrides: clean(fresh?.state?.overrides),
+          injects: clean(fresh?.state?.injects),
+        })
+        refreshEnvelope()
+        setInjectStatus('done')
+      }
+
       const loadPack = () => {
         if (selected === '') return
+        if (selected === BUILTIN_PURE) {
+          void applyBuiltinPure().catch(() => setStatus('error'))
+          return
+        }
         void packsCall({ op: 'get', name: selected })
           .then(async (data) => {
             const next = Array.isArray(data?.pack?.items) ? data.pack.items : []
@@ -1551,7 +1623,7 @@ window.__ModuleLoader__.load({
         return false
       }
       const deletePack = () => {
-        if (selected === '') return
+        if (selected === '' || selected === BUILTIN_PURE) return
         if (!armConfirm('preset')) return
         setConfirming('')
         void packsCall({ op: 'delete', name: selected })
@@ -1671,6 +1743,26 @@ window.__ModuleLoader__.load({
             margin: '0 auto',
           },
         },
+        // 与其他插件的冲突：**明确告诉用户**（用户定：pure preset 不再使用、由本插件接管）。
+        conflict
+          ? h(
+              'div',
+              { style: S.conflictBanner },
+              h(
+                'span',
+                { style: { fontWeight: 600 } },
+                `${t('conflictTitle')}：${
+                  conflict.kind === 'complete-section' ? t('conflictCompleteSection') : String(conflict.kind ?? '')
+                }`,
+              ),
+              (conflict.others ?? []).length > 0
+                ? h('span', null, `占用者：${(conflict.others ?? []).join('、')}`)
+                : null,
+              conflict.advice === undefined || conflict.advice === ''
+                ? null
+                : h('span', { style: S.dockHint }, String(conflict.advice)),
+            )
+          : null,
         h(
           'div',
           { style: S.dockHead },
@@ -1726,6 +1818,8 @@ window.__ModuleLoader__.load({
             'select',
             { style: S.dockSelect, value: selected, onChange: (event) => setSelected(event.target.value) },
             h('option', { value: '' }, t('packsEmpty')),
+            // 内置预设：不是文件里的包，套用时直接写本会话的闸门配置（接管 pure preset）。
+            h('option', { value: BUILTIN_PURE, title: t('purePresetTip') }, t('purePresetName')),
             ...packs.map((pack) =>
               h('option', { key: pack.name, value: pack.name }, `${pack.name} (${pack.count})`),
             ),

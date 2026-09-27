@@ -482,6 +482,9 @@ export function apply(ctx) {
         // 工具放行：catalog = 扫到的工具名（装配看到的）+ 官方可限制名单；sessions = 每会话装配到的工具。
         // 注意：**不改工具说明**（工具类注入一律忽略），这里只管"能不能用"。
         tools: typeof gateCache.module?.tools === 'function' ? gateCache.module.tools(rootCtxRef) : { catalog: [], sessions: {} },
+        // 与其他插件的冲突（典型：`complete:true` 段被 pure preset 占）——UI 要**明说**，
+        // 不能悄悄降级：用户已定 pure preset 不再使用、由本插件的「纯净模式」接管。
+        conflicts: typeof gateCache.module?.conflicts === 'function' ? gateCache.module.conflicts() : {},
         // 有"延后到下一轮"的重挂请求 ⇒ 客户端角标要明说"下一轮生效"，
         // 否则用户在**轮内**翻开关会以为没生效（它会一直跑到本轮结束 —— Q18 的轮次冻结）。
         pendingReprime: [...pendingReprime],

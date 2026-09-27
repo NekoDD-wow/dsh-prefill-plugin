@@ -87,6 +87,45 @@ function restrictableToolNames(toolService, agent) {
 const COMPLETE_CONFLICTS = (globalThis[Symbol.for('dsh-prefill.complete-conflicts')] ??= new Set())
 
 /**
+ * **与其他插件的冲突记录**（UI 要明确告诉用户，而不是悄悄退化）。
+ *
+ * 现状唯一一类：`complete:true` 段被占（典型是 `pure` preset 的 persona）。
+ * 用户已定：pure preset 不再使用、其语义由本插件的「纯净模式」预设接管 ——
+ * 所以撞上它时要**报出来并建议停用**，而不是默默降级。
+ * 挂 Symbol 以穿过内核热换。
+ */
+const CONFLICTS = (globalThis[Symbol.for('dsh-prefill.conflicts')] ??= new Map())
+
+/** 从 `multiple complete prompt sections are active: "a", "b"` 里抠出**别人**的名字。 */
+function competingNamesFrom(message) {
+  return [...String(message).matchAll(/"([^"]+)"/g)]
+    .map((match) => match[1])
+    .filter((name) => typeof name === 'string' && name !== '' && !name.startsWith('prefill'))
+}
+
+/** 记一条冲突（UI 读它）。 */
+function rememberConflict(sessionId, kind, message) {
+  if (typeof sessionId !== 'string' || sessionId === '') return undefined
+  const entry = {
+    kind,
+    others: competingNamesFrom(message),
+    message: String(message).slice(0, 300),
+    at: new Date().toISOString(),
+    advice:
+      kind === 'complete-section'
+        ? 'pure preset 已不再需要：请停用它，改由本插件的「纯净模式」预设接管（勾选后一键生效）'
+        : '请检查是否有其它插件在同一作用域重复注册',
+  }
+  CONFLICTS.set(sessionId, entry)
+  return entry
+}
+
+/** 读全部冲突（UI / 诊断出口）。 */
+export function conflicts() {
+  return Object.fromEntries(CONFLICTS)
+}
+
+/**
  * "逐名清空"：把 harness **已知的**段逐条清空（跳过我方要改写的那几条）。
  *
  * 与 `complete:true` 的分工：
@@ -688,7 +727,8 @@ export async function prime(api, agent) {
         const entry = api.latches.get(agent.id)
         const swapped = swapToPerNameWipe(agent, state, api, entry, primedComplete)
         if (entry !== undefined) entry.completeDisposer = undefined
-        api.note({ complete_conflict: 'at-created', fell_back: swapped, id: agent.id })
+        const conflict = rememberConflict(agent.id, 'complete-section', message)
+        api.note({ complete_conflict: 'at-created', fell_back: swapped, conflict, id: agent.id })
         if (swapped?.ok === true) {
           try {
             await computeRendered(agent)
@@ -915,7 +955,8 @@ export async function step(api, payload, decision) {
       if (message.includes('multiple complete prompt sections')) {
         const swapped = swapToPerNameWipe(agent, state, api, entry, completeDisposer)
         completeDisposer = undefined
-        note({ complete_conflict: 'pure-preset', fell_back: swapped, id: agent?.id })
+        const conflict = rememberConflict(agent?.id, 'complete-section', message)
+        note({ complete_conflict: 'at-pre-step', fell_back: swapped, conflict, id: agent?.id })
         selfCheck = { failed: message, fallback: swapped }
         if (swapped?.ok === true) {
           try {
