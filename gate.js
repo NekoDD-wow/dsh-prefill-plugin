@@ -65,6 +65,12 @@ function overridesFor(state, agentId) {
   return entry !== undefined && entry !== null && typeof entry === 'object' ? entry : undefined
 }
 
+/**
+ * 每会话**最近一次装配**的名字清单（Q17 的"注入内容改写"UI 要用它列出可改的段/上下文）。
+ * 挂 globalThis Symbol 以穿过内核热换。
+ */
+const ASSEMBLIES = (globalThis[Symbol.for('dsh-prefill.assemblies')] ??= new Map())
+
 /** 每会话**最近一轮**的闸门快照（Q9 角标）。挂 globalThis Symbol 以穿过内核热换。 */
 const SNAPSHOTS = (globalThis[Symbol.for('dsh-prefill.snapshots')] ??= new Map())
 
@@ -83,6 +89,34 @@ function gateStateOf(levers) {
 /** 读全部会话快照（UI / 诊断出口）。 */
 export function snapshots() {
   return Object.fromEntries(SNAPSHOTS)
+}
+
+/**
+ * Q17 的"可改注入"清单：每会话 →
+ *   `{ messages: [source.kind…], sections: [段名…], contexts: [上下文名…], tools: n }`
+ *
+ * 来源：`messages` 取最近一轮实际进入 pre-step 的 kind（`step()` 记录）；
+ * `sections`/`contexts` 取最近一次装配的名字（`system-prompt/assemble` 监听器记录）。
+ */
+export function injections() {
+  const out = {}
+  for (const [id, snap] of SNAPSHOTS) {
+    out[id] = {
+      messages: Array.isArray(snap.seenKinds) ? snap.seenKinds : [],
+      sections: [],
+      contexts: [],
+      tools: 0,
+    }
+  }
+  for (const [id, assembly] of ASSEMBLIES) {
+    out[id] = {
+      messages: out[id]?.messages ?? [],
+      sections: assembly.sections,
+      contexts: assembly.contexts,
+      tools: assembly.tools,
+    }
+  }
+  return out
 }
 
 /** 记录本轮快照。 */
@@ -196,6 +230,15 @@ function ensureToolsBlocker(api) {
     async (assembly, context, next) => {
       const result = await next()
       const id = context?.scope?.id ?? context?.agent?.id
+      // Q17：顺手记下这次装配里有哪些段 / 上下文（UI 靠它列出"可改的注入"）。
+      if (typeof id === 'string') {
+        ASSEMBLIES.set(id, {
+          sections: (result?.sections ?? []).map((section) => section.name),
+          contexts: (result?.contexts ?? []).map((entry) => entry.name),
+          tools: (result?.tools ?? []).length,
+          at: Date.now(),
+        })
+      }
       // 用**本轮冻结的** lever，而不是实时状态：否则轮内翻开关会让线上装配
       // 与"挂载的 lever"不一致（半轮移除、半轮恢复）。
       const frozen = typeof id === 'string' ? api.latches.get(id)?.frozenLevers : undefined
@@ -324,6 +367,8 @@ export function prime(api, agent) {
 export async function step(api, payload, decision) {
   const { readState, note, latches, unlatch, rootCtx } = api
   const agent = payload?.agent
+  // 无论是否武装都要挂"装配观察者"：Q17 的注入清单（段/上下文名）靠它拿。
+  ensureToolsBlocker(api)
   // M2：`state` 已经是"折算过按会话闸门"的有效状态（见 effectiveStateFor）。
   const state0 = effectiveStateFor(readState(), payload?.agent?.id)
   // `'*'` = 对所有会话生效：**只给无头探针用**（会话 id 事先不知道），UI 永远写具体 id。
@@ -339,12 +384,16 @@ export async function step(api, payload, decision) {
       armedList: state0.armed,
     })
     // 未武装 = 完全不干预 ⇒ 角标显示"全放行"。
+    const idleKinds = Array.isArray(decision?.messages)
+      ? decision.messages.map((message) => message?.source?.kind ?? '(none)')
+      : []
     recordSnapshot(agent?.id, {
       turn: payload?.turn,
       step: payload?.step,
       state: 'pass',
       armed: false,
       droppedKinds: [],
+      seenKinds: idleKinds,
       allowed: state0.allowKinds,
     })
     return decision
@@ -437,13 +486,14 @@ export async function step(api, payload, decision) {
     }
   }
 
-  // Q9：把本轮的生效快照记下来（客户端角标读它）。
+  // Q9：把本轮的生效快照记下来（客户端角标读它）；seenKinds 供 Q17 的注入清单用。
   recordSnapshot(agent.id, {
     turn: payload?.turn,
     step: payload?.step,
     state: gateStateOf(state.levers),
     armed: true,
     droppedKinds,
+    seenKinds,
     overrode,
     allowed: state.allowKinds,
   })

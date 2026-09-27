@@ -56,174 +56,190 @@ window.__ModuleLoader__.load({
 
     const zh = {
       nav: '预填装',
-      gateOff: '放行',
-      gateOn: '纯净',
-      gateTitleOff: '当前：全部放行（harness 注入照常）——点击开启纯净预注入',
-      gateTitleOn: '当前：纯净预注入 ON —— 本轮阻断全部 harness 注入；点击关闭',
-      gateNoticeTitle: '开启纯净预注入？',
-      gateNoticeBody:
-        '该轮系统提示会被渲染为空并重写头部 ⇒ 开新 series、前缀缓存失效、这一轮变贵。此说明只弹一次。',
+      // 两个开关：① 用不用预填装 ② 拦不拦 harness 的默认注入
+      gateOff: '不拦注入',
+      gateOn: '拦注入',
+      gateTitleOff: '当前：harness 的默认注入照常送出。点一下改成「拦注入」',
+      gateTitleOn: '当前：拦注入已开——这一轮不再送系统提示 / 工具 / 各种注入，只留你预填装的内容。点一下关掉',
+      gateNoticeTitle: '开启「拦注入」？',
+      gateNoticeBody: '这一轮系统提示会被清空重写 ⇒ 开新 series、前缀缓存失效、这一轮更贵。此说明只弹一次。',
       gateConfirm: '开启',
       gateCancel: '取消',
       prefillOff: '预填装',
       prefillOn: '预填装·开',
-      prefillTitleOff: '本会话未使用预填装——点击启用（进入预填装模式，预渲染填装内容）',
-      prefillTitleOn: '本会话已使用预填装——预渲染内容将在首轮发出时写成真实会话；点击关闭',
-      title: '会话预填装 · 注入闸门',
+      prefillTitleOff: '本会话还没用预填装——点一下开启，编辑区会出现在输入框上方',
+      prefillTitleOn: '本会话已用预填装——你发第一条消息时，这些内容会变成真实对话历史。点一下关掉',
+      title: '预填装 · 注入控制',
       intro:
-        'M1 四通道闸门：sections / contexts / tools / 注入消息，各自「能写」与「能关」。默认不干预任何会话——只有把会话 id 填进「武装目标」才会生效。',
-      cardTitle: '通道开关',
-      writeGroup: '写通道（预填装）',
-      blockGroup: '关通道（闸门 ON）',
-      probeSection: '写入探针 section',
-      probeContext: '写入探针 context',
-      blockSections: '清空 sections（complete 空段）',
-      blockContexts: '清空 contexts（suppressRuntimeContext）',
-      blockTools: '清空 tools（restrict allow:[]）',
-      blockMessages: '过滤注入消息（pre-step）',
-      armedLabel: '武装目标（会话 id，空格或逗号分隔；空 = 不干预任何会话）',
-      allowLabel: '放行 kind（逗号分隔；user 恒放行）',
-      apply: '应用',
-      applyArmed: '应用武装目标',
+        '开发 / 排查用的开关：系统提示(sections) / 运行时上下文(contexts) / 工具(tools) / 注入消息，各自「能写」与「能拦」。默认不碰任何会话——只有在「生效会话」里填了会话 id 才起作用。',
+      cardTitle: '开关',
+      writeGroup: '写入测试内容（开发用）',
+      blockGroup: '拦掉（开发用）',
+      probeSection: '写一段测试系统提示',
+      probeContext: '写一段测试运行时上下文',
+      blockSections: '清空系统提示',
+      blockContexts: '清空运行时上下文',
+      blockTools: '不给工具',
+      blockMessages: '拦掉注入消息',
+      armedLabel: '生效会话（会话 id，空格或逗号分隔；留空＝不干预任何会话）',
+      allowLabel: '放行哪些来源（来源标识 kind，逗号分隔；用户自己发的话永远放行）',
+      apply: '保存',
+      applyArmed: '保存生效会话',
       saved: '已保存',
       saveFailed: '保存失败',
-      stateTitle: '闸门状态',
+      stateTitle: '运行状态',
       stateFileLabel: '状态文件',
-      hostLabel: 'Host 半',
-      routeLabel: '自有路由',
+      hostLabel: '后台连接',
+      routeLabel: '接口',
       reachable: '通',
       unreachable: '不通',
-      busy: '探测中…',
-      idle: '未探测',
-      m1Note:
-        'M1 验收：四通道各自可写可关，且能按轮次闩锁、中途插话不重置。状态文件可被外部脚本直接改写，便于在不污染当前会话的前提下做端到端验证。',
-      // ── 草稿区（conversation.input.dock）──
-      dockTitle: '预填装草稿',
+      busy: '检测中…',
+      idle: '未检测',
+      m1Note: '排查用：状态文件可以直接改，不必污染当前会话。',
+      // ── 预填装内容（输入框上方的编辑区）──
+      dockTitle: '预填装内容',
       dockHint:
-        '按顺序任意写：用户消息与 AI 回答都可以连续出现，思维链挂在 AI 回答里（不是单独一轮）。首轮发出时它们会变成真实会话历史。',
+        '想让 AI 一开始就“记得”什么，写在这里：用户说的话和 AI 的回答顺序随意、连着好几条也行；AI 的思考过程写在 AI 那条里。你发第一条消息时，它们会变成真实对话历史。',
       dockEmpty: '还没有内容——点下面的按钮加一条。',
-      addUser: '＋ 用户消息',
+      addUser: '＋ 用户说',
       addAssistant: '＋ AI 回答',
       dockClear: '清空',
       roleUser: '用户',
       roleAssistant: 'AI',
-      textUser: '用户消息',
-      textAssistant: 'AI 回答',
+      textUser: '用户说的话',
+      textAssistant: 'AI 的回答',
       reasoning: '思维链（可选）',
-      toUser: '改成用户消息',
-      toAssistant: '改成 AI 回答',
+      toUser: '改成“用户说”',
+      toAssistant: '改成“AI 回答”',
       moveUp: '上移',
       moveDown: '下移',
-      removeItem: '删除这条',
+      removeItem: '删掉这条',
       syncIdle: '未改动',
-      syncSaving: '同步中…',
-      syncSaved: '已同步',
-      syncFailed: '同步失败（检查 host 路由）',
+      syncSaving: '保存中…',
+      syncSaved: '已保存',
+      syncFailed: '保存失败（后台接口不通？）',
       countSuffix: ' 条',
       // ── Q9 角标 ──
-      statePure: '纯净',
-      statePass: '全放行',
-      stateFilter: '白名单',
-      nextTurn: '下一轮生效',
-      badgeTip: '本轮生效的闸门快照（本轮已冻结；改开关只影响下一轮）',
-      // ── M4：包 ──
-      packs: '包',
-      packsEmpty: '（还没有包）',
-      loadPack: '载入到草稿',
-      savePack: '存为包',
-      deletePack: '删除包',
-      packNamePlaceholder: '包名字',
-      io: '导入 / 导出',
-      ioHint: '导出后这里是包的 JSON；粘贴一个 { name, items[] } 或纯 items 数组也能导入。',
-      ioExport: '导出到文本框',
-      ioImportPack: '从文本框存为包',
-      ioImportDraft: '从文本框载入草稿',
+      statePure: '只留预填装',
+      statePass: '注入照旧',
+      stateFilter: '按勾选的放行',
+      nextTurn: '下一轮才生效',
+      badgeTip: '这一轮实际生效的状态（本轮已锁定，改开关从下一轮开始）',
+      // ── 预设（原「包」）──
+      packs: '预设',
+      packsEmpty: '（暂无预设）',
+      loadPack: '套用',
+      savePack: '保存为预设',
+      deletePack: '删除预设',
+      packNamePlaceholder: '预设名',
+      io: '导出 / 导入',
+      ioHint: '这里显示当前内容的 JSON；把一段 JSON 粘进来也能导入。',
+      ioExport: '导出到这里',
+      ioImportPack: '存成预设',
+      ioImportDraft: '覆盖当前内容',
+      // ── 注入内容改写（Q17，只在本会话生效）──
+      injectTitle: '改写注入内容',
+      injectHint: '把 harness 送进去的内容改掉，只在本会话生效；留空＝不修改。',
+      injectNone: '（本会话还没见到可改的注入——先发一条消息让它们出现）',
+      injectMessages: '消息类注入',
+      injectSections: '系统提示里的段落',
+      injectContexts: '运行时上下文',
+      injectSaved: '已保存',
+      injectFailed: '保存失败',
     }
 
     const en = {
       nav: 'Prefill',
-      gateOff: 'Admit',
-      gateOn: 'Pure',
-      gateTitleOff: 'Current: everything admitted — click to enable the pure prefill gate',
-      gateTitleOn: 'Current: pure prefill ON — this turn blocks every harness injection; click to disable',
-      gateNoticeTitle: 'Enable pure prefill?',
+      gateOff: 'Injections on',
+      gateOn: 'Blocked',
+      gateTitleOff: 'Harness injections flow as usual — click to block them',
+      gateTitleOn: 'Blocking is on — the system prompt, tools and injections are withheld; only your prefill stays. Click to turn off',
+      gateNoticeTitle: 'Block injections?',
       gateNoticeBody:
-        'This turn renders the system prompt empty and rewrites the head ⇒ a new series starts, the prefix cache is void, and the turn costs more. Shown once.',
-      gateConfirm: 'Enable',
+        'This turn empties and rewrites the system prompt ⇒ a new series starts, the prefix cache is void, and the turn costs more. Shown once.',
+      gateConfirm: 'Turn on',
       gateCancel: 'Cancel',
       prefillOff: 'Prefill',
       prefillOn: 'Prefill·on',
-      prefillTitleOff: 'This session does not use prefill — click to enable prefill mode (draft is pre-rendered)',
-      prefillTitleOn: 'This session uses prefill — the pre-rendered content becomes real conversation on first send',
-      title: 'Session prefill · injection gate',
+      prefillTitleOff: 'This session does not use prefill — click to enable; the editor shows up above the composer',
+      prefillTitleOn: 'Prefill is on — this content becomes real history on your first send. Click to turn off',
+      title: 'Prefill · injection control',
       intro:
-        'M1 four-channel gate: sections / contexts / tools / injected messages, each writable and blockable. Nothing is touched by default — only session ids listed under "Armed targets" are affected.',
-      cardTitle: 'Channel switches',
-      writeGroup: 'Write channels (prefill)',
-      blockGroup: 'Block channels (gate ON)',
-      probeSection: 'Write probe section',
-      probeContext: 'Write probe context',
-      blockSections: 'Empty sections (complete empty section)',
-      blockContexts: 'Empty contexts (suppressRuntimeContext)',
-      blockTools: 'Empty tools (restrict allow:[])',
-      blockMessages: 'Filter injected messages (pre-step)',
-      armedLabel: 'Armed targets (session ids, space or comma separated; empty touches nothing)',
-      allowLabel: 'Allowed kinds (comma separated; user always passes)',
-      apply: 'Apply',
-      applyArmed: 'Apply armed targets',
+        'Developer/diagnostic switches: sections / contexts / tools / injected messages, each writable or blockable. Nothing is touched unless a session id is listed below.',
+      cardTitle: 'Switches',
+      writeGroup: 'Write test content (dev)',
+      blockGroup: 'Block (dev)',
+      probeSection: 'Write a test system section',
+      probeContext: 'Write a test runtime context',
+      blockSections: 'Empty the system prompt',
+      blockContexts: 'Empty runtime contexts',
+      blockTools: 'No tools',
+      blockMessages: 'Block injected messages',
+      armedLabel: 'Affected sessions (session ids, space/comma separated; empty touches nothing)',
+      allowLabel: 'Sources to admit (kind, comma separated; your own words always pass)',
+      apply: 'Save',
+      applyArmed: 'Save affected sessions',
       saved: 'Saved',
       saveFailed: 'Save failed',
-      stateTitle: 'Gate state',
+      stateTitle: 'Runtime state',
       stateFileLabel: 'State file',
-      hostLabel: 'Host half',
-      routeLabel: 'Own route',
+      hostLabel: 'Host link',
+      routeLabel: 'Route',
       reachable: 'reachable',
       unreachable: 'unreachable',
-      busy: 'probing…',
-      idle: 'not probed',
-      m1Note:
-        'M1 acceptance: each of the four channels can be written and blocked, latched per turn, with mid-turn interjections not resetting the latch. The state file can be edited by external scripts, so end-to-end verification needs no session pollution.',
-      // ── draft dock (conversation.input.dock) ──
-      dockTitle: 'Prefill draft',
+      busy: 'checking…',
+      idle: 'not checked',
+      m1Note: 'Diagnostics: the state file can be edited directly, so verification need not pollute a session.',
+      // ── prefill content (editor above the composer) ──
+      dockTitle: 'Prefill content',
       dockHint:
-        'Write rounds in any order: consecutive user messages and consecutive AI answers are both fine, and reasoning belongs to the AI answer (not a round of its own). They become real history on the first send.',
-      dockEmpty: 'Nothing yet — add a row with the buttons below.',
-      addUser: '+ User message',
+        'Write whatever the AI should "remember" from the start: your messages and AI answers in any order, several in a row is fine; the AI reasoning goes inside its own row. They become real history on your first send.',
+      dockEmpty: 'Nothing yet — add a row below.',
+      addUser: '+ User says',
       addAssistant: '+ AI answer',
       dockClear: 'Clear',
       roleUser: 'User',
       roleAssistant: 'AI',
-      textUser: 'User message',
-      textAssistant: 'AI answer',
+      textUser: 'What the user says',
+      textAssistant: 'The AI answer',
       reasoning: 'Reasoning (optional)',
       toUser: 'Make it a user message',
       toAssistant: 'Make it an AI answer',
       moveUp: 'Move up',
       moveDown: 'Move down',
-      removeItem: 'Remove this row',
+      removeItem: 'Remove',
       syncIdle: 'unchanged',
-      syncSaving: 'syncing…',
-      syncSaved: 'synced',
-      syncFailed: 'sync failed (check the host route)',
+      syncSaving: 'saving…',
+      syncSaved: 'saved',
+      syncFailed: 'save failed (host route?)',
       countSuffix: ' rows',
       // ── Q9 badge ──
-      statePure: 'Pure',
-      statePass: 'Admit all',
-      stateFilter: 'Allow-list',
+      statePure: 'Prefill only',
+      statePass: 'Injections normal',
+      stateFilter: 'Selected only',
       nextTurn: 'next turn',
-      badgeTip: 'Effective gate snapshot for this turn (frozen for the turn; toggling affects the next one)',
-      // ── M4: packs ──
-      packs: 'Pack',
-      packsEmpty: '(no packs yet)',
-      loadPack: 'Load into draft',
-      savePack: 'Save as pack',
-      deletePack: 'Delete pack',
-      packNamePlaceholder: 'pack name',
-      io: 'Import / export',
-      ioHint: 'After export this holds the pack JSON; paste { name, items[] } or a bare items array to import.',
-      ioExport: 'Export to box',
-      ioImportPack: 'Save box as pack',
-      ioImportDraft: 'Load box into draft',
+      badgeTip: 'What is actually in effect this turn (locked for the turn; toggling applies next turn)',
+      // ── presets (was "packs") ──
+      packs: 'Preset',
+      packsEmpty: '(no presets)',
+      loadPack: 'Apply',
+      savePack: 'Save as preset',
+      deletePack: 'Delete preset',
+      packNamePlaceholder: 'preset name',
+      io: 'Export / import',
+      ioHint: 'This box shows the current content as JSON; paste JSON here to import.',
+      ioExport: 'Export here',
+      ioImportPack: 'Save as preset',
+      ioImportDraft: 'Overwrite content',
+      // ── rewrite injections (Q17, this session only) ──
+      injectTitle: 'Rewrite injections',
+      injectHint: 'Override what the harness feeds in — this session only. Empty means leave it alone.',
+      injectNone: '(nothing injectable seen yet — send a message first so they show up)',
+      injectMessages: 'Injected messages',
+      injectSections: 'System prompt sections',
+      injectContexts: 'Runtime contexts',
+      injectSaved: 'saved',
+      injectFailed: 'save failed',
     }
 
     const S = {
@@ -366,6 +382,9 @@ window.__ModuleLoader__.load({
         borderRadius: 12,
         background: 'var(--dsw-alias-bg-layer-1)',
         fontSize: 12,
+        // 轮次再多也不许把整个面板顶高：否则它会把工作区选择 / 模式选择挤出可见区。
+        maxHeight: '62vh',
+        overflow: 'hidden',
       },
       dockHead: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
       dockTitle: { fontWeight: 600, fontSize: 13 },
@@ -401,11 +420,60 @@ window.__ModuleLoader__.load({
         width: '100%',
         boxSizing: 'border-box',
         minHeight: 32,
+        maxHeight: '16vh',
         padding: '5px 9px',
         borderRadius: 8,
         border: '1px dashed var(--dsw-alias-border-l2)',
         background: 'var(--dsw-alias-bg-layer-2)',
         color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 11,
+        fontFamily: 'inherit',
+        resize: 'vertical',
+      },
+      // ── 预填装内容列表：**自己滚**（轮次多时只滚这一块，头部/预设行始终可见）──
+      dockList: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        maxHeight: '34vh',
+        overflowY: 'auto',
+        paddingRight: 4,
+      },
+      // ── Q17：注入内容改写 ──
+      injectBar: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+      injectPanel: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        padding: '8px 10px',
+        borderRadius: 10,
+        border: '1px dashed var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        maxHeight: '30vh',
+        overflowY: 'auto',
+      },
+      injectGroup: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, marginTop: 2 },
+      injectRow: { display: 'flex', gap: 8, alignItems: 'flex-start' },
+      injectKey: {
+        flex: '0 0 32%',
+        fontFamily: 'ui-monospace, Menlo, monospace',
+        fontSize: 11,
+        color: 'var(--dsw-alias-label-secondary)',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        paddingTop: 6,
+      },
+      injectBox: {
+        flex: '1 1 auto',
+        minHeight: 30,
+        maxHeight: '14vh',
+        boxSizing: 'border-box',
+        padding: '5px 8px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-base)',
+        color: 'var(--dsw-alias-label-primary)',
         fontSize: 11,
         fontFamily: 'inherit',
         resize: 'vertical',
@@ -1128,8 +1196,12 @@ window.__ModuleLoader__.load({
 
         items.length === 0 ? h('div', { style: S.dockHint }, t('dockEmpty')) : null,
 
-        ...items.map((item, index) => {
-          const isAssistant = item?.role === 'assistant'
+        // 内容列表自己滚：轮次多时只滚这一块，头部/预设行始终可见。
+        h(
+          'div',
+          { style: S.dockList },
+          ...items.map((item, index) => {
+            const isAssistant = item?.role === 'assistant'
           return h(
             'div',
             { key: index, style: S.dockRow },
@@ -1189,7 +1261,8 @@ window.__ModuleLoader__.load({
               ),
             ),
           )
-        }),
+          }),
+        ),
 
         h(
           'div',
@@ -1209,6 +1282,138 @@ window.__ModuleLoader__.load({
             t('addAssistant'),
           ),
         ),
+      )
+    }
+
+    /**
+     * Q17：**改写注入内容**（只在本会话生效）。
+     *
+     * 可改的三类由宿主给（`envelope.injections[sessionId]`）：
+     *   · messages —— 按 `source.kind` 改注入消息的正文（runtime-context / skill-catalog / …）
+     *   · sections / contexts —— 按名字改写系统提示的某一段 / 某条运行时上下文
+     * 留空 = 该条不修改。写回 state.json 的 `overrides[sessionId]`，宿主在 `agent/pre-step`
+     * 与同名遮蔽里生效（§14.8）。
+     */
+    function InjectionEditor(props) {
+      const t = props.t ?? ((key) => key)
+      const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+      const [open, setOpen] = React.useState(false)
+      const [envelope, setEnvelope] = React.useState(null)
+      const [draft, setDraft] = React.useState(null)
+      const [status, setStatus] = React.useState('idle')
+      const dirty = React.useRef(false)
+
+      const call = React.useCallback(async (body) => {
+        const response = await fetch(STATE_ROUTE, {
+          method: 'POST',
+          headers: body === undefined ? {} : { 'content-type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return await response.json()
+      }, [])
+
+      React.useEffect(() => {
+        if (sessionId === '') return undefined
+        let alive = true
+        void call(undefined)
+          .then((data) => {
+            if (!alive) return
+            setEnvelope(data)
+            if (open) {
+              const current = data?.state?.overrides?.[sessionId] ?? {}
+              setDraft({
+                messages: { ...(current.messages ?? {}) },
+                sections: { ...(current.sections ?? {}) },
+                contexts: { ...(current.contexts ?? {}) },
+              })
+            }
+          })
+          .catch(() => {
+            if (alive) setStatus('error')
+          })
+        return () => {
+          alive = false
+        }
+      }, [call, open, sessionId])
+
+      // 改完 800ms 落盘（写 state.json 的 overrides）。
+      React.useEffect(() => {
+        if (!open || draft === null || !dirty.current) return undefined
+        const timer = setTimeout(() => {
+          dirty.current = false
+          setStatus('saving')
+          void call({ overrides: { ...(envelope?.state?.overrides ?? {}), [sessionId]: draft } })
+            .then((data) => {
+              setEnvelope(data)
+              setStatus('saved')
+            })
+            .catch(() => setStatus('error'))
+        }, 800)
+        return () => clearTimeout(timer)
+      }, [call, draft, envelope, open, sessionId])
+
+      if (sessionId === '') return null
+      const injectables = envelope?.injections?.[sessionId] ?? { messages: [], sections: [], contexts: [] }
+      const groups = [
+        { key: 'messages', label: t('injectMessages'), names: injectables.messages ?? [] },
+        { key: 'sections', label: t('injectSections'), names: injectables.sections ?? [] },
+        { key: 'contexts', label: t('injectContexts'), names: injectables.contexts ?? [] },
+      ]
+      const count = groups.reduce((sum, group) => sum + group.names.length, 0)
+
+      const setField = (group, name, value) => {
+        if (draft === null) return
+        dirty.current = true
+        const next = { ...draft, [group]: { ...draft[group] } }
+        if (value === '') delete next[group][name]
+        else next[group][name] = value
+        setDraft(next)
+      }
+
+      return h(
+        'div',
+        { style: S.injectBar },
+        h(
+          'button',
+          { type: 'button', style: S.gateBtn, onClick: () => setOpen(!open) },
+          `${open ? '▾' : '▸'} ${t('injectTitle')}（${count}）`,
+        ),
+        open ? h('span', { style: S.dockHint }, t('injectHint')) : null,
+        open && status !== 'idle'
+          ? h(
+              'span',
+              { style: S.dockStatus(status === 'error' ? 'error' : status === 'saved' ? 'saved' : 'idle') },
+              status === 'error' ? t('injectFailed') : status === 'saving' ? t('syncSaving') : t('injectSaved'),
+            )
+          : null,
+        open
+          ? h(
+              'div',
+              { style: S.injectPanel },
+              count === 0 ? h('div', { style: S.injectGroup }, t('injectNone')) : null,
+              ...groups.flatMap((group) =>
+                group.names.length === 0
+                  ? []
+                  : [
+                      h('div', { key: `g-${group.key}`, style: S.injectGroup }, `${group.label}（${group.names.length}）`),
+                      ...group.names.map((name) =>
+                        h(
+                          'div',
+                          { key: `${group.key}-${name}`, style: S.injectRow },
+                          h('span', { style: S.injectKey, title: name }, name),
+                          h('textarea', {
+                            style: S.injectBox,
+                            value: draft?.[group.key]?.[name] ?? '',
+                            spellCheck: false,
+                            onChange: (event) => setField(group.key, name, event.target.value),
+                          }),
+                        ),
+                      ),
+                    ],
+              ),
+            )
+          : null,
       )
     }
 
@@ -1269,6 +1474,18 @@ window.__ModuleLoader__.load({
               locale: NS,
             },
             PrefillDock,
+          ),
+        )
+        // Q17：注入内容改写（会话内，默认折叠）。
+        ctx.slots.inject('conversation.input.dock', () =>
+          ctx.slots.register(
+            {
+              name: 'conversation.input.dock',
+              id: 'prefill-injections',
+              order: 25,
+              locale: NS,
+            },
+            InjectionEditor,
           ),
         )
       },
