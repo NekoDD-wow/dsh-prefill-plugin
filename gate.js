@@ -54,27 +54,14 @@ function allowKindsFor(state, sessionId) {
  * 该会话的整条挂载链挂掉。所以先用 `view(scope).restrictableNames` 求交集。
  */
 export function tools(rootCtx) {
-  const catalog = new Set()
+  const catalog = new Set(TOOL_REGISTRY)
   const sessions = {}
   for (const [id, assembly] of ASSEMBLIES) {
     const names = Array.isArray(assembly.toolNames) ? assembly.toolNames : []
     sessions[id] = names
     for (const name of names) catalog.add(name)
   }
-  let restrictable = []
-  try {
-    const service = typeof rootCtx?.get === 'function' ? rootCtx.get('tools') : rootCtx?.tools
-    if (typeof service?.view === 'function') {
-      // 根 ctx 没有 agent 作用域，能拿到多少算多少（拿不到就退回"装配看到的"）。
-      const view = service.view(rootCtx)
-      const names = view?.restrictableNames
-      if (names instanceof Set) restrictable = [...names]
-      else if (Array.isArray(names)) restrictable = names
-    }
-  } catch {
-    // 忽略：catalog 仍可用。
-  }
-  return { catalog: [...new Set([...catalog, ...restrictable])].sort(), sessions }
+  return { catalog: [...catalog].sort(), sessions }
 }
 
 /** 该 agent 允许放行的全局工具名（官方 restrict 的白名单；拿不到就返回空=不设限）。 */
@@ -122,6 +109,23 @@ function overridesFor(state, agentId) {
   const exact = typeof agentId === 'string' ? all[agentId] : undefined
   const entry = exact !== undefined && exact !== null && typeof exact === 'object' ? exact : all['*']
   return entry !== undefined && entry !== null && typeof entry === 'object' ? entry : undefined
+}
+
+/**
+ * **全局工具注册表**（与"放行与否"无关）——UI 的工具清单就取这里。
+ *
+ * 为什么不能用装配结果当清单：装配结果是 **restriction 之后**的。用户问得很对——
+ * 一开"拦注入"（或把放行清单设小）装配结果里就 0 个工具，"扫一轮就有了"会变成
+ * "越拦越扫不到"，甚至**永远为空**。所以清单必须来自注册表，而不是筛完的产物。
+ * 挂 Symbol 以穿过内核热换。
+ */
+const TOOL_REGISTRY = (globalThis[Symbol.for('dsh-prefill.tools')] ??= new Set())
+
+/** 往注册表里记名字。 */
+function rememberToolNames(names) {
+  for (const name of names ?? []) {
+    if (typeof name === 'string' && name !== '') TOOL_REGISTRY.add(name)
+  }
 }
 
 /**
@@ -369,6 +373,14 @@ function ensureToolsBlocker(api) {
     async (assembly, context, next) => {
       const result = await next()
       const id = context?.scope?.id ?? context?.agent?.id
+      // 工具清单：注册表（与放行无关）优先；装配观察到的名字作为补充（含 scope 局部工具）。
+      try {
+        const { tools: registryService } = resolveServices(context?.agent, api.rootCtx)
+        rememberToolNames(restrictableToolNames(registryService.service, context?.agent))
+      } catch {
+        // 忽略。
+      }
+      rememberToolNames((result?.tools ?? []).map((tool) => tool?.name))
       // Q17：顺手记下这次装配里有哪些段 / 上下文（UI 靠它列出"可改的注入"）。
       if (typeof id === 'string') {
         ASSEMBLIES.set(id, {
@@ -552,6 +564,14 @@ function mountLevers(agent, state, api, sink) {
  */
 export function prime(api, agent) {
   if (typeof agent?.id !== 'string') return
+  // 工具清单在**武装判定之前**登记：清单与"放不放行"无关，且这样"开会话就有"，
+  // 不必先跑一轮（拦注入开着的会话也一样能扫到）。
+  try {
+    const { tools: registryService } = resolveServices(agent, api.rootCtx)
+    rememberToolNames(restrictableToolNames(registryService.service, agent))
+  } catch {
+    // 拿不到就算了（清单还能靠装配观察补）。
+  }
   const state = effectiveStateFor(api.readState(), agent.id)
   if (!state.armed.includes(agent.id) && !state.armed.includes('*')) return
   const disposers = []
