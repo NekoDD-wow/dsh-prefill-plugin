@@ -784,7 +784,7 @@ export function apply(ctx) {
                 items,
                 ...(overrides === undefined ? {} : { overrides }),
                 ...(tools === undefined ? {} : { tools }),
-                ...(gate === 'pure' || gate === 'pass' ? { gate } : {}),
+                ...(gate === 'pure' || gate === 'pass' || gate === 'replace' ? { gate } : {}),
               }
               const at = packs.findIndex((entry) => entry.name === name)
               if (at >= 0) packs[at] = pack

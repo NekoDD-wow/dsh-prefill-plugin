@@ -283,6 +283,7 @@ const SNAPSHOTS = (globalThis[Symbol.for('dsh-prefill.snapshots')] ??= new Map()
 function gateStateOf(levers) {
   if (levers.blockSections && levers.blockContexts && levers.blockTools && levers.blockMessages) return 'pure'
   if (levers.blockMessages) return 'filter'
+  if (levers.blockSections) return 'replace'
   return 'pass'
 }
 
@@ -454,6 +455,22 @@ function resolveServices(agent, rootCtx) {
 function effectiveStateFor(state, agentId) {
   const gate = state.gate !== null && typeof state.gate === 'object' ? state.gate : {}
   if (typeof agentId !== 'string') return state
+  if (gate[agentId] === 'replace') {
+    // 【替换】只换系统提示正文（一条 complete 段 = 用户写的那段），工具、运行时上下文、
+    // 消息全部照旧 —— 典型用途：中文版官方系统提示，换语言但能力不变。
+    return {
+      ...state,
+      armed: state.armed.includes(agentId) ? state.armed : [...state.armed, agentId],
+      levers: {
+        probeSection: false,
+        probeContext: false,
+        blockSections: true,
+        blockContexts: false,
+        blockTools: false,
+        blockMessages: false,
+      },
+    }
+  }
   if (gate[agentId] !== 'pure') {
     // 没被显式武装（armed / '*'）的会话 —— 典型是"只套了人格预设"的会话 —— 不吃全局开关：
     // 全局 levers 是开发面板 / 旧版「纯净模式」写的，若照搬，套个人格就会顺带
@@ -566,6 +583,15 @@ function ensureToolsBlocker(api) {
   if (typeof dispose === 'function') BLOCKERS.set('root', dispose)
 }
 
+/**
+ * 用户文本里的 `{{…}}`：dsh 默认会做变量插值，遇到未知变量会让整份系统提示装配抛错。
+ * 只有全部引用都是 loop 提供的 `model` / `cwd` 时才插值，否则原样保留（interpolate:false）。
+ */
+function interpolateOk(text) {
+  const refs = String(text ?? '').match(/\{\{[^}]*\}\}/g) ?? []
+  return refs.every((ref) => /^\{\{\s*(model|cwd)\s*\}\}$/.test(ref))
+}
+
 /** 把状态解析成该 agent 这一轮该挂的 lever 集合。 */
 function mountLevers(agent, state, api, sink) {
   const rootCtx = api.rootCtx
@@ -628,7 +654,7 @@ function mountLevers(agent, state, api, sink) {
         .map((name) => String(overrides.sections[name] ?? ''))
         .filter((value) => value.trim() !== '')
         .join('\n\n')
-      completeDisposer = sp.section({ name: 'prefill:pure', order: 0, text, complete: true })
+      completeDisposer = sp.section({ name: 'prefill:pure', order: 0, text, complete: true, ...(interpolateOk(text) ? {} : { interpolate: false }) })
       push(completeDisposer)
       sectionsFoldedIntoComplete = true
     } else {
@@ -686,7 +712,7 @@ function mountLevers(agent, state, api, sink) {
       for (const [name, text] of Object.entries(overrides.sections)) {
         // 优先显式给的 order，其次沿用全局那段的原 order，最后才默认 1000。
         const order = Number.isFinite(orders[name]) ? orders[name] : (globalOrderOf(rootCtx, 'sections', name) ?? 1000)
-        push(sp.section({ name, order, text: String(text) }))
+        push(sp.section({ name, order, text: String(text), ...(interpolateOk(text) ? {} : { interpolate: false }) }))
       }
     }
     if (overrides.contexts !== null && typeof overrides.contexts === 'object' && typeof sp?.context === 'function') {
@@ -740,7 +766,8 @@ export async function prime(api, agent) {
   // 与 step() 的武装判定保持一致：**只配了注入改写（例如人格预设）**的会话也要急切挂载，
   // 否则首个请求的装配抢在 pre-step 之前 ⇒ 人格段"首轮不生效、第二轮才生效"。
   const hasOverrides = overridesFor(state, agent.id) !== undefined
-  if (!state.armed.includes(agent.id) && !state.armed.includes('*') && !hasOverrides) return
+  const hasInjects = Array.isArray(state?.injects?.[agent.id]) && state.injects[agent.id].length > 0
+  if (!state.armed.includes(agent.id) && !state.armed.includes('*') && !hasOverrides && !hasInjects) return
   const disposers = []
   let error = ''
   let primedComplete
@@ -804,9 +831,12 @@ export async function step(api, payload, decision) {
   // ③ 是必需的：用户要的是"预填装留空、只改系统提示"，那种情况下没有任何 lever，
   // 光靠 armed 永远进不来，改写就静默不生效了。
   const hasOverrides = overridesFor(state0, agent?.id) !== undefined
+  // ④ 会话配了**每轮注入**（开跑后写的开场对话）：没有系统提示改写时也必须进来，
+  // 否则注入静默不生效（实测：只写每轮注入、不套人格的会话，日志里一条注入消息都没有）。
+  const hasInjects = Array.isArray(state0?.injects?.[agent?.id]) && state0.injects[agent.id].length > 0
   const armed =
     typeof agent?.id === 'string' &&
-    (state0.armed.includes(agent.id) || state0.armed.includes('*') || hasOverrides)
+    (state0.armed.includes(agent.id) || state0.armed.includes('*') || hasOverrides || hasInjects)
 
   if (!armed) {
     note({

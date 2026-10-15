@@ -244,6 +244,7 @@ window.__ModuleLoader__.load({
       statePure: '只留预填装',
       statePass: '注入照旧',
       stateFilter: '按勾选的放行',
+      stateReplace: '系统提示已替换',
       nextTurn: '下一轮才生效',
       badgeTip: '这一轮实际生效的状态（本轮已锁定，改开关从下一轮开始）',
       // ── 预设（原「包」）──
@@ -387,6 +388,7 @@ window.__ModuleLoader__.load({
       statePure: 'Prefill only',
       statePass: 'Injections normal',
       stateFilter: 'Selected only',
+      stateReplace: 'System prompt replaced',
       nextTurn: 'next turn',
       badgeTip: 'What is actually in effect this turn (locked for the turn; toggling applies next turn)',
       // ── presets (was "packs") ──
@@ -446,6 +448,7 @@ window.__ModuleLoader__.load({
       presetsHint: '点一下即套用：会一并设置系统提示、开场对话和工具权限。首轮前套用从第一轮生效；会话开跑后套用从下一轮生效。',
       footPure: '系统提示 0 · 工具 0',
       footTakeover: '系统提示完全由你写',
+      footReplace: '替换系统提示正文，工具照旧',
       footSystem: '追加系统提示',
       footMine: '我的预设',
       tagMine: '我的',
@@ -466,9 +469,13 @@ window.__ModuleLoader__.load({
       systemOffMeta: '不改',
       systemAppendMeta: '追加',
       systemTakeoverMeta: '接管',
+      systemReplaceMeta: '替换',
       modeOff: '不改',
       modeAppend: '追加到默认提示后',
       modeTakeover: '接管整个系统提示',
+      modeReplace: '替换正文·保留工具',
+      modeReplaceHint: '用下面这段替换 dsh 默认系统提示的正文，但工具、运行时上下文（工作区、权限）和审批全部照旧。适合换语言（如中文版官方提示）或整体重写规则。可以写 {{model}} 和 {{cwd}}，dsh 会自动填入。',
+      noteReplace: '替换：系统提示只剩你写的那段（约 {n} tok），工具和运行时上下文照旧。',
       modeOffHint: '保持 dsh 默认系统提示（身份、工具说明、工作区规则等）。下面写的内容不会发送。',
       modeAppendHint: '在 dsh 默认系统提示里追加下面这段（排在靠后位置）：工具、工作区、审批都照旧，模型只是多了这些设定（适合人格、口吻、团队规范）。默认提示的前缀不变，缓存照样能命中。',
       modeTakeoverHint: '系统提示只剩下面这段，不发运行时上下文、不给工具、只放行你的话（和开场对话）。效果等同用脚本直接调 API。留空 = 纯净模式（完全没有系统提示）。',
@@ -568,6 +575,7 @@ window.__ModuleLoader__.load({
       presetsHint: 'Click to apply it: it sets the system prompt, opening dialogue and tool access together. Before the first turn it applies from turn 1; afterwards from the next turn.',
       footPure: 'system 0 · tools 0',
       footTakeover: 'you write the whole system prompt',
+      footReplace: 'replaces the system prompt body, tools stay',
       footSystem: 'appends to system',
       footMine: 'my preset',
       tagMine: 'mine',
@@ -587,9 +595,13 @@ window.__ModuleLoader__.load({
       systemOffMeta: 'unchanged',
       systemAppendMeta: 'append',
       systemTakeoverMeta: 'take over',
+      systemReplaceMeta: 'replace',
       modeOff: 'Unchanged',
       modeAppend: 'Append to default',
       modeTakeover: 'Take over entirely',
+      modeReplace: 'Replace text, keep tools',
+      modeReplaceHint: 'Replaces the body of the default dsh system prompt with the text below, while tools, runtime context (workspace, permissions) and approvals stay. {{model}} and {{cwd}} are filled in by dsh.',
+      noteReplace: 'Replace: the system prompt is only your text (≈{n} tok); tools and runtime context stay.',
       modeOffHint: 'Keep the default dsh system prompt. The text below is not sent.',
       modeAppendHint: 'Appends the text below after the default dsh system prompt: tools, workspace and approvals stay; the model just gains these instructions. The default prefix is unchanged, so caching still works.',
       modeTakeoverHint: 'The system prompt becomes only the text below: no runtime context, no tools, only your messages (and the opening dialogue) pass. Same as calling the API from a script. Empty = pure mode.',
@@ -1567,7 +1579,7 @@ window.__ModuleLoader__.load({
       const pending = Array.isArray(envelope?.pendingReprime) && envelope.pendingReprime.includes(sessionId)
       const dropped = Array.isArray(snap?.droppedKinds) ? snap.droppedKinds : []
       const badgeLabel =
-        snap?.state === 'pure' ? t('statePure') : snap?.state === 'filter' ? t('stateFilter') : t('statePass')
+        snap?.state === 'pure' ? t('statePure') : snap?.state === 'filter' ? t('stateFilter') : snap?.state === 'replace' ? t('stateReplace') : t('statePass')
       // 输入行只放一颗芯片：本轮状态的细节已经在面板与顶栏徽标里，这里只在"改动要到下一轮才生效"时提示。
       const badge =
         snap === undefined || !pending
@@ -1710,7 +1722,11 @@ window.__ModuleLoader__.load({
         gap: 8,
         alignItems: 'baseline',
         flexWrap: 'wrap',
-        minHeight: 18,
+        alignContent: 'flex-start',
+        // 固定高度：说明长短不一，若随悬停变高，底部锚定的面板会整体上移，
+        // 卡片在光标下"跳走"，点击落空（实测：mousedown 落在 A、mouseup 落在 B，click 丢失）。
+        height: 72,
+        overflow: 'hidden',
         fontSize: 11.5,
         lineHeight: 1.55,
         color: 'var(--dsw-alias-label-secondary)',
@@ -2069,7 +2085,7 @@ window.__ModuleLoader__.load({
       }, [items, enabled, sessionId])
 
       const state = envelope?.state ?? null
-      const gateMode = state?.gate?.[sessionId] === 'pure' ? 'pure' : 'pass'
+      const gateMode = state?.gate?.[sessionId] === 'pure' ? 'pure' : state?.gate?.[sessionId] === 'replace' ? 'replace' : 'pass'
       const storedSystem = state?.overrides?.[sessionId]?.sections?.[PERSONA_SECTION]
       const activePreset = state?.activePreset?.[sessionId] ?? ''
       const turns = envelope?.turns?.[sessionId] ?? 0
@@ -2079,7 +2095,7 @@ window.__ModuleLoader__.load({
       const pending = Array.isArray(envelope?.pendingReprime) && envelope.pendingReprime.includes(sessionId)
       // 系统提示模式：不改 / 追加 / 接管（接管 = 闸门 pure + 人格段；纯净 = 闸门 pure + 无人格段）。
       const systemText = systemDraft ?? (typeof storedSystem === 'string' ? storedSystem : '')
-      const systemMode = gateMode === 'pure' ? 'takeover' : typeof storedSystem === 'string' && storedSystem.trim() !== '' ? 'append' : 'off'
+      const systemMode = gateMode === 'pure' ? 'takeover' : gateMode === 'replace' ? 'replace' : typeof storedSystem === 'string' && storedSystem.trim() !== '' ? 'append' : 'off'
 
       // 系统提示：编辑后 800ms 落盘（写 overrides[session].sections['prefill:persona']）。
       React.useEffect(() => {
@@ -2166,7 +2182,7 @@ window.__ModuleLoader__.load({
           ...(extra ?? {}),
         }
         if (mode !== undefined) {
-          patch.gate = { ...(fresh?.state?.gate ?? {}), [sessionId]: mode === 'takeover' ? 'pure' : 'pass' }
+          patch.gate = { ...(fresh?.state?.gate ?? {}), [sessionId]: mode === 'takeover' ? 'pure' : mode === 'replace' ? 'replace' : 'pass' }
           // 旧版「纯净模式」写的是全局开关 + armed；这里顺手把本会话从 armed 里摘掉，免得关不掉。
           if (mode !== 'takeover') {
             patch.armed = (fresh?.state?.armed ?? []).filter((id) => id !== sessionId)
@@ -2219,7 +2235,7 @@ window.__ModuleLoader__.load({
           dirty.current = true // 挡住写状态后的广播刷新，别让 host 的空草稿盖掉
           setItems(preset.items)
         }
-        const nextMode = preset.takeover === true ? 'takeover' : mode
+        const nextMode = preset.takeover === true ? 'takeover' : preset.replace === true ? 'replace' : mode
         await writeSystem(text, nextMode, { activePreset: activeMap })
         if (opening) {
           // 草稿后写：草稿路由会按**已生效的新系统提示**预热合成轮。
@@ -2227,7 +2243,7 @@ window.__ModuleLoader__.load({
           dirty.current = false
           setStatus('saved')
         }
-        if (preset.takeover === true) setOpen((current) => ({ ...current, system: true }))
+        if (preset.takeover === true || preset.replace === true) setOpen((current) => ({ ...current, system: true }))
         flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
       }
 
@@ -2254,7 +2270,7 @@ window.__ModuleLoader__.load({
           systemDirty.current = false
           setSystemDraft(typeof text === 'string' ? text : '')
         }
-        if (pack.gate === 'pure' || pack.gate === 'pass') patch.gate = { ...(fresh?.state?.gate ?? {}), [sessionId]: pack.gate }
+        if (pack.gate === 'pure' || pack.gate === 'pass' || pack.gate === 'replace') patch.gate = { ...(fresh?.state?.gate ?? {}), [sessionId]: pack.gate }
         if (pack.tools !== undefined) patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: pack.tools }
         setEnvelope(await postJson(STATE_ROUTE, patch))
         notifyStateChanged()
@@ -2366,12 +2382,13 @@ window.__ModuleLoader__.load({
       const itemsTok = itemsTokens(items)
       const systemTok = estimateTokens(systemText)
 
-      const presetPill = (key, { emoji, name, active, onClick, onHover }) =>
+      const presetPill = (key, { emoji, name, active, onClick, onHover, tip }) =>
         h(
           'button',
           {
             key,
             type: 'button',
+            title: tip,
             style: V.pill(active),
             onClick,
             onMouseEnter: onHover,
@@ -2389,7 +2406,7 @@ window.__ModuleLoader__.load({
         ? [
             `${hoveredBuiltin.emoji} ${hoveredBuiltin.name}`,
             hoveredBuiltin.desc,
-            hoveredBuiltin.pure ? t('footPure') : hoveredBuiltin.takeover ? t('footTakeover') : `${t('footSystem')} ≈${Math.round(hoveredBuiltin.personaChars * 0.7)} tok`,
+            hoveredBuiltin.pure ? t('footPure') : hoveredBuiltin.takeover ? t('footTakeover') : hoveredBuiltin.replace ? `${t('footReplace')} ≈${Math.round(hoveredBuiltin.personaChars * 0.7)} tok` : `${t('footSystem')} ≈${Math.round(hoveredBuiltin.personaChars * 0.7)} tok`,
           ]
         : hoveredPack
           ? [`📁 ${hoveredPack.name}`, `${t('myPresetDesc')} · ${hoveredPack.count}${t('countSuffix')}`, '']
@@ -2428,6 +2445,7 @@ window.__ModuleLoader__.load({
               emoji: preset.emoji,
               name: preset.name,
               active: activePreset === `builtin:${preset.id}`,
+              tip: preset.desc,
               onHover: () => setHovered(`builtin:${preset.id}`),
               onClick: () => void applyBuiltin(preset, systemMode === 'takeover' ? 'takeover' : 'append').catch(() => setStatus('error')),
             }),
@@ -2493,7 +2511,7 @@ window.__ModuleLoader__.load({
         {
           id: 'system',
           title: t('systemTitle'),
-          meta: systemMode === 'off' ? t('systemOffMeta') : systemMode === 'append' ? `${t('systemAppendMeta')} · ≈${systemTok} tok` : `${t('systemTakeoverMeta')} · ≈${systemTok} tok`,
+          meta: systemMode === 'off' ? t('systemOffMeta') : systemMode === 'append' ? `${t('systemAppendMeta')} · ≈${systemTok} tok` : systemMode === 'replace' ? `${t('systemReplaceMeta')} · ≈${systemTok} tok` : `${t('systemTakeoverMeta')} · ≈${systemTok} tok`,
           open: open.system,
           onToggle: () => toggle('system'),
         },
@@ -2506,6 +2524,7 @@ window.__ModuleLoader__.load({
             ...[
               ['off', t('modeOff')],
               ['append', t('modeAppend')],
+              ['replace', t('modeReplace')],
               ['takeover', t('modeTakeover')],
             ].map(([key, label]) =>
               h(
@@ -2525,7 +2544,7 @@ window.__ModuleLoader__.load({
           ),
           pending ? h('span', { style: { ...V.sectionMeta, color: 'var(--dsw-alias-state-warn-primary)' } }, t('nextTurnNotice')) : null,
         ),
-        h('div', { style: V.hint }, systemMode === 'off' ? t('modeOffHint') : systemMode === 'append' ? t('modeAppendHint') : t('modeTakeoverHint')),
+        h('div', { style: V.hint }, systemMode === 'off' ? t('modeOffHint') : systemMode === 'append' ? t('modeAppendHint') : systemMode === 'replace' ? t('modeReplaceHint') : t('modeTakeoverHint')),
         h('textarea', {
           style: { ...V.textarea, minHeight: 90 },
           value: systemText,
@@ -2691,7 +2710,7 @@ window.__ModuleLoader__.load({
         activeName,
         systemMode === 'off' || (systemMode === 'takeover' && systemText.trim() === '')
           ? ''
-          : `${t('systemTitle')}·${systemMode === 'append' ? t('systemAppendMeta') : t('systemTakeoverMeta')}`,
+          : `${t('systemTitle')}·${systemMode === 'append' ? t('systemAppendMeta') : systemMode === 'replace' ? t('systemReplaceMeta') : t('systemTakeoverMeta')}`,
         items.length > 0 ? `${items.length}${t('countSuffix')}` : '',
       ]
         .filter((part) => part !== '')
@@ -2764,6 +2783,7 @@ window.__ModuleLoader__.load({
       const notes = []
       if (props.gateMode === 'pure') notes.push(props.systemMode === 'takeover' && props.systemTok > 0 ? t('noteTakeover') : t('notePure'))
       else if (props.systemMode === 'append') notes.push(t('noteAppend').replace('{n}', String(props.systemTok)))
+      else if (props.systemMode === 'replace') notes.push(t('noteReplace').replace('{n}', String(props.systemTok)))
       if (props.injectCount > 0) notes.push(t('noteInject').replace('{n}', String(props.itemsTok)))
       else if (props.itemsTok > 0 && (!props.injectMode || props.written)) notes.push(t('noteHistory').replace('{n}', String(props.itemsTok)))
       notes.push(t('noteSwitch'))
