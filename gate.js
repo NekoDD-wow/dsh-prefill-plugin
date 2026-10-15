@@ -142,8 +142,14 @@ function mountPerNameWipe(sp, rootCtx, agentId, overrideSectionNames, push) {
   let count = 0
   for (const name of known) {
     if (overrideSectionNames.includes(name)) continue
-    push(sp.section({ name, order: globalOrderOf(rootCtx, 'sections', name) ?? 1000, text: '' }))
-    count += 1
+    // 逐条兜住：agent 作用域里已有同名段时注册会抛 "already registered in this scope"，
+    // 一条抛错不许把后面的清空（以及我方的改写段）一起带崩。
+    try {
+      push(sp.section({ name, order: globalOrderOf(rootCtx, 'sections', name) ?? 1000, text: '' }))
+      count += 1
+    } catch {
+      // 跳过这一条。
+    }
   }
   return count
 }
@@ -165,9 +171,19 @@ function swapToPerNameWipe(agent, state, api, entry, completeDisposer) {
     if (typeof sp?.section !== 'function') return { ok: false, reason: 'no-section-api' }
     const overrideSectionNames = Object.keys(overridesFor(state, agent?.id)?.sections ?? {})
     const disposers = entry?.disposers ?? []
-    const wiped = mountPerNameWipe(sp, api.rootCtx, agent?.id, overrideSectionNames, (disposer) => {
+    const keep = (disposer) => {
       if (typeof disposer === 'function') disposers.push(disposer)
-    })
+    }
+    const wiped = mountPerNameWipe(sp, api.rootCtx, agent?.id, overrideSectionNames, keep)
+    // 接管时改写段原本并在 complete 段里，complete 撤掉后要把它们单独补挂回来。
+    const sections = overridesFor(state, agent?.id)?.sections ?? {}
+    for (const [name, text] of Object.entries(sections)) {
+      try {
+        keep(sp.section({ name, order: globalOrderOf(api.rootCtx, 'sections', name) ?? 1000, text: String(text) }))
+      } catch {
+        // 已挂过（非接管路径）就跳过。
+      }
+    }
     return { ok: true, wiped }
   } catch (error) {
     return { ok: false, reason: String(error?.message ?? error) }
@@ -437,7 +453,18 @@ function resolveServices(agent, rootCtx) {
  */
 function effectiveStateFor(state, agentId) {
   const gate = state.gate !== null && typeof state.gate === 'object' ? state.gate : {}
-  if (typeof agentId !== 'string' || gate[agentId] !== 'pure') return state
+  if (typeof agentId !== 'string') return state
+  if (gate[agentId] !== 'pure') {
+    // 没被显式武装（armed / '*'）的会话 —— 典型是"只套了人格预设"的会话 —— 不吃全局开关：
+    // 全局 levers 是开发面板 / 旧版「纯净模式」写的，若照搬，套个人格就会顺带
+    // 清空系统提示、拦掉工具（实测踩到：人格会话 tools=0、runtime-context 被丢）。
+    const explicit = state.armed.includes(agentId) || state.armed.includes('*')
+    if (explicit) return state
+    return {
+      ...state,
+      levers: Object.fromEntries(Object.keys(state.levers ?? {}).map((key) => [key, false])),
+    }
+  }
   return {
     ...state,
     armed: state.armed.includes(agentId) ? state.armed : [...state.armed, agentId],
@@ -585,10 +612,25 @@ function mountLevers(agent, state, api, sink) {
   // "开着拦注入时，改写静默失效"。现在改成**逐名清空 harness 自己的段**，
   // 留下我们要改写的那几条。
   let completeDisposer
+  // 接管系统提示时，我方改写的段**并进那一条 complete 段**，不再单独注册。
+  let sectionsFoldedIntoComplete = false
   if (state.levers.blockSections && typeof sp?.section === 'function') {
-    // 撞过车的会话直接走逐名清空：不再试探，省掉一次注定失败的装配。
-    if (overrideSectionNames.length > 0 || COMPLETE_CONFLICTS.has(agent?.id)) {
+    if (COMPLETE_CONFLICTS.has(agent?.id)) {
+      // 撞过车的会话直接走逐名清空：不再试探，省掉一次注定失败的装配。
       mountPerNameWipe(sp, rootCtx, agent?.id, overrideSectionNames, push)
+    } else if (overrideSectionNames.length > 0) {
+      // 【接管】用**一条带正文的 complete 段**一次性替换整份段列表 ⇒ 系统提示 = 用户写的那段，
+      // 跟脚本直接调 API 一样。为什么不再用逐名清空：它只认得全局层登记过的名字，
+      // agent 自己作用域里注册的段（如 `context:file-reference`）一清就撞
+      // "already registered in this scope"，挂载链中途抛错 ⇒ 人格段根本没挂上、
+      // 还残留 2954 字的 harness 段（实测）。
+      const text = overrideSectionNames
+        .map((name) => String(overrides.sections[name] ?? ''))
+        .filter((value) => value.trim() !== '')
+        .join('\n\n')
+      completeDisposer = sp.section({ name: 'prefill:pure', order: 0, text, complete: true })
+      push(completeDisposer)
+      sectionsFoldedIntoComplete = true
     } else {
       // 没有我方改写、也没撞过车：先用"一条清空"（最强：绝对接管整份段列表）。
       // ⚠️ 它同 scope 只能有一个：撞上 `pure` preset 会在 assemble() 抛错 ⇒
@@ -640,7 +682,7 @@ function mountLevers(agent, state, api, sink) {
   // 参数 schema 走 `request.header.tools`，不由这里决定 ⇒ 改说明不会破坏调用格式。
   if (overrides !== undefined) {
     const orders = overrides.sectionOrders !== null && typeof overrides.sectionOrders === 'object' ? overrides.sectionOrders : {}
-    if (overrides.sections !== null && typeof overrides.sections === 'object' && typeof sp?.section === 'function') {
+    if (!sectionsFoldedIntoComplete && overrides.sections !== null && typeof overrides.sections === 'object' && typeof sp?.section === 'function') {
       for (const [name, text] of Object.entries(overrides.sections)) {
         // 优先显式给的 order，其次沿用全局那段的原 order，最后才默认 1000。
         const order = Number.isFinite(orders[name]) ? orders[name] : (globalOrderOf(rootCtx, 'sections', name) ?? 1000)
@@ -695,7 +737,10 @@ export async function prime(api, agent) {
     // 拿不到就算了（清单还能靠装配观察补）。
   }
   const state = effectiveStateFor(api.readState(), agent.id)
-  if (!state.armed.includes(agent.id) && !state.armed.includes('*')) return
+  // 与 step() 的武装判定保持一致：**只配了注入改写（例如人格预设）**的会话也要急切挂载，
+  // 否则首个请求的装配抢在 pre-step 之前 ⇒ 人格段"首轮不生效、第二轮才生效"。
+  const hasOverrides = overridesFor(state, agent.id) !== undefined
+  if (!state.armed.includes(agent.id) && !state.armed.includes('*') && !hasOverrides) return
   const disposers = []
   let error = ''
   let primedComplete
@@ -1400,6 +1445,12 @@ export async function materializePrefill(api, agent) {
  *     `${turn}:${step}`，同一 turn 里多条 assistant/message 会被并成一个节点）
  *   · 尾部没有 assistant 承接的 user 项 → 自己开一轮
  */
+/** 哪些会话的预填装已经写成真实历史（会话 → 条数）：输入框芯片据此显示"已写入历史"，而不是催你去点注入。 */
+const MATERIALIZED = (globalThis[Symbol.for('dsh-prefill.materialized')] ??= new Map())
+export function materialized() {
+  return Object.fromEntries(MATERIALIZED)
+}
+
 export function writeSyntheticTurns(api, agent, session, rendered, items) {
   // 空草稿 = "开关开了但还没写内容" ⇒ 什么都不物化，也把草稿消费掉。
   if (!Array.isArray(items) || items.length === 0) {
@@ -1517,6 +1568,7 @@ export function writeSyntheticTurns(api, agent, session, rendered, items) {
     turnAdjusted = `error:${String(error?.message ?? error)}`
   }
 
+  MATERIALIZED.set(agent.id, items.length)
   api.note({
     prefill: 'materialized',
     id: agent.id,

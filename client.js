@@ -421,6 +421,247 @@ window.__ModuleLoader__.load({
       injectFailed: 'save failed',
     }
 
+
+    // ── v0.2 文案（新手友好：每个框都说清楚"写什么、什么时候生效、花多少钱"）──
+    Object.assign(zh, {
+      gateOff: '纯净',
+      gateOn: '纯净·开',
+      gateOnTakeover: '接管·开',
+      gateTitleOff: '当前：harness 的默认注入照常送出。点一下切到纯净（不发系统提示、运行时上下文和工具，只留你的话）',
+      gateTitleOn: '当前：纯净已开。点一下关掉，恢复 harness 默认注入',
+      gateNoticeTitle: '开启纯净？',
+      gateNoticeBody: '系统提示会被清空：切换的那一轮缓存基本不命中，之后每轮输入反而更少。用量统计不受影响。此说明只弹一次。',
+      injectTitleOff: '本会话已开跑，内容不会再写进历史。要点面板里的「注入」，内容才会在下一轮带上（这里只是启用）。',
+      injectTitleOn: '已启用预注入，但不会自动生效：还需点面板里的「注入」，下一轮请求才会带上。',
+      modeInjectTip: '会话已开跑，无法再写入历史，内容改为每轮注入。不会自动生效：点「注入」后下一轮请求才带上（不进历史、每轮都计费）。',
+      injectOriginalHint: '框里显示的是当前原文；改动即覆盖，改回原文或清空 = 不修改',
+      presetsTitle: '预设',
+      presetsNone: '未套用',
+      presetsActive: '已套用 1 个',
+      presetClear: '取消预设',
+      groupBuiltin: '内置',
+      groupMine: '我的',
+      manageShow: '＋ 保存 / 导入 / 导出预设',
+      manageHide: '收起',
+      presetsHint: '点一下即套用：会一并设置系统提示、开场对话和工具权限。首轮前套用从第一轮生效；会话开跑后套用从下一轮生效。',
+      footPure: '系统提示 0 · 工具 0',
+      footTakeover: '系统提示完全由你写',
+      footSystem: '追加系统提示',
+      footMine: '我的预设',
+      tagMine: '我的',
+      myPresetDesc: '保存于本工作区',
+      inUse: '使用中',
+      packNamePlaceholder: '给当前配置起个名字，例如：周报助手',
+      savePack: '保存为预设',
+      needName: '先在左边输入预设名',
+      savedAs: '已保存为',
+      deleted: '已删除',
+      imported: '已导入',
+      importBad: '文件不是有效的预设 JSON',
+      exportFile: '导出文件',
+      importFile: '导入文件',
+      deletePack: '删除',
+      confirmYes: '再点确认',
+      systemTitle: '系统提示',
+      systemOffMeta: '不改',
+      systemAppendMeta: '追加',
+      systemTakeoverMeta: '接管',
+      modeOff: '不改',
+      modeAppend: '追加到默认提示后',
+      modeTakeover: '接管整个系统提示',
+      modeOffHint: '保持 dsh 默认系统提示（身份、工具说明、工作区规则等）。下面写的内容不会发送。',
+      modeAppendHint: '在 dsh 默认系统提示里追加下面这段（排在靠后位置）：工具、工作区、审批都照旧，模型只是多了这些设定（适合人格、口吻、团队规范）。默认提示的前缀不变，缓存照样能命中。',
+      modeTakeoverHint: '系统提示只剩下面这段，不发运行时上下文、不给工具、只放行你的话（和开场对话）。效果等同用脚本直接调 API。留空 = 纯净模式（完全没有系统提示）。',
+      systemPlaceholder: '在这里写系统提示。例如：\n你是一位耐心的 Python 老师，回答先给结论，再给 5 行以内的示例代码；遇到术语用括号解释。\n\n小提示：点上面的预设卡片可以一键填入现成的人格。',
+      systemNotActive: '当前是「不改」，这段文字不会发送。选「追加」或「接管」后生效。',
+      takeoverEmpty: '已接管：系统提示为空（= 纯净模式）。在框里写内容即成为唯一的系统提示',
+      appliedFirstTurn: '已套用，发第一条消息时生效',
+      appliedNextTurn: '已套用，从下一轮生效',
+      presetCleared: '已取消预设，恢复默认',
+      nextTurnNotice: '本轮进行中，改动从下一轮生效',
+      itemsTitle: '开场对话（预填装）',
+      itemsHistoryHint: '想让 AI 一开始就"记得"的对话写在这里。你发第一条消息时，这些会变成真实对话历史：只在首轮按输入计费一次，之后作为历史前缀，通常能命中缓存。用户和 AI 的消息顺序随意，连着几条也行。',
+      itemsInjectHint: '会话已开跑，没法再写进开头的历史：现在改为「每轮注入」，点右下角「注入」后从下一轮起，每轮都会在你的话之前带上一份（每轮计费）。',
+      itemsEmpty: '还没有内容。可以先点「填入示例」看看格式。',
+      fillExample: '填入示例',
+      exampleUser: '我是刚学编程的新手，接下来的回答请尽量通俗，多举例子。',
+      exampleReasoning: '对方是新手 → 回答要短，先给结论，多用比喻，术语加括号解释。',
+      exampleAssistant: '好的！之后我会先说结论，再用生活中的例子解释，遇到专业词会在括号里说明。',
+      textUserPh: '用户说的话。例如：我叫小明，在做一个记账小程序，用 Vue。',
+      textAssistantPh: 'AI 的回答（模型会当成自己说过的话）。例如：明白，小明！之后我都按 Vue 3 + 组合式 API 来给你写代码。',
+      reasoningPh: '（可选）AI 的思考过程，会显示成折叠的思维链。例如：用户在做 Vue 记账应用 → 代码示例用 Vue 3。',
+      roleUser: '用户',
+      roleAssistant: 'AI',
+      toUser: '点击改成"用户说"',
+      toAssistant: '点击改成"AI 回答"',
+      addUser: '＋ 用户说',
+      addAssistant: '＋ AI 回答',
+      dockClear: '清空',
+      injectNow: '注入',
+      injectUpdate: '更新注入',
+      stopInject: '停止注入',
+      injectNowTip: '把当前开场对话写成本会话的"每轮注入"，不产生任何消息；下一轮请求开始带上',
+      advanced: '高级',
+      injectHint: '把 harness 送进去的某条注入换成你的版本，只在本会话生效；框里是原文，改回原文或清空 = 不修改。',
+      usageTitle: '用量与缓存',
+      usageNoTurns: '还没开跑',
+      turnsUnit: '轮',
+      usageEmpty: '还没有用量记录：发一条消息后这里会按轮显示。',
+      statInput: '未命中输入',
+      statCache: '缓存命中',
+      statOutput: '输出',
+      statHit: '命中率',
+      colTurn: '轮',
+      colInput: '未命中',
+      colCache: '命中',
+      colOutput: '输出',
+      colHit: '命中率',
+      colSystem: '系统提示',
+      colTools: '工具',
+      charsUnit: '字',
+      syntheticTurn: '预填装',
+      notePure: '纯净：系统提示 0 字、工具 0 个，每轮输入大幅减少。',
+      noteTakeover: '接管：系统提示只有你写的那段，没有工具和运行时上下文，每轮输入最少。',
+      noteAppend: '追加：每轮多发约 {n} tok 的系统提示；它排在默认提示靠后的位置，前面的大段前缀不变，第 2 轮起通常照常命中缓存。',
+      noteHistory: '开场对话约 {n} tok：首轮写进历史，只在首轮算一次未命中，之后作为历史前缀通常能命中。',
+      noteInject: '每轮注入约 {n} tok：每一轮都会在你这句话之前再带上一份（会话日志里每轮一条），所以每轮都计费、轮数越多累计越多。长期有效的设定更适合写进「系统提示」。',
+      noteSwitch: '切换预设 / 纯净 / 接管的那一轮，系统提示变了，缓存基本不命中，下一轮恢复。',
+      noteMinCache: '很短的请求（例如纯净模式的头几轮）可能达不到服务商的最小缓存长度，命中 0% 属正常。',
+      guideShow: '新手指南',
+      guideHide: '收起指南',
+      guideTitle: '三步上手',
+      guide1: '在「预设」里点一张卡片：想换人格选人格卡，想完全自己写系统提示选「自定义系统提示」，想什么都不发选「纯净模式」。',
+      guide2: '「系统提示」里选模式：不改 / 追加（保留 dsh 能力）/ 接管（像直接调 API）。框里的文字可以随时改，800 毫秒后自动保存。',
+      guide3: '「开场对话」写你希望 AI 一开始就记得的对话，在发第一条消息前写好，会变成真实历史。',
+      guide4: '会话已经聊过了也能改：系统提示从下一轮生效；开场对话要点「注入」才会每轮带上。',
+      guide5: '展开「用量与缓存」能看到每轮实际花了多少、缓存命中多少，跟底栏的数字同源。',
+      chipPure: '纯净',
+      settingsWhere: '日常使用不需要来这里：在会话输入框上方点「预填装」打开面板，就能选预设、写系统提示和开场对话。这一页是开发 / 排查用的全局开关。',
+      resetGlobal: '把全局开关恢复默认',
+      resetTip: '关掉所有全局开关、清空「生效会话」——旧版「纯净模式」会在这里留下全局开关，导致之后套人格时连工具一起被拦。',
+      toolsZero: '无工具',
+      toolsUnit: '个工具',
+      expandPanel: '展开',
+      collapsePanel: '收起',
+      prefillWritten: '预填装 · 已写入历史',
+      itemsWrittenHint: '✓ 首轮已把 {n} 条开场对话写成真实历史（在对话里可以看到）。',
+      prefillWrittenTip: '开场对话已在首轮写成真实历史，之后每轮作为历史前缀发送（通常命中缓存）。想再追加内容可在面板里改为每轮注入。',
+      chipTakeover: '接管系统提示',
+      pureApplied: '纯净模式已生效',
+    })
+    Object.assign(en, {
+      gateOff: 'Pure',
+      gateOn: 'Pure·on',
+      gateOnTakeover: 'Custom·on',
+      gateTitleOff: 'Harness injections flow as usual. Click to go pure (no system prompt, runtime context or tools)',
+      gateTitleOn: 'Pure is on. Click to restore the harness defaults',
+      gateNoticeTitle: 'Go pure?',
+      gateNoticeBody: 'The system prompt is emptied: the switching turn mostly misses the cache, later turns send far fewer tokens. Usage stats are unaffected. Shown once.',
+      presetsTitle: 'Presets',
+      presetsNone: 'none applied',
+      presetsActive: '1 applied',
+      presetClear: 'Clear preset',
+      groupBuiltin: 'Built-in',
+      groupMine: 'Mine',
+      manageShow: '+ Save / import / export',
+      manageHide: 'Hide',
+      presetsHint: 'Click to apply it: it sets the system prompt, opening dialogue and tool access together. Before the first turn it applies from turn 1; afterwards from the next turn.',
+      footPure: 'system 0 · tools 0',
+      footTakeover: 'you write the whole system prompt',
+      footSystem: 'appends to system',
+      footMine: 'my preset',
+      tagMine: 'mine',
+      myPresetDesc: 'saved in this workspace',
+      inUse: 'in use',
+      packNamePlaceholder: 'Name the current setup, e.g. Weekly report helper',
+      needName: 'Type a preset name first',
+      savedAs: 'Saved as',
+      deleted: 'Deleted',
+      imported: 'Imported',
+      importBad: 'Not a valid preset JSON file',
+      exportFile: 'Export',
+      importFile: 'Import',
+      deletePack: 'Delete',
+      confirmYes: 'Click to confirm',
+      systemTitle: 'System prompt',
+      systemOffMeta: 'unchanged',
+      systemAppendMeta: 'append',
+      systemTakeoverMeta: 'take over',
+      modeOff: 'Unchanged',
+      modeAppend: 'Append to default',
+      modeTakeover: 'Take over entirely',
+      modeOffHint: 'Keep the default dsh system prompt. The text below is not sent.',
+      modeAppendHint: 'Appends the text below after the default dsh system prompt: tools, workspace and approvals stay; the model just gains these instructions. The default prefix is unchanged, so caching still works.',
+      modeTakeoverHint: 'The system prompt becomes only the text below: no runtime context, no tools, only your messages (and the opening dialogue) pass. Same as calling the API from a script. Empty = pure mode.',
+      systemPlaceholder: 'Write the system prompt here, e.g.\nYou are a patient Python teacher. Lead with the answer, then a code sample under 5 lines.\n\nTip: the preset cards above fill in ready-made personas.',
+      systemNotActive: 'Mode is "Unchanged", so this text is not sent. Pick Append or Take over.',
+      takeoverEmpty: 'Taken over with an empty prompt (= pure). Whatever you type becomes the only system prompt',
+      appliedFirstTurn: 'Applied — takes effect on your first message',
+      appliedNextTurn: 'Applied — takes effect next turn',
+      presetCleared: 'Preset cleared, defaults restored',
+      nextTurnNotice: 'A turn is running; changes apply next turn',
+      itemsTitle: 'Opening dialogue (prefill)',
+      itemsHistoryHint: 'Write the conversation the AI should "remember". On your first send it becomes real history: billed once as input, then cached as history prefix. Any order, several in a row is fine.',
+      itemsInjectHint: 'This session has already run, so history is closed: the content is now injected every turn once you press Inject (not history, billed every turn).',
+      itemsEmpty: 'Nothing yet. Try "Fill example" to see the format.',
+      fillExample: 'Fill example',
+      exampleUser: 'I am new to programming. Please keep answers simple with lots of examples.',
+      exampleReasoning: 'Beginner → short answers, lead with the conclusion, use analogies.',
+      exampleAssistant: 'Got it! I will lead with the answer, explain with everyday examples, and define any jargon.',
+      textUserPh: 'What the user says, e.g. I am building a budgeting app with Vue.',
+      textAssistantPh: 'The AI answer (the model treats it as its own words), e.g. Understood — I will write Vue 3 code with the Composition API.',
+      reasoningPh: '(optional) AI reasoning, shown as a folded chain of thought.',
+      injectNow: 'Inject',
+      injectUpdate: 'Update injection',
+      stopInject: 'Stop injecting',
+      advanced: 'advanced',
+      usageTitle: 'Usage & cache',
+      usageNoTurns: 'not started',
+      turnsUnit: 'turns',
+      usageEmpty: 'No usage yet: send a message and each turn shows up here.',
+      statInput: 'uncached input',
+      statCache: 'cache hits',
+      statOutput: 'output',
+      statHit: 'hit rate',
+      colTurn: 'turn',
+      colInput: 'uncached',
+      colCache: 'cached',
+      colOutput: 'output',
+      colHit: 'hit',
+      colSystem: 'system',
+      colTools: 'tools',
+      charsUnit: 'ch',
+      syntheticTurn: 'prefill',
+      notePure: 'Pure: 0 system chars, 0 tools — far less input per turn.',
+      noteTakeover: 'Take over: only your system text, no tools or runtime context.',
+      noteAppend: 'Append: ~{n} tok more system prompt per turn, placed after the default prefix, so turn 2+ usually still hits the cache.',
+      noteHistory: 'Opening dialogue ~{n} tok: written to history on turn 1, billed once, then usually cached.',
+      noteInject: 'Per-turn injection ~{n} tok: a fresh copy is added before your message every turn (one row per turn in the session log), so it is billed every turn and adds up. Long-lived instructions belong in the system prompt.',
+      noteSwitch: 'The turn where you switch preset / pure / take over changes the system prompt and mostly misses the cache; the next turn recovers.',
+      noteMinCache: 'Very short requests may be below the provider minimum cache length; 0% is normal then.',
+      guideShow: 'Guide',
+      guideHide: 'Hide guide',
+      guideTitle: 'Get started',
+      guide1: 'Pick a preset card: personas change the voice, "Custom system prompt" lets you write it all, "Pure" sends nothing.',
+      guide2: 'Choose the system-prompt mode: unchanged / append (keeps dsh abilities) / take over (like a raw API call). Edits autosave.',
+      guide3: 'Write the opening dialogue before your first message; it becomes real history.',
+      guide4: 'After the session has run: system prompt changes apply next turn; the opening dialogue needs Inject.',
+      guide5: 'Open "Usage & cache" to see per-turn spend and cache hits, from the same data as the footer.',
+      chipPure: 'Pure',
+      settingsWhere: 'Everyday use happens in the Prefill panel above the composer (presets, system prompt, opening dialogue). This page holds developer/diagnostic global switches.',
+      resetGlobal: 'Reset global switches',
+      resetTip: 'Turn every global switch off and clear the affected-session list (older pure mode left them on).',
+      toolsZero: 'no tools',
+      toolsUnit: 'tools',
+      expandPanel: 'Expand',
+      collapsePanel: 'Collapse',
+      prefillWritten: 'Prefill · in history',
+      itemsWrittenHint: '✓ {n} opening rows were written into history on turn 1 (visible in the conversation).',
+      prefillWrittenTip: 'The opening dialogue was written into history on turn 1 and is sent as cached history prefix from then on.',
+      chipTakeover: 'Custom system',
+      pureApplied: 'Pure mode active',
+    })
+
     const S = {
       page: {
         display: 'flex',
@@ -938,7 +1179,24 @@ window.__ModuleLoader__.load({
         'div',
         { style: S.page },
         h('div', { style: S.title }, t('title')),
+        h('div', { style: { ...S.intro, padding: '8px 10px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2)', borderLeft: '3px solid var(--dsw-alias-brand-primary)' } }, t('settingsWhere')),
         h('div', { style: S.intro }, t('intro')),
+        h(
+          'button',
+          {
+            type: 'button',
+            style: S.button,
+            title: t('resetTip'),
+            onClick: () =>
+              void mutate({
+                armed: [],
+                levers: { probeSection: false, probeContext: false, blockSections: false, blockContexts: false, blockTools: false, blockMessages: false },
+                allowKinds: ['user'],
+                tools: null,
+              }),
+          },
+          t('resetGlobal'),
+        ),
 
         h(
           'div',
@@ -1157,18 +1415,25 @@ window.__ModuleLoader__.load({
       // 会话开跑过就没有"写进历史"这条路了 ⇒ 同一颗键自动改叫「预注入」，并要求手动触发。
       const injected = (envelope?.injects?.[sessionId] ?? 0) > 0
       const injectMode = (envelope?.turns?.[sessionId] ?? 0) > 0
-      const pending = injectMode && on && !injected
+      // 首轮前写好的预填装已经变成真实历史：不用再点注入，别拿警示色催人。
+      const written = (envelope?.materialized?.[sessionId] ?? 0) > 0
+      // 输入框芯片不知道面板里有没有内容，所以不在这里催；催促只在面板里（有内容、没注入时才高亮「注入」按钮）。
+      const pending = false
       const label = injectMode
-        ? pending
-          ? t('injectOn')
-          : injected
-            ? t('injectDone')
-            : t('injectOff')
+        ? written && !injected
+          ? t('prefillWritten')
+          : pending
+            ? t('injectOn')
+            : injected
+              ? t('injectDone')
+              : t('injectOff')
         : on
           ? t('prefillOn')
           : t('prefillOff')
       const title = injectMode
-        ? on
+        ? written && !injected
+          ? t('prefillWrittenTip')
+          : on
           ? t('injectTitleOn')
           : t('injectTitleOff')
         : on
@@ -1237,7 +1502,11 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         refresh()
         const timer = setInterval(refresh, 2500)
-        return () => clearInterval(timer)
+        window.addEventListener(STATE_EVENT, refresh)
+        return () => {
+          clearInterval(timer)
+          window.removeEventListener(STATE_EVENT, refresh)
+        }
       }, [refresh, sessionId])
 
       if (sessionId === '') return null
@@ -1247,8 +1516,23 @@ window.__ModuleLoader__.load({
       const write = (mode, markSeen) => {
         const patch = { gate: { ...gate, [sessionId]: mode } }
         if (markSeen === true) patch.noticeSeen = true
+        if (mode !== 'pure') {
+          // 关闭时把旧版「纯净模式」留下的 armed / 工具清单一并撤掉，否则看着关了、实际仍纯净。
+          patch.armed = (state?.armed ?? []).filter((id) => id !== sessionId)
+          const tools = { ...(state?.sessionTools ?? {}) }
+          delete tools[sessionId]
+          patch.sessionTools = tools
+          if (state?.activePreset?.[sessionId] === 'builtin:pure') {
+            const active = { ...(state?.activePreset ?? {}) }
+            delete active[sessionId]
+            patch.activePreset = active
+          }
+        }
         void call(patch)
-          .then((data) => setEnvelope(data))
+          .then((data) => {
+            setEnvelope(data)
+            notifyStateChanged()
+          })
           .catch(() => {})
       }
 
@@ -1284,8 +1568,9 @@ window.__ModuleLoader__.load({
       const dropped = Array.isArray(snap?.droppedKinds) ? snap.droppedKinds : []
       const badgeLabel =
         snap?.state === 'pure' ? t('statePure') : snap?.state === 'filter' ? t('stateFilter') : t('statePass')
+      // 输入行只放一颗芯片：本轮状态的细节已经在面板与顶栏徽标里，这里只在"改动要到下一轮才生效"时提示。
       const badge =
-        snap === undefined
+        snap === undefined || !pending
           ? null
           : h(
               'span',
@@ -1321,24 +1606,321 @@ window.__ModuleLoader__.load({
             },
           },
           h('span', { style: S.gateDot(on) }),
-          on ? t('gateOn') : t('gateOff'),
+          on
+            ? typeof state?.overrides?.[sessionId]?.sections?.['prefill:persona'] === 'string' &&
+              state.overrides[sessionId].sections['prefill:persona'].trim() !== ''
+              ? t('gateOnTakeover')
+              : t('gateOn')
+            : t('gateOff'),
         ),
         badge,
       )
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // v0.2 面板：预设卡片 + 系统提示 + 开场对话 + 改写注入 + 用量与缓存
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /** 人格段的名字（与 host 的 builtin-presets.js 保持一致）。 */
+    const PERSONA_SECTION = 'prefill:persona'
+    /** 用量路由（只读）。 */
+    const USAGE_ROUTE = '/api/dsh-prefill/usage'
+
     /**
-     * 预填装草稿区（`conversation.input.dock` —— 输入框上方的会话级面板）。
+     * 粗估 token：中日韩字符 ≈ 0.7 token/字，其余 ≈ 1 token/3.5 字符。
+     * 只用于"大概多花多少"的提示，真实计费以底栏 / 用量卡里的接口读数为准。
+     */
+    function estimateTokens(text) {
+      if (typeof text !== 'string' || text === '') return 0
+      let cjk = 0
+      for (const char of text) if (/[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(char)) cjk += 1
+      return Math.round(cjk * 0.7 + (text.length - cjk) / 3.5)
+    }
+
+    function itemsTokens(items) {
+      return (items ?? []).reduce((sum, item) => sum + estimateTokens(item?.text) + estimateTokens(item?.reasoning), 0)
+    }
+
+    /** 1234 → "1.2K"。 */
+    function fmt(value) {
+      if (!Number.isFinite(value)) return '—'
+      return value >= 10000 ? `${(value / 1000).toFixed(1)}K` : value >= 1000 ? `${(value / 1000).toFixed(2)}K` : String(value)
+    }
+
+    async function postJson(path, body) {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: body === undefined ? {} : { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return await response.json()
+    }
+
+    /** 从 state 的"会话 → 值"表里删掉一个会话。 */
+    function without(map, sessionId) {
+      const next = { ...(map ?? {}) }
+      delete next[sessionId]
+      return next
+    }
+
+    /** 新面板的样式（只用 DSH 的 --dsw-alias-* token，深浅色自动跟随）。 */
+    const V = {
+      section: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        padding: '10px 12px',
+        borderRadius: 10,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-base)',
+      },
+      sectionHead: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' },
+      sectionTitle: { fontWeight: 600, fontSize: 12.5, color: 'var(--dsw-alias-label-primary)' },
+      sectionMeta: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' },
+      caret: (open) => ({
+        display: 'inline-block',
+        width: 10,
+        color: 'var(--dsw-alias-label-tertiary)',
+        transform: open ? 'rotate(90deg)' : 'none',
+        transition: 'transform 120ms ease',
+      }),
+      hint: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11.5, lineHeight: 1.6 },
+      grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 8 },
+      pills: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+      pill: (active) => ({
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        height: 28,
+        padding: '0 10px 0 8px',
+        borderRadius: 14,
+        cursor: 'pointer',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        whiteSpace: 'nowrap',
+        border: `1px solid ${active ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'}`,
+        background: active ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, var(--dsw-alias-bg-base))' : 'var(--dsw-alias-bg-layer-1)',
+        color: active ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-primary)',
+        fontWeight: active ? 600 : 400,
+      }),
+      pillGroup: { fontSize: 10.5, color: 'var(--dsw-alias-label-tertiary)', alignSelf: 'center', marginRight: 2 },
+      detail: {
+        display: 'flex',
+        gap: 8,
+        alignItems: 'baseline',
+        flexWrap: 'wrap',
+        minHeight: 18,
+        fontSize: 11.5,
+        lineHeight: 1.55,
+        color: 'var(--dsw-alias-label-secondary)',
+      },
+      card: (active) => ({
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        padding: '8px 10px',
+        borderRadius: 10,
+        textAlign: 'left',
+        cursor: 'pointer',
+        border: `1px solid ${active ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l1)'}`,
+        background: active
+          ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, var(--dsw-alias-bg-base))'
+          : 'var(--dsw-alias-bg-layer-1)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        minWidth: 0,
+      }),
+      cardTop: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
+      cardEmoji: { fontSize: 16, lineHeight: 1 },
+      cardName: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      tag: {
+        marginLeft: 'auto',
+        flex: '0 0 auto',
+        padding: '0 6px',
+        borderRadius: 999,
+        fontSize: 10,
+        lineHeight: '16px',
+        color: 'var(--dsw-alias-label-tertiary)',
+        border: '1px solid var(--dsw-alias-border-l2)',
+      },
+      cardDesc: {
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 11,
+        lineHeight: 1.45,
+        overflow: 'hidden',
+        display: '-webkit-box',
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: 'vertical',
+      },
+      cardFoot: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: 'var(--dsw-alias-label-tertiary)' },
+      activeMark: { color: 'var(--dsw-alias-brand-primary)', fontWeight: 600 },
+      btn: {
+        height: 26,
+        padding: '0 10px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      btnPrimary: {
+        height: 26,
+        padding: '0 12px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-label-primary)',
+        background: 'var(--dsw-alias-label-primary)',
+        color: 'var(--dsw-alias-bg-base)',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      btnGhost: {
+        height: 24,
+        padding: '0 8px',
+        borderRadius: 6,
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      seg: {
+        display: 'inline-flex',
+        padding: 2,
+        gap: 2,
+        borderRadius: 8,
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-l1)',
+      },
+      segBtn: (on) => ({
+        height: 24,
+        padding: '0 10px',
+        borderRadius: 6,
+        border: 'none',
+        background: on ? 'var(--dsw-alias-bg-base)' : 'transparent',
+        boxShadow: on ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+        color: on ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
+        fontWeight: on ? 600 : 400,
+        fontSize: 12,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      }),
+      textarea: {
+        width: '100%',
+        boxSizing: 'border-box',
+        minHeight: 64,
+        maxHeight: '28vh',
+        padding: '8px 10px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: 12.5,
+        lineHeight: 1.55,
+        fontFamily: 'inherit',
+        resize: 'vertical',
+      },
+      input: {
+        height: 26,
+        boxSizing: 'border-box',
+        padding: '0 8px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        minWidth: 0,
+      },
+      row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+      callout: (tone) => ({
+        padding: '7px 10px',
+        borderRadius: 8,
+        fontSize: 11.5,
+        lineHeight: 1.6,
+        color: 'var(--dsw-alias-label-secondary)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        borderLeft: `3px solid ${
+          tone === 'warn'
+            ? 'var(--dsw-alias-state-warn-primary)'
+            : tone === 'brand'
+              ? 'var(--dsw-alias-brand-primary)'
+              : 'var(--dsw-alias-border-l2)'
+        }`,
+      }),
+      table: { width: '100%', borderCollapse: 'collapse', fontSize: 11.5, fontVariantNumeric: 'tabular-nums' },
+      th: {
+        textAlign: 'right',
+        fontWeight: 500,
+        color: 'var(--dsw-alias-label-tertiary)',
+        padding: '3px 6px',
+        borderBottom: '1px solid var(--dsw-alias-border-l1)',
+        whiteSpace: 'nowrap',
+      },
+      td: { textAlign: 'right', padding: '3px 6px', color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' },
+      stat: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 72 },
+      statValue: { fontSize: 15, fontWeight: 600, color: 'var(--dsw-alias-label-primary)', fontVariantNumeric: 'tabular-nums' },
+      statLabel: { fontSize: 10.5, color: 'var(--dsw-alias-label-tertiary)' },
+      bar: { height: 6, borderRadius: 3, background: 'var(--dsw-alias-bg-layer-2)', overflow: 'hidden', display: 'flex' },
+      steps: { margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 },
+      itemCard: (assistant) => ({
+        display: 'flex',
+        gap: 8,
+        alignItems: 'flex-start',
+        padding: '8px 8px 8px 10px',
+        borderRadius: 10,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: assistant ? 'var(--dsw-alias-bg-layer-1)' : 'var(--dsw-alias-bg-base)',
+      }),
+    }
+
+    /** 可折叠的小节。 */
+    function Section(props) {
+      return h(
+        'div',
+        { style: V.section, 'data-prefill-section': props.id },
+        h(
+          'div',
+          {
+            style: V.sectionHead,
+            role: 'button',
+            tabIndex: 0,
+            'aria-expanded': props.open ? 'true' : 'false',
+            onClick: props.onToggle,
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                props.onToggle()
+              }
+            },
+          },
+          h('span', { style: V.caret(props.open) }, '▸'),
+          h('span', { style: V.sectionTitle }, props.title),
+          props.meta ? h('span', { style: V.sectionMeta }, props.meta) : null,
+          h('span', { style: { flex: '1 1 auto' } }),
+          props.right ?? null,
+        ),
+        props.open ? props.children : null,
+      )
+    }
+
+    /**
+     * 输入框上方的预填装面板（v0.2）。
      *
-     * 编辑模型（用户定，§14.3）：
-     *   items = 有序列表，每项 `{ role:'user'|'assistant', text, reasoning? }`
-     *   · 思维链是 **AI 那一项里的一个字段**，不是单独一轮；
-     *   · **不强制 user/ai 交替** —— 连续多条 user、连续多条 assistant 都合法。
-     * 落盘规则由 host 侧负责（连续 user 同轮 / 每个 assistant 独占一轮 / 尾部 user 自开一轮），
-     * 客户端只管"编辑 → debounce 推到 `POST /api/dsh-prefill/draft`"。
-     *
-     * 会话 id 来自**槽位下发的 `props.sessionId`**（`scope: 'session'` 的槽位由框架注入），
-     * 不读 DOM、不碰 document.body（P9）；控件全部自绘（P1）。
+     * 一个会话的配置只有四样东西，面板就按这四样排：
+     *   ① 预设（一键套用下面三样）；② 系统提示（不改 / 追加 / 接管）；
+     *   ③ 开场对话（预填装：首轮前写成真实历史，开跑后改为每轮注入）；
+     *   ④ 改写注入（高级）。外加 ⑤ 用量与缓存（只读，数据同 DSH 底栏）。
      */
     function PrefillDock(props) {
       const t = props.t ?? ((key) => key)
@@ -1347,45 +1929,32 @@ window.__ModuleLoader__.load({
       const [enabled, setEnabled] = React.useState(false)
       const [status, setStatus] = React.useState('idle')
       const [revision, setRevision] = React.useState(0)
-      // M4：包（按工作区存在 host 侧）
       const [packs, setPacks] = React.useState([])
-      const [selected, setSelected] = React.useState('')
+      const [builtins, setBuiltins] = React.useState([])
       const [packName, setPackName] = React.useState('')
-      // 注入改写不再单独占一行：它是本面板里的一节（用户要求：放进预填装窗口、跟预设绑在一起）。
-      const [injectOpen, setInjectOpen] = React.useState(false)
-      // ⚠️ hooks 一律放**提前 return 之前**：放后面会随渲染次数变化 ⇒ React 直接抛错、
-      // 整个面板白屏（这个坑踩过两次，记在 §14.19）。
+      const [envelope, setEnvelope] = React.useState(null)
+      const [toast, setToast] = React.useState('')
+      const [open, setOpen] = React.useState({ guide: false, presets: true, system: false, items: true, inject: false, usage: false, manage: false })
+      const [hovered, setHovered] = React.useState('')
+      // 整个面板可收起成一行：会话开跑后默认收起（否则它会盖住对话）。用户手动展开/收起后按会话记住。
+      const [collapsed, setCollapsed] = React.useState(null)
+      const [systemDraft, setSystemDraft] = React.useState(null)
+      const [usage, setUsage] = React.useState(null)
       const [confirming, setConfirming] = React.useState('')
+      const [injectStatus, setInjectStatus] = React.useState('idle')
       const dirty = React.useRef(false)
+      const systemDirty = React.useRef(false)
       const staged = React.useRef(false)
-      /** 导入文件用的隐藏 input（hook 必须在提前 return 之前）。 */
       const fileRef = React.useRef(null)
-
-      /**
-       * 让面板**真的长到上限**：dock 在宿主的 flex 列里是默认项（`flex: 0 1 auto`），
-       * 内容一多它就被压扁 —— 实测 maxHeight 算出 803px，实际只渲染 462px。
-       * 所以内容装不下时显式给一个 height；装得下就交回 auto（不来回抖）。
-       */
       const listRef = React.useRef(null)
-      const [panelHeight, setPanelHeight] = React.useState(undefined)
-      React.useEffect(() => {
-        const list = listRef.current
-        if (!(list instanceof HTMLElement) || bounds?.maxHeight === undefined) return
-        const panel = list.closest('[data-prefill-dock]')
-        if (!(panel instanceof HTMLElement)) return
-        const chrome = panel.clientHeight - list.clientHeight
-        const needed = list.scrollHeight + chrome
-        const target = needed >= bounds.maxHeight ? bounds.maxHeight : undefined
-        setPanelHeight((current) => (current === target ? current : target))
-      })
-
-      /**
-       * 面板尺寸跟着输入框走（用户要求：宽度一致；高度先自动伸展，快到顶部栏再内滚）：
-       *   · 宽度 = 输入框那张**圆角卡片**的宽度（往上找第一个够宽且有圆角的自绘容器）
-       *   · 高度上限 = 输入框上沿 − 顶栏下沿 ⇒ 内容短就自然撑开，长到接近顶栏才内滚
-       * 只**读**别人的几何信息，不写 DOM（守 P9）。
-       */
       const [bounds, setBounds] = React.useState(null)
+
+      const flash = React.useCallback((text) => {
+        setToast(text)
+        setTimeout(() => setToast((current) => (current === text ? '' : current)), 3200)
+      }, [])
+
+      // 面板宽度对齐输入框卡片、高度上限 = 输入框上沿到顶栏（只读几何，不写别人的 DOM）。
       React.useEffect(() => {
         const measure = () => {
           const input = document.querySelector('[contenteditable="true"]')
@@ -1403,10 +1972,10 @@ window.__ModuleLoader__.load({
           }
           const pane = document.querySelector('[data-conversation-session]')
           const ceiling = pane === null ? 56 : pane.getBoundingClientRect().top + 52
-          setBounds({
-            width,
-            maxHeight: Math.max(220, Math.round(input.getBoundingClientRect().top - ceiling)),
-          })
+          const maxHeight = Math.max(240, Math.round(input.getBoundingClientRect().top - ceiling))
+          setBounds((current) =>
+            current !== null && current.width === width && current.maxHeight === maxHeight ? current : { width, maxHeight },
+          )
         }
         measure()
         window.addEventListener('resize', measure)
@@ -1417,41 +1986,43 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
-      // 输入框里的开关翻动后广播 ⇒ 这里重读状态，草稿区立刻出现 / 消失。
       React.useEffect(() => {
         const onChanged = () => setRevision((value) => value + 1)
         window.addEventListener(STATE_EVENT, onChanged)
         return () => window.removeEventListener(STATE_EVENT, onChanged)
       }, [])
 
-      const post = React.useCallback(async (path, body) => {
-        const response = await fetch(path, {
-          method: 'POST',
-          headers: body === undefined ? {} : { 'content-type': 'application/json' },
-          body: body === undefined ? undefined : JSON.stringify(body),
-        })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return await response.json()
+      const refreshEnvelope = React.useCallback(() => {
+        void postJson(STATE_ROUTE, undefined)
+          .then((data) => setEnvelope(data))
+          .catch(() => {})
       }, [])
 
+      // 打开 / 换会话：读开关 + 草稿 + 系统提示。
       React.useEffect(() => {
         if (sessionId === '') return undefined
         let alive = true
+        staged.current = false
         void (async () => {
           try {
-            const snapshot = await post(STATE_ROUTE, undefined)
+            const snapshot = await postJson(STATE_ROUTE, undefined)
             if (!alive) return
+            setEnvelope(snapshot)
             const map = snapshot?.state?.prefill
-            const on =
-              map !== null && typeof map === 'object' && typeof map[sessionId] === 'string' && map[sessionId] !== ''
+            const on = map !== null && typeof map === 'object' && typeof map[sessionId] === 'string' && map[sessionId] !== ''
             setEnabled(on)
             if (!on) {
               setItems(null)
               return
             }
-            const draft = await post(DRAFT_ROUTE, { sessionId })
+            const draft = await postJson(DRAFT_ROUTE, { sessionId })
             if (!alive) return
-            setItems(Array.isArray(draft?.draft) ? draft.draft : [])
+            // 本地有没落盘的编辑（debounce 中）时不要用 host 的旧草稿覆盖它（套预设时实测踩到）。
+            if (!dirty.current) setItems(Array.isArray(draft?.draft) ? draft.draft : [])
+            if (!systemDirty.current) {
+              const text = snapshot?.state?.overrides?.[sessionId]?.sections?.[PERSONA_SECTION]
+              setSystemDraft(typeof text === 'string' ? text : '')
+            }
           } catch {
             if (alive) setStatus('error')
           }
@@ -1459,85 +2030,105 @@ window.__ModuleLoader__.load({
         return () => {
           alive = false
         }
-      }, [post, sessionId, revision])
+      }, [sessionId, revision])
 
-      // 开关打开、host 还没有草稿 ⇒ 先登记一份空的：既声明"本会话启用预填装"，
-      // 也让 host 顺手把系统提示**预热**好（物化时要用，见 §14.5 的两条硬约束）。
+      // 状态轮询：轮次数 / 闸门 / 注入数会在别处变（跑完一轮、点了芯片）。
+      React.useEffect(() => {
+        if (!enabled || sessionId === '') return undefined
+        const timer = setInterval(refreshEnvelope, 3000)
+        return () => clearInterval(timer)
+      }, [enabled, refreshEnvelope, sessionId])
+
+      // 启用后先登记一份空草稿：声明"本会话用预填装"，也让 host 预热系统提示。
       React.useEffect(() => {
         if (!enabled || items === null || staged.current || sessionId === '') return
         staged.current = true
-        if (items.length === 0) {
-          void post(DRAFT_ROUTE, { sessionId, items: [] }).catch(() => setStatus('error'))
-        }
-      }, [enabled, items, post, sessionId])
+        if (items.length === 0) void postJson(DRAFT_ROUTE, { sessionId, items: [] }).catch(() => setStatus('error'))
+      }, [enabled, items, sessionId])
 
-      // ── M4：包 ────────────────────────────────────────────────────────────────
-      const packsCall = React.useCallback(
-        async (payload) => {
-          const response = await fetch(PACKS_ROUTE, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sessionId, ...payload }),
-          })
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
-          return await response.json()
-        },
-        [sessionId],
-      )
-
-      const refreshPacks = React.useCallback(() => {
-        void packsCall({ op: 'list' })
-          .then((data) => setPacks(Array.isArray(data?.packs) ? data.packs : []))
-          .catch(() => setStatus('error'))
-      }, [packsCall])
-
+      const packsCall = React.useCallback((payload) => postJson(PACKS_ROUTE, { sessionId, ...payload }), [sessionId])
+      const adoptPacks = (data) => {
+        setPacks(Array.isArray(data?.packs) ? data.packs : [])
+        if (Array.isArray(data?.builtins)) setBuiltins(data.builtins)
+      }
       React.useEffect(() => {
-        if (enabled && sessionId !== '') refreshPacks()
-      }, [enabled, refreshPacks, sessionId])
+        if (enabled && sessionId !== '') void packsCall({ op: 'list' }).then(adoptPacks).catch(() => setStatus('error'))
+      }, [enabled, packsCall, sessionId])
 
-      // 模式判定：`turns[sessionId]` —— 首轮前 = 写入历史；会话已开跑 = 每轮注入。
-      // 这不是偏好问题：首轮之后"写进历史"这条路被 F11/F12 关死了，继续显示
-      // "将变成真实历史"就是在骗人，所以自动切换并**明写**当前模式。
-      const [envelope, setEnvelope] = React.useState(null)
-      const [injectStatus, setInjectStatus] = React.useState('idle')
-      const refreshEnvelope = React.useCallback(() => {
-        void post(STATE_ROUTE, undefined)
-          .then((data) => setEnvelope(data))
-          .catch(() => {
-            // 拿不到就维持当前显示。
-          })
-      }, [])
-      React.useEffect(() => {
-        if (enabled && sessionId !== '') refreshEnvelope()
-      }, [enabled, refreshEnvelope, sessionId])
-      const turns = envelope?.turns?.[sessionId] ?? 0
-      // 与其他插件的冲突（host 记在 envelope.conflicts[会话]，UI 要明说）
-      const conflict = envelope?.conflicts?.[sessionId]
-      const injectCount = envelope?.injects?.[sessionId] ?? 0
-      const injectMode = turns > 0
-
-      const save = React.useCallback(
-        (next) => {
-          setStatus('saving')
-          void post(DRAFT_ROUTE, { sessionId, items: next })
-            .then(() => setStatus('saved'))
-            .catch(() => setStatus('error'))
-        },
-        [post, sessionId],
-      )
-
-      // 编辑后 700ms 落盘（debounce）。
+      // 开场对话：编辑后 700ms 落盘。
       React.useEffect(() => {
         if (!enabled || items === null || !dirty.current) return undefined
         const timer = setTimeout(() => {
           dirty.current = false
-          save(items)
+          setStatus('saving')
+          void postJson(DRAFT_ROUTE, { sessionId, items })
+            .then(() => setStatus('saved'))
+            .catch(() => setStatus('error'))
         }, 700)
         return () => clearTimeout(timer)
-      }, [items, enabled, save])
+      }, [items, enabled, sessionId])
+
+      const state = envelope?.state ?? null
+      const gateMode = state?.gate?.[sessionId] === 'pure' ? 'pure' : 'pass'
+      const storedSystem = state?.overrides?.[sessionId]?.sections?.[PERSONA_SECTION]
+      const activePreset = state?.activePreset?.[sessionId] ?? ''
+      const turns = envelope?.turns?.[sessionId] ?? 0
+      const injectMode = turns > 0
+      const injectCount = envelope?.injects?.[sessionId] ?? 0
+      const conflict = envelope?.conflicts?.[sessionId]
+      const pending = Array.isArray(envelope?.pendingReprime) && envelope.pendingReprime.includes(sessionId)
+      // 系统提示模式：不改 / 追加 / 接管（接管 = 闸门 pure + 人格段；纯净 = 闸门 pure + 无人格段）。
+      const systemText = systemDraft ?? (typeof storedSystem === 'string' ? storedSystem : '')
+      const systemMode = gateMode === 'pure' ? 'takeover' : typeof storedSystem === 'string' && storedSystem.trim() !== '' ? 'append' : 'off'
+
+      // 系统提示：编辑后 800ms 落盘（写 overrides[session].sections['prefill:persona']）。
+      React.useEffect(() => {
+        if (systemDraft === null || !systemDirty.current || sessionId === '') return undefined
+        const timer = setTimeout(() => {
+          systemDirty.current = false
+          void writeSystem(systemDraft, undefined).catch(() => setStatus('error'))
+        }, 800)
+        return () => clearTimeout(timer)
+      }, [systemDraft, sessionId])
+
+      // 用量：展开时每 4 秒刷新一次。
+      React.useEffect(() => {
+        if (!open.usage || sessionId === '') return undefined
+        let alive = true
+        const load = () =>
+          void postJson(USAGE_ROUTE, { sessionId })
+            .then((data) => {
+              if (alive) setUsage(data)
+            })
+            .catch(() => {})
+        load()
+        const timer = setInterval(load, 4000)
+        return () => {
+          alive = false
+          clearInterval(timer)
+        }
+      }, [open.usage, sessionId])
 
       if (sessionId === '' || !enabled || items === null) return null
 
+      const collapseKey = `dsh-prefill:collapsed:${sessionId}`
+      let remembered = null
+      try {
+        remembered = window.localStorage.getItem(collapseKey)
+      } catch {
+        remembered = null
+      }
+      const isCollapsed = collapsed ?? (remembered === null ? (envelope?.turns?.[sessionId] ?? 0) > 0 : remembered === '1')
+      const setCollapsedRemembered = (value) => {
+        setCollapsed(value)
+        try {
+          window.localStorage.setItem(collapseKey, value ? '1' : '0')
+        } catch {
+          // 存不了就只在本次生效。
+        }
+      }
+
+      const toggle = (key) => setOpen((current) => ({ ...current, [key]: !current[key] }))
       const edit = (next) => {
         dirty.current = true
         setItems(next)
@@ -1551,133 +2142,130 @@ window.__ModuleLoader__.load({
         next.splice(target, 0, moved)
         edit(next)
       }
-
-      const adoptPacks = (data) => {
-        setPacks(Array.isArray(data?.packs) ? data.packs : [])
-      }
-      /**
-       * **内置「纯净模式」**：一键把本会话切到纯净态（= pure preset 的五条腿语义）。
-       *
-       * 为什么要有它（用户定）：pure preset 不再使用，纯净态由本插件**完全接管** ——
-       * 这样同一作用域里恒只有本插件一个生产者，§9.3 的 R14 冲突从根上不存在。
-       * 五条腿的对应：① 段清空 → blockSections；② 上下文清空 → blockContexts；
-       * ③④ 工具清空（restrict + wire 级）→ blockTools；⑤ 只放行 user → blockMessages
-       * + 本会话白名单 ['user']。
-       */
-      const applyBuiltinPure = async () => {
-        const fresh = await post(STATE_ROUTE, undefined)
-        const clean = (map) => {
-          const next = { ...(map ?? {}) }
-          delete next[sessionId]
-          return next
-        }
-        await post(STATE_ROUTE, {
-          armed: [...new Set([...(fresh?.state?.armed ?? []), sessionId])],
-          levers: {
-            ...(fresh?.state?.levers ?? {}),
-            blockSections: true,
-            blockContexts: true,
-            blockTools: true,
-            blockMessages: true,
-          },
-          allowKinds: ['user'],
-          sessionAllowKinds: { ...(fresh?.state?.sessionAllowKinds ?? {}), [sessionId]: ['user'] },
-          sessionTools: { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: [] },
-          // 纯净态不注入任何自有内容：清掉该会话的改写与每轮注入。
-          overrides: clean(fresh?.state?.overrides),
-          injects: clean(fresh?.state?.injects),
-        })
-        refreshEnvelope()
-        setInjectStatus('done')
-      }
-
-      const loadPack = () => {
-        if (selected === '') return
-        if (selected === BUILTIN_PURE) {
-          void applyBuiltinPure().catch(() => setStatus('error'))
-          return
-        }
-        void packsCall({ op: 'get', name: selected })
-          .then(async (data) => {
-            const next = Array.isArray(data?.pack?.items) ? data.pack.items : []
-            edit(next)
-            setPackName(selected)
-            // 预设里的注入改写与**工具权限**也一并套用（"跟预设绑在一起"；§4-M5）。
-            const overrides = data?.pack?.overrides
-            const packTools = data?.pack?.tools
-            if (overrides !== undefined && overrides !== null) {
-              injectionDrafts.set(sessionId, overrides)
-            }
-            if (overrides !== undefined || packTools !== undefined) {
-              const fresh = await post(STATE_ROUTE, undefined)
-              const patch = {}
-              if (overrides !== undefined && overrides !== null) {
-                patch.overrides = { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides }
-              }
-              if (packTools !== undefined) {
-                // `null` = 全部放行；数组 = 只放这些。
-                patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: packTools }
-              }
-              await post(STATE_ROUTE, patch)
-            }
-          })
-          .catch(() => setStatus('error'))
-      }
-      const savePack = () => {
-        const name = (packName.trim() === '' ? selected : packName).trim()
-        if (name === '') {
-          setStatus('error')
-          return
-        }
-        // 存预设 = 预填装内容 + 注入改写 + 工具放行（用户要求绑在一起；§4-M5 换包=换权限）。
-        void Promise.all([currentOverrides(), currentTools()])
-          .then(([overrides, tools]) => packsCall({ op: 'save', name, items, overrides, tools }))
-          .then((data) => {
-            adoptPacks(data)
-            setSelected(name)
-            setStatus('saved')
-          })
-          .catch(() => setStatus('error'))
-      }
-      /**
-       * 删除类动作统一用**两步确认**，不用 `window.confirm`：
-       * 浏览器可以屏蔽反复弹的对话框（返回 false）⇒ 删除会**静默失败**，最坑。
-       * 第一次点变成"确认？"，再点才真删；换别的操作就自动复位。
-       */
       const armConfirm = (key) => {
         if (confirming === key) return true
         setConfirming(key)
         setTimeout(() => setConfirming((current) => (current === key ? '' : current)), 4000)
         return false
       }
-      const deletePack = () => {
-        if (selected === '' || selected === BUILTIN_PURE) return
-        if (!armConfirm('preset')) return
-        setConfirming('')
-        void packsCall({ op: 'delete', name: selected })
-          .then((data) => {
-            adoptPacks(data)
-            setSelected('')
-            setStatus('saved')
+
+      /**
+       * 写系统提示：`text` = 人格段正文（空 = 不改）；`mode` = 'off' | 'append' | 'takeover' | undefined（不动模式）。
+       * 接管 = `gate[sid]='pure'`（闸门逐名清空 harness 的段、拦掉注入与工具），人格段作为唯一一段留下。
+       */
+      const writeSystem = async (text, mode, extra) => {
+        const fresh = await postJson(STATE_ROUTE, undefined)
+        const current = fresh?.state?.overrides?.[sessionId] ?? {}
+        const sections = { ...(current.sections ?? {}) }
+        if (typeof text === 'string' && text.trim() !== '') sections[PERSONA_SECTION] = text
+        else delete sections[PERSONA_SECTION]
+        const entry = { messages: { ...(current.messages ?? {}) }, sections, contexts: { ...(current.contexts ?? {}) } }
+        const empty = Object.keys(entry.messages).length + Object.keys(entry.sections).length + Object.keys(entry.contexts).length === 0
+        const patch = {
+          overrides: empty ? without(fresh?.state?.overrides, sessionId) : { ...(fresh?.state?.overrides ?? {}), [sessionId]: entry },
+          ...(extra ?? {}),
+        }
+        if (mode !== undefined) {
+          patch.gate = { ...(fresh?.state?.gate ?? {}), [sessionId]: mode === 'takeover' ? 'pure' : 'pass' }
+          // 旧版「纯净模式」写的是全局开关 + armed；这里顺手把本会话从 armed 里摘掉，免得关不掉。
+          if (mode !== 'takeover') {
+            patch.armed = (fresh?.state?.armed ?? []).filter((id) => id !== sessionId)
+            patch.sessionTools = without(fresh?.state?.sessionTools, sessionId)
+          } else {
+            patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: [] }
+          }
+        }
+        injectionDrafts.set(sessionId, entry)
+        const data = await postJson(STATE_ROUTE, patch)
+        setEnvelope(data)
+        notifyStateChanged()
+        return data
+      }
+
+      const setSystemMode = (mode) => {
+        void writeSystem(systemText, mode)
+          .then(() => {
+            if (mode === 'takeover' && systemText.trim() === '') flash(t('takeoverEmpty'))
+            else flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
           })
           .catch(() => setStatus('error'))
       }
-      // ── 导出 / 导入：**走文件**（用户要求），文件名 = 预设名 ──
-      // 预设文件内容 = 完整预对话记录（items） + 预注入改写（overrides）。
-      // ⚠️ fileRef 必须和其他 hook 一起放在**提前 return 之前**（hook 数量不能随渲染变化）。
-      /**
-       * 取本会话"当前生效的注入改写"。
-       *
-       * ⚠️ 必须**从宿主拉一次**，不能只读模块级的 `injectionDrafts`：那个表只有在
-       * "注入改写"章节**被展开挂载过**才有内容 —— 否则用户没点开过它，
-       * 导出的预设文件就会**悄悄丢掉改写**（实测踩到）。
-       * 两边的都有时，以面板里正在编辑的草稿为准。
-       */
+
+      // ── 预设 ────────────────────────────────────────────────────────────────
+      const applyBuiltin = async (summary, mode) => {
+        const data = await packsCall({ op: 'builtin', id: summary.id })
+        const preset = data?.pack
+        if (preset === null || preset === undefined) throw new Error('missing preset')
+        const fresh = await postJson(STATE_ROUTE, undefined)
+        const activeMap = { ...(fresh?.state?.activePreset ?? {}), [sessionId]: `builtin:${summary.id}` }
+        if (preset.pure === true) {
+          // 纯净：系统提示 0、上下文 0、工具 0、只放行你的话（与预填装）。
+          systemDirty.current = false
+          setSystemDraft('')
+          await writeSystem('', 'takeover', {
+            activePreset: activeMap,
+            injects: without(fresh?.state?.injects, sessionId),
+          })
+          flash(injectMode ? t('appliedNextTurn') : t('pureApplied'))
+          return
+        }
+        const text = preset.overrides?.sections?.[PERSONA_SECTION] ?? ''
+        systemDirty.current = false
+        setSystemDraft(text)
+        // 开场白：只在"还没写东西、会话也没开跑"时填入，不覆盖用户已有内容。
+        // 先落草稿再写状态：写状态会广播刷新，晚了会被 host 的旧草稿盖掉。
+        const opening = Array.isArray(preset.items) && preset.items.length > 0 && items.length === 0 && !injectMode
+        if (opening) {
+          dirty.current = true // 挡住写状态后的广播刷新，别让 host 的空草稿盖掉
+          setItems(preset.items)
+        }
+        const nextMode = preset.takeover === true ? 'takeover' : mode
+        await writeSystem(text, nextMode, { activePreset: activeMap })
+        if (opening) {
+          // 草稿后写：草稿路由会按**已生效的新系统提示**预热合成轮。
+          await postJson(DRAFT_ROUTE, { sessionId, items: preset.items })
+          dirty.current = false
+          setStatus('saved')
+        }
+        if (preset.takeover === true) setOpen((current) => ({ ...current, system: true }))
+        flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
+      }
+
+      const clearPreset = async () => {
+        const fresh = await postJson(STATE_ROUTE, undefined)
+        systemDirty.current = false
+        setSystemDraft('')
+        await writeSystem('', 'off', { activePreset: without(fresh?.state?.activePreset, sessionId) })
+        flash(t('presetCleared'))
+      }
+
+      const applyPack = async (name) => {
+        const data = await packsCall({ op: 'get', name })
+        const pack = data?.pack
+        if (pack === null || pack === undefined) throw new Error('missing pack')
+        edit(Array.isArray(pack.items) ? pack.items : [])
+        setPackName(name)
+        const fresh = await postJson(STATE_ROUTE, undefined)
+        const patch = { activePreset: { ...(fresh?.state?.activePreset ?? {}), [sessionId]: `pack:${name}` } }
+        if (pack.overrides !== undefined && pack.overrides !== null) {
+          injectionDrafts.set(sessionId, pack.overrides)
+          patch.overrides = { ...(fresh?.state?.overrides ?? {}), [sessionId]: pack.overrides }
+          const text = pack.overrides?.sections?.[PERSONA_SECTION]
+          systemDirty.current = false
+          setSystemDraft(typeof text === 'string' ? text : '')
+        }
+        if (pack.gate === 'pure' || pack.gate === 'pass') patch.gate = { ...(fresh?.state?.gate ?? {}), [sessionId]: pack.gate }
+        if (pack.tools !== undefined) patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: pack.tools }
+        setEnvelope(await postJson(STATE_ROUTE, patch))
+        notifyStateChanged()
+        flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
+      }
+
       const currentOverrides = async () => {
         const fresh = injectionDraftOf(sessionId)
         try {
-          const envelope = await post(STATE_ROUTE, undefined)
-          const stored = envelope?.state?.overrides?.[sessionId] ?? {}
+          const snapshot = await postJson(STATE_ROUTE, undefined)
+          const stored = snapshot?.state?.overrides?.[sessionId] ?? {}
           return {
             messages: { ...(stored.messages ?? {}), ...(fresh.messages ?? {}) },
             sections: { ...(stored.sections ?? {}), ...(fresh.sections ?? {}) },
@@ -1687,63 +2275,50 @@ window.__ModuleLoader__.load({
           return fresh
         }
       }
-
-      /**
-       * **一键注入**：把"当前内容 + 注入改写"写成**本会话配置**，不产生任何消息。
-       *
-       * 为什么不要"手输一句话触发"：注入是宿主侧配置，写完下一轮请求就带上了；拿一句
-       * 废话当触发器会把那句废话永久留在历史里、还烧一次钱，也把"改配置"和"问正事"耦合了。
-       */
-      const oneClickInject = () => {
-        setInjectStatus('idle')
-        void currentOverrides()
-          .then(async (overrides) => {
-            const fresh = await post(STATE_ROUTE, undefined)
-            const patch = {
-              overrides: { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides },
-            }
-            // 只有"已开跑"的会话才写每轮注入；首轮前交给物化（那才是真的写入历史）。
-            if (injectMode && items.length > 0) {
-              patch.injects = { ...(fresh?.state?.injects ?? {}), [sessionId]: items }
-            }
-            await post(STATE_ROUTE, patch)
-            setInjectStatus('done')
-            refreshEnvelope()
-          })
-          .catch(() => setInjectStatus('error'))
-      }
-
-      /** 取本会话"当前生效的工具放行清单"（`array`=只放这些 / `[]`=一个都不给 / `null`=全部放行）。 */
       const currentTools = async () => {
         try {
-          const envelope = await post(STATE_ROUTE, undefined)
-          const stored = envelope?.state?.sessionTools?.[sessionId]
+          const snapshot = await postJson(STATE_ROUTE, undefined)
+          const stored = snapshot?.state?.sessionTools?.[sessionId]
           return Array.isArray(stored) ? stored : null
         } catch {
           return null
         }
       }
 
-      const exportFile = async () => {
-        const explicit = (packName.trim() === '' ? selected : packName).trim()
-        const name = explicit === '' ? 'prefill' : explicit
-        const payload = {
-          version: 1,
-          name,
-          items,
-          overrides: await currentOverrides(),
-          // §4-M5：包 = 内容 + 注入改写 + **工具权限**（换包=换权限）。
-          tools: await currentTools(),
+      const savePack = () => {
+        const name = packName.trim()
+        if (name === '') {
+          flash(t('needName'))
+          return
         }
+        void Promise.all([currentOverrides(), currentTools()])
+          .then(([overrides, tools]) => packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode }))
+          .then((data) => {
+            adoptPacks(data)
+            flash(`${t('savedAs')}「${name}」`)
+          })
+          .catch(() => setStatus('error'))
+      }
+      const deletePack = (name) => {
+        if (!armConfirm(`del:${name}`)) return
+        setConfirming('')
+        void packsCall({ op: 'delete', name })
+          .then((data) => {
+            adoptPacks(data)
+            flash(`${t('deleted')}「${name}」`)
+          })
+          .catch(() => setStatus('error'))
+      }
+      const exportFile = async () => {
+        const name = packName.trim() === '' ? 'prefill' : packName.trim()
+        const payload = { version: 2, name, items, overrides: await currentOverrides(), tools: await currentTools(), gate: gateMode }
         const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
-        // 游离的 <a> 触发下载：不写别人的 DOM（守 P9）。
         const anchor = document.createElement('a')
         anchor.href = url
-        anchor.download = explicit === '' ? 'prefill.json' : `${name}.prefill.json`
+        anchor.download = `${name}.prefill.json`
         anchor.click()
         setTimeout(() => URL.revokeObjectURL(url), 4000)
-        setStatus('saved')
       }
       const importFile = (event) => {
         const file = event?.target?.files?.[0]
@@ -1752,38 +2327,384 @@ window.__ModuleLoader__.load({
         reader.onload = () => {
           try {
             const parsed = JSON.parse(String(reader.result))
-            const next = Array.isArray(parsed) ? parsed : parsed?.items
-            if (Array.isArray(next)) edit(next)
-            const overrides = parsed?.overrides
-            const importedTools = parsed?.tools
-            if (overrides !== undefined && overrides !== null && typeof overrides === 'object') {
-              injectionDrafts.set(sessionId, overrides)
-            }
-            // 导入也带上工具权限（包 = 内容 + 改写 + 工具；§4-M5）。
-            if (overrides !== undefined || importedTools !== undefined) {
-              void post(STATE_ROUTE, undefined).then((fresh) => {
-                const patch = {}
-                if (overrides !== undefined && overrides !== null && typeof overrides === 'object') {
-                  patch.overrides = { ...(fresh?.state?.overrides ?? {}), [sessionId]: overrides }
-                }
-                if (importedTools !== undefined) {
-                  patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: importedTools }
-                }
-                return post(STATE_ROUTE, patch)
+            const name = typeof parsed?.name === 'string' && parsed.name.trim() !== '' ? parsed.name.trim() : file.name.replace(/\.prefill\.json$|\.json$/i, '')
+            void packsCall({ op: 'import', name, json: { ...parsed, name } })
+              .then((data) => {
+                adoptPacks(data)
+                if (data?.reason) flash(String(data.reason))
+                else flash(`${t('imported')}「${name}」`)
               })
-            }
-            if (typeof parsed?.name === 'string' && parsed.name !== '') setPackName(parsed.name)
-            setStatus('saved')
+              .catch(() => setStatus('error'))
           } catch {
-            setStatus('error')
+            flash(t('importBad'))
           }
         }
         reader.readAsText(file)
+        event.target.value = ''
       }
 
-      const statusKind = status === 'error' ? 'error' : status === 'saved' ? 'saved' : 'idle'
+      const oneClickInject = () => {
+        setInjectStatus('idle')
+        void (async () => {
+          const fresh = await postJson(STATE_ROUTE, undefined)
+          const patch = { injects: { ...(fresh?.state?.injects ?? {}), [sessionId]: items } }
+          setEnvelope(await postJson(STATE_ROUTE, patch))
+          setInjectStatus('done')
+        })().catch(() => setInjectStatus('error'))
+      }
+      const stopInject = () => {
+        void (async () => {
+          const fresh = await postJson(STATE_ROUTE, undefined)
+          setEnvelope(await postJson(STATE_ROUTE, { injects: without(fresh?.state?.injects, sessionId) }))
+          setInjectStatus('idle')
+        })().catch(() => setInjectStatus('error'))
+      }
+
+      // ── 渲染 ───────────────────────────────────────────────────────────────
       const statusText =
-        status === 'error' ? t('syncFailed') : status === 'saving' ? t('syncSaving') : status === 'saved' ? t('syncSaved') : t('syncIdle')
+        status === 'error' ? t('syncFailed') : status === 'saving' ? t('syncSaving') : status === 'saved' ? t('syncSaved') : ''
+      const itemsTok = itemsTokens(items)
+      const systemTok = estimateTokens(systemText)
+
+      const presetPill = (key, { emoji, name, active, onClick, onHover }) =>
+        h(
+          'button',
+          {
+            key,
+            type: 'button',
+            style: V.pill(active),
+            onClick,
+            onMouseEnter: onHover,
+            onFocus: onHover,
+            'data-prefill-preset': key,
+            'aria-pressed': active ? 'true' : 'false',
+          },
+          h('span', { style: { fontSize: 14, lineHeight: 1 } }, emoji),
+          name,
+        )
+      const hoveredKey = hovered !== '' ? hovered : activePreset
+      const hoveredBuiltin = builtins.find((preset) => `builtin:${preset.id}` === hoveredKey)
+      const hoveredPack = packs.find((pack) => `pack:${pack.name}` === hoveredKey)
+      const detail = hoveredBuiltin
+        ? [
+            `${hoveredBuiltin.emoji} ${hoveredBuiltin.name}`,
+            hoveredBuiltin.desc,
+            hoveredBuiltin.pure ? t('footPure') : hoveredBuiltin.takeover ? t('footTakeover') : `${t('footSystem')} ≈${Math.round(hoveredBuiltin.personaChars * 0.7)} tok`,
+          ]
+        : hoveredPack
+          ? [`📁 ${hoveredPack.name}`, `${t('myPresetDesc')} · ${hoveredPack.count}${t('countSuffix')}`, '']
+          : ['', t('presetsHint'), '']
+
+      const presetsSection = h(
+        Section,
+        {
+          id: 'presets',
+          title: t('presetsTitle'),
+          meta: activePreset === '' ? t('presetsNone') : t('presetsActive'),
+          open: open.presets,
+          onToggle: () => toggle('presets'),
+          right:
+            activePreset === ''
+              ? null
+              : h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: V.btnGhost,
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      void clearPreset().catch(() => setStatus('error'))
+                    },
+                  },
+                  t('presetClear'),
+                ),
+        },
+        h(
+          'div',
+          { style: V.pills, onMouseLeave: () => setHovered('') },
+          h('span', { style: V.pillGroup }, t('groupBuiltin')),
+          ...builtins.map((preset) =>
+            presetPill(`builtin:${preset.id}`, {
+              emoji: preset.emoji,
+              name: preset.name,
+              active: activePreset === `builtin:${preset.id}`,
+              onHover: () => setHovered(`builtin:${preset.id}`),
+              onClick: () => void applyBuiltin(preset, systemMode === 'takeover' ? 'takeover' : 'append').catch(() => setStatus('error')),
+            }),
+          ),
+          packs.length > 0 ? h('span', { style: { ...V.pillGroup, marginLeft: 6 } }, t('groupMine')) : null,
+          ...packs.map((pack) =>
+            presetPill(`pack:${pack.name}`, {
+              emoji: '📁',
+              name: pack.name,
+              active: activePreset === `pack:${pack.name}`,
+              onHover: () => setHovered(`pack:${pack.name}`),
+              onClick: () => void applyPack(pack.name).catch(() => setStatus('error')),
+            }),
+          ),
+        ),
+        h(
+          'div',
+          { style: V.detail },
+          detail[0] ? h('span', { style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, detail[0]) : null,
+          h('span', null, detail[1]),
+          detail[2] ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, `· ${detail[2]}`) : null,
+          hoveredPack
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  style: { ...V.btnGhost, color: confirming === `del:${hoveredPack.name}` ? 'var(--dsw-alias-state-warn-primary)' : V.btnGhost.color },
+                  onClick: () => deletePack(hoveredPack.name),
+                },
+                confirming === `del:${hoveredPack.name}` ? t('confirmYes') : t('deletePack'),
+              )
+            : null,
+        ),
+        open.manage
+          ? h(
+          'div',
+          { style: V.row },
+          h('input', {
+            style: { ...V.input, flex: '1 1 160px' },
+            value: packName,
+            placeholder: t('packNamePlaceholder'),
+            spellCheck: false,
+            onChange: (event) => setPackName(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') savePack()
+            },
+          }),
+          h('button', { type: 'button', style: V.btn, onClick: savePack }, t('savePack')),
+          h('button', { type: 'button', style: V.btn, onClick: () => void exportFile() }, t('exportFile')),
+          h('button', { type: 'button', style: V.btn, onClick: () => fileRef.current?.click() }, t('importFile')),
+          h('button', { type: 'button', style: V.btnGhost, onClick: () => toggle('manage') }, t('manageHide')),
+        )
+          : h(
+              'div',
+              { style: V.row },
+              h('button', { type: 'button', style: V.btnGhost, onClick: () => toggle('manage') }, t('manageShow')),
+            ),
+        h('input', { ref: fileRef, type: 'file', accept: '.json,application/json', style: { display: 'none' }, onChange: importFile }),
+      )
+
+      const systemSection = h(
+        Section,
+        {
+          id: 'system',
+          title: t('systemTitle'),
+          meta: systemMode === 'off' ? t('systemOffMeta') : systemMode === 'append' ? `${t('systemAppendMeta')} · ≈${systemTok} tok` : `${t('systemTakeoverMeta')} · ≈${systemTok} tok`,
+          open: open.system,
+          onToggle: () => toggle('system'),
+        },
+        h(
+          'div',
+          { style: V.row },
+          h(
+            'div',
+            { style: V.seg, role: 'radiogroup' },
+            ...[
+              ['off', t('modeOff')],
+              ['append', t('modeAppend')],
+              ['takeover', t('modeTakeover')],
+            ].map(([key, label]) =>
+              h(
+                'button',
+                {
+                  key,
+                  type: 'button',
+                  role: 'radio',
+                  'aria-checked': systemMode === key ? 'true' : 'false',
+                  style: V.segBtn(systemMode === key),
+                  'data-prefill-mode': key,
+                  onClick: () => setSystemMode(key),
+                },
+                label,
+              ),
+            ),
+          ),
+          pending ? h('span', { style: { ...V.sectionMeta, color: 'var(--dsw-alias-state-warn-primary)' } }, t('nextTurnNotice')) : null,
+        ),
+        h('div', { style: V.hint }, systemMode === 'off' ? t('modeOffHint') : systemMode === 'append' ? t('modeAppendHint') : t('modeTakeoverHint')),
+        h('textarea', {
+          style: { ...V.textarea, minHeight: 90 },
+          value: systemText,
+          spellCheck: false,
+          placeholder: t('systemPlaceholder'),
+          'data-prefill-system': '1',
+          onChange: (event) => {
+            systemDirty.current = true
+            setSystemDraft(event.target.value)
+          },
+        }),
+        systemMode === 'off' && systemText.trim() !== ''
+          ? h('div', { style: V.callout('warn') }, t('systemNotActive'))
+          : null,
+      )
+
+      const itemRow = (item, index) => {
+        const isAssistant = item?.role === 'assistant'
+        return h(
+          'div',
+          { key: index, style: V.itemCard(isAssistant) },
+          h(
+            'button',
+            {
+              type: 'button',
+              style: S.dockRole(isAssistant),
+              title: isAssistant ? t('toUser') : t('toAssistant'),
+              onClick: () => patchAt(index, isAssistant ? { role: 'user', reasoning: undefined } : { role: 'assistant', reasoning: '' }),
+            },
+            isAssistant ? `🤖 ${t('roleAssistant')}` : `🙂 ${t('roleUser')}`,
+          ),
+          h(
+            'div',
+            { style: S.dockBody },
+            h('textarea', {
+              style: { ...V.textarea, minHeight: 44 },
+              value: item?.text ?? '',
+              spellCheck: false,
+              placeholder: isAssistant ? t('textAssistantPh') : t('textUserPh'),
+              onChange: (event) => patchAt(index, { text: event.target.value }),
+            }),
+            isAssistant
+              ? h('textarea', {
+                  style: S.dockThink,
+                  value: item?.reasoning ?? '',
+                  spellCheck: false,
+                  placeholder: t('reasoningPh'),
+                  onChange: (event) => patchAt(index, { reasoning: event.target.value }),
+                })
+              : null,
+          ),
+          h(
+            'div',
+            { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+            h('button', { type: 'button', style: S.dockMini, title: t('moveUp'), onClick: () => move(index, -1) }, '↑'),
+            h('button', { type: 'button', style: S.dockMini, title: t('moveDown'), onClick: () => move(index, 1) }, '↓'),
+            h('button', { type: 'button', style: S.dockMini, title: t('removeItem'), onClick: () => edit(items.filter((_unused, at) => at !== index)) }, '✕'),
+          ),
+        )
+      }
+
+      const itemsSection = h(
+        Section,
+        {
+          id: 'items',
+          title: t('itemsTitle'),
+          meta: `${items.length}${t('countSuffix')} · ≈${itemsTok} tok · ${injectMode ? t('modeInject') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
+          open: open.items,
+          onToggle: () => toggle('items'),
+          right:
+            items.length === 0
+              ? null
+              : h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: V.btnGhost,
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      if (!armConfirm('clear')) return
+                      setConfirming('')
+                      edit([])
+                    },
+                  },
+                  confirming === 'clear' ? t('confirmYes') : t('dockClear'),
+                ),
+        },
+        injectMode && (envelope?.materialized?.[sessionId] ?? 0) > 0
+          ? h('div', { style: V.callout('brand') }, t('itemsWrittenHint').replace('{n}', String(envelope.materialized[sessionId])))
+          : null,
+        h('div', { style: V.callout(injectMode ? 'warn' : 'brand') }, injectMode ? t('itemsInjectHint') : t('itemsHistoryHint')),
+        items.length === 0
+          ? h(
+              'div',
+              { style: { ...V.row, color: 'var(--dsw-alias-label-tertiary)', fontSize: 11.5 } },
+              h('span', null, t('itemsEmpty')),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: V.btn,
+                  onClick: () =>
+                    edit([
+                      { role: 'user', text: t('exampleUser') },
+                      { role: 'assistant', reasoning: t('exampleReasoning'), text: t('exampleAssistant') },
+                    ]),
+                },
+                t('fillExample'),
+              ),
+            )
+          : null,
+        h('div', { ref: listRef, style: { display: 'flex', flexDirection: 'column', gap: 6 } }, ...items.map(itemRow)),
+        h(
+          'div',
+          { style: V.row },
+          h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'user', text: '' }]) }, t('addUser')),
+          h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'assistant', reasoning: '', text: '' }]) }, t('addAssistant')),
+          injectMode ? h('span', { style: { flex: '1 1 auto' } }) : null,
+          injectMode
+            ? injectCount > 0
+              ? h('button', { type: 'button', style: V.btn, onClick: stopInject }, `${t('stopInject')} (${injectCount})`)
+              : null
+            : null,
+          injectMode && items.length > 0
+            ? h(
+                'button',
+                { type: 'button', style: V.btnPrimary, title: t('injectNowTip'), onClick: oneClickInject, 'data-prefill-inject': '1' },
+                injectCount > 0 ? t('injectUpdate') : t('injectNow'),
+              )
+            : null,
+          injectStatus === 'idle'
+            ? null
+            : h('span', { style: S.dockStatus(injectStatus === 'error' ? 'error' : 'saved') }, injectStatus === 'error' ? t('injectFailed') : t('injectedNext')),
+        ),
+      )
+
+      const injectSection = h(
+        Section,
+        { id: 'inject', title: t('injectTitle'), meta: t('advanced'), open: open.inject, onToggle: () => toggle('inject') },
+        h('div', { style: V.hint }, t('injectHint')),
+        h(InjectionSection, { t, sessionId }),
+      )
+
+      const usageSection = h(
+        Section,
+        {
+          id: 'usage',
+          title: t('usageTitle'),
+          meta: turns > 0 ? `${turns} ${t('turnsUnit')}` : t('usageNoTurns'),
+          open: open.usage,
+          onToggle: () => toggle('usage'),
+        },
+        h(UsagePanel, { t, usage, systemMode, systemTok, itemsTok, injectMode, injectCount, gateMode, written: (envelope?.materialized?.[sessionId] ?? 0) > 0 }),
+      )
+
+      const activeName = (() => {
+        const b = builtins.find((preset) => `builtin:${preset.id}` === activePreset)
+        if (b !== undefined) return `${b.emoji} ${b.name}`
+        if (activePreset.startsWith('pack:')) return `📁 ${activePreset.slice(5)}`
+        return ''
+      })()
+      const collapsedSummary = [
+        activeName,
+        systemMode === 'off' || (systemMode === 'takeover' && systemText.trim() === '')
+          ? ''
+          : `${t('systemTitle')}·${systemMode === 'append' ? t('systemAppendMeta') : t('systemTakeoverMeta')}`,
+        items.length > 0 ? `${items.length}${t('countSuffix')}` : '',
+      ]
+        .filter((part) => part !== '')
+        .join(' · ')
+
+      const guideSection = open.guide
+        ? h(
+            'div',
+            { style: V.callout('brand') },
+            h('div', { style: { fontWeight: 600, marginBottom: 4, color: 'var(--dsw-alias-label-primary)' } }, t('guideTitle')),
+            h('ol', { style: V.steps }, ...[1, 2, 3, 4, 5].map((n) => h('li', { key: n }, t(`guide${n}`)))),
+          )
+        : null
 
       return h(
         'div',
@@ -1791,230 +2712,116 @@ window.__ModuleLoader__.load({
           'data-prefill-dock': '1',
           style: {
             ...S.dock,
+            gap: 8,
+            overflowY: 'auto',
+            overflowX: 'hidden',
             width: bounds?.width === undefined ? '100%' : `${bounds.width}px`,
             maxWidth: '100%',
             maxHeight: bounds?.maxHeight === undefined ? '62vh' : `${bounds.maxHeight}px`,
-            ...(panelHeight === undefined ? {} : { height: `${panelHeight}px` }),
             margin: '0 auto',
           },
         },
-        // 与其他插件的冲突：**明确告诉用户**（用户定：pure preset 不再使用、由本插件接管）。
+        h(
+          'div',
+          { style: V.row },
+          h('span', { style: S.dockTitle }, `🧩 ${t('dockTitle')}`),
+          h('span', { style: S.modeChip(injectMode), title: injectMode ? t('modeInjectTip') : t('modeHistoryTip') }, injectMode ? t('modeInject') : t('modeHistory')),
+          gateMode === 'pure'
+            ? h('span', { style: S.modeChip(true) }, systemMode === 'takeover' && systemText.trim() !== '' ? t('chipTakeover') : t('chipPure'))
+            : null,
+          toast === '' ? null : h('span', { style: { ...S.dockStatus('saved'), fontWeight: 600 } }, toast),
+          isCollapsed ? h('span', { style: V.sectionMeta }, collapsedSummary) : null,
+          h('span', { style: { flex: '1 1 auto' } }),
+          isCollapsed
+            ? null
+            : h('button', { type: 'button', style: V.btnGhost, onClick: () => toggle('guide'), 'aria-expanded': open.guide ? 'true' : 'false' }, open.guide ? t('guideHide') : t('guideShow')),
+          h(
+            'button',
+            { type: 'button', style: V.btn, onClick: () => setCollapsedRemembered(!isCollapsed), 'aria-expanded': isCollapsed ? 'false' : 'true', 'data-prefill-collapse': '1' },
+            isCollapsed ? t('expandPanel') : t('collapsePanel'),
+          ),
+        ),
         conflict
           ? h(
               'div',
               { style: S.conflictBanner },
-              h(
-                'span',
-                { style: { fontWeight: 600 } },
-                `${t('conflictTitle')}：${
-                  conflict.kind === 'complete-section' ? t('conflictCompleteSection') : String(conflict.kind ?? '')
-                }`,
-              ),
-              (conflict.others ?? []).length > 0
-                ? h('span', null, `占用者：${(conflict.others ?? []).join('、')}`)
-                : null,
-              conflict.advice === undefined || conflict.advice === ''
-                ? null
-                : h('span', { style: S.dockHint }, String(conflict.advice)),
+              h('span', { style: { fontWeight: 600 } }, `${t('conflictTitle')}：${conflict.kind === 'complete-section' ? t('conflictCompleteSection') : String(conflict.kind ?? '')}`),
+              conflict.advice ? h('span', { style: S.dockHint }, String(conflict.advice)) : null,
             )
           : null,
+        ...(isCollapsed ? [] : [guideSection, presetsSection, systemSection, itemsSection, injectSection, usageSection]),
+      )
+    }
+
+    /** 「用量与缓存」：逐轮读数 + 按当前配置解释"多花了多少、缓存还命不命中"。 */
+    function UsagePanel(props) {
+      const t = props.t
+      const usage = props.usage
+      const rows = Array.isArray(usage?.turns) ? usage.turns : []
+      const total = usage?.total ?? { input: 0, cacheRead: 0, output: 0 }
+      const prompt = total.input + total.cacheRead
+      const hit = prompt > 0 ? Math.round((total.cacheRead / prompt) * 100) : null
+      const notes = []
+      if (props.gateMode === 'pure') notes.push(props.systemMode === 'takeover' && props.systemTok > 0 ? t('noteTakeover') : t('notePure'))
+      else if (props.systemMode === 'append') notes.push(t('noteAppend').replace('{n}', String(props.systemTok)))
+      if (props.injectCount > 0) notes.push(t('noteInject').replace('{n}', String(props.itemsTok)))
+      else if (props.itemsTok > 0 && (!props.injectMode || props.written)) notes.push(t('noteHistory').replace('{n}', String(props.itemsTok)))
+      notes.push(t('noteSwitch'))
+      notes.push(t('noteMinCache'))
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
         h(
           'div',
-          { style: S.dockHead },
-          h('span', { style: S.dockTitle }, t('dockTitle')),
-          h('span', { style: S.label }, `${items.length}${t('countSuffix')}`),
-          h('span', { style: S.dockStatus(statusKind) }, statusText),
-          // 模式标签：把"现在是写入历史还是每轮注入"明写出来（说明见 title）。
-          h(
-            'span',
-            { style: S.modeChip(injectMode), title: injectMode ? t('modeInjectTip') : t('modeHistoryTip') },
-            injectMode ? `${t('modeInject')}${injectCount > 0 ? ` · ${injectCount}` : ''}` : t('modeHistory'),
-          ),
-          // 一键注入：写成本会话配置，不产生任何消息。
-          // 「待注入」时用警示色 + 加粗：**不点它就不会生效**，这个提示必须够显眼。
-          h(
-            'button',
-            {
-              type: 'button',
-              style:
-                injectMode && injectCount === 0 && items.length > 0
-                  ? {
-                      ...S.gateBtn,
-                      borderColor: 'var(--dsw-alias-state-warn-primary)',
-                      color: 'var(--dsw-alias-state-warn-primary)',
-                      fontWeight: 600,
-                    }
-                  : S.gateBtn,
-              title: t('injectNowTip'),
-              onClick: oneClickInject,
-            },
-            t('injectNow'),
-          ),
-          injectStatus === 'idle'
-            ? null
-            : h(
-                'span',
-                { style: S.dockStatus(injectStatus === 'error' ? 'error' : 'saved') },
-                injectStatus === 'error' ? t('injectFailed') : t('injectedNext'),
-              ),
-          h('span', { style: { flex: '1 1 auto' } }),
-          h(
-            'button',
-            { type: 'button', style: S.gateBtn, onClick: () => edit([]) },
-            t('dockClear'),
-          ),
+          { style: { ...V.row, gap: 18 } },
+          ...[
+            [fmt(total.input), t('statInput')],
+            [fmt(total.cacheRead), t('statCache')],
+            [fmt(total.output), t('statOutput')],
+            [hit === null ? '—' : `${hit}%`, t('statHit')],
+          ].map(([value, label]) => h('div', { key: label, style: V.stat }, h('span', { style: V.statValue }, value), h('span', { style: V.statLabel }, label))),
         ),
-        // M4：包行 —— 选择 / 载入 / 存为 / 删除 / 导入导出
-        h(
-          'div',
-          { style: S.dockHead },
-          h('span', { style: S.label }, t('packs')),
-          h(
-            'select',
-            { style: S.dockSelect, value: selected, onChange: (event) => setSelected(event.target.value) },
-            h('option', { value: '' }, t('packsEmpty')),
-            // 内置预设：不是文件里的包，套用时直接写本会话的闸门配置（接管 pure preset）。
-            h('option', { value: BUILTIN_PURE, title: t('purePresetTip') }, t('purePresetName')),
-            ...packs.map((pack) =>
-              h('option', { key: pack.name, value: pack.name }, `${pack.name} (${pack.count})`),
-            ),
-          ),
-          h('button', { type: 'button', style: S.gateBtn, onClick: loadPack }, t('loadPack')),
-          h('input', {
-            style: S.dockName,
-            value: packName,
-            placeholder: t('packNamePlaceholder'),
-            spellCheck: false,
-            onChange: (event) => setPackName(event.target.value),
-          }),
-          h('button', { type: 'button', style: S.gateBtn, onClick: savePack }, t('savePack')),
-          // 两步确认：第一次点变"确认删除？"，再点才真删（避免误删，也避开被屏蔽的 window.confirm）。
-          h(
-            'button',
-            {
-              type: 'button',
-              style: S.gateBtn,
-              title: t('confirmDeletePreset'),
-              onClick: deletePack,
-              disabled: selected === '',
-            },
-            confirming === 'preset' ? t('confirmYes') : t('deletePack'),
-          ),
-          h('button', { type: 'button', style: S.gateBtn, onClick: exportFile }, t('exportFile')),
-          h('button', { type: 'button', style: S.gateBtn, onClick: () => fileRef.current?.click() }, t('importFile')),
-          h('input', {
-            ref: fileRef,
-            type: 'file',
-            accept: '.json,application/json',
-            style: { display: 'none' },
-            onChange: importFile,
-          }),
-          h('span', { style: S.dockHint }, t('fileHint')),
-        ),
-
-        h('div', { style: S.dockHint }, injectMode ? t('modeInjectTip') : t('dockHint')),
-
-        items.length === 0 ? h('div', { style: S.dockHint }, t('dockEmpty')) : null,
-
-        // 内容列表自己滚：轮次多时只滚这一块，头部/预设行始终可见。
-        h(
-          'div',
-          { ref: listRef, style: S.dockList },
-          ...items.map((item, index) => {
-            const isAssistant = item?.role === 'assistant'
-          return h(
-            'div',
-            { key: index, style: S.dockRow },
-            h(
-              'button',
-              {
-                type: 'button',
-                style: S.dockRole(isAssistant),
-                title: isAssistant ? t('toUser') : t('toAssistant'),
-                onClick: () =>
-                  patchAt(
-                    index,
-                    isAssistant ? { role: 'user', reasoning: undefined } : { role: 'assistant', reasoning: '' },
-                  ),
-              },
-              isAssistant ? t('roleAssistant') : t('roleUser'),
-            ),
-            h(
+        prompt > 0
+          ? h(
               'div',
-              { style: S.dockBody },
-              h('textarea', {
-                style: S.dockText,
-                value: item?.text ?? '',
-                spellCheck: false,
-                placeholder: isAssistant ? t('textAssistant') : t('textUser'),
-                onChange: (event) => patchAt(index, { text: event.target.value }),
-              }),
-              // 思维链**只挂在 AI 那一项里**（用户定的模型）。
-              isAssistant
-                ? h('textarea', {
-                    style: S.dockThink,
-                    value: item?.reasoning ?? '',
-                    spellCheck: false,
-                    placeholder: t('reasoning'),
-                    onChange: (event) => patchAt(index, { reasoning: event.target.value }),
-                  })
-                : null,
-            ),
-            h(
+              { style: V.bar, title: `${t('statCache')} ${fmt(total.cacheRead)} / ${t('statInput')} ${fmt(total.input)}` },
+              h('div', { style: { width: `${(total.cacheRead / prompt) * 100}%`, background: 'var(--dsw-alias-brand-primary)' } }),
+            )
+          : null,
+        rows.length === 0
+          ? h('div', { style: V.hint }, t('usageEmpty'))
+          : h(
               'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-              h('button', { type: 'button', style: S.dockMini, title: t('moveUp'), onClick: () => move(index, -1) }, '↑'),
+              { style: { maxHeight: 180, overflowY: 'auto' } },
               h(
-                'button',
-                { type: 'button', style: S.dockMini, title: t('moveDown'), onClick: () => move(index, 1) },
-                '↓',
-              ),
-              h(
-                'button',
-                {
-                  type: 'button',
-                  style: S.dockMini,
-                  title: t('removeItem'),
-                  onClick: () => edit(items.filter((_unused, at) => at !== index)),
-                },
-                '✕',
+                'table',
+                { style: V.table },
+                h(
+                  'thead',
+                  null,
+                  h('tr', null, ...[t('colTurn'), t('colInput'), t('colCache'), t('colOutput'), t('colHit'), t('colSystem'), t('colTools')].map((label) => h('th', { key: label, style: V.th }, label))),
+                ),
+                h(
+                  'tbody',
+                  null,
+                  ...rows.map((row) => {
+                    const p = row.input + row.cacheRead
+                    return h(
+                      'tr',
+                      { key: row.turn },
+                      h('td', { style: V.td }, row.synthetic && row.steps === 0 ? `${row.turn} · ${t('syntheticTurn')}` : String(row.turn)),
+                      h('td', { style: V.td }, fmt(row.input)),
+                      h('td', { style: V.td }, fmt(row.cacheRead)),
+                      h('td', { style: V.td }, fmt(row.output)),
+                      h('td', { style: V.td }, p > 0 ? `${Math.round((row.cacheRead / p) * 100)}%` : '—'),
+                      h('td', { style: V.td }, row.systemChars === null ? '—' : `${fmt(row.systemChars)} ${t('charsUnit')}`),
+                      h('td', { style: V.td }, row.tools === null ? '—' : String(row.tools)),
+                    )
+                  }),
+                ),
               ),
             ),
-          )
-          }),
-        ),
-
-        h(
-          'div',
-          { style: { display: 'flex', gap: 8 } },
-          h(
-            'button',
-            { type: 'button', style: S.gateBtn, onClick: () => edit([...items, { role: 'user', text: '' }]) },
-            t('addUser'),
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              style: S.gateBtn,
-              onClick: () => edit([...items, { role: 'assistant', reasoning: '', text: '' }]),
-            },
-            t('addAssistant'),
-          ),
-        ),
-
-        // 注入改写：**本面板里的一节**（不是常驻横条），和预设一起存/取。
-        h(
-          'div',
-          { style: S.dockHead },
-          h(
-            'button',
-            { type: 'button', style: S.gateBtn, onClick: () => setInjectOpen(!injectOpen) },
-            `${injectOpen ? '▾' : '▸'} ${t('injectTitle')}`,
-          ),
-          h('span', { style: S.injectHintText }, t('injectHint')),
-        ),
-        injectOpen ? h(InjectionSection, { t, sessionId }) : null,
+        h('div', { style: V.callout('') }, ...notes.map((text, index) => h('div', { key: index }, `• ${text}`))),
       )
     }
 
@@ -2480,7 +3287,9 @@ window.__ModuleLoader__.load({
       const levers = envelope?.state?.levers ?? {}
       const armedList = Array.isArray(envelope?.state?.armed) ? envelope.state.armed : []
       const armed = armedList.includes(sessionId) || armedList.includes('*')
+      const gateMap = envelope?.state?.gate ?? {}
       const pureOn =
+        gateMap[sessionId] === 'pure' ||
         armed === true &&
         levers.blockSections === true &&
         levers.blockContexts === true &&
@@ -2491,9 +3300,20 @@ window.__ModuleLoader__.load({
       const turns = envelope?.turns?.[sessionId] ?? 0
       const injected = (envelope?.injects?.[sessionId] ?? 0) > 0
       const tools = envelope?.state?.sessionTools?.[sessionId]
-      const gateText = gate === 'pure' ? t('statePure') : gate === 'filter' ? t('stateFilter') : t('statePass')
+      const persona = envelope?.state?.overrides?.[sessionId]?.sections?.['prefill:persona']
+      const hasPersona = typeof persona === 'string' && persona.trim() !== ''
+      const gateText =
+        gate === 'pure'
+          ? hasPersona
+            ? t('chipTakeover')
+            : t('chipPure')
+          : hasPersona
+            ? `${t('systemTitle')}·${t('systemAppendMeta')}`
+            : gate === 'filter'
+              ? t('stateFilter')
+              : t('statePass')
       const modeText = turns > 0 ? t('modeInject') : t('modeHistory')
-      const toolsText = Array.isArray(tools) ? (tools.length === 0 ? t('toolsNone') : `${tools.length} 工具`) : ''
+      const toolsText = Array.isArray(tools) ? (tools.length === 0 ? t('toolsZero') : `${tools.length} ${t('toolsUnit')}`) : ''
       const summary = [gateText, modeText, toolsText].filter((part) => part !== '').join(' · ')
 
       return h(
@@ -2571,17 +3391,6 @@ window.__ModuleLoader__.load({
         // ⚠️ 这个槽位由 `@deepseek-ai/dsh-client-ui-conversation` 渲染，实测里它没生效
         // （可能还要更精确的客户端包注入）；所以**再挂一份**到输入框左侧 —— 那里是我们
         // 自己的座位、一定可见。等"每包一个 preset"（§15 第 ⑥ 项）做完，顶栏芯片会自己变。
-        ctx.slots.inject('conversation.input.left', () =>
-          ctx.slots.register(
-            {
-              name: 'conversation.input.left',
-              id: 'prefill-mode-badge',
-              order: 17,
-              locale: NS,
-            },
-            SessionModeBadge,
-          ),
-        )
         ctx.slots.inject('conversation.session.header.utilities', () =>
           ctx.slots.register(
             {

@@ -21,13 +21,15 @@
  * @module @local/dsh-prefill
  */
 
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { zstdDecompressSync } from 'node:zlib'
+import { builtinPreset, builtinSummaries } from './builtin-presets.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
-const STAGE = 'M1.2-shell'
+const STAGE = 'M6-shell'
 
 /** Cordis 插件名。 */
 export const name = 'dsh-prefill'
@@ -51,6 +53,8 @@ const STATE_ROUTE = '/api/dsh-prefill/state'
 const DRAFT_ROUTE = '/api/dsh-prefill/draft'
 /** 预填装包的读写入口（M4）。 */
 const PACKS_ROUTE = '/api/dsh-prefill/packs'
+/** 本会话逐轮用量（输入 / 缓存命中 / 输出 + 系统提示规模），给面板的「用量与缓存」卡片。 */
+const USAGE_ROUTE = '/api/dsh-prefill/usage'
 
 /** 热插拔内核的位置。 */
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -232,6 +236,155 @@ function sanitizeItems(raw) {
       return { role, text }
     })
     .filter((item) => item !== undefined)
+}
+
+// ── 用量（只读）──────────────────────────────────────────────────────────────
+// 数据来源与 DSH 自己的 token-meter 相同：会话日志里 `assistant/message.usage`
+// （模型接口返回的计费用量）。本插件**不写**任何统计相关的东西，只是按轮汇总给面板看，
+// 外加两项"构成"读数：该轮的系统提示字数与工具 schema 个数 —— 用来回答
+// "套了预设 / 纯净模式之后，到底少发了多少、缓存还命不命中"。
+
+/** 会话日志文件：`<DSH_HOME>/sessions/<工作区>/session-<id>/session.v4.jsonl.zstd`。 */
+function sessionLogFile(sessionId) {
+  const root = join(HOME, 'sessions')
+  try {
+    for (const workspace of readdirSync(root)) {
+      // 会话 id 本身就带 `session-` 前缀，目录名 = 会话 id；兼容不带前缀的旧写法。
+      for (const dir of [sessionId, `session-${sessionId}`]) {
+        const file = join(root, workspace, dir, 'session.v4.jsonl.zstd')
+        if (existsSync(file)) return file
+      }
+    }
+  } catch {
+    // 没有 sessions 目录。
+  }
+  return undefined
+}
+
+// 会话日志是**多个 zstd 帧首尾相接**：`zstdDecompressSync` 只解第一帧，必须逐帧切开。
+// （帧解析与仓库根的 dump-session.mjs 相同。）
+const ZSTD_MAGIC = 4247762216
+
+function scanZstdFrames(buffer) {
+  const frames = []
+  let offset = 0
+  while (offset < buffer.length) {
+    const start = offset
+    if (buffer.length - offset < 4) break
+    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) throw new Error(`bad magic at ${offset}`)
+    offset += 4
+    const descriptor = buffer.readUInt8(offset)
+    offset += 1
+    const contentSizeFlag = descriptor >>> 6
+    const singleSegment = (descriptor & 32) !== 0
+    const checksum = (descriptor & 4) !== 0
+    const dictionaryFlag = descriptor & 3
+    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag
+    const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : 1 << contentSizeFlag
+    offset += (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes
+    for (;;) {
+      const blockHeader = buffer.readUIntLE(offset, 3)
+      offset += 3
+      const lastBlock = (blockHeader & 1) !== 0
+      const blockType = (blockHeader >>> 1) & 3
+      const blockSize = blockHeader >>> 3
+      offset += blockType === 1 ? 1 : blockSize
+      if (lastBlock) break
+    }
+    if (checksum) offset += 4
+    frames.push({ start, end: offset })
+  }
+  return frames
+}
+
+
+function decodeSessionLog(buffer) {
+  let text = ''
+  for (const { start, end } of scanZstdFrames(buffer)) text += zstdDecompressSync(buffer.subarray(start, end)).toString('utf8')
+  return text
+}
+
+/** 取会话事件：在册 agent 直接读内存快照，否则解码落盘日志（只读）。 */
+function sessionEvents(agent, sessionId) {
+  try {
+    const events = agent?.session?.snapshotEvents?.()
+    if (Array.isArray(events)) return events
+  } catch {
+    // 落到读文件。
+  }
+  const file = sessionLogFile(sessionId)
+  if (file === undefined) return []
+  try {
+    return decodeSessionLog(readFileSync(file))
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => {
+        try {
+          return JSON.parse(line)
+        } catch {
+          return undefined
+        }
+      })
+      .filter((event) => event !== undefined)
+  } catch {
+    return []
+  }
+}
+
+/** 一条消息里所有文本块的总字数。 */
+function textLength(message) {
+  const content = Array.isArray(message?.content) ? message.content : []
+  return content.reduce((sum, block) => sum + (typeof block?.text === 'string' ? block.text.length : 0), 0)
+}
+
+/** 把事件流折叠成逐轮用量。 */
+export function usageOf(events) {
+  const turns = new Map()
+  const bucket = (turn) => {
+    const key = Number.isFinite(turn) ? turn : 0
+    if (!turns.has(key)) {
+      turns.set(key, { turn: key, steps: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, systemChars: null, tools: null, injectedChars: 0, synthetic: false })
+    }
+    return turns.get(key)
+  }
+  let currentTurn = 0
+  for (const event of events) {
+    const data = event?.data ?? {}
+    if (Number.isFinite(data.turn)) currentTurn = data.turn
+    if (event?.type === 'system/message') {
+      bucket(currentTurn).systemChars = textLength(data.message)
+    } else if (event?.type === 'request/header') {
+      const tools = data?.header?.tools
+      bucket(currentTurn).tools = Array.isArray(tools) ? tools.length : 0
+    } else if (event?.type === 'user/message') {
+      const kind = data?.source?.kind
+      if (typeof kind === 'string' && kind !== 'user') bucket(currentTurn).injectedChars += textLength(data)
+    } else if (event?.type === 'assistant/message') {
+      const usage = data?.usage ?? data?.message?.usage
+      const row = bucket(Number.isFinite(data.turn) ? data.turn : currentTurn)
+      if (usage === undefined || usage === null) {
+        // 预填装写进历史的合成轮：没有 usage（零消耗）。
+        row.synthetic = true
+        continue
+      }
+      row.steps += 1
+      row.input += Number(usage.inputTokens) || 0
+      row.cacheRead += Number(usage.cacheReadTokens) || 0
+      row.cacheWrite += Number(usage.cacheWriteTokens) || 0
+      row.output += Number(usage.outputTokens) || 0
+    }
+  }
+  const rows = [...turns.values()].filter((row) => row.turn > 0).sort((a, b) => a.turn - b.turn)
+  const total = rows.reduce(
+    (sum, row) => ({
+      input: sum.input + row.input,
+      cacheRead: sum.cacheRead + row.cacheRead,
+      cacheWrite: sum.cacheWrite + row.cacheWrite,
+      output: sum.output + row.output,
+    }),
+    { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+  )
+  return { turns: rows, total }
 }
 
 function unlatch(agentId) {
@@ -495,6 +648,8 @@ export function apply(ctx) {
         // 有"延后到下一轮"的重挂请求 ⇒ 客户端角标要明说"下一轮生效"，
         // 否则用户在**轮内**翻开关会以为没生效（它会一直跑到本轮结束 —— Q18 的轮次冻结）。
         pendingReprime: [...pendingReprime],
+        // 预填装已写成真实历史的会话（会话 → 条数）。
+        materialized: typeof gateCache.module?.materialized === 'function' ? gateCache.module.materialized() : {},
         // 诊断（给脚本/排查用）。
         diagnostics: {
           seen: diagnostics.seen,
@@ -528,6 +683,16 @@ export function apply(ctx) {
               patchState(patch)
               // 【关键】写状态后当场重新挂载：让"点完开关再发"在该轮装配之前就位。
               await reprimeAll('state-write')
+              // 系统提示可能变了（套人格 / 接管）：首轮前要物化的预填装轮得用**新**提示，
+              // 否则合成轮里记着旧系统提示（实测：合成轮 5766 字无人格、真实轮 5971 字有人格）。
+              const gate = await loadGate()
+              for (const [, live] of liveAgents) {
+                try {
+                  if (typeof gate?.preparePrefillPrompt === 'function') await gate.preparePrefillPrompt(api(), live)
+                } catch {
+                  // 预热失败不影响写状态。
+                }
+              }
             }
             return Response.json(envelope(), noStore)
           },
@@ -611,7 +776,7 @@ export function apply(ctx) {
             let packs = readPacks(workspace)
             let reason = ''
 
-            const upsert = (name, items, overrides, tools) => {
+            const upsert = (name, items, overrides, tools, gate) => {
               // 预设 = 预填装内容 + 注入改写 + **工具放行**（§4-M5：换包=换权限）。
               const pack = {
                 name,
@@ -619,6 +784,7 @@ export function apply(ctx) {
                 items,
                 ...(overrides === undefined ? {} : { overrides }),
                 ...(tools === undefined ? {} : { tools }),
+                ...(gate === 'pure' || gate === 'pass' ? { gate } : {}),
               }
               const at = packs.findIndex((entry) => entry.name === name)
               if (at >= 0) packs[at] = pack
@@ -628,6 +794,11 @@ export function apply(ctx) {
 
             if (op === 'list') {
               // 无操作，直接回列表。
+            } else if (op === 'builtin') {
+              const id = typeof body?.id === 'string' ? body.id : ''
+              const preset = builtinPreset(id)
+              note({ seat: 'packs-route', op, id, hit: preset !== undefined })
+              return Response.json({ ok: true, op, id, pack: preset ?? null, ...envelope() }, noStore)
             } else if (op === 'get') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const found = packs.find((entry) => entry.name === name)
@@ -640,7 +811,7 @@ export function apply(ctx) {
               const tools = sanitizeTools(body?.tools)
               if (name === '') reason = 'missing name'
               else if (items === undefined) reason = 'invalid items[]'
-              else upsert(name, items, overrides, tools)
+              else upsert(name, items, overrides, tools, body?.gate)
             } else if (op === 'delete') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const next = packs.filter((entry) => entry.name !== name)
@@ -664,7 +835,7 @@ export function apply(ctx) {
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
                 if (items === undefined || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides, tools)
+                else upsert(name, items, overrides, tools, parsed?.gate)
               }
             } else {
               reason = `unknown op "${op}"`
@@ -672,12 +843,34 @@ export function apply(ctx) {
 
             note({ seat: 'packs-route', op, sessionId, workspace: workspace ?? '(global)', count: packs.length, reason })
             return Response.json(
-              { ok: true, op, packs: packSummaries(packs), file, reason, ...envelope() },
+              { ok: true, op, packs: packSummaries(packs), builtins: builtinSummaries(), file, reason, ...envelope() },
               noStore,
             )
           },
         }),
       'dsh-prefill: packs route',
+    )
+
+    scope.effect(
+      () =>
+        register({
+          path: USAGE_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body
+            try {
+              body = await request?.json?.()
+            } catch {
+              body = undefined
+            }
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+            if (sessionId === '') return Response.json({ ok: false, reason: 'missing sessionId' }, noStore)
+            const usage = usageOf(sessionEvents(liveAgents.get(sessionId), sessionId))
+            return Response.json({ ok: true, sessionId, ...usage }, noStore)
+          },
+        }),
+      'dsh-prefill: usage route',
     )
 
     ctx.logger?.info?.(`dsh-prefill: host half applied (${STAGE}), state at ${STATE_FILE}`)
