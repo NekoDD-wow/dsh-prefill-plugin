@@ -970,8 +970,13 @@ export async function step(api, payload, decision) {
     injectItems.length > 0 &&
     Number.isFinite(payload?.turn) &&
     payload.turn > 1 &&
+    // 只在每轮第 1 步注入：注入消息会落进会话日志、后续步骤作为历史重放，
+    // 每步都插会在多步（工具调用）回合里叠出 N 份（实测一轮 10 份）。
+    (payload?.step ?? 1) === 1 &&
     decision?.kind === 'enter' &&
-    Array.isArray(next.messages)
+    Array.isArray(next.messages) &&
+    // 幂等：pre-step 会从根级和 per-agent 两个座位各进一次，不查重就会插两条（实测每轮两份注入）。
+    !next.messages.some((message) => message?.source?.kind === 'prefill' && message?.source?.prefill === 'inject')
   ) {
     const messages = [...next.messages]
     // 借用 harness 自己那条注入消息的形状（省得猜字段），只换 kind 和正文。
