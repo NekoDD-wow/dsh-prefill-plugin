@@ -216,6 +216,22 @@ function keeper(state, message, sessionId) {
  * ```
  * 「仅在单个会话生效」由 key 就是会话 id 保证；`*` 只是给无头探针省事。
  */
+/**
+ * 本会话的「每轮注入」配置：`state.everyTurn[会话] ?? state.everyTurn['*']`。
+ * 形状 `{ enabled, text, untilTurn }`；关掉或正文为空 ⇒ undefined。
+ */
+export function everyTurnFor(state, agentId) {
+  const all = state?.everyTurn
+  if (all === null || typeof all !== 'object') return undefined
+  const exact = typeof agentId === 'string' ? all[agentId] : undefined
+  const entry = exact !== undefined && exact !== null && typeof exact === 'object' ? exact : all['*']
+  if (entry === null || typeof entry !== 'object' || entry.enabled !== true) return undefined
+  const text = typeof entry.text === 'string' ? entry.text.trim() : ''
+  if (text === '') return undefined
+  const until = Number(entry.untilTurn)
+  return { text, untilTurn: Number.isFinite(until) && until > 0 ? Math.floor(until) : 0 }
+}
+
 function overridesFor(state, agentId) {
   const all = state?.overrides
   if (all === null || typeof all !== 'object') return undefined
@@ -766,7 +782,8 @@ export async function prime(api, agent) {
   // 与 step() 的武装判定保持一致：**只配了注入改写（例如人格预设）**的会话也要急切挂载，
   // 否则首个请求的装配抢在 pre-step 之前 ⇒ 人格段"首轮不生效、第二轮才生效"。
   const hasOverrides = overridesFor(state, agent.id) !== undefined
-  const hasInjects = Array.isArray(state?.injects?.[agent.id]) && state.injects[agent.id].length > 0
+  const hasInjects =
+    (Array.isArray(state?.injects?.[agent.id]) && state.injects[agent.id].length > 0) || everyTurnFor(state, agent.id) !== undefined
   if (!state.armed.includes(agent.id) && !state.armed.includes('*') && !hasOverrides && !hasInjects) return
   const disposers = []
   let error = ''
@@ -833,7 +850,9 @@ export async function step(api, payload, decision) {
   const hasOverrides = overridesFor(state0, agent?.id) !== undefined
   // ④ 会话配了**每轮注入**（开跑后写的开场对话）：没有系统提示改写时也必须进来，
   // 否则注入静默不生效（实测：只写每轮注入、不套人格的会话，日志里一条注入消息都没有）。
-  const hasInjects = Array.isArray(state0?.injects?.[agent?.id]) && state0.injects[agent.id].length > 0
+  const hasInjects =
+    (Array.isArray(state0?.injects?.[agent?.id]) && state0.injects[agent.id].length > 0) ||
+    everyTurnFor(state0, agent?.id) !== undefined
   const armed =
     typeof agent?.id === 'string' &&
     (state0.armed.includes(agent.id) || state0.armed.includes('*') || hasOverrides || hasInjects)
@@ -1004,6 +1023,43 @@ export async function step(api, payload, decision) {
     else messages.push(injected)
     next = { ...next, messages }
     note({ inject: 'done', id: agent.id, turn: payload.turn, chars: text.length, items: injectItems.length })
+  }
+
+  // ── 每轮注入（可选功能，`state.everyTurn`）─────────────────────────────────
+  // 与上面"开跑后的预填装注入"不同：从**第 1 轮**起就生效，
+  // 可设"只注入前 N 轮"。同样只在每轮第 1 步插、按 kind 查重（双座位会各进一次）。
+  const everyTurn = everyTurnFor(state, agent.id)
+  if (
+    everyTurn !== undefined &&
+    Number.isFinite(payload?.turn) &&
+    (everyTurn.untilTurn === 0 || payload.turn <= everyTurn.untilTurn) &&
+    (payload?.step ?? 1) === 1 &&
+    decision?.kind === 'enter' &&
+    Array.isArray(next.messages) &&
+    !next.messages.some((message) => message?.source?.kind === 'prefill' && message?.source?.prefill === 'every-turn')
+  ) {
+    const messages = [...next.messages]
+    const template = messages.find((message) => message?.source?.kind === 'runtime-context') ?? { role: 'user', source: {} }
+    const injected = {
+      ...template,
+      id: `prefill-everyturn-${payload.turn}`,
+      role: 'user',
+      source: { ...(template.source ?? {}), kind: 'prefill', prefill: 'every-turn' },
+      // 必须套"背景"外壳：裸发正文时 step-5 把它当成用户本轮的要求，四段直接写进了回答正文、
+      // 思维链反而不守格式（实测 D1：注入的 5 轮四段只命中 1 轮）；套上外壳后与 B2b 一致（13/14）。
+      content: [{ type: 'text', text: renderInjectBlock([{ role: 'user', text: everyTurn.text }]) }],
+    }
+    let at = -1
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.source?.kind === 'user') {
+        at = index
+        break
+      }
+    }
+    if (at >= 0) messages.splice(at, 0, injected)
+    else messages.push(injected)
+    next = { ...next, messages }
+    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, chars: everyTurn.text.length, untilTurn: everyTurn.untilTurn })
   }
 
   // ── 自检：直接向装配器要一份"此刻到底装配成什么"的真相 ──────────────────

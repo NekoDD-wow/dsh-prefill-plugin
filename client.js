@@ -474,6 +474,17 @@ window.__ModuleLoader__.load({
       modeAppend: '追加到默认提示后',
       modeTakeover: '接管整个系统提示',
       modeReplace: '替换正文·保留工具',
+      everyTurnTitle: '每轮注入',
+      everyTurnOffMeta: '关',
+      everyTurnOn: '启用',
+      everyTurnHint: '每轮在你的消息之前自动插一条提醒，模型每轮都会重新看到。实测在 step-5 上比系统提示管用得多：思维链语言、格式、人称都靠它稳住。代价：每轮多几十到一百多 token（会写进历史），前缀不变，缓存命中率基本不受影响。',
+      everyTurnPresets: '常用：',
+      everyTurnPlaceholder: '每轮要提醒模型的话。例如：本轮思维链请全程用中文。',
+      everyTurnUntil: '只注入前',
+      everyTurnUntilUnit: '轮（0 = 一直注入）',
+      everyTurnDefault: '新会话默认也开启',
+      everyTurnSaved: '每轮注入已保存，下一条消息起生效',
+      everyTurnOffSaved: '每轮注入已关闭',
       modeReplaceHint: '用下面这段替换 dsh 默认系统提示的正文，但工具、运行时上下文（工作区、权限）和审批全部照旧。适合换语言（如中文版官方提示）或整体重写规则。可以写 {{model}} 和 {{cwd}}，dsh 会自动填入。',
       noteReplace: '替换：系统提示只剩你写的那段（约 {n} tok），工具和运行时上下文照旧。',
       modeOffHint: '保持 dsh 默认系统提示（身份、工具说明、工作区规则等）。下面写的内容不会发送。',
@@ -600,6 +611,17 @@ window.__ModuleLoader__.load({
       modeAppend: 'Append to default',
       modeTakeover: 'Take over entirely',
       modeReplace: 'Replace text, keep tools',
+      everyTurnTitle: 'Every-turn reminder',
+      everyTurnOffMeta: 'off',
+      everyTurnOn: 'Enabled',
+      everyTurnHint: 'Inserts a short reminder before your message on every turn. On step-5 this steers reasoning language, format and person far better than the system prompt. Cost: a few dozen to ~100 tokens per turn (kept in history); the prefix is unchanged, so cache hits barely move.',
+      everyTurnPresets: 'Presets:',
+      everyTurnPlaceholder: 'What to remind the model each turn, e.g. think in Chinese this turn.',
+      everyTurnUntil: 'Only for the first',
+      everyTurnUntilUnit: 'turns (0 = always)',
+      everyTurnDefault: 'Also on by default for new sessions',
+      everyTurnSaved: 'Every-turn reminder saved — applies from your next message',
+      everyTurnOffSaved: 'Every-turn reminder off',
       modeReplaceHint: 'Replaces the body of the default dsh system prompt with the text below, while tools, runtime context (workspace, permissions) and approvals stay. {{model}} and {{cwd}} are filled in by dsh.',
       noteReplace: 'Replace: the system prompt is only your text (≈{n} tok); tools and runtime context stay.',
       modeOffHint: 'Keep the default dsh system prompt. The text below is not sent.',
@@ -1947,10 +1969,14 @@ window.__ModuleLoader__.load({
       const [revision, setRevision] = React.useState(0)
       const [packs, setPacks] = React.useState([])
       const [builtins, setBuiltins] = React.useState([])
+      const [everyTurnList, setEveryTurnList] = React.useState([])
+      const [everyTurnDraft, setEveryTurnDraft] = React.useState(null)
+      const everyTurnTimer = React.useRef(0)
+      React.useEffect(() => setEveryTurnDraft(null), [sessionId])
       const [packName, setPackName] = React.useState('')
       const [envelope, setEnvelope] = React.useState(null)
       const [toast, setToast] = React.useState('')
-      const [open, setOpen] = React.useState({ guide: false, presets: true, system: false, items: true, inject: false, usage: false, manage: false })
+      const [open, setOpen] = React.useState({ guide: false, presets: true, system: false, items: true, inject: false, everyTurn: false, usage: false, manage: false })
       const [hovered, setHovered] = React.useState('')
       // 整个面板可收起成一行：会话开跑后默认收起（否则它会盖住对话）。用户手动展开/收起后按会话记住。
       const [collapsed, setCollapsed] = React.useState(null)
@@ -2066,6 +2092,7 @@ window.__ModuleLoader__.load({
       const adoptPacks = (data) => {
         setPacks(Array.isArray(data?.packs) ? data.packs : [])
         if (Array.isArray(data?.builtins)) setBuiltins(data.builtins)
+        if (Array.isArray(data?.everyTurnPresets)) setEveryTurnList(data.everyTurnPresets)
       }
       React.useEffect(() => {
         if (enabled && sessionId !== '') void packsCall({ op: 'list' }).then(adoptPacks).catch(() => setStatus('error'))
@@ -2681,6 +2708,117 @@ window.__ModuleLoader__.load({
         ),
       )
 
+      // ── 每轮注入（state.everyTurn[会话]；勾"新会话默认"时同时写 '*'）──
+      const storedEveryTurn = state?.everyTurn?.[sessionId] ?? state?.everyTurn?.['*'] ?? null
+      const everyTurn = everyTurnDraft ?? {
+        enabled: storedEveryTurn?.enabled === true,
+        text: typeof storedEveryTurn?.text === 'string' ? storedEveryTurn.text : '',
+        untilTurn: Number(storedEveryTurn?.untilTurn) > 0 ? Number(storedEveryTurn.untilTurn) : 0,
+        asDefault: state?.everyTurn?.['*']?.enabled === true,
+      }
+      const writeEveryTurn = async (nextValue) => {
+        setEveryTurnDraft(nextValue)
+        const fresh = await postJson(STATE_ROUTE, undefined)
+        const map = { ...(fresh?.state?.everyTurn ?? {}) }
+        const entry = { enabled: nextValue.enabled === true, text: String(nextValue.text ?? ''), untilTurn: Math.max(0, Math.floor(Number(nextValue.untilTurn) || 0)) }
+        map[sessionId] = entry
+        if (nextValue.asDefault === true) map['*'] = entry
+        else delete map['*']
+        const data = await postJson(STATE_ROUTE, { everyTurn: map })
+        setEnvelope(data)
+        notifyStateChanged()
+        return data
+      }
+      const editEveryTurn = (patch, immediate) => {
+        const nextValue = { ...everyTurn, ...patch }
+        setEveryTurnDraft(nextValue)
+        clearTimeout(everyTurnTimer.current)
+        const run = () =>
+          void writeEveryTurn(nextValue)
+            .then(() => flash(nextValue.enabled && String(nextValue.text).trim() !== '' ? t('everyTurnSaved') : t('everyTurnOffSaved')))
+            .catch(() => setStatus('error'))
+        if (immediate) run()
+        else everyTurnTimer.current = setTimeout(run, 700)
+      }
+      const everyTurnActive = everyTurn.enabled && everyTurn.text.trim() !== ''
+      const everyTurnSection = h(
+        Section,
+        {
+          id: 'every-turn',
+          title: t('everyTurnTitle'),
+          meta: everyTurnActive
+            ? `≈${estimateTokens(everyTurn.text)} tok/${t('turnsUnit')}${everyTurn.untilTurn > 0 ? ` · ≤${everyTurn.untilTurn}` : ''}`
+            : t('everyTurnOffMeta'),
+          open: open.everyTurn,
+          onToggle: () => toggle('everyTurn'),
+        },
+        h('div', { style: V.hint }, t('everyTurnHint')),
+        h(
+          'label',
+          { style: { ...V.row, gap: 6, fontSize: 12 } },
+          h('input', {
+            type: 'checkbox',
+            checked: everyTurn.enabled,
+            'data-prefill-everyturn-toggle': '1',
+            onChange: (event) => editEveryTurn({ enabled: event.target.checked }, true),
+          }),
+          t('everyTurnOn'),
+        ),
+        h(
+          'div',
+          { style: { ...V.row, flexWrap: 'wrap', gap: 6 } },
+          h('span', { style: V.sectionMeta }, t('everyTurnPresets')),
+          ...everyTurnList.map((preset) =>
+            h(
+              'button',
+              {
+                key: preset.id,
+                type: 'button',
+                style: everyTurn.text === preset.text ? V.btn : V.btnGhost,
+                title: preset.desc,
+                'data-prefill-everyturn-preset': preset.id,
+                onClick: () => editEveryTurn({ enabled: true, text: preset.text }, true),
+              },
+              `${preset.emoji} ${preset.name}`,
+            ),
+          ),
+        ),
+        h('textarea', {
+          style: { ...V.textarea, minHeight: 60 },
+          value: everyTurn.text,
+          spellCheck: false,
+          placeholder: t('everyTurnPlaceholder'),
+          'data-prefill-everyturn-text': '1',
+          onChange: (event) => editEveryTurn({ text: event.target.value }, false),
+        }),
+        h(
+          'div',
+          { style: { ...V.row, gap: 6, fontSize: 12 } },
+          h('span', null, t('everyTurnUntil')),
+          h('input', {
+            type: 'number',
+            min: 0,
+            step: 1,
+            value: String(everyTurn.untilTurn),
+            style: { ...V.input, width: 64 },
+            'data-prefill-everyturn-until': '1',
+            onChange: (event) => editEveryTurn({ untilTurn: event.target.value }, false),
+          }),
+          h('span', null, t('everyTurnUntilUnit')),
+        ),
+        h(
+          'label',
+          { style: { ...V.row, gap: 6, fontSize: 12 } },
+          h('input', {
+            type: 'checkbox',
+            checked: everyTurn.asDefault,
+            'data-prefill-everyturn-default': '1',
+            onChange: (event) => editEveryTurn({ asDefault: event.target.checked }, true),
+          }),
+          t('everyTurnDefault'),
+        ),
+      )
+
       const injectSection = h(
         Section,
         { id: 'inject', title: t('injectTitle'), meta: t('advanced'), open: open.inject, onToggle: () => toggle('inject') },
@@ -2712,6 +2850,7 @@ window.__ModuleLoader__.load({
           ? ''
           : `${t('systemTitle')}·${systemMode === 'append' ? t('systemAppendMeta') : systemMode === 'replace' ? t('systemReplaceMeta') : t('systemTakeoverMeta')}`,
         items.length > 0 ? `${items.length}${t('countSuffix')}` : '',
+        everyTurnActive ? t('everyTurnTitle') : '',
       ]
         .filter((part) => part !== '')
         .join(' · ')
@@ -2768,7 +2907,7 @@ window.__ModuleLoader__.load({
               conflict.advice ? h('span', { style: S.dockHint }, String(conflict.advice)) : null,
             )
           : null,
-        ...(isCollapsed ? [] : [guideSection, presetsSection, systemSection, itemsSection, injectSection, usageSection]),
+        ...(isCollapsed ? [] : [guideSection, presetsSection, systemSection, everyTurnSection, itemsSection, injectSection, usageSection]),
       )
     }
 

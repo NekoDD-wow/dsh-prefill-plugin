@@ -224,3 +224,51 @@ export function builtinSummaries() {
     openingChars: items.reduce((sum, item) => sum + (item.text?.length ?? 0) + (item.reasoning?.length ?? 0), 0),
   }))
 }
+
+/**
+ * 「每轮注入」预设：每轮第 1 步，在用户这条消息之前插一条提醒（kind `prefill` / `every-turn`）。
+ *
+ * 为什么要单独做：step-5-preview 上系统提示和开场示范都管不住思维链（中文约 5–54%、
+ * 长对话四段格式 0/15），只有每轮重复提醒稳定（中文 86–91%、四段 13/14、第一人称从第 4 轮起
+ * 再没出现"用户"）。见 tests/reasoning-lab/README.md。
+ *
+ * 代价：注入会写进会话日志、作为后续历史重放 ⇒ 每轮多几十到一百多 token；前缀不变，缓存命中率基本不受影响
+ * （实测 94–95%，与不注入的组相同）。
+ *
+ * `untilTurn`：只注入前 N 轮（0 = 一直注入）。
+ */
+export const EVERY_TURN_PRESETS = [
+  {
+    id: 'zh-thinking',
+    emoji: '🀄',
+    name: '中文思考',
+    desc: '思维链全程用中文（英文问题也一样）。',
+    text: '【思考语言】本轮你的思维链（reasoning）请全程用中文，即使问题是英文。回答正文按用户的语言正常写。',
+  },
+  {
+    id: 'four-section',
+    emoji: '🧱',
+    name: '四段式思考',
+    desc: '思维链按【理解】【拆解】【验证】【结论】四段写，正文不受影响。',
+    text: '【思考格式】本轮你的思维链（reasoning）请全程用中文，并按四段写：【理解】【拆解】【验证】【结论】，每段一到三句。回答正文正常写，不要把这四段放进回答里。',
+  },
+  {
+    id: 'first-person',
+    emoji: '🎭',
+    name: '第一人称思考（角色扮演）',
+    desc: '思维链用角色的第一人称写，不说"用户"，改称"主人"；配合角色扮演人格用。',
+    text: '【思考人称】本轮你的思维链（reasoning）请用你所扮演角色的第一人称、中文来写（"我觉得……""我该……"），把对方称为"主人"，不要出现"用户""the user"这类说法。回答正文保持角色口吻。',
+  },
+  {
+    id: 'brief-thinking',
+    emoji: '✂️',
+    name: '简短思考',
+    desc: '简单问题少想几句，复杂问题照常；省输出 token。',
+    text: '【思考长度】本轮如果问题简单，思维链（reasoning）控制在三句以内、用中文；复杂问题（多步推理、写代码、改文件）照常充分思考。',
+  },
+]
+
+/** 给面板的每轮注入预设清单。 */
+export function everyTurnPresets() {
+  return EVERY_TURN_PRESETS.map((preset) => ({ ...preset }))
+}

@@ -26,7 +26,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { zstdDecompressSync } from 'node:zlib'
-import { builtinPreset, builtinSummaries } from './builtin-presets.js'
+import { builtinPreset, builtinSummaries, everyTurnPresets } from './builtin-presets.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
 const STAGE = 'M6-shell'
@@ -843,7 +843,7 @@ export function apply(ctx) {
 
             note({ seat: 'packs-route', op, sessionId, workspace: workspace ?? '(global)', count: packs.length, reason })
             return Response.json(
-              { ok: true, op, packs: packSummaries(packs), builtins: builtinSummaries(), file, reason, ...envelope() },
+              { ok: true, op, packs: packSummaries(packs), builtins: builtinSummaries(), everyTurnPresets: everyTurnPresets(), file, reason, ...envelope() },
               noStore,
             )
           },
