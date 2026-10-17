@@ -480,6 +480,9 @@ window.__ModuleLoader__.load({
       everyTurnHint: '每轮在你的消息之前自动插一条提醒，模型每轮都会重新看到。实测在 step-5 上比系统提示管用得多：思维链语言、格式、人称都靠它稳住。代价：每轮多几十到一百多 token（会写进历史），前缀不变，缓存命中率基本不受影响。',
       everyTurnPresets: '常用：',
       everyTurnPlaceholder: '每轮要提醒模型的话。例如：本轮思维链请全程用中文。',
+      everyTurnFirstLabel: '首轮专用（可选）：第 1 轮发这段，之后每轮发下面那段',
+      everyTurnFirstPlaceholder: '第 1 轮要讲清楚的完整要求。例如：整场对话守住人设，思维链用角色第一人称、中文……\n留空 = 第 1 轮也发下面那段。',
+      everyTurnLaterLabel: '每轮注入',
       everyTurnUntil: '只注入前',
       everyTurnUntilUnit: '轮（0 = 一直注入）',
       everyTurnDefault: '新会话默认也开启',
@@ -617,6 +620,9 @@ window.__ModuleLoader__.load({
       everyTurnHint: 'Inserts a short reminder before your message on every turn. On step-5 this steers reasoning language, format and person far better than the system prompt. Cost: a few dozen to ~100 tokens per turn (kept in history); the prefix is unchanged, so cache hits barely move.',
       everyTurnPresets: 'Presets:',
       everyTurnPlaceholder: 'What to remind the model each turn, e.g. think in Chinese this turn.',
+      everyTurnFirstLabel: 'First turn only (optional): sent on turn 1, the text below on later turns',
+      everyTurnFirstPlaceholder: 'The full requirement to state on turn 1.\nEmpty = turn 1 also gets the text below.',
+      everyTurnLaterLabel: 'Every turn',
       everyTurnUntil: 'Only for the first',
       everyTurnUntilUnit: 'turns (0 = always)',
       everyTurnDefault: 'Also on by default for new sessions',
@@ -2713,6 +2719,7 @@ window.__ModuleLoader__.load({
       const everyTurn = everyTurnDraft ?? {
         enabled: storedEveryTurn?.enabled === true,
         text: typeof storedEveryTurn?.text === 'string' ? storedEveryTurn.text : '',
+        firstText: typeof storedEveryTurn?.firstText === 'string' ? storedEveryTurn.firstText : '',
         untilTurn: Number(storedEveryTurn?.untilTurn) > 0 ? Number(storedEveryTurn.untilTurn) : 0,
         asDefault: state?.everyTurn?.['*']?.enabled === true,
       }
@@ -2720,7 +2727,7 @@ window.__ModuleLoader__.load({
         setEveryTurnDraft(nextValue)
         const fresh = await postJson(STATE_ROUTE, undefined)
         const map = { ...(fresh?.state?.everyTurn ?? {}) }
-        const entry = { enabled: nextValue.enabled === true, text: String(nextValue.text ?? ''), untilTurn: Math.max(0, Math.floor(Number(nextValue.untilTurn) || 0)) }
+        const entry = { enabled: nextValue.enabled === true, text: String(nextValue.text ?? ''), firstText: String(nextValue.firstText ?? ''), untilTurn: Math.max(0, Math.floor(Number(nextValue.untilTurn) || 0)) }
         map[sessionId] = entry
         if (nextValue.asDefault === true) map['*'] = entry
         else delete map['*']
@@ -2735,12 +2742,12 @@ window.__ModuleLoader__.load({
         clearTimeout(everyTurnTimer.current)
         const run = () =>
           void writeEveryTurn(nextValue)
-            .then(() => flash(nextValue.enabled && String(nextValue.text).trim() !== '' ? t('everyTurnSaved') : t('everyTurnOffSaved')))
+            .then(() => flash(nextValue.enabled && (String(nextValue.text).trim() !== '' || String(nextValue.firstText ?? '').trim() !== '') ? t('everyTurnSaved') : t('everyTurnOffSaved')))
             .catch(() => setStatus('error'))
         if (immediate) run()
         else everyTurnTimer.current = setTimeout(run, 700)
       }
-      const everyTurnActive = everyTurn.enabled && everyTurn.text.trim() !== ''
+      const everyTurnActive = everyTurn.enabled && (everyTurn.text.trim() !== '' || everyTurn.firstText.trim() !== '')
       const everyTurnSection = h(
         Section,
         {
@@ -2774,15 +2781,25 @@ window.__ModuleLoader__.load({
               {
                 key: preset.id,
                 type: 'button',
-                style: everyTurn.text === preset.text ? V.btn : V.btnGhost,
+                style: everyTurn.text === preset.text && everyTurn.firstText === (preset.firstText ?? '') ? V.btn : V.btnGhost,
                 title: preset.desc,
                 'data-prefill-everyturn-preset': preset.id,
-                onClick: () => editEveryTurn({ enabled: true, text: preset.text }, true),
+                onClick: () => editEveryTurn({ enabled: true, text: preset.text, firstText: preset.firstText ?? '' }, true),
               },
               `${preset.emoji} ${preset.name}`,
             ),
           ),
         ),
+        h('div', { style: V.sectionMeta }, t('everyTurnFirstLabel')),
+        h('textarea', {
+          style: { ...V.textarea, minHeight: 48 },
+          value: everyTurn.firstText,
+          spellCheck: false,
+          placeholder: t('everyTurnFirstPlaceholder'),
+          'data-prefill-everyturn-first': '1',
+          onChange: (event) => editEveryTurn({ firstText: event.target.value }, false),
+        }),
+        h('div', { style: V.sectionMeta }, t('everyTurnLaterLabel')),
         h('textarea', {
           style: { ...V.textarea, minHeight: 60 },
           value: everyTurn.text,

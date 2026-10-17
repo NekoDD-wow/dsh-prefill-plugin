@@ -216,9 +216,13 @@ function keeper(state, message, sessionId) {
  * ```
  * 「仅在单个会话生效」由 key 就是会话 id 保证；`*` 只是给无头探针省事。
  */
+/** 每轮注入计数（会话 id → 已注入轮数）。只在内存里：插件重载后从 0 重数，首轮专用段会再发一次。 */
+const everyTurnCount = new Map()
+
 /**
  * 本会话的「每轮注入」配置：`state.everyTurn[会话] ?? state.everyTurn['*']`。
- * 形状 `{ enabled, text, untilTurn }`；关掉或正文为空 ⇒ undefined。
+ * 形状 `{ enabled, text, firstText, untilTurn }`：第 1 轮发 `firstText`（空则发 `text`），之后每轮发 `text`。
+ * 关掉或两段都空 ⇒ undefined。
  */
 export function everyTurnFor(state, agentId) {
   const all = state?.everyTurn
@@ -227,9 +231,10 @@ export function everyTurnFor(state, agentId) {
   const entry = exact !== undefined && exact !== null && typeof exact === 'object' ? exact : all['*']
   if (entry === null || typeof entry !== 'object' || entry.enabled !== true) return undefined
   const text = typeof entry.text === 'string' ? entry.text.trim() : ''
-  if (text === '') return undefined
+  const firstText = typeof entry.firstText === 'string' ? entry.firstText.trim() : ''
+  if (text === '' && firstText === '') return undefined
   const until = Number(entry.untilTurn)
-  return { text, untilTurn: Number.isFinite(until) && until > 0 ? Math.floor(until) : 0 }
+  return { text, firstText, untilTurn: Number.isFinite(until) && until > 0 ? Math.floor(until) : 0 }
 }
 
 function overridesFor(state, agentId) {
@@ -999,16 +1004,11 @@ export async function step(api, payload, decision) {
   ) {
     const messages = [...next.messages]
     // 借用 harness 自己那条注入消息的形状（省得猜字段），只换 kind 和正文。
-    const template = messages.find((message) => message?.source?.kind === 'runtime-context') ?? {
-      role: 'user',
-      source: {},
-    }
     const text = renderInjectBlock(injectItems)
     const injected = {
-      ...template,
       id: `prefill-inject-${payload.turn}-${payload.step ?? 0}`,
       role: 'user',
-      source: { ...(template.source ?? {}), kind: 'prefill', prefill: 'inject' },
+      source: { kind: 'prefill', prefill: 'inject' },
       content: [{ type: 'text', text }],
     }
     // 插在**最后一条真实用户消息之前**（没有就追加）。
@@ -1028,26 +1028,36 @@ export async function step(api, payload, decision) {
   // ── 每轮注入（可选功能，`state.everyTurn`）─────────────────────────────────
   // 与上面"开跑后的预填装注入"不同：从**第 1 轮**起就生效，
   // 可设"只注入前 N 轮"。同样只在每轮第 1 步插、按 kind 查重（双座位会各进一次）。
+  //
+  // 「第几轮」按本会话**已注入过几次**数，不按 payload.turn：人格预设会先写一轮开场白
+  // （turn 1 不调模型、也不经过这里的 enter），用户真正的第一句是 turn 2 —— 实测 E2 里
+  // 按 payload.turn===1 判首轮，首轮专用段一次都没发出去。
   const everyTurn = everyTurnFor(state, agent.id)
+  const injectedSoFar = everyTurnCount.get(agent.id) ?? 0
+  const isFirst = injectedSoFar === 0
+  const everyTurnText =
+    everyTurn === undefined ? '' : isFirst && everyTurn.firstText !== '' ? everyTurn.firstText : everyTurn.text
   if (
     everyTurn !== undefined &&
+    everyTurnText !== '' &&
     Number.isFinite(payload?.turn) &&
-    (everyTurn.untilTurn === 0 || payload.turn <= everyTurn.untilTurn) &&
+    (everyTurn.untilTurn === 0 || injectedSoFar < everyTurn.untilTurn) &&
     (payload?.step ?? 1) === 1 &&
     decision?.kind === 'enter' &&
     Array.isArray(next.messages) &&
     !next.messages.some((message) => message?.source?.kind === 'prefill' && message?.source?.prefill === 'every-turn')
   ) {
     const messages = [...next.messages]
-    const template = messages.find((message) => message?.source?.kind === 'runtime-context') ?? { role: 'user', source: {} }
+    // 消息形状自己拼，不再借 runtime-context 的：借来的 source 带着 `form:'snapshot'` 和整份
+    // 运行时上下文的 `sections`（实测会话日志里每条注入都背着一份），而接管 / 纯净模式下
+    // runtime-context 已被拦掉、根本借不到 ⇒ 两种模式下注入的形状不一致。
     const injected = {
-      ...template,
       id: `prefill-everyturn-${payload.turn}`,
       role: 'user',
-      source: { ...(template.source ?? {}), kind: 'prefill', prefill: 'every-turn' },
+      source: { kind: 'prefill', prefill: 'every-turn' },
       // 必须套"背景"外壳：裸发正文时 step-5 把它当成用户本轮的要求，四段直接写进了回答正文、
       // 思维链反而不守格式（实测 D1：注入的 5 轮四段只命中 1 轮）；套上外壳后与 B2b 一致（13/14）。
-      content: [{ type: 'text', text: renderInjectBlock([{ role: 'user', text: everyTurn.text }]) }],
+      content: [{ type: 'text', text: renderInjectBlock([{ role: 'user', text: everyTurnText }]) }],
     }
     let at = -1
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -1059,7 +1069,8 @@ export async function step(api, payload, decision) {
     if (at >= 0) messages.splice(at, 0, injected)
     else messages.push(injected)
     next = { ...next, messages }
-    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, chars: everyTurn.text.length, untilTurn: everyTurn.untilTurn })
+    everyTurnCount.set(agent.id, injectedSoFar + 1)
+    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: injectedSoFar + 1, first: isFirst && everyTurn.firstText !== '', chars: everyTurnText.length, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
   }
 
   // ── 自检：直接向装配器要一份"此刻到底装配成什么"的真相 ──────────────────
