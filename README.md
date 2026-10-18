@@ -70,17 +70,28 @@ dsh plugin --profile web add /绝对路径/dsh-prefill/prefill-plugin
 
 实测数据和完整对话见 [`tests/reasoning-lab`](../tests/reasoning-lab/README.md)。
 
+## 角色卡（角色扮演）
+
+面板里的「角色卡」分区可以导入 SillyTavern 角色卡（V2/V3，`.json` 或 `.png`）。选中一张后：
+
+- **带工具（Agent）**：保留官方系统提示、工具和审批，卡片内容追加在后面。角色只影响说话方式，让它读文件、跑命令照样会做，结果如实转述。可以填工具白名单。
+- **纯角色扮演**：接管系统提示，只发卡片内容，不带工具和运行时上下文。
+- 可选开场白、填「我的名字」（替换卡里的 `{{user}}`），默认打开每轮提醒，可加「中文思考」「第一人称思考」。
+
+套用只影响当前会话，写的都是已有设置（系统提示、开场对话、每轮注入），套用后还能在各分区里手改。取消预设会一并关掉卡片打开的每轮提醒。世界书目前只用常驻条目，关键词条目下一期做。
+
 ## 文件
 
 | 文件 | 内容 |
 |---|---|
 | `index.js` | 引导层：按 `impl.js` 的修改时间动态加载（改它需要重启） |
-| `impl.js` | 壳：路由（state / draft / packs / usage / ping）、轮次闩锁、预填装物化触发 |
+| `impl.js` | 壳：路由（state / draft / packs / cards / usage / ping）、轮次闩锁、预填装物化触发 |
 | `gate.js` | 核：闸门、系统提示接管、注入过滤、预填装合成轮（热插拔，改了不用重启） |
 | `builtin-presets.js` | 内置预设（纯净、自定义系统提示、7 个人格） |
+| `character-cards.js` | 角色卡：解析 JSON / PNG 卡、编译成人设段 + 开场白 + 每轮提醒（纯函数） |
 | `client.js` | 浏览器端：输入框芯片、预填装面板、设置页、会话顶栏徽标 |
 
-状态文件在 `<DSH_HOME>/prefill/state.json`；"我的预设"按工作区存在 `<工作区>/.dsh-prefill/packs.json`。
+状态文件在 `<DSH_HOME>/prefill/state.json`；"我的预设"按工作区存在 `<工作区>/.dsh-prefill/packs.json`，角色卡存在 `<工作区>/.dsh-prefill/cards/`。
 
 ## 设置页
 

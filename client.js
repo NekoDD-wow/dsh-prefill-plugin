@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
      * 图标：Lucide（https://lucide.dev，ISC 许可，见 THIRD_PARTY_NOTICES.md）。
      * 只内联用到的几个，按名字取；没有对应图标时回落到 emoji 文本（兼容旧的文件预设）。
      */
-    const ICONS = {"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"castle":[["path",{"d":"M10 5V3"}],["path",{"d":"M14 5V3"}],["path",{"d":"M15 21v-3a3 3 0 0 0-6 0v3"}],["path",{"d":"M18 3v8"}],["path",{"d":"M18 5H6"}],["path",{"d":"M22 11H2"}],["path",{"d":"M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9"}],["path",{"d":"M6 3v8"}]],"cat":[["path",{"d":"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"}],["path",{"d":"M8 14v.5"}],["path",{"d":"M16 14v.5"}],["path",{"d":"M11.25 16.25h1.5L12 17l-.75-.75Z"}]],"drama":[["path",{"d":"M10 11h.01"}],["path",{"d":"M14 6h.01"}],["path",{"d":"M18 6h.01"}],["path",{"d":"M6.5 13.1h.01"}],["path",{"d":"M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3"}],["path",{"d":"M17.4 9.9c-.8.8-2 .8-2.8 0"}],["path",{"d":"M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7"}],["path",{"d":"M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"flame":[["path",{"d":"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"}]],"flower-2":[["path",{"d":"M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"}],["circle",{"cx":"12","cy":"8","r":"2"}],["path",{"d":"M12 10v12"}],["path",{"d":"M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"}],["path",{"d":"M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"languages":[["path",{"d":"m5 8 6 6"}],["path",{"d":"m4 14 6-6 2-3"}],["path",{"d":"M2 5h12"}],["path",{"d":"M7 2h1"}],["path",{"d":"m22 22-5-10-5 10"}],["path",{"d":"M14 18h6"}]],"layout-list":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}],["path",{"d":"M14 4h7"}],["path",{"d":"M14 9h7"}],["path",{"d":"M14 15h7"}],["path",{"d":"M14 20h7"}]],"message-circle-question":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"paw-print":[["circle",{"cx":"11","cy":"4","r":"2"}],["circle",{"cx":"18","cy":"8","r":"2"}],["circle",{"cx":"20","cy":"16","r":"2"}],["path",{"d":"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"}]],"pen-line":[["path",{"d":"M13 21h8"}],["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"scan-search":[["path",{"d":"M3 7V5a2 2 0 0 1 2-2h2"}],["path",{"d":"M17 3h2a2 2 0 0 1 2 2v2"}],["path",{"d":"M21 17v2a2 2 0 0 1-2 2h-2"}],["path",{"d":"M7 21H5a2 2 0 0 1-2-2v-2"}],["circle",{"cx":"12","cy":"12","r":"3"}],["path",{"d":"m16 16-1.9-1.9"}]],"scissors":[["circle",{"cx":"6","cy":"6","r":"3"}],["path",{"d":"M8.12 8.12 12 12"}],["path",{"d":"M20 4 8.12 15.88"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M14.8 14.8 20 20"}]],"sword":[["path",{"d":"m11 19-6-6"}],["path",{"d":"m5 21-2-2"}],["path",{"d":"m8 16-4 4"}],["path",{"d":"M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]]}
+    const ICONS = {"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"castle":[["path",{"d":"M10 5V3"}],["path",{"d":"M14 5V3"}],["path",{"d":"M15 21v-3a3 3 0 0 0-6 0v3"}],["path",{"d":"M18 3v8"}],["path",{"d":"M18 5H6"}],["path",{"d":"M22 11H2"}],["path",{"d":"M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9"}],["path",{"d":"M6 3v8"}]],"cat":[["path",{"d":"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"}],["path",{"d":"M8 14v.5"}],["path",{"d":"M16 14v.5"}],["path",{"d":"M11.25 16.25h1.5L12 17l-.75-.75Z"}]],"contact":[["path",{"d":"M16 2v2"}],["path",{"d":"M7 21v-2a2 2 0 012-2h6a2 2 0 012 2v2"}],["path",{"d":"M8 2v2"}],["circle",{"cx":"12","cy":"10","r":"3"}],["rect",{"x":"3","y":"3","width":"18","height":"18","rx":"2"}]],"download":[["path",{"d":"M12 15V3"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}],["path",{"d":"m7 10 5 5 5-5"}]],"drama":[["path",{"d":"M10 11h.01"}],["path",{"d":"M14 6h.01"}],["path",{"d":"M18 6h.01"}],["path",{"d":"M6.5 13.1h.01"}],["path",{"d":"M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3"}],["path",{"d":"M17.4 9.9c-.8.8-2 .8-2.8 0"}],["path",{"d":"M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7"}],["path",{"d":"M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"flame":[["path",{"d":"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"}]],"flower-2":[["path",{"d":"M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"}],["circle",{"cx":"12","cy":"8","r":"2"}],["path",{"d":"M12 10v12"}],["path",{"d":"M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"}],["path",{"d":"M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"languages":[["path",{"d":"m5 8 6 6"}],["path",{"d":"m4 14 6-6 2-3"}],["path",{"d":"M2 5h12"}],["path",{"d":"M7 2h1"}],["path",{"d":"m22 22-5-10-5 10"}],["path",{"d":"M14 18h6"}]],"layout-list":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}],["path",{"d":"M14 4h7"}],["path",{"d":"M14 9h7"}],["path",{"d":"M14 15h7"}],["path",{"d":"M14 20h7"}]],"message-circle-question":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"message-circle":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}]],"paw-print":[["circle",{"cx":"11","cy":"4","r":"2"}],["circle",{"cx":"18","cy":"8","r":"2"}],["circle",{"cx":"20","cy":"16","r":"2"}],["path",{"d":"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"}]],"pen-line":[["path",{"d":"M13 21h8"}],["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}]],"play":[["path",{"d":"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"scan-search":[["path",{"d":"M3 7V5a2 2 0 0 1 2-2h2"}],["path",{"d":"M17 3h2a2 2 0 0 1 2 2v2"}],["path",{"d":"M21 17v2a2 2 0 0 1-2 2h-2"}],["path",{"d":"M7 21H5a2 2 0 0 1-2-2v-2"}],["circle",{"cx":"12","cy":"12","r":"3"}],["path",{"d":"m16 16-1.9-1.9"}]],"scissors":[["circle",{"cx":"6","cy":"6","r":"3"}],["path",{"d":"M8.12 8.12 12 12"}],["path",{"d":"M20 4 8.12 15.88"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M14.8 14.8 20 20"}]],"sword":[["path",{"d":"m11 19-6-6"}],["path",{"d":"m5 21-2-2"}],["path",{"d":"m8 16-4 4"}],["path",{"d":"M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5"}]],"trash-2":[["path",{"d":"M10 11v6"}],["path",{"d":"M14 11v6"}],["path",{"d":"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}],["path",{"d":"M3 6h18"}],["path",{"d":"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],"upload":[["path",{"d":"M12 3v12"}],["path",{"d":"m17 8-5-5-5 5"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"wrench":[["path",{"d":"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]]}
     function Icon({ name, size = 14 }) {
       const shape = ICONS[name]
       if (shape === undefined) return null
@@ -64,6 +64,8 @@ window.__ModuleLoader__.load({
     const DRAFT_ROUTE = '/api/dsh-prefill/draft'
     /** 包路由：预填装包按工作区存取（M4）。 */
     const PACKS_ROUTE = '/api/dsh-prefill/packs'
+    /** 角色卡路由（v0.6 角色扮演扩展）。 */
+    const CARDS_ROUTE = '/api/dsh-prefill/cards'
 
     /**
      * 同页两个组件之间的状态同步：输入框里的「预填装」开关写完之后广播一次，
@@ -531,6 +533,34 @@ window.__ModuleLoader__.load({
       systemPlaceholder: '在这里写系统提示。例如：\n你是一位耐心的 Python 老师，回答先给结论，再给 5 行以内的示例代码；遇到术语用括号解释。\n\n小提示：点上面的预设卡片可以一键填入现成的人格。',
       systemNotActive: '当前是「不改」，这段文字不会发送。选「追加」或「接管」后生效。',
       takeoverEmpty: '已接管：系统提示为空（= 纯净模式）。在框里写内容即成为唯一的系统提示',
+      // 角色卡（v0.6）
+      cardsTitle: '角色卡',
+      cardsHint: '导入 SillyTavern 角色卡（V2/V3，JSON 或 PNG），选模式后套用：会自动写好人设段、开场白和每轮提醒。只影响本会话，不改其他设置。',
+      cardsEmpty: '还没有角色卡，点「导入」选一个 .json 或 .png 文件。',
+      cardsMeta: '{n} 张',
+      cardImport: '导入',
+      cardExport: '导出',
+      cardDelete: '删除',
+      cardApply: '套用到本会话',
+      cardModeAgent: '带工具（Agent）',
+      cardModePure: '纯角色扮演',
+      cardModeAgentTip: '保留官方系统提示、工具和审批，角色卡追加在后面',
+      cardModePureTip: '接管系统提示：只发角色卡，不带工具和运行时上下文',
+      cardGreeting: '开场白',
+      cardNoGreeting: '不要开场白',
+      cardUserName: '我的名字',
+      cardUserNamePlaceholder: '{{user}}，留空 = 你',
+      cardReinforce: '每轮提醒（推荐）',
+      cardThinkZh: '中文思考',
+      cardFirstPerson: '第一人称思考',
+      cardTools: '工具白名单',
+      cardToolsPlaceholder: '逗号分隔，例如 read, grep, web_search；留空 = 全部',
+      cardApplied: '已套用角色卡「{name}」',
+      cardImported: '已导入「{name}」',
+      cardImportBad: '没认出角色卡：',
+      cardLore: '世界书 {n} 条（一期只用常驻条目）',
+      cardGreetings: '开场白 {n} 句',
+      cardBy: '作者',
       appliedFirstTurn: '已套用，发第一条消息时生效',
       appliedNextTurn: '已套用，从下一轮生效',
       presetCleared: '已取消预设，恢复默认',
@@ -671,6 +701,34 @@ window.__ModuleLoader__.load({
       systemPlaceholder: 'Write the system prompt here, e.g.\nYou are a patient Python teacher. Lead with the answer, then a code sample under 5 lines.\n\nTip: the preset cards above fill in ready-made personas.',
       systemNotActive: 'Mode is "Unchanged", so this text is not sent. Pick Append or Take over.',
       takeoverEmpty: 'Taken over with an empty prompt (= pure). Whatever you type becomes the only system prompt',
+      // character cards (v0.6)
+      cardsTitle: 'Character cards',
+      cardsHint: 'Import SillyTavern cards (V2/V3, JSON or PNG), pick a mode and apply: persona, greeting and every-turn reminder are set for you. This session only; nothing else changes.',
+      cardsEmpty: 'No cards yet — click Import and pick a .json or .png file.',
+      cardsMeta: '{n} cards',
+      cardImport: 'Import',
+      cardExport: 'Export',
+      cardDelete: 'Delete',
+      cardApply: 'Apply to this session',
+      cardModeAgent: 'With tools (agent)',
+      cardModePure: 'Pure roleplay',
+      cardModeAgentTip: 'Keeps the official system prompt, tools and approvals; the card is appended',
+      cardModePureTip: 'Takes over the system prompt: only the card, no tools or runtime context',
+      cardGreeting: 'Greeting',
+      cardNoGreeting: 'No greeting',
+      cardUserName: 'My name',
+      cardUserNamePlaceholder: '{{user}}; empty = "you"',
+      cardReinforce: 'Every-turn reminder (recommended)',
+      cardThinkZh: 'Reason in Chinese',
+      cardFirstPerson: 'First-person reasoning',
+      cardTools: 'Tool allowlist',
+      cardToolsPlaceholder: 'comma separated, e.g. read, grep, web_search; empty = all',
+      cardApplied: 'Applied card "{name}"',
+      cardImported: 'Imported "{name}"',
+      cardImportBad: 'Not a character card: ',
+      cardLore: '{n} lorebook entries (phase 1 uses constant ones only)',
+      cardGreetings: '{n} greeting(s)',
+      cardBy: 'by',
       appliedFirstTurn: 'Applied — takes effect on your first message',
       appliedNextTurn: 'Applied — takes effect next turn',
       presetCleared: 'Preset cleared, defaults restored',
@@ -2015,6 +2073,12 @@ window.__ModuleLoader__.load({
       const everyTurnTimer = React.useRef(0)
       React.useEffect(() => setEveryTurnDraft(null), [sessionId])
       const [packName, setPackName] = React.useState('')
+      // 角色卡（v0.6）：列表、选中、套用选项、编译预览。
+      const [cards, setCards] = React.useState([])
+      const [cardPick, setCardPick] = React.useState('')
+      const [cardOpts, setCardOpts] = React.useState({ mode: 'agent', greeting: 0, userName: '', reinforce: true, thinkZh: false, firstPerson: false, tools: '' })
+      const [cardPreview, setCardPreview] = React.useState(null)
+      const cardFileRef = React.useRef(null)
       const [envelope, setEnvelope] = React.useState(null)
       const [toast, setToast] = React.useState('')
       const [open, setOpen] = React.useState({ guide: false, presets: true, system: false, items: true, inject: false, everyTurn: false, usage: false, manage: false })
@@ -2138,6 +2202,10 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (enabled && sessionId !== '') void packsCall({ op: 'list' }).then(adoptPacks).catch(() => setStatus('error'))
       }, [enabled, packsCall, sessionId])
+      const cardsCall = React.useCallback((payload) => postJson(CARDS_ROUTE, { sessionId, ...payload }), [sessionId])
+      React.useEffect(() => {
+        if (enabled && sessionId !== '') void cardsCall({ op: 'list' }).then((data) => setCards(Array.isArray(data?.cards) ? data.cards : [])).catch(() => {})
+      }, [enabled, cardsCall, sessionId])
 
       // 开场对话：编辑后 700ms 落盘。
       React.useEffect(() => {
@@ -2319,7 +2387,13 @@ window.__ModuleLoader__.load({
         const fresh = await postJson(STATE_ROUTE, undefined)
         systemDirty.current = false
         setSystemDraft('')
-        await writeSystem('', 'off', { activePreset: without(fresh?.state?.activePreset, sessionId) })
+        const extra = { activePreset: without(fresh?.state?.activePreset, sessionId) }
+        // 角色卡套用时顺带开了本会话的每轮提醒：取消时一并关掉（只对角色卡；内置/文件预设照旧）。
+        if (String(fresh?.state?.activePreset?.[sessionId] ?? '').startsWith('card:')) {
+          extra.everyTurn = { ...(fresh?.state?.everyTurn ?? {}), [sessionId]: { enabled: false, text: '', firstText: '', untilTurn: 0 } }
+          setEveryTurnDraft(null)
+        }
+        await writeSystem('', 'off', extra)
         flash(t('presetCleared'))
       }
 
@@ -2343,6 +2417,120 @@ window.__ModuleLoader__.load({
         setEnvelope(await postJson(STATE_ROUTE, patch))
         notifyStateChanged()
         flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
+      }
+
+      // ── 角色卡（v0.6）────────────────────────────────────────────────────────
+      const cardOptions = (opts) => ({
+        mode: opts.mode,
+        greeting: opts.greeting,
+        userName: opts.userName,
+        reinforce: { enabled: opts.reinforce },
+        thinking: { language: opts.thinkZh ? 'zh' : null, firstPerson: opts.firstPerson },
+        tools: opts.tools.trim() === '' ? null : opts.tools.split(/[,，\s]+/).filter((name) => name !== ''),
+      })
+      const previewCard = (id, opts) => {
+        if (id === '') {
+          setCardPreview(null)
+          return
+        }
+        void cardsCall({ op: 'compile', id, options: cardOptions(opts) })
+          .then((data) => setCardPreview(data?.compiled ?? null))
+          .catch(() => setCardPreview(null))
+      }
+      const pickCard = (summary) => {
+        const next = { ...cardOpts, mode: summary.mode === 'pure' ? 'pure' : 'agent', greeting: 0 }
+        setCardPick(summary.id)
+        setCardOpts(next)
+        previewCard(summary.id, next)
+      }
+      const editCardOpts = (patch) => {
+        const next = { ...cardOpts, ...patch }
+        setCardOpts(next)
+        previewCard(cardPick, next)
+      }
+      const applyCard = async () => {
+        const summary = cards.find((card) => card.id === cardPick)
+        if (summary === undefined) return
+        const data = await cardsCall({ op: 'compile', id: cardPick, options: cardOptions(cardOpts) })
+        const compiled = data?.compiled
+        if (compiled === undefined || compiled === null) {
+          flash(String(data?.reason ?? 'error'))
+          return
+        }
+        const fresh = await postJson(STATE_ROUTE, undefined)
+        const activeMap = { ...(fresh?.state?.activePreset ?? {}), [sessionId]: `card:${cardPick}` }
+        systemDirty.current = false
+        setSystemDraft(compiled.systemText)
+        // 开场白：规则同内置预设 —— 只在还没写东西、会话也没开跑时填入。
+        const opening = compiled.items.length > 0 && items.length === 0 && !injectMode
+        if (opening) {
+          dirty.current = true
+          setItems(compiled.items)
+        }
+        // 每轮提醒只写本会话这一格，不碰「新会话默认」（'*'）。
+        const everyTurnMap = { ...(fresh?.state?.everyTurn ?? {}), [sessionId]: compiled.everyTurn }
+        await writeSystem(compiled.systemText, compiled.systemMode, { activePreset: activeMap, everyTurn: everyTurnMap })
+        if (compiled.mode === 'agent' && Array.isArray(compiled.tools)) {
+          const again = await postJson(STATE_ROUTE, undefined)
+          setEnvelope(await postJson(STATE_ROUTE, { sessionTools: { ...(again?.state?.sessionTools ?? {}), [sessionId]: compiled.tools } }))
+        }
+        setEveryTurnDraft(null)
+        if (opening) {
+          await postJson(DRAFT_ROUTE, { sessionId, items: compiled.items })
+          dirty.current = false
+          setStatus('saved')
+        }
+        notifyStateChanged()
+        flash(t('cardApplied').replace('{name}', summary.name))
+      }
+      const importCardFile = (event) => {
+        const file = event?.target?.files?.[0]
+        if (file === undefined) return
+        const reader = new FileReader()
+        const done = (data) => {
+          setCards(Array.isArray(data?.cards) ? data.cards : [])
+          if (data?.ok === false) flash(`${t('cardImportBad')}${data?.reason ?? ''}`)
+          else {
+            flash(t('cardImported').replace('{name}', data?.name ?? file.name))
+            const added = (data?.cards ?? []).find((card) => card.id === data?.id)
+            if (added !== undefined) pickCard(added)
+          }
+        }
+        if (/\.png$/i.test(file.name) || file.type === 'image/png') {
+          reader.onload = () => {
+            const bytes = new Uint8Array(reader.result)
+            let binary = ''
+            for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
+            void cardsCall({ op: 'import', png: btoa(binary) }).then(done).catch(() => setStatus('error'))
+          }
+          reader.readAsArrayBuffer(file)
+        } else {
+          reader.onload = () => void cardsCall({ op: 'import', json: String(reader.result) }).then(done).catch(() => setStatus('error'))
+          reader.readAsText(file)
+        }
+        event.target.value = ''
+      }
+      const exportCard = async () => {
+        const data = await cardsCall({ op: 'get', id: cardPick })
+        if (data?.card === undefined) return
+        const blob = new Blob([`${JSON.stringify(data.card, null, 2)}\n`], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = `${data.card.data?.name ?? cardPick}.json`
+        anchor.click()
+        setTimeout(() => URL.revokeObjectURL(url), 4000)
+      }
+      const deleteCard = () => {
+        if (!armConfirm(`card:${cardPick}`)) return
+        setConfirming('')
+        void cardsCall({ op: 'delete', id: cardPick })
+          .then((data) => {
+            setCards(Array.isArray(data?.cards) ? data.cards : [])
+            setCardPick('')
+            setCardPreview(null)
+          })
+          .catch(() => setStatus('error'))
       }
 
       const currentOverrides = async () => {
@@ -2573,6 +2761,168 @@ window.__ModuleLoader__.load({
               h('button', { type: 'button', style: V.btnGhost, onClick: () => toggle('manage') }, t('manageShow')),
             ),
         h('input', { ref: fileRef, type: 'file', accept: '.json,application/json', style: { display: 'none' }, onChange: importFile }),
+      )
+
+      const pickedCard = cards.find((card) => card.id === cardPick)
+      const check = (key, label, extraProps) =>
+        h(
+          'label',
+          { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
+          h('input', { type: 'checkbox', checked: cardOpts[key] === true, onChange: (event) => editCardOpts({ [key]: event.target.checked }), ...(extraProps ?? {}) }),
+          label,
+        )
+      const cardsSection = h(
+        Section,
+        {
+          id: 'cards',
+          title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h(Icon, { name: 'contact', size: 13 }), t('cardsTitle')),
+          meta: cards.length > 0 ? t('cardsMeta').replace('{n}', String(cards.length)) : '',
+          open: open.cards === true,
+          onToggle: () => toggle('cards'),
+          right: h(
+            'button',
+            {
+              type: 'button',
+              style: V.btnGhost,
+              'data-prefill-card-import': '',
+              onClick: (event) => {
+                event.stopPropagation()
+                cardFileRef.current?.click()
+              },
+            },
+            withIcon('upload', t('cardImport'), 12),
+          ),
+        },
+        h('div', { style: V.hint }, cards.length === 0 ? t('cardsEmpty') : t('cardsHint')),
+        cards.length > 0
+          ? h(
+              'div',
+              { style: V.pills },
+              ...cards.map((card) =>
+                h(
+                  'button',
+                  {
+                    key: card.id,
+                    type: 'button',
+                    title: card.notes || card.name,
+                    style: V.pill(cardPick === card.id || activePreset === `card:${card.id}`),
+                    'data-prefill-card': card.id,
+                    'aria-pressed': cardPick === card.id ? 'true' : 'false',
+                    onClick: () => pickCard(card),
+                  },
+                  glyph({ icon: card.icon }),
+                  card.name,
+                ),
+              ),
+            )
+          : null,
+        pickedCard === undefined
+          ? null
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+              h(
+                'div',
+                { style: { ...V.detail, height: 'auto', maxHeight: 72 } },
+                h('span', { style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, pickedCard.name),
+                h(
+                  'span',
+                  null,
+                  [
+                    pickedCard.creator ? `${t('cardBy')} ${pickedCard.creator}` : '',
+                    pickedCard.tags.slice(0, 4).join(' / '),
+                    t('cardGreetings').replace('{n}', String(pickedCard.greetings)),
+                    pickedCard.lore > 0 ? t('cardLore').replace('{n}', String(pickedCard.lore)) : '',
+                    cardPreview ? `≈${estimateTokens(cardPreview.systemText)} tok` : '',
+                  ]
+                    .filter((part) => part !== '')
+                    .join(' · '),
+                ),
+              ),
+              h(
+                'div',
+                { style: V.row },
+                h(
+                  'div',
+                  { style: V.seg, role: 'radiogroup' },
+                  ...[
+                    ['agent', t('cardModeAgent'), t('cardModeAgentTip'), 'wrench'],
+                    ['pure', t('cardModePure'), t('cardModePureTip'), 'message-circle'],
+                  ].map(([key, label, tip, icon]) =>
+                    h(
+                      'button',
+                      {
+                        key,
+                        type: 'button',
+                        role: 'radio',
+                        title: tip,
+                        'aria-checked': cardOpts.mode === key ? 'true' : 'false',
+                        style: V.segBtn(cardOpts.mode === key),
+                        'data-prefill-card-mode': key,
+                        onClick: () => editCardOpts({ mode: key }),
+                      },
+                      withIcon(icon, label, 12),
+                    ),
+                  ),
+                ),
+                h('span', { style: V.sectionMeta }, t('cardGreeting')),
+                h(
+                  'select',
+                  {
+                    style: { ...V.input, flex: '0 1 220px' },
+                    value: String(cardOpts.greeting),
+                    'data-prefill-card-greeting': '',
+                    onChange: (event) => editCardOpts({ greeting: Number(event.target.value) }),
+                  },
+                  ...(cardPreview?.greetings ?? []).map((text, index) => h('option', { key: index, value: String(index) }, `${index + 1}. ${text}`)),
+                  h('option', { key: 'none', value: '-1' }, t('cardNoGreeting')),
+                ),
+              ),
+              h(
+                'div',
+                { style: V.row },
+                h('span', { style: V.sectionMeta }, t('cardUserName')),
+                h('input', {
+                  style: { ...V.input, flex: '0 1 160px' },
+                  value: cardOpts.userName,
+                  placeholder: t('cardUserNamePlaceholder'),
+                  spellCheck: false,
+                  'data-prefill-card-user': '',
+                  onChange: (event) => setCardOpts({ ...cardOpts, userName: event.target.value }),
+                  onBlur: () => previewCard(cardPick, cardOpts),
+                }),
+                check('reinforce', t('cardReinforce'), { 'data-prefill-card-reinforce': '' }),
+                check('thinkZh', t('cardThinkZh'), { 'data-prefill-card-zh': '' }),
+                check('firstPerson', t('cardFirstPerson'), { 'data-prefill-card-firstperson': '' }),
+              ),
+              cardOpts.mode === 'agent'
+                ? h(
+                    'div',
+                    { style: V.row },
+                    h('span', { style: V.sectionMeta }, t('cardTools')),
+                    h('input', {
+                      style: { ...V.input, flex: '1 1 240px' },
+                      value: cardOpts.tools,
+                      placeholder: t('cardToolsPlaceholder'),
+                      spellCheck: false,
+                      'data-prefill-card-tools': '',
+                      onChange: (event) => setCardOpts({ ...cardOpts, tools: event.target.value }),
+                    }),
+                  )
+                : null,
+              h(
+                'div',
+                { style: V.row },
+                h('button', { type: 'button', style: V.btn, 'data-prefill-card-apply': '', onClick: () => void applyCard().catch(() => setStatus('error')) }, withIcon('play', t('cardApply'), 12)),
+                h('button', { type: 'button', style: V.btnGhost, onClick: () => void exportCard().catch(() => setStatus('error')) }, withIcon('download', t('cardExport'), 12)),
+                h(
+                  'button',
+                  { type: 'button', style: { ...V.btnGhost, color: confirming === `card:${cardPick}` ? 'var(--dsw-alias-state-warn-primary)' : V.btnGhost.color }, onClick: deleteCard },
+                  withIcon('trash-2', confirming === `card:${cardPick}` ? t('confirmYes') : t('cardDelete'), 12),
+                ),
+              ),
+            ),
+        h('input', { ref: cardFileRef, type: 'file', accept: '.json,.png,application/json,image/png', style: { display: 'none' }, onChange: importCardFile }),
       )
 
       const systemSection = h(
@@ -2895,6 +3245,7 @@ window.__ModuleLoader__.load({
         const b = builtins.find((preset) => `builtin:${preset.id}` === activePreset)
         if (b !== undefined) return b.name
         if (activePreset.startsWith('pack:')) return activePreset.slice(5)
+        if (activePreset.startsWith('card:')) return cards.find((card) => `card:${card.id}` === activePreset)?.name ?? activePreset.slice(5)
         return ''
       })()
       const collapsedSummary = [
@@ -2960,7 +3311,7 @@ window.__ModuleLoader__.load({
               conflict.advice ? h('span', { style: S.dockHint }, String(conflict.advice)) : null,
             )
           : null,
-        ...(isCollapsed ? [] : [guideSection, presetsSection, systemSection, everyTurnSection, itemsSection, injectSection, usageSection]),
+        ...(isCollapsed ? [] : [guideSection, presetsSection, cardsSection, systemSection, everyTurnSection, itemsSection, injectSection, usageSection]),
       )
     }
 

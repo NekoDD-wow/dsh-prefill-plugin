@@ -1033,7 +1033,11 @@ export async function step(api, payload, decision) {
   // （turn 1 不调模型、也不经过这里的 enter），用户真正的第一句是 turn 2 —— 实测 E2 里
   // 按 payload.turn===1 判首轮，首轮专用段一次都没发出去。
   const everyTurn = everyTurnFor(state, agent.id)
-  const injectedSoFar = everyTurnCount.get(agent.id) ?? 0
+  // 按**不同的轮号**计数：同一轮可能经过这里不止一次（双座位、标题生成等旁路请求），
+  // 只按次数数会让旁路请求先把「首轮专用段」吃掉（v0.6 实测：纯角色扮演的新会话里首轮段一次都没发出去）。
+  const seenTurns = everyTurnCount.get(agent.id) ?? { n: 0, first: undefined, last: undefined }
+  const sameAsLast = seenTurns.last !== undefined && seenTurns.last === payload?.turn
+  const injectedSoFar = sameAsLast ? seenTurns.n - 1 : seenTurns.n
   const isFirst = injectedSoFar === 0
   const everyTurnText =
     everyTurn === undefined ? '' : isFirst && everyTurn.firstText !== '' ? everyTurn.firstText : everyTurn.text
@@ -1069,7 +1073,7 @@ export async function step(api, payload, decision) {
     if (at >= 0) messages.splice(at, 0, injected)
     else messages.push(injected)
     next = { ...next, messages }
-    everyTurnCount.set(agent.id, injectedSoFar + 1)
+    everyTurnCount.set(agent.id, { n: injectedSoFar + 1, last: payload.turn })
     note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: injectedSoFar + 1, first: isFirst && everyTurn.firstText !== '', chars: everyTurnText.length, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
   }
 

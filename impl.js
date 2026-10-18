@@ -21,12 +21,13 @@
  * @module @local/dsh-prefill
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnPresets } from './builtin-presets.js'
+import { cardFromPng, cardId, cardSummary, compileCard, parseCard } from './character-cards.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
 const STAGE = 'M6-shell'
@@ -55,6 +56,8 @@ const DRAFT_ROUTE = '/api/dsh-prefill/draft'
 const PACKS_ROUTE = '/api/dsh-prefill/packs'
 /** 本会话逐轮用量（输入 / 缓存命中 / 输出 + 系统提示规模），给面板的「用量与缓存」卡片。 */
 const USAGE_ROUTE = '/api/dsh-prefill/usage'
+/** 角色卡（角色扮演扩展，v0.6）：按工作区存取 + 编译。不改动上面任何一条路由。 */
+const CARDS_ROUTE = '/api/dsh-prefill/cards'
 
 /** 热插拔内核的位置。 */
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -236,6 +239,55 @@ function sanitizeItems(raw) {
       return { role, text }
     })
     .filter((item) => item !== undefined)
+}
+
+
+// ── 角色卡（v0.6，角色扮演扩展）────────────────────────────────────────────
+// 一卡一文件：`<workspace>/.dsh-prefill/cards/<id>.json`，内容就是 V2 卡原文（可以直接拷走给 SillyTavern）。
+// 没有工作区时落到全局目录，规则同 packs.json。
+
+function cardsDirFor(workspace) {
+  const root = typeof workspace === 'string' && workspace !== '' ? workspace : join(DATA_DIR, 'global')
+  return join(root, '.dsh-prefill', 'cards')
+}
+
+const SAFE_ID = /^[\p{L}\p{N}_-]{1,64}$/u
+
+function readCards(workspace) {
+  const dir = cardsDirFor(workspace)
+  let names = []
+  try {
+    names = readdirSync(dir).filter((file) => file.endsWith('.json'))
+  } catch {
+    return []
+  }
+  const out = []
+  for (const file of names.sort()) {
+    try {
+      const card = parseCard(readFileSync(join(dir, file), 'utf8'))
+      if (card !== undefined) out.push({ id: file.slice(0, -5), card })
+    } catch {
+      // 坏文件跳过。
+    }
+  }
+  return out
+}
+
+function readCard(workspace, id) {
+  if (!SAFE_ID.test(id)) return undefined
+  try {
+    return parseCard(readFileSync(join(cardsDirFor(workspace), `${id}.json`), 'utf8'))
+  } catch {
+    return undefined
+  }
+}
+
+function writeCard(workspace, card) {
+  const dir = cardsDirFor(workspace)
+  mkdirSync(dir, { recursive: true })
+  const id = cardId(card)
+  writeFileSync(join(dir, `${id}.json`), `${JSON.stringify(card, null, 2)}\n`, 'utf8')
+  return id
 }
 
 // ── 用量（只读）──────────────────────────────────────────────────────────────
@@ -849,6 +901,78 @@ export function apply(ctx) {
           },
         }),
       'dsh-prefill: packs route',
+    )
+
+
+    // 角色卡：op = list | get | import | delete | compile（规划-角色卡 §6）。
+    // 只读写卡片文件、做编译；套用由客户端走原有的系统提示 / 草稿 / 每轮注入路径完成。
+    scope.effect(
+      () =>
+        register({
+          path: CARDS_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body
+            try {
+              body = await request?.json?.()
+            } catch {
+              body = undefined
+            }
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+            const workspace = liveAgents.get(sessionId)?.session?.header?.cwd
+            const op = typeof body?.op === 'string' ? body.op : 'list'
+            const id = typeof body?.id === 'string' ? body.id : ''
+            let reason = ''
+            let extra = {}
+            if (op === 'list') {
+              // 直接回列表。
+            } else if (op === 'get') {
+              const card = readCard(workspace, id)
+              if (card === undefined) reason = 'not found'
+              else extra = { card }
+            } else if (op === 'import') {
+              let card
+              if (typeof body?.png === 'string') {
+                try {
+                  card = cardFromPng(Buffer.from(body.png, 'base64'))
+                } catch {
+                  card = undefined
+                }
+                if (card === undefined) reason = 'no character data in PNG'
+              } else {
+                card = parseCard(body?.json)
+                if (card === undefined) reason = 'not a character card (needs at least a name)'
+              }
+              if (card !== undefined) extra = { id: writeCard(workspace, card), name: card.data.name }
+            } else if (op === 'delete') {
+              if (!SAFE_ID.test(id)) reason = 'bad id'
+              else {
+                try {
+                  unlinkSync(join(cardsDirFor(workspace), `${id}.json`))
+                } catch {
+                  reason = 'not found'
+                }
+              }
+            } else if (op === 'compile') {
+              const card = readCard(workspace, id)
+              if (card === undefined) reason = 'not found'
+              else {
+                try {
+                  extra = { compiled: compileCard(card, body?.options ?? {}) }
+                } catch (error) {
+                  reason = String(error?.message ?? error)
+                }
+              }
+            } else {
+              reason = `unknown op "${op}"`
+            }
+            const cards = readCards(workspace).map(({ id: key, card }) => cardSummary(key, card))
+            note({ seat: 'cards-route', op, id, workspace: workspace ?? '(global)', count: cards.length, reason })
+            return Response.json({ ok: reason === '', op, reason, cards, dir: cardsDirFor(workspace), ...extra }, noStore)
+          },
+        }),
+      'dsh-prefill: cards route',
     )
 
     scope.effect(
