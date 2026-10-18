@@ -2,7 +2,7 @@
  * 内置预设（host 侧唯一来源，客户端通过 `/api/dsh-prefill/packs` 的 `builtins` 字段拿到）。
  *
  * 一个内置预设 = 文件预设的同一形状 `{ items, overrides, tools }`，外加展示用的
- * `id / emoji / name / tag / desc`。套用规则与文件预设完全一致，只有 `pure` 例外：
+ * `id / icon / name / tag / desc`。套用规则与文件预设完全一致，只有 `pure` 例外：
  * 它不写任何内容，而是把本会话的闸门切到 `gate[sessionId] = 'pure'`。
  *
  * 人格 / 角色扮演一律写成**一段追加的系统提示**（`overrides.sections['prefill:persona']`）：
@@ -18,10 +18,10 @@
 export const PERSONA_SECTION = 'prefill:persona'
 
 /** 生成一个人格预设：人格段 + 可选开场白。 */
-function persona({ id, emoji, name, tag, desc, prompt, opening = [] }) {
+function persona({ id, icon, name, tag, desc, prompt, opening = [] }) {
   return {
     id,
-    emoji,
+    icon,
     name,
     tag,
     desc,
@@ -38,7 +38,7 @@ export const ZH_OFFICIAL_PROMPT = "你是一个由 DeepSeek Harness 驱动的 AI
 export const BUILTIN_PRESETS = [
   {
     id: 'pure',
-    emoji: '🧼',
+    icon: 'eraser',
     name: '纯净模式',
     tag: '模式',
     desc: '不发系统提示、运行时上下文和工具，模型只看到你写的话（含预填装）。用量统计照常。',
@@ -50,7 +50,7 @@ export const BUILTIN_PRESETS = [
   },
   {
     id: 'custom-system',
-    emoji: '✍️',
+    icon: 'pen-line',
     name: '自定义系统提示',
     tag: '模式',
     desc: '系统提示由你自己写：接管模式下模型只收到你这段话，像用脚本直接调 API。',
@@ -62,7 +62,7 @@ export const BUILTIN_PRESETS = [
   },
   {
     id: 'zh-official',
-    emoji: '🀄',
+    icon: 'languages',
     name: '中文版官方系统提示',
     tag: '模式',
     desc: '把 dsh 默认系统提示换成中文译本（替换模式）：工具、工作区、审批照旧。约 2000 字，比英文原版少一半多。注意：单靠它不能让 step-5 用中文思考，见 tests/reasoning-lab。',
@@ -74,7 +74,7 @@ export const BUILTIN_PRESETS = [
   },
   persona({
     id: 'gentle-senior',
-    emoji: '🌸',
+    icon: 'flower-2',
     name: '温柔学姐',
     tag: '人格',
     desc: '给新手讲东西：先给结论，再用生活比喻解释，少用术语，最后给一个能马上动手的小练习。',
@@ -97,7 +97,7 @@ export const BUILTIN_PRESETS = [
   }),
   persona({
     id: 'socratic',
-    emoji: '🦉',
+    icon: 'message-circle-question',
     name: '苏格拉底导师',
     tag: '人格',
     desc: '不直接给答案，用一连串小问题引导你自己想明白；适合学习和备考。',
@@ -112,7 +112,7 @@ export const BUILTIN_PRESETS = [
   }),
   persona({
     id: 'roast-reviewer',
-    emoji: '🔥',
+    icon: 'flame',
     name: '毒舌代码审查官',
     tag: '人格',
     desc: '嘴上不饶人、心里有数：吐槽一句，然后逐条给出可落地的修改建议。',
@@ -127,7 +127,7 @@ export const BUILTIN_PRESETS = [
   }),
   persona({
     id: 'catgirl',
-    emoji: '🐱',
+    icon: 'cat',
     name: '猫娘助手小咪',
     tag: '角色扮演',
     desc: '元气猫娘，句尾带"喵"，偶尔小动作描写；干活照样认真。',
@@ -150,7 +150,7 @@ export const BUILTIN_PRESETS = [
   }),
   persona({
     id: 'wuxia-storyteller',
-    emoji: '🗡️',
+    icon: 'sword',
     name: '武侠说书人',
     tag: '角色扮演',
     desc: '茶馆说书腔，把任何问题讲成一回武侠故事，再把干货落到"看官请记"。',
@@ -165,7 +165,7 @@ export const BUILTIN_PRESETS = [
   }),
   persona({
     id: 'detective',
-    emoji: '🕵️',
+    icon: 'scan-search',
     name: '名侦探',
     tag: '角色扮演',
     desc: '排查 bug、分析问题时像侦探破案：线索 → 推理 → 嫌疑人 → 验证方法。',
@@ -179,7 +179,7 @@ export const BUILTIN_PRESETS = [
   }),
   persona({
     id: 'text-adventure',
-    emoji: '🏰',
+    icon: 'castle',
     name: '文字冒险主持人',
     tag: '角色扮演',
     desc: '跑一场文字冒险：每回合描写场景，给出 3 个选项，也接受你自由行动。',
@@ -210,9 +210,9 @@ export function builtinPreset(id) {
 
 /** 给选择器的轻量摘要。 */
 export function builtinSummaries() {
-  return BUILTIN_PRESETS.map(({ id, emoji, name, tag, desc, pure, takeover, replace, items, overrides }) => ({
+  return BUILTIN_PRESETS.map(({ id, icon, name, tag, desc, pure, takeover, replace, items, overrides }) => ({
     id,
-    emoji,
+    icon,
     name,
     tag,
     desc,
@@ -241,28 +241,28 @@ export function builtinSummaries() {
 export const EVERY_TURN_PRESETS = [
   {
     id: 'zh-thinking',
-    emoji: '🀄',
+    icon: 'languages',
     name: '中文思考',
     desc: '思维链全程用中文（英文问题也一样）。',
     text: '【思考语言】本轮你的思维链（reasoning）请全程用中文，即使问题是英文。回答正文按用户的语言正常写。',
   },
   {
     id: 'four-section',
-    emoji: '🧱',
+    icon: 'layout-list',
     name: '四段式思考',
     desc: '思维链按【理解】【拆解】【验证】【结论】四段写，正文不受影响。',
     text: '【思考格式】本轮你的思维链（reasoning）请全程用中文，并按四段写：【理解】【拆解】【验证】【结论】，每段一到三句。回答正文正常写，不要把这四段放进回答里。',
   },
   {
     id: 'first-person',
-    emoji: '🎭',
+    icon: 'drama',
     name: '第一人称思考（角色扮演）',
     desc: '思维链用角色的第一人称写，不说"用户"，改称"主人"；配合角色扮演人格用。',
     text: '【思考人称】本轮你的思维链（reasoning）请用你所扮演角色的第一人称、中文来写（"我觉得……""我该……"），把对方称为"主人"，不要出现"用户""the user"这类说法。回答正文保持角色口吻。',
   },
   {
     id: 'rp-reinforce',
-    emoji: '🐾',
+    icon: 'paw-print',
     name: '角色扮演强化（首轮完整 + 每轮提醒）',
     desc: '第 1 轮注入完整的角色扮演要求，之后每轮注入第一人称 + 中文思考提醒。配合人格预设用。',
     firstText:
@@ -273,7 +273,7 @@ export const EVERY_TURN_PRESETS = [
   },
   {
     id: 'brief-thinking',
-    emoji: '✂️',
+    icon: 'scissors',
     name: '简短思考',
     desc: '简单问题少想几句，复杂问题照常；省输出 token。',
     text: '【思考长度】本轮如果问题简单，思维链（reasoning）控制在三句以内、用中文；复杂问题（多步推理、写代码、改文件）照常充分思考。',

@@ -19,6 +19,41 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
 
+    /**
+     * 图标：Lucide（https://lucide.dev，ISC 许可，见 THIRD_PARTY_NOTICES.md）。
+     * 只内联用到的几个，按名字取；没有对应图标时回落到 emoji 文本（兼容旧的文件预设）。
+     */
+    const ICONS = {"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"castle":[["path",{"d":"M10 5V3"}],["path",{"d":"M14 5V3"}],["path",{"d":"M15 21v-3a3 3 0 0 0-6 0v3"}],["path",{"d":"M18 3v8"}],["path",{"d":"M18 5H6"}],["path",{"d":"M22 11H2"}],["path",{"d":"M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9"}],["path",{"d":"M6 3v8"}]],"cat":[["path",{"d":"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"}],["path",{"d":"M8 14v.5"}],["path",{"d":"M16 14v.5"}],["path",{"d":"M11.25 16.25h1.5L12 17l-.75-.75Z"}]],"drama":[["path",{"d":"M10 11h.01"}],["path",{"d":"M14 6h.01"}],["path",{"d":"M18 6h.01"}],["path",{"d":"M6.5 13.1h.01"}],["path",{"d":"M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3"}],["path",{"d":"M17.4 9.9c-.8.8-2 .8-2.8 0"}],["path",{"d":"M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7"}],["path",{"d":"M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"flame":[["path",{"d":"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"}]],"flower-2":[["path",{"d":"M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"}],["circle",{"cx":"12","cy":"8","r":"2"}],["path",{"d":"M12 10v12"}],["path",{"d":"M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"}],["path",{"d":"M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"languages":[["path",{"d":"m5 8 6 6"}],["path",{"d":"m4 14 6-6 2-3"}],["path",{"d":"M2 5h12"}],["path",{"d":"M7 2h1"}],["path",{"d":"m22 22-5-10-5 10"}],["path",{"d":"M14 18h6"}]],"layout-list":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}],["path",{"d":"M14 4h7"}],["path",{"d":"M14 9h7"}],["path",{"d":"M14 15h7"}],["path",{"d":"M14 20h7"}]],"message-circle-question":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"paw-print":[["circle",{"cx":"11","cy":"4","r":"2"}],["circle",{"cx":"18","cy":"8","r":"2"}],["circle",{"cx":"20","cy":"16","r":"2"}],["path",{"d":"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"}]],"pen-line":[["path",{"d":"M13 21h8"}],["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"scan-search":[["path",{"d":"M3 7V5a2 2 0 0 1 2-2h2"}],["path",{"d":"M17 3h2a2 2 0 0 1 2 2v2"}],["path",{"d":"M21 17v2a2 2 0 0 1-2 2h-2"}],["path",{"d":"M7 21H5a2 2 0 0 1-2-2v-2"}],["circle",{"cx":"12","cy":"12","r":"3"}],["path",{"d":"m16 16-1.9-1.9"}]],"scissors":[["circle",{"cx":"6","cy":"6","r":"3"}],["path",{"d":"M8.12 8.12 12 12"}],["path",{"d":"M20 4 8.12 15.88"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M14.8 14.8 20 20"}]],"sword":[["path",{"d":"m11 19-6-6"}],["path",{"d":"m5 21-2-2"}],["path",{"d":"m8 16-4 4"}],["path",{"d":"M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]]}
+    function Icon({ name, size = 14 }) {
+      const shape = ICONS[name]
+      if (shape === undefined) return null
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 24 24',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+          style: { display: 'inline-block', verticalAlign: '-2px', flex: 'none' },
+        },
+        ...shape.map(([tag, attrs], index) => h(tag, { key: index, ...attrs })),
+      )
+    }
+    /** 预设前面的小图标：有 icon 用图标，否则用旧的 emoji 文本。 */
+    function glyph(preset, size = 14) {
+      if (preset?.icon && ICONS[preset.icon]) return h(Icon, { name: preset.icon, size })
+      return preset?.emoji ? h('span', { style: { fontSize: size, lineHeight: 1 } }, preset.emoji) : null
+    }
+    /** 图标 + 文字，横排。 */
+    function withIcon(name, text, size = 14) {
+      return h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h(Icon, { name, size }), text)
+    }
+
     /** 本插件独占的 locale 命名空间。 */
     const NS = 'dsh-prefill'
 
@@ -2415,7 +2450,7 @@ window.__ModuleLoader__.load({
       const itemsTok = itemsTokens(items)
       const systemTok = estimateTokens(systemText)
 
-      const presetPill = (key, { emoji, name, active, onClick, onHover, tip }) =>
+      const presetPill = (key, { icon, emoji, name, active, onClick, onHover, tip }) =>
         h(
           'button',
           {
@@ -2429,7 +2464,7 @@ window.__ModuleLoader__.load({
             'data-prefill-preset': key,
             'aria-pressed': active ? 'true' : 'false',
           },
-          h('span', { style: { fontSize: 14, lineHeight: 1 } }, emoji),
+          glyph({ icon, emoji }),
           name,
         )
       const hoveredKey = hovered !== '' ? hovered : activePreset
@@ -2437,12 +2472,12 @@ window.__ModuleLoader__.load({
       const hoveredPack = packs.find((pack) => `pack:${pack.name}` === hoveredKey)
       const detail = hoveredBuiltin
         ? [
-            `${hoveredBuiltin.emoji} ${hoveredBuiltin.name}`,
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, glyph(hoveredBuiltin), hoveredBuiltin.name),
             hoveredBuiltin.desc,
             hoveredBuiltin.pure ? t('footPure') : hoveredBuiltin.takeover ? t('footTakeover') : hoveredBuiltin.replace ? `${t('footReplace')} ≈${Math.round(hoveredBuiltin.personaChars * 0.7)} tok` : `${t('footSystem')} ≈${Math.round(hoveredBuiltin.personaChars * 0.7)} tok`,
           ]
         : hoveredPack
-          ? [`📁 ${hoveredPack.name}`, `${t('myPresetDesc')} · ${hoveredPack.count}${t('countSuffix')}`, '']
+          ? [withIcon('folder', hoveredPack.name), `${t('myPresetDesc')} · ${hoveredPack.count}${t('countSuffix')}`, '']
           : ['', t('presetsHint'), '']
 
       const presetsSection = h(
@@ -2475,6 +2510,7 @@ window.__ModuleLoader__.load({
           h('span', { style: V.pillGroup }, t('groupBuiltin')),
           ...builtins.map((preset) =>
             presetPill(`builtin:${preset.id}`, {
+              icon: preset.icon,
               emoji: preset.emoji,
               name: preset.name,
               active: activePreset === `builtin:${preset.id}`,
@@ -2486,7 +2522,7 @@ window.__ModuleLoader__.load({
           packs.length > 0 ? h('span', { style: { ...V.pillGroup, marginLeft: 6 } }, t('groupMine')) : null,
           ...packs.map((pack) =>
             presetPill(`pack:${pack.name}`, {
-              emoji: '📁',
+              icon: 'folder',
               name: pack.name,
               active: activePreset === `pack:${pack.name}`,
               onHover: () => setHovered(`pack:${pack.name}`),
@@ -2607,7 +2643,7 @@ window.__ModuleLoader__.load({
               title: isAssistant ? t('toUser') : t('toAssistant'),
               onClick: () => patchAt(index, isAssistant ? { role: 'user', reasoning: undefined } : { role: 'assistant', reasoning: '' }),
             },
-            isAssistant ? `🤖 ${t('roleAssistant')}` : `🙂 ${t('roleUser')}`,
+            isAssistant ? withIcon('bot', t('roleAssistant'), 13) : withIcon('user', t('roleUser'), 13),
           ),
           h(
             'div',
@@ -2634,7 +2670,7 @@ window.__ModuleLoader__.load({
             { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
             h('button', { type: 'button', style: S.dockMini, title: t('moveUp'), onClick: () => move(index, -1) }, '↑'),
             h('button', { type: 'button', style: S.dockMini, title: t('moveDown'), onClick: () => move(index, 1) }, '↓'),
-            h('button', { type: 'button', style: S.dockMini, title: t('removeItem'), onClick: () => edit(items.filter((_unused, at) => at !== index)) }, '✕'),
+            h('button', { type: 'button', style: S.dockMini, title: t('removeItem'), onClick: () => edit(items.filter((_unused, at) => at !== index)) }, h(Icon, { name: 'x', size: 12 })),
           ),
         )
       }
@@ -2786,7 +2822,7 @@ window.__ModuleLoader__.load({
                 'data-prefill-everyturn-preset': preset.id,
                 onClick: () => editEveryTurn({ enabled: true, text: preset.text, firstText: preset.firstText ?? '' }, true),
               },
-              `${preset.emoji} ${preset.name}`,
+              h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, glyph(preset, 13), preset.name),
             ),
           ),
         ),
@@ -2857,8 +2893,8 @@ window.__ModuleLoader__.load({
 
       const activeName = (() => {
         const b = builtins.find((preset) => `builtin:${preset.id}` === activePreset)
-        if (b !== undefined) return `${b.emoji} ${b.name}`
-        if (activePreset.startsWith('pack:')) return `📁 ${activePreset.slice(5)}`
+        if (b !== undefined) return b.name
+        if (activePreset.startsWith('pack:')) return activePreset.slice(5)
         return ''
       })()
       const collapsedSummary = [
@@ -2899,7 +2935,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: V.row },
-          h('span', { style: S.dockTitle }, `🧩 ${t('dockTitle')}`),
+          h('span', { style: S.dockTitle }, withIcon('puzzle', t('dockTitle'))),
           h('span', { style: S.modeChip(injectMode), title: injectMode ? t('modeInjectTip') : t('modeHistoryTip') }, injectMode ? t('modeInject') : t('modeHistory')),
           gateMode === 'pure'
             ? h('span', { style: S.modeChip(true) }, systemMode === 'takeover' && systemText.trim() !== '' ? t('chipTakeover') : t('chipPure'))
