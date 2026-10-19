@@ -1009,7 +1009,7 @@ export async function step(api, payload, decision) {
   // （位置与 harness 自己的 runtime-context 一致），既不写 session、也不是历史。
   //
   // 只在 `turn > 1` 生效：首轮仍然走物化 —— 那才是"变成真实历史"。
-  const injectItems = Array.isArray(state?.injects?.[agent.id]) ? state.injects[agent.id] : []
+  const injectItems = filledItems(state?.injects?.[agent.id])
   if (
     injectItems.length > 0 &&
     Number.isFinite(payload?.turn) &&
@@ -1461,9 +1461,20 @@ function prefillWanted(state, agentId) {
  *   ③ 都没有 → 空。
  */
 function resolveItems(state, agentId) {
-  if (DRAFTS.has(agentId)) return DRAFTS.get(agentId)
+  if (DRAFTS.has(agentId)) return filledItems(DRAFTS.get(agentId))
   if (state?.levers?.prefillProbe === true) return resolveProbeItems()
   return []
+}
+
+/**
+ * 只留"有正文"的条目（issue #1）。面板里点了「＋ 用户说 / ＋ AI 回答」没填的空行，
+ * 原样写进历史会变成 `text: ""` 的消息：有的网关直接 400（user message must have content），
+ * 而且物化不可逆，之后每轮都带着它 ⇒ 会话报废。判定看 `text`，只有思维链没有回答的
+ * AI 条目同样跳过（回答为空的 assistant 消息一样会被拒）。
+ */
+export function filledItems(items) {
+  if (!Array.isArray(items)) return []
+  return items.filter((item) => typeof item?.text === 'string' && item.text.trim() !== '')
 }
 
 /**
@@ -1637,6 +1648,7 @@ export function materialized() {
 }
 
 export function writeSyntheticTurns(api, agent, session, rendered, items) {
+  items = filledItems(items)
   // 空草稿 = "开关开了但还没写内容" ⇒ 什么都不物化，也把草稿消费掉。
   if (!Array.isArray(items) || items.length === 0) {
     api.note({ prefill: 'empty-draft', id: agent.id })
