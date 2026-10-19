@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnPresets } from './builtin-presets.js'
-import { cardFromPng, cardId, cardSummary, compileCard, parseCard } from './character-cards.js'
+import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
 const STAGE = 'M6-shell'
@@ -282,12 +282,23 @@ function readCard(workspace, id) {
   }
 }
 
-function writeCard(workspace, card) {
+function writeCard(workspace, card, png) {
   const dir = cardsDirFor(workspace)
   mkdirSync(dir, { recursive: true })
   const id = cardId(card)
   writeFileSync(join(dir, `${id}.json`), `${JSON.stringify(card, null, 2)}\n`, 'utf8')
+  // PNG 卡把原图存在旁边（头像 + 导出 PNG 用）；卡片数据仍以 .json 为准。
+  if (png !== undefined) writeFileSync(join(dir, `${id}.png`), png)
   return id
+}
+
+function cardPng(workspace, id) {
+  if (!SAFE_ID.test(id)) return undefined
+  try {
+    return readFileSync(join(cardsDirFor(workspace), `${id}.png`))
+  } catch {
+    return undefined
+  }
 }
 
 // ── 用量（只读）──────────────────────────────────────────────────────────────
@@ -904,7 +915,7 @@ export function apply(ctx) {
     )
 
 
-    // 角色卡：op = list | get | import | delete | compile（规划-角色卡 §6）。
+    // 角色卡：op = list | get | import | delete | compile | avatar | export-png（规划-角色卡 §6）。
     // 只读写卡片文件、做编译；套用由客户端走原有的系统提示 / 草稿 / 每轮注入路径完成。
     scope.effect(
       () =>
@@ -934,17 +945,20 @@ export function apply(ctx) {
             } else if (op === 'import') {
               let card
               if (typeof body?.png === 'string') {
+                let bytes
                 try {
-                  card = cardFromPng(Buffer.from(body.png, 'base64'))
+                  bytes = Buffer.from(body.png, 'base64')
+                  card = cardFromPng(bytes)
                 } catch {
                   card = undefined
                 }
                 if (card === undefined) reason = 'no character data in PNG'
+                else extra = { id: writeCard(workspace, card, bytes), name: card.data.name }
               } else {
                 card = parseCard(body?.json)
                 if (card === undefined) reason = 'not a character card (needs at least a name)'
               }
-              if (card !== undefined) extra = { id: writeCard(workspace, card), name: card.data.name }
+              if (card !== undefined && extra.id === undefined) extra = { id: writeCard(workspace, card), name: card.data.name }
             } else if (op === 'delete') {
               if (!SAFE_ID.test(id)) reason = 'bad id'
               else {
@@ -953,7 +967,24 @@ export function apply(ctx) {
                 } catch {
                   reason = 'not found'
                 }
+                try {
+                  unlinkSync(join(cardsDirFor(workspace), `${id}.png`))
+                } catch {
+                  // 没有头像就算了。
+                }
               }
+            } else if (op === 'avatar') {
+              // 头像：PNG 卡导入时存下的原图（base64）。
+              const png = cardPng(workspace, id)
+              if (png === undefined) reason = 'no avatar'
+              else extra = { png: png.toString('base64') }
+            } else if (op === 'export-png') {
+              // 导出 PNG：原图 + 当前卡片数据（重写 chara / ccv3 两个文本块）。
+              const card = readCard(workspace, id)
+              const png = cardPng(workspace, id)
+              const out = card !== undefined && png !== undefined ? embedCardInPng(png, card) : undefined
+              if (out === undefined) reason = 'no avatar'
+              else extra = { png: Buffer.from(out).toString('base64'), name: card.data.name }
             } else if (op === 'compile') {
               const card = readCard(workspace, id)
               if (card === undefined) reason = 'not found'
@@ -967,7 +998,10 @@ export function apply(ctx) {
             } else {
               reason = `unknown op "${op}"`
             }
-            const cards = readCards(workspace).map(({ id: key, card }) => cardSummary(key, card))
+            const cards = readCards(workspace).map(({ id: key, card }) => ({
+              ...cardSummary(key, card),
+              hasAvatar: existsSync(join(cardsDirFor(workspace), `${key}.png`)),
+            }))
             note({ seat: 'cards-route', op, id, workspace: workspace ?? '(global)', count: cards.length, reason })
             return Response.json({ ok: reason === '', op, reason, cards, dir: cardsDirFor(workspace), ...extra }, noStore)
           },
