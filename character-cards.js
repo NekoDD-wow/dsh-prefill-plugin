@@ -245,8 +245,8 @@ export function compileCard(card, options = {}) {
   if (data.scenario.trim() !== '') parts.push(`## 场景\n${m(data.scenario)}`)
   const lore = constantLore(card)
   if (lore.length > 0) parts.push(`## 常驻设定\n${lore.map((entry) => (entry.title ? `【${entry.title}】${m(entry.content)}` : m(entry.content))).join('\n')}`)
-  const book = data.character_book?.entries
-  if (Array.isArray(book) && book.length > lore.length) warnings.push(`world-book: ${book.length - lore.length} keyword entries skipped (phase 2)`)
+  // 世界书关键词条目：编译成 `lore`，由闸门在每轮按最近几条消息匹配、命中才注入（二期）。
+  const keywordLore = compileLore(card, { char, user })
   const examples = exampleBlocks(data.mes_example)
   if (examples.length > 0) parts.push(`## 示例对话（只学语气和节奏，不要照抄）\n${examples.map((block) => m(block)).join('\n\n')}`)
   if (mode === 'agent') parts.push(`## 和工具的关系\n${AGENT_RULE}`)
@@ -306,6 +306,7 @@ export function compileCard(card, options = {}) {
     tools,
     everyTurn,
     greetings: greetings.map((g) => snippet(stripHtml(m(g)), 40)),
+    lore: keywordLore.entries.length > 0 ? { ...keywordLore, enabled: options.lore !== false, char } : null,
     warnings,
   }
 }
@@ -323,6 +324,7 @@ export function cardSummary(id, card) {
     mode: settings.mode,
     greetings: greetingsOf(card).length,
     lore: Array.isArray(data.character_book?.entries) ? data.character_book.entries.length : 0,
+    keywordLore: Array.isArray(data.character_book?.entries) ? data.character_book.entries.filter((entry) => entry && entry.enabled !== false && entry.constant !== true).length : 0,
     notes: snippet(stripHtml(data.creator_notes), 120),
   }
 }
@@ -338,4 +340,215 @@ export function cardId(card) {
   }
   const base = name.replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'card'
   return `${base}-${hash.toString(36).slice(0, 6)}`
+}
+
+// ── 世界书（二期）：关键词触发 ───────────────────────────────────────────────
+// 语义按 SillyTavern 的常用子集：
+//   · keys 任一命中即候选；`/正则/flags` 形式的 key 当正则用；
+//   · selective + secondary_keys：selectiveLogic 0=再含任一 / 1=不全含 / 2=一个都不含 / 3=全含；
+//   · case_sensitive 缺省不区分大小写；match_whole_words 缺省：纯 ASCII 的词按整词，含中文的按子串；
+//   · probability（useProbability 时）按「会话 + 轮号 + 条目」确定性取随机，同一轮两次经过结果一致；
+//   · 扫描最近 scan_depth 条消息（缺省 4，含本轮这句），总长超过预算时按 insertion_order 高的优先。
+// 暂不做：递归扫描、sticky / cooldown / delay、position（统一插在本轮用户消息前）。
+
+const LORE_DEFAULT_DEPTH = 4
+const LORE_DEFAULT_BUDGET = 2400
+
+/** 卡片 → 关键词条目表（可以 JSON 化存进 state）。 */
+export function compileLore(card, macros) {
+  const book = card?.data?.character_book
+  const entries = Array.isArray(book?.entries) ? book.entries : []
+  const out = []
+  entries.forEach((entry, index) => {
+    if (entry === null || typeof entry !== 'object' || entry.enabled === false || entry.constant === true) return
+    const content = expandMacros(str(entry.content), macros).trim()
+    const keys = (Array.isArray(entry.keys) ? entry.keys : []).filter((key) => typeof key === 'string' && key.trim() !== '').map((key) => key.trim())
+    if (content === '' || keys.length === 0) return
+    const ext = entry.extensions !== null && typeof entry.extensions === 'object' ? entry.extensions : {}
+    const secondary = (Array.isArray(entry.secondary_keys) ? entry.secondary_keys : []).filter((key) => typeof key === 'string' && key.trim() !== '').map((key) => key.trim())
+    const pick = (...values) => values.find((value) => value !== undefined && value !== null)
+    const probability = Number(pick(ext.probability, entry.probability, 100))
+    out.push({
+      id: entry.id ?? index,
+      title: str(entry.comment) || str(entry.name),
+      keys,
+      secondary: entry.selective === true ? secondary : [],
+      logic: [0, 1, 2, 3].includes(Number(ext.selectiveLogic)) ? Number(ext.selectiveLogic) : 0,
+      caseSensitive: pick(entry.case_sensitive, ext.case_sensitive) === true,
+      wholeWords: pick(ext.match_whole_words, entry.match_whole_words) ?? null,
+      probability: ext.useProbability === false || !Number.isFinite(probability) ? 100 : Math.max(0, Math.min(100, probability)),
+      order: Number(entry.insertion_order) || 0,
+      content,
+    })
+  })
+  const depth = Number(book?.scan_depth)
+  const budget = Number(book?.token_budget)
+  return {
+    scanDepth: Number.isFinite(depth) && depth > 0 ? Math.floor(depth) : LORE_DEFAULT_DEPTH,
+    // token_budget 是 token；中文大约 1 字 1 token，这里按字数算，上限放宽到 2 倍。
+    budget: Number.isFinite(budget) && budget > 0 ? Math.floor(budget * 2) : LORE_DEFAULT_BUDGET,
+    entries: out,
+  }
+}
+
+function keyMatcher(key, entry) {
+  const regex = /^\/(.+)\/([a-z]*)$/s.exec(key)
+  if (regex !== null) {
+    try {
+      const re = new RegExp(regex[1], regex[2].replace(/[gy]/g, ''))
+      return (text) => re.test(text)
+    } catch {
+      return () => false
+    }
+  }
+  const needle = entry.caseSensitive ? key : key.toLowerCase()
+  const ascii = /^[\x20-\x7e]+$/.test(key)
+  const whole = entry.wholeWords === null ? ascii : entry.wholeWords === true
+  if (whole && ascii) {
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`(^|[^A-Za-z0-9_])${escaped}($|[^A-Za-z0-9_])`, entry.caseSensitive ? '' : 'i')
+    return (text) => re.test(text)
+  }
+  return (text) => (entry.caseSensitive ? text : text.toLowerCase()).includes(needle)
+}
+
+/** 确定性的 0–100 随机数（FNV-1a）。 */
+function seeded(seed) {
+  let hash = 2166136261
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i)
+    hash = Math.imul(hash, 16777619) >>> 0
+  }
+  return (hash % 10000) / 100
+}
+
+/**
+ * 在最近几条消息里找命中的条目。
+ * @param {object} lore     `compileLore` 的结果（state 里存的那份）
+ * @param {string[]} texts  最近的消息文本，旧 → 新（调用方已按 scanDepth 截好）
+ * @param {string} [seed]   概率条目的随机种子（会话 id + 轮号）
+ * @returns 命中的条目，按 insertion_order 升序（越大越靠后、越靠近本轮）
+ */
+export function matchLore(lore, texts, seed = '') {
+  const entries = Array.isArray(lore?.entries) ? lore.entries : []
+  const haystack = texts.filter((text) => typeof text === 'string' && text !== '').join('\n')
+  if (haystack === '' || entries.length === 0) return []
+  const hits = []
+  for (const entry of entries) {
+    if (!entry.keys.some((key) => keyMatcher(key, entry)(haystack))) continue
+    if (entry.secondary.length > 0) {
+      const present = entry.secondary.map((key) => keyMatcher(key, entry)(haystack))
+      const any = present.some(Boolean)
+      const all = present.every(Boolean)
+      const ok = entry.logic === 1 ? !all : entry.logic === 2 ? !any : entry.logic === 3 ? all : any
+      if (!ok) continue
+    }
+    if (entry.probability < 100 && seeded(`${seed}:${entry.id}`) >= entry.probability) continue
+    hits.push(entry)
+  }
+  // 预算：insertion_order 高的优先保留。
+  const budget = Number(lore.budget) > 0 ? Number(lore.budget) : LORE_DEFAULT_BUDGET
+  const kept = []
+  let used = 0
+  for (const entry of [...hits].sort((a, b) => b.order - a.order)) {
+    if (used + entry.content.length > budget && kept.length > 0) continue
+    kept.push(entry)
+    used += entry.content.length
+  }
+  return kept.sort((a, b) => a.order - b.order)
+}
+
+/** 命中条目渲染成一条注入消息的正文。 */
+export function renderLore(entries, char) {
+  const who = typeof char === 'string' && char !== '' ? char : '角色'
+  return [
+    `【世界书 · 本轮相关设定】以下是和当前对话有关的背景设定，供${who}参考；自然地用在回应里，不要整段复述，也不要提到「世界书」或「设定」这些词。`,
+    ...entries.map((entry) => (entry.title ? `【${entry.title}】${entry.content}` : entry.content)),
+  ].join('\n')
+}
+
+// ── PNG 导出（二期）──────────────────────────────────────────────────────────
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256)
+  for (let n = 0; n < 256; n += 1) {
+    let c = n
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    table[n] = c >>> 0
+  }
+  return table
+})()
+
+function crc32(bytes) {
+  let c = 0xffffffff
+  for (let i = 0; i < bytes.length; i += 1) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8)
+  return (c ^ 0xffffffff) >>> 0
+}
+
+function encodeBase64Utf8(text) {
+  const bytes = new TextEncoder().encode(text)
+  if (typeof Buffer !== 'undefined') return Buffer.from(bytes).toString('base64')
+  let binary = ''
+  for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
+  return btoa(binary)
+}
+
+function textChunk(keyword, text) {
+  const data = new Uint8Array(keyword.length + 1 + text.length)
+  for (let i = 0; i < keyword.length; i += 1) data[i] = keyword.charCodeAt(i)
+  data[keyword.length] = 0
+  for (let i = 0; i < text.length; i += 1) data[keyword.length + 1 + i] = text.charCodeAt(i)
+  const chunk = new Uint8Array(12 + data.length)
+  const view = new DataView(chunk.buffer)
+  view.setUint32(0, data.length)
+  chunk.set([0x74, 0x45, 0x58, 0x74], 4) // tEXt
+  chunk.set(data, 8)
+  view.setUint32(8 + data.length, crc32(chunk.subarray(4, 8 + data.length)))
+  return chunk
+}
+
+/**
+ * 把卡写进一张 PNG：去掉原有的 `chara` / `ccv3` 块，在 IEND 前写入新的 V2（`chara`）和 V3（`ccv3`）。
+ * 返回新 PNG 的字节；输入不是 PNG 时返回 `undefined`。
+ */
+export function embedCardInPng(bytes, card) {
+  const buffer = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  for (let i = 0; i < 8; i += 1) if (buffer[i] !== PNG_SIGNATURE[i]) return undefined
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+  const parts = [buffer.subarray(0, 8)]
+  let at = 8
+  let iend
+  while (at + 12 <= buffer.length) {
+    const length = view.getUint32(at)
+    const type = String.fromCharCode(buffer[at + 4], buffer[at + 5], buffer[at + 6], buffer[at + 7])
+    const end = at + 12 + length
+    if (end > buffer.length) return undefined
+    if (type === 'IEND') {
+      iend = buffer.subarray(at, end)
+      break
+    }
+    let drop = false
+    if (type === 'tEXt') {
+      const chunk = buffer.subarray(at + 8, at + 8 + length)
+      const zero = chunk.indexOf(0)
+      const keyword = zero > 0 ? String.fromCharCode(...chunk.subarray(0, zero)) : ''
+      drop = keyword === 'chara' || keyword === 'ccv3'
+    }
+    if (!drop) parts.push(buffer.subarray(at, end))
+    at = end
+  }
+  if (iend === undefined) return undefined
+  const v2 = { spec: 'chara_card_v2', spec_version: '2.0', data: card.data }
+  const v3 = { spec: 'chara_card_v3', spec_version: '3.0', data: { ...card.data, group_only_greetings: card.data.group_only_greetings ?? [] } }
+  parts.push(textChunk('chara', encodeBase64Utf8(JSON.stringify(v2))))
+  parts.push(textChunk('ccv3', encodeBase64Utf8(JSON.stringify(v3))))
+  parts.push(iend)
+  const total = parts.reduce((sum, part) => sum + part.length, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const part of parts) {
+    out.set(part, offset)
+    offset += part.length
+  }
+  return out
 }

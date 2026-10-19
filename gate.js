@@ -21,6 +21,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { matchLore, renderLore } from './character-cards.js'
 
 /** 内核代次：壳会在诊断里回报它，用来确认热换是否生效。 */
 export const STAGE = 'M1.1-gate+p1'
@@ -235,6 +236,25 @@ export function everyTurnFor(state, agentId) {
   if (text === '' && firstText === '') return undefined
   const until = Number(entry.untilTurn)
   return { text, firstText, untilTurn: Number.isFinite(until) && until > 0 ? Math.floor(until) : 0 }
+}
+
+/**
+ * 世界书关键词条目（v0.6 二期，角色卡专用）：`state.lore[会话] = { enabled, scanDepth, budget, entries, char }`。
+ * 只有套用了带关键词世界书的角色卡才会有这一格；没有时下面的注入逻辑完全不走。
+ */
+export function loreFor(state, agentId) {
+  const entry = typeof agentId === 'string' ? state?.lore?.[agentId] : undefined
+  if (entry === null || typeof entry !== 'object' || entry.enabled !== true) return undefined
+  if (!Array.isArray(entry.entries) || entry.entries.length === 0) return undefined
+  return entry
+}
+
+/** 一条消息里的纯文本（只取 text 段）。 */
+function messageText(message) {
+  const content = message?.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content.map((part) => (part?.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('')
 }
 
 function overridesFor(state, agentId) {
@@ -1075,6 +1095,65 @@ export async function step(api, payload, decision) {
     next = { ...next, messages }
     everyTurnCount.set(agent.id, { n: injectedSoFar + 1, last: payload.turn })
     note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: injectedSoFar + 1, first: isFirst && everyTurn.firstText !== '', chars: everyTurnText.length, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
+  }
+
+  // ── 世界书关键词注入（v0.6 二期，只对套了角色卡的会话）────────────────────
+  // 扫最近 scanDepth 条真实对话（用户原话 + 模型回答，不含任何注入），命中的条目渲染成一条
+  // 背景消息插在本轮用户消息前。和每轮注入一样只在每轮第 1 步、按 kind 查重（双座位各进一次）。
+  // 概率条目用「会话 + 轮号」做种子，两次经过结果一致。
+  const lore = loreFor(state, agent.id)
+  if (
+    lore !== undefined &&
+    Number.isFinite(payload?.turn) &&
+    (payload?.step ?? 1) === 1 &&
+    decision?.kind === 'enter' &&
+    Array.isArray(next.messages) &&
+    !next.messages.some((message) => message?.source?.kind === 'prefill' && message?.source?.prefill === 'lore')
+  ) {
+    // 本轮装配器手里只有这一轮的新消息；更早的对话从会话事件里取（用户原话 + 模型回答正文，不含思维链和注入）。
+    const dialogue = []
+    const seen = new Set()
+    try {
+      for (const event of agent.session?.snapshotEvents?.() ?? []) {
+        if (event?.type === 'user/message' && event.data?.source?.kind === 'user') {
+          if (typeof event.data.id === 'string') seen.add(event.data.id)
+          dialogue.push(messageText(event.data))
+        } else if (event?.type === 'assistant/message') {
+          const text = messageText(event.data?.message)
+          if (text !== '') dialogue.push(text)
+        }
+      }
+    } catch {
+      // 读不到历史就只看本轮。
+    }
+    for (const message of next.messages) {
+      if (message?.source?.kind !== 'user' && message?.role !== 'assistant') continue
+      if (typeof message.id === 'string' && seen.has(message.id)) continue
+      dialogue.push(messageText(message))
+    }
+    const depth = Number(lore.scanDepth) > 0 ? Math.floor(Number(lore.scanDepth)) : 4
+    const texts = dialogue.slice(-depth)
+    const hits = matchLore(lore, texts, `${agent.id}:${payload.turn}`)
+    if (hits.length > 0) {
+      const messages = [...next.messages]
+      const injected = {
+        id: `prefill-lore-${payload.turn}`,
+        role: 'user',
+        source: { kind: 'prefill', prefill: 'lore' },
+        content: [{ type: 'text', text: renderLore(hits, lore.char) }],
+      }
+      let at = -1
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        if (messages[index]?.source?.kind === 'user') {
+          at = index
+          break
+        }
+      }
+      if (at >= 0) messages.splice(at, 0, injected)
+      else messages.push(injected)
+      next = { ...next, messages }
+    }
+    note({ lore: hits.length > 0 ? 'done' : 'none', id: agent.id, turn: payload.turn, scanned: texts.length, hits: hits.map((entry) => entry.title || String(entry.id)) })
   }
 
   // ── 自检：直接向装配器要一份"此刻到底装配成什么"的真相 ──────────────────
