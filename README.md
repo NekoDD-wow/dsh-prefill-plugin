@@ -80,6 +80,8 @@ dsh plugin --profile web add /绝对路径/dsh-prefill/prefill-plugin
 
 世界书：常驻条目写进人设段；关键词条目每轮看最近 4 条对话，提到了才把那一条设定作为背景塞进本轮（可以在面板里关掉）。PNG 卡会显示头像，也能导出回 PNG。
 
+故事记忆：长对话里每 8 轮在后台把前情总结成一段摘要（人物关系、发生过的事、约定和伏笔、当前状态），之后作为背景发给模型，早先的约定不容易忘。面板里能看、能改、能清空，也可以在套卡前关掉。
+
 套用只影响当前会话，写的都是已有设置（系统提示、开场对话、每轮注入）和本会话的世界书，套用后还能在各分区里手改。取消预设会一并关掉卡片打开的每轮提醒和世界书。
 
 ## 文件
@@ -87,7 +89,7 @@ dsh plugin --profile web add /绝对路径/dsh-prefill/prefill-plugin
 | 文件 | 内容 |
 |---|---|
 | `index.js` | 引导层：按 `impl.js` 的修改时间动态加载（改它需要重启） |
-| `impl.js` | 壳：路由（state / draft / packs / cards / usage / ping）、轮次闩锁、预填装物化触发 |
+| `impl.js` | 壳：路由（state / draft / packs / cards / memory / usage / ping）、轮次闩锁、预填装物化触发 |
 | `gate.js` | 核：闸门、系统提示接管、注入过滤、预填装合成轮（热插拔，改了不用重启） |
 | `builtin-presets.js` | 内置预设（纯净、自定义系统提示、7 个人格） |
 | `character-cards.js` | 角色卡：解析 JSON / PNG 卡、编译成人设段 + 开场白 + 每轮提醒（纯函数） |

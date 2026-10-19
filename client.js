@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
      * 图标：Lucide（https://lucide.dev，ISC 许可，见 THIRD_PARTY_NOTICES.md）。
      * 只内联用到的几个，按名字取；没有对应图标时回落到 emoji 文本（兼容旧的文件预设）。
      */
-    const ICONS = {"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"castle":[["path",{"d":"M10 5V3"}],["path",{"d":"M14 5V3"}],["path",{"d":"M15 21v-3a3 3 0 0 0-6 0v3"}],["path",{"d":"M18 3v8"}],["path",{"d":"M18 5H6"}],["path",{"d":"M22 11H2"}],["path",{"d":"M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9"}],["path",{"d":"M6 3v8"}]],"cat":[["path",{"d":"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"}],["path",{"d":"M8 14v.5"}],["path",{"d":"M16 14v.5"}],["path",{"d":"M11.25 16.25h1.5L12 17l-.75-.75Z"}]],"contact":[["path",{"d":"M16 2v2"}],["path",{"d":"M7 21v-2a2 2 0 012-2h6a2 2 0 012 2v2"}],["path",{"d":"M8 2v2"}],["circle",{"cx":"12","cy":"10","r":"3"}],["rect",{"x":"3","y":"3","width":"18","height":"18","rx":"2"}]],"download":[["path",{"d":"M12 15V3"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}],["path",{"d":"m7 10 5 5 5-5"}]],"drama":[["path",{"d":"M10 11h.01"}],["path",{"d":"M14 6h.01"}],["path",{"d":"M18 6h.01"}],["path",{"d":"M6.5 13.1h.01"}],["path",{"d":"M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3"}],["path",{"d":"M17.4 9.9c-.8.8-2 .8-2.8 0"}],["path",{"d":"M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7"}],["path",{"d":"M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"flame":[["path",{"d":"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"}]],"flower-2":[["path",{"d":"M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"}],["circle",{"cx":"12","cy":"8","r":"2"}],["path",{"d":"M12 10v12"}],["path",{"d":"M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"}],["path",{"d":"M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"image":[["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2","ry":"2"}],["circle",{"cx":"9","cy":"9","r":"2"}],["path",{"d":"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"}]],"languages":[["path",{"d":"m5 8 6 6"}],["path",{"d":"m4 14 6-6 2-3"}],["path",{"d":"M2 5h12"}],["path",{"d":"M7 2h1"}],["path",{"d":"m22 22-5-10-5 10"}],["path",{"d":"M14 18h6"}]],"layout-list":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}],["path",{"d":"M14 4h7"}],["path",{"d":"M14 9h7"}],["path",{"d":"M14 15h7"}],["path",{"d":"M14 20h7"}]],"message-circle-question":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"message-circle":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}]],"paw-print":[["circle",{"cx":"11","cy":"4","r":"2"}],["circle",{"cx":"18","cy":"8","r":"2"}],["circle",{"cx":"20","cy":"16","r":"2"}],["path",{"d":"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"}]],"pen-line":[["path",{"d":"M13 21h8"}],["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}]],"play":[["path",{"d":"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"scan-search":[["path",{"d":"M3 7V5a2 2 0 0 1 2-2h2"}],["path",{"d":"M17 3h2a2 2 0 0 1 2 2v2"}],["path",{"d":"M21 17v2a2 2 0 0 1-2 2h-2"}],["path",{"d":"M7 21H5a2 2 0 0 1-2-2v-2"}],["circle",{"cx":"12","cy":"12","r":"3"}],["path",{"d":"m16 16-1.9-1.9"}]],"scissors":[["circle",{"cx":"6","cy":"6","r":"3"}],["path",{"d":"M8.12 8.12 12 12"}],["path",{"d":"M20 4 8.12 15.88"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M14.8 14.8 20 20"}]],"sword":[["path",{"d":"m11 19-6-6"}],["path",{"d":"m5 21-2-2"}],["path",{"d":"m8 16-4 4"}],["path",{"d":"M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5"}]],"trash-2":[["path",{"d":"M10 11v6"}],["path",{"d":"M14 11v6"}],["path",{"d":"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}],["path",{"d":"M3 6h18"}],["path",{"d":"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],"upload":[["path",{"d":"M12 3v12"}],["path",{"d":"m17 8-5-5-5 5"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"wrench":[["path",{"d":"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]]}
+    const ICONS = {"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"castle":[["path",{"d":"M10 5V3"}],["path",{"d":"M14 5V3"}],["path",{"d":"M15 21v-3a3 3 0 0 0-6 0v3"}],["path",{"d":"M18 3v8"}],["path",{"d":"M18 5H6"}],["path",{"d":"M22 11H2"}],["path",{"d":"M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9"}],["path",{"d":"M6 3v8"}]],"cat":[["path",{"d":"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"}],["path",{"d":"M8 14v.5"}],["path",{"d":"M16 14v.5"}],["path",{"d":"M11.25 16.25h1.5L12 17l-.75-.75Z"}]],"contact":[["path",{"d":"M16 2v2"}],["path",{"d":"M7 21v-2a2 2 0 012-2h6a2 2 0 012 2v2"}],["path",{"d":"M8 2v2"}],["circle",{"cx":"12","cy":"10","r":"3"}],["rect",{"x":"3","y":"3","width":"18","height":"18","rx":"2"}]],"download":[["path",{"d":"M12 15V3"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}],["path",{"d":"m7 10 5 5 5-5"}]],"drama":[["path",{"d":"M10 11h.01"}],["path",{"d":"M14 6h.01"}],["path",{"d":"M18 6h.01"}],["path",{"d":"M6.5 13.1h.01"}],["path",{"d":"M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3"}],["path",{"d":"M17.4 9.9c-.8.8-2 .8-2.8 0"}],["path",{"d":"M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7"}],["path",{"d":"M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"flame":[["path",{"d":"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"}]],"flower-2":[["path",{"d":"M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"}],["circle",{"cx":"12","cy":"8","r":"2"}],["path",{"d":"M12 10v12"}],["path",{"d":"M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"}],["path",{"d":"M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"image":[["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2","ry":"2"}],["circle",{"cx":"9","cy":"9","r":"2"}],["path",{"d":"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"}]],"languages":[["path",{"d":"m5 8 6 6"}],["path",{"d":"m4 14 6-6 2-3"}],["path",{"d":"M2 5h12"}],["path",{"d":"M7 2h1"}],["path",{"d":"m22 22-5-10-5 10"}],["path",{"d":"M14 18h6"}]],"layout-list":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}],["path",{"d":"M14 4h7"}],["path",{"d":"M14 9h7"}],["path",{"d":"M14 15h7"}],["path",{"d":"M14 20h7"}]],"message-circle-question":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"message-circle":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}]],"paw-print":[["circle",{"cx":"11","cy":"4","r":"2"}],["circle",{"cx":"18","cy":"8","r":"2"}],["circle",{"cx":"20","cy":"16","r":"2"}],["path",{"d":"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"}]],"pen-line":[["path",{"d":"M13 21h8"}],["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}]],"play":[["path",{"d":"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"scan-search":[["path",{"d":"M3 7V5a2 2 0 0 1 2-2h2"}],["path",{"d":"M17 3h2a2 2 0 0 1 2 2v2"}],["path",{"d":"M21 17v2a2 2 0 0 1-2 2h-2"}],["path",{"d":"M7 21H5a2 2 0 0 1-2-2v-2"}],["circle",{"cx":"12","cy":"12","r":"3"}],["path",{"d":"m16 16-1.9-1.9"}]],"scroll-text":[["path",{"d":"M15 12h-5"}],["path",{"d":"M15 8h-5"}],["path",{"d":"M19 17V5a2 2 0 0 0-2-2H4"}],["path",{"d":"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"}]],"scissors":[["circle",{"cx":"6","cy":"6","r":"3"}],["path",{"d":"M8.12 8.12 12 12"}],["path",{"d":"M20 4 8.12 15.88"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M14.8 14.8 20 20"}]],"sword":[["path",{"d":"m11 19-6-6"}],["path",{"d":"m5 21-2-2"}],["path",{"d":"m8 16-4 4"}],["path",{"d":"M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5"}]],"trash-2":[["path",{"d":"M10 11v6"}],["path",{"d":"M14 11v6"}],["path",{"d":"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}],["path",{"d":"M3 6h18"}],["path",{"d":"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],"upload":[["path",{"d":"M12 3v12"}],["path",{"d":"m17 8-5-5-5 5"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"wrench":[["path",{"d":"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]]}
     /** 有正文的条目数：空行（点了加行没填）发送时会被跳过，不算进「N 条」（issue #1）。 */
     function countFilled(items) {
       return Array.isArray(items) ? items.filter((item) => typeof item?.text === 'string' && item.text.trim() !== '').length : 0
@@ -71,6 +71,7 @@ window.__ModuleLoader__.load({
     const PACKS_ROUTE = '/api/dsh-prefill/packs'
     /** 角色卡路由（v0.6 角色扮演扩展）。 */
     const CARDS_ROUTE = '/api/dsh-prefill/cards'
+    const MEMORY_ROUTE = '/api/dsh-prefill/memory'
 
     /**
      * 同页两个组件之间的状态同步：输入框里的「预填装」开关写完之后广播一次，
@@ -567,6 +568,18 @@ window.__ModuleLoader__.load({
       cardImportBad: '没认出角色卡：',
       cardLore: '世界书 {n} 条',
       cardLoreToggle: '世界书（{n} 条关键词，命中才注入）',
+      cardMemoryToggle: '故事记忆（每 {n} 轮总结一次前情）',
+      memoryTitle: '故事记忆',
+      memoryNone: '还没有总结（每 {n} 轮总结一次）',
+      memoryThrough: '已总结到第 {n} 轮',
+      memoryRunning: '正在总结…',
+      memoryEdited: '手动改过',
+      memoryShow: '查看',
+      memoryHide: '收起',
+      memorySave: '保存修改',
+      memoryClear: '清空',
+      memorySaved: '故事记忆已保存',
+      memoryCleared: '故事记忆已清空',
       cardExportPng: '导出 PNG',
       cardGreetings: '开场白 {n} 句',
       cardBy: '作者',
@@ -737,6 +750,18 @@ window.__ModuleLoader__.load({
       cardImportBad: 'Not a character card: ',
       cardLore: '{n} lorebook entries',
       cardLoreToggle: 'Lorebook ({n} keyword entries, injected on match)',
+      cardMemoryToggle: 'Story memory (summarize every {n} turns)',
+      memoryTitle: 'Story memory',
+      memoryNone: 'No summary yet (every {n} turns)',
+      memoryThrough: 'Summarized through turn {n}',
+      memoryRunning: 'Summarizing…',
+      memoryEdited: 'edited',
+      memoryShow: 'Show',
+      memoryHide: 'Hide',
+      memorySave: 'Save',
+      memoryClear: 'Clear',
+      memorySaved: 'Story memory saved',
+      memoryCleared: 'Story memory cleared',
       cardExportPng: 'Export PNG',
       cardGreetings: '{n} greeting(s)',
       cardBy: 'by',
@@ -2087,7 +2112,7 @@ window.__ModuleLoader__.load({
       // 角色卡（v0.6）：列表、选中、套用选项、编译预览。
       const [cards, setCards] = React.useState([])
       const [cardPick, setCardPick] = React.useState('')
-      const [cardOpts, setCardOpts] = React.useState({ mode: 'agent', greeting: 0, userName: '', reinforce: true, thinkZh: false, firstPerson: false, tools: '', lore: true })
+      const [cardOpts, setCardOpts] = React.useState({ mode: 'agent', greeting: 0, userName: '', reinforce: true, thinkZh: false, firstPerson: false, tools: '', lore: true, memory: true })
       const [avatars, setAvatars] = React.useState({})
       const [cardPreview, setCardPreview] = React.useState(null)
       const cardFileRef = React.useRef(null)
@@ -2215,6 +2240,32 @@ window.__ModuleLoader__.load({
         if (enabled && sessionId !== '') void packsCall({ op: 'list' }).then(adoptPacks).catch(() => setStatus('error'))
       }, [enabled, packsCall, sessionId])
       const cardsCall = React.useCallback((payload) => postJson(CARDS_ROUTE, { sessionId, ...payload }), [sessionId])
+      // 故事记忆（三期）：本会话开着记忆时，每 15 秒取一次摘要状态（总结在后台跑，几轮才变一次）。
+      const memoryConfig = envelope?.state?.memory?.[sessionId] ?? null
+      const memoryOn = memoryConfig !== null && typeof memoryConfig === 'object' && memoryConfig.enabled === true
+      const [memoryView, setMemoryView] = React.useState(null)
+      const [memoryOpen, setMemoryOpen] = React.useState(false)
+      const [memoryDraft, setMemoryDraft] = React.useState(null)
+      const memoryCall = React.useCallback((payload) => postJson(MEMORY_ROUTE, { sessionId, ...payload }), [sessionId])
+      React.useEffect(() => {
+        if (!enabled || !memoryOn || sessionId === '') {
+          setMemoryView(null)
+          return undefined
+        }
+        let alive = true
+        const pull = () =>
+          void memoryCall({ op: 'get' })
+            .then((data) => {
+              if (alive) setMemoryView(data ?? null)
+            })
+            .catch(() => {})
+        pull()
+        const timer = setInterval(pull, 15000)
+        return () => {
+          alive = false
+          clearInterval(timer)
+        }
+      }, [enabled, memoryOn, memoryCall, sessionId])
       React.useEffect(() => {
         if (enabled && sessionId !== '') void cardsCall({ op: 'list' }).then((data) => setCards(Array.isArray(data?.cards) ? data.cards : [])).catch(() => {})
       }, [enabled, cardsCall, sessionId])
@@ -2421,6 +2472,7 @@ window.__ModuleLoader__.load({
         if (String(fresh?.state?.activePreset?.[sessionId] ?? '').startsWith('card:')) {
           extra.everyTurn = { ...(fresh?.state?.everyTurn ?? {}), [sessionId]: { enabled: false, text: '', firstText: '', untilTurn: 0 } }
           extra.lore = without(fresh?.state?.lore, sessionId)
+          extra.memory = without(fresh?.state?.memory, sessionId)
           setEveryTurnDraft(null)
         }
         await writeSystem('', 'off', extra)
@@ -2458,6 +2510,7 @@ window.__ModuleLoader__.load({
         thinking: { language: opts.thinkZh ? 'zh' : null, firstPerson: opts.firstPerson },
         tools: opts.tools.trim() === '' ? null : opts.tools.split(/[,，\s]+/).filter((name) => name !== ''),
         lore: opts.lore,
+        memory: opts.memory,
       })
       const previewCard = (id, opts) => {
         if (id === '') {
@@ -2502,7 +2555,9 @@ window.__ModuleLoader__.load({
         const everyTurnMap = { ...(fresh?.state?.everyTurn ?? {}), [sessionId]: compiled.everyTurn }
         // 世界书关键词条目：存进 state.lore[会话]，闸门每轮匹配；卡片没有关键词条目就清掉这一格。
         const loreMap = compiled.lore ? { ...(fresh?.state?.lore ?? {}), [sessionId]: compiled.lore } : without(fresh?.state?.lore, sessionId)
-        await writeSystem(compiled.systemText, compiled.systemMode, { activePreset: activeMap, everyTurn: everyTurnMap, lore: loreMap })
+        // 故事记忆（三期）：开着就写 state.memory[会话]，闸门每 N 轮在后台总结一次；关掉就清这一格（已有摘要文件保留，可在面板清空）。
+        const memoryMap = compiled.memory?.enabled ? { ...(fresh?.state?.memory ?? {}), [sessionId]: compiled.memory } : without(fresh?.state?.memory, sessionId)
+        await writeSystem(compiled.systemText, compiled.systemMode, { activePreset: activeMap, everyTurn: everyTurnMap, lore: loreMap, memory: memoryMap })
         if (compiled.mode === 'agent' && Array.isArray(compiled.tools)) {
           const again = await postJson(STATE_ROUTE, undefined)
           setEnvelope(await postJson(STATE_ROUTE, { sessionTools: { ...(again?.state?.sessionTools ?? {}), [sessionId]: compiled.tools } }))
@@ -2843,6 +2898,96 @@ window.__ModuleLoader__.load({
           ),
         },
         h('div', { style: V.hint }, cards.length === 0 ? t('cardsEmpty') : t('cardsHint')),
+        memoryOn
+          ? h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-memory': '' },
+              h(
+                'div',
+                { style: V.row },
+                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 600 } }, h(Icon, { name: 'scroll-text', size: 13 }), t('memoryTitle')),
+                h(
+                  'span',
+                  { style: V.sectionMeta, 'data-prefill-memory-status': '' },
+                  [
+                    memoryView?.running ? t('memoryRunning') : '',
+                    typeof memoryView?.memory?.text === 'string' && memoryView.memory.text !== ''
+                      ? t('memoryThrough').replace('{n}', String(memoryView.memory.throughTurn ?? 0))
+                      : memoryView?.running
+                        ? ''
+                        : t('memoryNone').replace('{n}', String(memoryConfig.every ?? 8)),
+                    memoryView?.memory?.edited ? t('memoryEdited') : '',
+                  ]
+                    .filter((part) => part !== '')
+                    .join(' · '),
+                ),
+                typeof memoryView?.memory?.text === 'string' && memoryView.memory.text !== ''
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        style: V.btnGhost,
+                        'data-prefill-memory-toggle': '',
+                        onClick: () => {
+                          setMemoryOpen(!memoryOpen)
+                          setMemoryDraft(null)
+                        },
+                      },
+                      memoryOpen ? t('memoryHide') : t('memoryShow'),
+                    )
+                  : null,
+              ),
+              memoryOpen && typeof memoryView?.memory?.text === 'string'
+                ? h('textarea', {
+                    style: { ...V.input, minHeight: 140, resize: 'vertical', fontSize: 12, lineHeight: 1.5 },
+                    value: memoryDraft ?? memoryView.memory.text,
+                    'data-prefill-memory-text': '',
+                    onChange: (event) => setMemoryDraft(event.target.value),
+                  })
+                : null,
+              memoryOpen
+                ? h(
+                    'div',
+                    { style: V.row },
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        style: V.btn,
+                        disabled: memoryDraft === null,
+                        onClick: () =>
+                          void memoryCall({ op: 'set', text: memoryDraft ?? '' })
+                            .then((data) => {
+                              setMemoryView(data)
+                              setMemoryDraft(null)
+                              flash(t('memorySaved'))
+                            })
+                            .catch(() => setStatus('error')),
+                      },
+                      t('memorySave'),
+                    ),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        style: V.btnGhost,
+                        'data-prefill-memory-clear': '',
+                        onClick: () =>
+                          void memoryCall({ op: 'clear' })
+                            .then((data) => {
+                              setMemoryView(data)
+                              setMemoryDraft(null)
+                              setMemoryOpen(false)
+                              flash(t('memoryCleared'))
+                            })
+                            .catch(() => setStatus('error')),
+                      },
+                      withIcon('eraser', t('memoryClear'), 12),
+                    ),
+                  )
+                : null,
+            )
+          : null,
         cards.length > 0
           ? h(
               'div',
@@ -2949,6 +3094,7 @@ window.__ModuleLoader__.load({
                 check('thinkZh', t('cardThinkZh'), { 'data-prefill-card-zh': '' }),
                 check('firstPerson', t('cardFirstPerson'), { 'data-prefill-card-firstperson': '' }),
                 (pickedCard.keywordLore ?? 0) > 0 ? check('lore', t('cardLoreToggle').replace('{n}', String(pickedCard.keywordLore)), { 'data-prefill-card-lore': '' }) : null,
+                check('memory', t('cardMemoryToggle').replace('{n}', String(cardPreview?.memory?.every ?? 8)), { 'data-prefill-card-memory': '' }),
               ),
               cardOpts.mode === 'agent'
                 ? h(

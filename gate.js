@@ -21,7 +21,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { matchLore, renderLore } from './character-cards.js'
+import { cleanMemory, matchLore, memoryDue, memoryInput, memorySystemPrompt, renderLore, renderMemory } from './character-cards.js'
 
 /** 内核代次：壳会在诊断里回报它，用来确认热换是否生效。 */
 export const STAGE = 'M1.1-gate+p1'
@@ -247,6 +247,103 @@ export function loreFor(state, agentId) {
   if (entry === null || typeof entry !== 'object' || entry.enabled !== true) return undefined
   if (!Array.isArray(entry.entries) || entry.entries.length === 0) return undefined
   return entry
+}
+
+/** 故事记忆配置（三期）：只对套了角色卡、开着记忆的会话生效。 */
+export function memoryFor(state, agentId) {
+  const entry = typeof agentId === 'string' ? state?.memory?.[agentId] : undefined
+  if (entry === null || typeof entry !== 'object' || entry.enabled !== true) return undefined
+  return entry
+}
+
+/** 进行中的总结（会话 → Promise）：双座位、连续几轮都只跑一个。 */
+const MEMORY_JOBS = (globalThis[Symbol.for('dsh-prefill.memoryJobs')] ??= new Map())
+/** 每个会话最近一次注入的摘要版本（throughTurn）和轮号。 */
+const MEMORY_INJECTED = (globalThis[Symbol.for('dsh-prefill.memoryInjected')] ??= new Map())
+/** 每个会话最近一次发起总结时的轮数：同一轮（双座位）失败了也不重复发。 */
+const MEMORY_TRIED = (globalThis[Symbol.for('dsh-prefill.memoryTried')] ??= new Map())
+export function memoryJobs() {
+  return [...MEMORY_JOBS.keys()]
+}
+
+/**
+ * 把会话事件按轮切出「真实对话」：用户原话 + 角色回答正文（不含思维链、注入、工具结果）。
+ * @returns [{ turn, who: 'user' | 'char', text }]
+ */
+export function dialogueByTurn(events) {
+  const out = []
+  let turn = 0
+  for (const event of Array.isArray(events) ? events : []) {
+    if (event?.type === 'turn/start') {
+      turn = Number.isFinite(event.data?.turn) ? event.data.turn : turn + 1
+    } else if (event?.type === 'user/message' && event.data?.source?.kind === 'user') {
+      const text = messageText(event.data)
+      if (text.trim() !== '') out.push({ turn, who: 'user', text })
+    } else if (event?.type === 'assistant/message') {
+      const text = messageText(event.data?.message)
+      if (text.trim() !== '') out.push({ turn, who: 'char', text })
+    }
+  }
+  return out
+}
+
+/**
+ * 后台总结：旧记忆 + (throughTurn, completed] 这几轮的对话 → 新记忆，写回存储。
+ * 不阻塞当前这一轮；失败只记诊断，下一轮还会再试。
+ */
+export async function summarizeMemory(api, agent, config, stored, completed) {
+  const session = agent.session
+  const from = Number(stored?.throughTurn) || 0
+  const lines = dialogueByTurn(session?.snapshotEvents?.() ?? []).filter((line) => line.turn > from && line.turn <= completed)
+  if (lines.length === 0) {
+    api.memory.write(agent.id, { ...(stored ?? {}), throughTurn: completed })
+    return
+  }
+  const rootCtx = api.rootCtx
+  // Cordis：插件没声明 inject 时直接读 ctx.llm 会抛错，先走 ctx.get（和 resolveServices 的回退一致）。
+  let llm
+  try {
+    llm = typeof rootCtx?.get === 'function' ? rootCtx.get('llm') : undefined
+    if (llm === undefined) llm = rootCtx?.llm
+  } catch {
+    llm = undefined
+  }
+  const route = typeof session?.requestHeader === 'function' ? session.requestHeader()?.config : undefined
+  if (llm === undefined || typeof llm.stream !== 'function' || typeof route?.provider !== 'string' || typeof route?.model !== 'string') {
+    api.note({ memory: 'unavailable', id: agent.id, llm: llm !== undefined, route: route ?? null })
+    return
+  }
+  const started = Date.now()
+  const signal = AbortSignal.timeout(120000)
+  let text = ''
+  const closed = []
+  for await (const chunk of llm.stream({
+    provider: route.provider,
+    model: route.model,
+    system: memorySystemPrompt(config),
+    messages: [
+      {
+        id: randomUUID(),
+        role: 'user',
+        source: { kind: 'prefill', prefill: 'memory-request' },
+        content: [{ type: 'text', text: memoryInput(stored?.text, lines, config) }],
+      },
+    ],
+    maxTokens: 4000,
+    sessionId: session.id,
+    purpose: 'compaction',
+    signal,
+  })) {
+    if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+    else if (chunk?.type === 'block-end' && chunk.block?.type === 'text' && typeof chunk.block.text === 'string') closed.push(chunk.block.text)
+  }
+  const summary = cleanMemory(closed.length > 0 ? closed.join('') : text, config.maxChars)
+  if (summary === '') {
+    api.note({ memory: 'empty', id: agent.id, completed })
+    return
+  }
+  api.memory.write(agent.id, { text: summary, throughTurn: completed, updatedAt: new Date().toISOString(), model: `${route.provider}/${route.model}` })
+  api.note({ memory: 'updated', id: agent.id, from, through: completed, lines: lines.length, chars: summary.length, ms: Date.now() - started })
 }
 
 /** 一条消息里的纯文本（只取 text 段）。 */
@@ -1154,6 +1251,57 @@ export async function step(api, payload, decision) {
       next = { ...next, messages }
     }
     note({ lore: hits.length > 0 ? 'done' : 'none', id: agent.id, turn: payload.turn, scanned: texts.length, hits: hits.map((entry) => entry.title || String(entry.id)) })
+  }
+
+  // ── 故事记忆（v0.6 三期，只对套了角色卡、开着记忆的会话）──────────────────
+  // ① 有摘要就注入一条背景消息（插在本轮用户消息前，按 kind 查重）；
+  // ② 已结束的轮数比上次总结多出 every 轮 ⇒ 后台发起一次总结，本轮不等它，下一轮起用新摘要。
+  const memory = memoryFor(state, agent.id)
+  if (
+    memory !== undefined &&
+    api.memory !== undefined &&
+    Number.isFinite(payload?.turn) &&
+    (payload?.step ?? 1) === 1 &&
+    decision?.kind === 'enter' &&
+    Array.isArray(next.messages)
+  ) {
+    const stored = api.memory.read(agent.id) ?? {}
+    const already = next.messages.some((message) => message?.source?.kind === 'prefill' && message?.source?.prefill === 'memory')
+    // 注入会落进会话历史，所以同一版摘要只注入一次（同一轮的两个座位都注入），新摘要出来再注入；
+    // 插件重启后丢了记录就补注入一次。这样历史里不会每轮堆一份几百字的摘要。
+    const through = Number(stored.throughTurn) || 0
+    const last = MEMORY_INJECTED.get(agent.id)
+    const fresh = last === undefined || last.through !== through || last.turn === payload.turn
+    if (!already && fresh && typeof stored.text === 'string' && stored.text.trim() !== '') {
+      MEMORY_INJECTED.set(agent.id, { through, turn: payload.turn })
+      const messages = [...next.messages]
+      const injected = {
+        id: `prefill-memory-${payload.turn}`,
+        role: 'user',
+        source: { kind: 'prefill', prefill: 'memory' },
+        content: [{ type: 'text', text: renderMemory(stored.text, memory.char) }],
+      }
+      let at = -1
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        if (messages[index]?.source?.kind === 'user') {
+          at = index
+          break
+        }
+      }
+      if (at >= 0) messages.splice(at, 0, injected)
+      else messages.push(injected)
+      next = { ...next, messages }
+      note({ memory: 'injected', id: agent.id, turn: payload.turn, through: stored.throughTurn ?? 0, chars: stored.text.length })
+    }
+    const completed = payload.turn - 1
+    if (!already && memoryDue(completed, stored.throughTurn, memory.every) && !MEMORY_JOBS.has(agent.id) && MEMORY_TRIED.get(agent.id) !== completed) {
+      MEMORY_TRIED.set(agent.id, completed)
+      note({ memory: 'start', id: agent.id, from: stored.throughTurn ?? 0, through: completed })
+      const job = summarizeMemory(api, agent, memory, stored, completed)
+        .catch((error) => note({ memory: 'failed', id: agent.id, error: String(error?.message ?? error) }))
+        .finally(() => MEMORY_JOBS.delete(agent.id))
+      MEMORY_JOBS.set(agent.id, job)
+    }
   }
 
   // ── 自检：直接向装配器要一份"此刻到底装配成什么"的真相 ──────────────────

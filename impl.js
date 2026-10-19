@@ -58,6 +58,8 @@ const PACKS_ROUTE = '/api/dsh-prefill/packs'
 const USAGE_ROUTE = '/api/dsh-prefill/usage'
 /** 角色卡（角色扮演扩展，v0.6）：按工作区存取 + 编译。不改动上面任何一条路由。 */
 const CARDS_ROUTE = '/api/dsh-prefill/cards'
+/** 故事记忆（角色卡三期）：op = get | set | clear，按会话。 */
+const MEMORY_ROUTE = '/api/dsh-prefill/memory'
 
 /** 热插拔内核的位置。 */
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -489,6 +491,37 @@ async function loadGate() {
   return gateCache.module
 }
 
+/**
+ * 故事记忆（v0.6 三期）：一会话一文件 `<DATA_DIR>/memory/<会话>.json`
+ * = { text, throughTurn, updatedAt, model }。闸门读写，面板经 MEMORY_ROUTE 查看 / 修改 / 清空。
+ */
+const MEMORY_DIR = join(DATA_DIR, 'memory')
+const SAFE_SESSION = /^[A-Za-z0-9_-]{1,128}$/
+const memoryStore = {
+  read(sessionId) {
+    if (typeof sessionId !== 'string' || !SAFE_SESSION.test(sessionId)) return undefined
+    try {
+      const parsed = JSON.parse(readFileSync(join(MEMORY_DIR, `${sessionId}.json`), 'utf8'))
+      return parsed !== null && typeof parsed === 'object' ? parsed : undefined
+    } catch {
+      return undefined
+    }
+  },
+  write(sessionId, value) {
+    if (typeof sessionId !== 'string' || !SAFE_SESSION.test(sessionId)) return
+    mkdirSync(MEMORY_DIR, { recursive: true })
+    writeFileSync(join(MEMORY_DIR, `${sessionId}.json`), `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+  },
+  clear(sessionId) {
+    if (typeof sessionId !== 'string' || !SAFE_SESSION.test(sessionId)) return
+    try {
+      unlinkSync(join(MEMORY_DIR, `${sessionId}.json`))
+    } catch {
+      // 本来就没有。
+    }
+  },
+}
+
 /** 插件根 ctx 的引用：内核的服务解析第三级回退要用它。 */
 let rootCtxRef = null
 
@@ -500,7 +533,7 @@ async function handle(payload, decision, seat) {
     return decision
   }
   try {
-    const next = await gate.step({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, { ...payload, __seat: seat }, decision)
+    const next = await gate.step({ readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore }, { ...payload, __seat: seat }, decision)
     return next ?? decision
   } catch (error) {
     note({ seat, error: String(error?.message ?? error) })
@@ -1007,6 +1040,42 @@ export function apply(ctx) {
           },
         }),
       'dsh-prefill: cards route',
+    )
+
+    // 故事记忆：面板查看 / 手动改 / 清空本会话的摘要。running = 这会儿正在后台总结。
+    scope.effect(
+      () =>
+        register({
+          path: MEMORY_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body
+            try {
+              body = await request?.json?.()
+            } catch {
+              body = undefined
+            }
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+            const op = typeof body?.op === 'string' ? body.op : 'get'
+            let reason = ''
+            if (!SAFE_SESSION.test(sessionId)) reason = 'bad session'
+            else if (op === 'set') {
+              const text = typeof body?.text === 'string' ? body.text.trim() : ''
+              const current = memoryStore.read(sessionId) ?? {}
+              memoryStore.write(sessionId, { ...current, text, updatedAt: new Date().toISOString(), edited: true })
+            } else if (op === 'clear') {
+              memoryStore.clear(sessionId)
+            } else if (op !== 'get') {
+              reason = `unknown op "${op}"`
+            }
+            const memory = reason === '' ? memoryStore.read(sessionId) ?? null : null
+            const running = typeof gateCache.module?.memoryJobs === 'function' ? gateCache.module.memoryJobs().includes(sessionId) : false
+            note({ seat: 'memory-route', op, sessionId, reason })
+            return Response.json({ ok: reason === '', op, reason, memory, running }, noStore)
+          },
+        }),
+      'dsh-prefill: memory route',
     )
 
     scope.effect(

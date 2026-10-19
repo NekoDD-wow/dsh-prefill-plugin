@@ -174,6 +174,7 @@ export function cardSettings(card) {
   const source = ext !== null && typeof ext === 'object' ? ext : {}
   const reinforce = source.reinforce !== null && typeof source.reinforce === 'object' ? source.reinforce : {}
   const thinking = source.thinking !== null && typeof source.thinking === 'object' ? source.thinking : {}
+  const memory = source.memory !== null && typeof source.memory === 'object' ? source.memory : {}
   return {
     mode: source.mode === 'pure' ? 'pure' : 'agent',
     tools: Array.isArray(source.tools) ? source.tools.filter((name) => typeof name === 'string' && name !== '') : null,
@@ -185,7 +186,18 @@ export function cardSettings(card) {
     },
     thinking: { language: thinking.language === 'zh' ? 'zh' : null, firstPerson: thinking.firstPerson === true },
     icon: typeof source.icon === 'string' && source.icon !== '' ? source.icon : 'user',
+    memory: {
+      enabled: memory.enabled !== false,
+      every: clampInt(memory.every, MEMORY_DEFAULTS.every, 2, 100),
+      maxChars: clampInt(memory.maxChars, MEMORY_DEFAULTS.maxChars, 200, 4000),
+    },
   }
+}
+
+function clampInt(value, fallback, min, max) {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(max, Math.max(min, n))
 }
 
 /** 示例对话按 `<START>` 切块。 */
@@ -307,6 +319,14 @@ export function compileCard(card, options = {}) {
     everyTurn,
     greetings: greetings.map((g) => snippet(stripHtml(m(g)), 40)),
     lore: keywordLore.entries.length > 0 ? { ...keywordLore, enabled: options.lore !== false, char } : null,
+    // 故事记忆（三期）：每 every 轮把新发生的剧情并进一段摘要，闸门每轮把摘要作为背景注入。
+    memory: {
+      enabled: options.memory === undefined ? settings.memory.enabled : options.memory !== false,
+      every: clampInt(options.memoryEvery, settings.memory.every, 2, 100),
+      maxChars: settings.memory.maxChars,
+      char,
+      user: named ? user : '',
+    },
     warnings,
   }
 }
@@ -551,4 +571,68 @@ export function embedCardInPng(bytes, card) {
     offset += part.length
   }
   return out
+}
+
+
+// ── 故事记忆（三期）──────────────────────────────────────────────────────────
+// 长对话里早先的剧情会被压缩或挤出上下文，人物关系、约定和伏笔跟着丢。做法：每 N 轮让模型把
+// 「旧摘要 + 这 N 轮的新对话」合并成一段新摘要（不超过 maxChars 字），之后每轮作为一条
+// `{kind:'prefill', prefill:'memory'}` 背景消息插在用户消息前。只加不删，不动真实历史。
+
+export const MEMORY_DEFAULTS = { every: 8, maxChars: 800 }
+
+/** 总结用的系统提示。 */
+export function memorySystemPrompt({ char, user, maxChars } = {}) {
+  const who = typeof char === 'string' && char !== '' ? char : '角色'
+  const other = typeof user === 'string' && user !== '' ? user : '对方'
+  const limit = Number(maxChars) > 0 ? Math.floor(Number(maxChars)) : MEMORY_DEFAULTS.maxChars
+  return [
+    `你是角色扮演对话的记录员，负责维护「${who}」和${other}之间的故事记忆。`,
+    '输入里有「旧记忆」（可能为空）和「新对话」。把新对话里发生的事并进旧记忆，输出一份完整的新记忆。',
+    '只写已经发生、对之后剧情有用的事实，按下面四节写，每节用短句列点，某节没有内容就写「无」：',
+    '【人物与关系】【已发生的事】【约定与伏笔】【当前状态】（地点、时间、正在做什么、情绪）',
+    '【已发生的事】只留会影响后面剧情的关键事件，最多 8 条，每条一句；动作细节、原话、环境描写一律省略，旧事件可以合并成一句。',
+    `要求：用中文；第三人称，直接写名字；不评价、不续写、不猜测；总长严格不超过 ${limit} 字，超了就合并或删掉最不重要的旧细节。`,
+    '只输出记忆正文，不要任何开场白或解释。',
+  ].join('\n')
+}
+
+/**
+ * 把旧记忆和新对话拼成总结请求的正文。
+ * @param previous - 旧记忆（可空）。
+ * @param lines - [{ who: 'user' | 'char', text }]，按时间顺序。
+ */
+export function memoryInput(previous, lines, { char, user } = {}) {
+  const who = typeof char === 'string' && char !== '' ? char : '角色'
+  const other = typeof user === 'string' && user !== '' ? user : '对方'
+  const old = typeof previous === 'string' && previous.trim() !== '' ? previous.trim() : '（空）'
+  const dialogue = (Array.isArray(lines) ? lines : [])
+    .filter((line) => typeof line?.text === 'string' && line.text.trim() !== '')
+    .map((line) => `${line.who === 'char' ? who : other}：${line.text.trim()}`)
+    .join('\n')
+  return `## 旧记忆\n${old}\n\n## 新对话\n${dialogue}`
+}
+
+/** 每轮注入的正文。 */
+export function renderMemory(text, char) {
+  const who = typeof char === 'string' && char !== '' ? char : '角色'
+  return `【故事记忆 · 前情提要】以下是此前剧情的摘要，帮你（${who}）记住发生过的事。直接按它延续剧情，不要复述、不要提到这份摘要：\n${String(text ?? '').trim()}`
+}
+
+/**
+ * 该不该在这一轮发起总结：已完成的轮数比上次总结覆盖到的多出 every 轮。
+ * @param completedTurns - 已经结束的轮数（本轮之前）。
+ * @param throughTurn - 上次总结覆盖到第几轮（没总结过 = 0）。
+ */
+export function memoryDue(completedTurns, throughTurn, every) {
+  const n = Number(every) > 0 ? Math.floor(Number(every)) : MEMORY_DEFAULTS.every
+  return Number.isFinite(completedTurns) && completedTurns - (Number(throughTurn) || 0) >= n
+}
+
+/** 模型偶尔会把四节标题前后加废话或超长：去掉首尾空白，硬截到 maxChars 的 1.5 倍兜底。 */
+export function cleanMemory(text, maxChars) {
+  const limit = Number(maxChars) > 0 ? Math.floor(Number(maxChars)) : MEMORY_DEFAULTS.maxChars
+  const flat = String(text ?? '').replace(/\r\n/g, '\n').trim()
+  const cap = Math.floor(limit * 1.5)
+  return flat.length <= cap ? flat : `${flat.slice(0, cap)}…`
 }
