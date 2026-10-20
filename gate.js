@@ -342,8 +342,14 @@ export async function summarizeMemory(api, agent, config, stored, completed) {
     api.note({ memory: 'empty', id: agent.id, completed })
     return
   }
-  api.memory.write(agent.id, { text: summary, throughTurn: completed, updatedAt: new Date().toISOString(), model: `${route.provider}/${route.model}` })
+  api.memory.write(agent.id, { text: summary, throughTurn: completed, updatedAt: new Date().toISOString(), model: routeLabel(route) })
   api.note({ memory: 'updated', id: agent.id, from, through: completed, lines: lines.length, chars: summary.length, ms: Date.now() - started })
+}
+
+/** 记录用的模型名：有的 profile 里 route.model 已经带 provider 前缀（cline-pass/xxx），不再重复拼（issue #4）。 */
+export function routeLabel(route) {
+  const prefix = `${route.provider}/`
+  return route.model.startsWith(prefix) ? route.model : `${prefix}${route.model}`
 }
 
 /** 一条消息里的纯文本（只取 text 段）。 */
