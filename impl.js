@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnPresets } from './builtin-presets.js'
+import { historyToItems } from './session-history.js'
 import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
@@ -900,6 +901,15 @@ export function apply(ctx) {
               const found = packs.find((entry) => entry.name === name)
               note({ seat: 'packs-route', op, name, hit: found !== undefined })
               return Response.json({ ok: true, op, name, pack: found ?? null, file, ...envelope() }, noStore)
+            } else if (op === 'from-session') {
+              // 把当前会话已发生的对话转成开场条目（只读，不存）；客户端预览后再走 save。
+              const result = historyToItems(sessionEvents(liveAgents.get(sessionId), sessionId), {
+                reasoning: body?.reasoning === true,
+                fromTurn: body?.fromTurn,
+                toTurn: body?.toTurn,
+              })
+              note({ seat: 'packs-route', op, sessionId, items: result.items.length, turnCount: result.turnCount, lastTurn: result.lastTurn, toolCalls: result.toolCalls })
+              return Response.json({ ok: true, op, ...result, ...envelope() }, noStore)
             } else if (op === 'save') {
               const name = typeof body?.name === 'string' ? body.name.trim() : ''
               const items = sanitizeItems(body?.items)

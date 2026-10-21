@@ -502,6 +502,16 @@ window.__ModuleLoader__.load({
       packNamePlaceholder: '给当前配置起个名字，例如：周报助手',
       savePack: '保存为预设',
       needName: '先在左边输入预设名',
+      historyOpen: '从当前会话取',
+      historyTip: '把这个会话里已经发生的对话存成预设的开场对话，新会话套用后从这里接着聊',
+      historyHint: '取用户原话和 AI 回答，存成开场对话（预设名用上面输入框里的）。插件注入（每轮注入、世界书、故事记忆）和工具调用不会带上；系统提示、工具权限照「保存为预设」一并保存。新会话套用后，首轮写进历史。',
+      historyReasoning: '带上思维链',
+      historyToTurn: '截至第',
+      historyTurnUnit: '轮（留空 = 全部）',
+      historyMeta: '{turns} 轮 · {n} 条 · ≈{tok} tok',
+      historyTools: ' · 已略过 {n} 次工具调用',
+      historySave: '存为预设',
+      historyEmpty: '这个会话还没有可取的对话',
       savedAs: '已保存为',
       deleted: '已删除',
       imported: '已导入',
@@ -684,6 +694,16 @@ window.__ModuleLoader__.load({
       inUse: 'in use',
       packNamePlaceholder: 'Name the current setup, e.g. Weekly report helper',
       needName: 'Type a preset name first',
+      historyOpen: 'From this session',
+      historyTip: 'Save the conversation so far as the opening dialogue of a preset, so a new session can pick up from here',
+      historyHint: 'Takes your messages and the AI answers and saves them as opening dialogue (named by the box above). Plugin injects (every-turn, lore, story memory) and tool calls are left out; the system prompt and tool access are saved like "Save as preset". A new session that applies it writes them into history on turn 1.',
+      historyReasoning: 'Include reasoning',
+      historyToTurn: 'Up to turn',
+      historyTurnUnit: '(empty = all)',
+      historyMeta: '{turns} turns · {n} rows · ≈{tok} tok',
+      historyTools: ' · {n} tool calls skipped',
+      historySave: 'Save as preset',
+      historyEmpty: 'Nothing to take from this session yet',
       savedAs: 'Saved as',
       deleted: 'Deleted',
       imported: 'Imported',
@@ -2109,6 +2129,10 @@ window.__ModuleLoader__.load({
       const everyTurnTimer = React.useRef(0)
       React.useEffect(() => setEveryTurnDraft(null), [sessionId])
       const [packName, setPackName] = React.useState('')
+      // 「从当前会话取」：把已发生的对话转成开场条目存成预设（v0.8）。
+      const [historyOpen, setHistoryOpen] = React.useState(false)
+      const [historyOpts, setHistoryOpts] = React.useState({ reasoning: false, toTurn: '' })
+      const [historyPreview, setHistoryPreview] = React.useState(null)
       // 角色卡（v0.6）：列表、选中、套用选项、编译预览。
       const [cards, setCards] = React.useState([])
       const [cardPick, setCardPick] = React.useState('')
@@ -2675,6 +2699,42 @@ window.__ModuleLoader__.load({
           })
           .catch(() => setStatus('error'))
       }
+      const loadHistory = (opts) => {
+        const next = { ...historyOpts, ...(opts ?? {}) }
+        setHistoryOpts(next)
+        const toTurn = Number(next.toTurn)
+        void packsCall({ op: 'from-session', reasoning: next.reasoning === true, ...(toTurn > 0 ? { toTurn } : {}) })
+          .then((data) => setHistoryPreview(Array.isArray(data?.items) ? data : { items: [], turnCount: 0, lastTurn: 0, toolCalls: 0 }))
+          .catch(() => setStatus('error'))
+      }
+      const toggleHistory = () => {
+        if (historyOpen) {
+          setHistoryOpen(false)
+          return
+        }
+        setHistoryOpen(true)
+        loadHistory()
+      }
+      const saveHistoryPack = () => {
+        const name = packName.trim()
+        if (name === '') {
+          flash(t('needName'))
+          return
+        }
+        const historyItems = historyPreview?.items ?? []
+        if (historyItems.length === 0) {
+          flash(t('historyEmpty'))
+          return
+        }
+        void Promise.all([currentOverrides(), currentTools()])
+          .then(([overrides, tools]) => packsCall({ op: 'save', name, items: historyItems, overrides, tools, gate: gateMode }))
+          .then((data) => {
+            adoptPacks(data)
+            flash(`${t('savedAs')}「${name}」`)
+            setHistoryOpen(false)
+          })
+          .catch(() => setStatus('error'))
+      }
       const deletePack = (name) => {
         if (!armConfirm(`del:${name}`)) return
         setConfirming('')
@@ -2855,6 +2915,7 @@ window.__ModuleLoader__.load({
             },
           }),
           h('button', { type: 'button', style: V.btn, onClick: savePack }, t('savePack')),
+          h('button', { type: 'button', style: V.btn, 'data-prefill-history-open': '', title: t('historyTip'), onClick: toggleHistory }, t('historyOpen')),
           h('button', { type: 'button', style: V.btn, onClick: () => void exportFile() }, t('exportFile')),
           h('button', { type: 'button', style: V.btn, onClick: () => fileRef.current?.click() }, t('importFile')),
           h('button', { type: 'button', style: V.btnGhost, onClick: () => toggle('manage') }, t('manageHide')),
@@ -2864,6 +2925,60 @@ window.__ModuleLoader__.load({
               { style: V.row },
               h('button', { type: 'button', style: V.btnGhost, onClick: () => toggle('manage') }, t('manageShow')),
             ),
+        open.manage && historyOpen
+          ? h(
+              'div',
+              { style: { ...V.callout('brand'), display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-history': '' },
+              h('div', { style: V.hint }, t('historyHint')),
+              h(
+                'div',
+                { style: V.row },
+                h(
+                  'label',
+                  { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 } },
+                  h('input', {
+                    type: 'checkbox',
+                    'data-prefill-history-reasoning': '',
+                    checked: historyOpts.reasoning === true,
+                    onChange: (event) => loadHistory({ reasoning: event.target.checked }),
+                  }),
+                  t('historyReasoning'),
+                ),
+                h(
+                  'label',
+                  { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 } },
+                  t('historyToTurn'),
+                  h('input', {
+                    type: 'number',
+                    min: 1,
+                    'data-prefill-history-to': '',
+                    style: { ...V.input, width: 64, flex: '0 0 auto' },
+                    value: historyOpts.toTurn,
+                    placeholder: String(historyPreview?.lastTurn ?? ''),
+                    onChange: (event) => loadHistory({ toTurn: event.target.value }),
+                  }),
+                  t('historyTurnUnit'),
+                ),
+              ),
+              h(
+                'div',
+                { style: V.hint, 'data-prefill-history-meta': '' },
+                historyPreview === null
+                  ? '…'
+                  : t('historyMeta')
+                      .replace('{turns}', String(historyPreview.turnCount ?? 0))
+                      .replace('{n}', String(historyPreview.items?.length ?? 0))
+                      .replace('{tok}', String(itemsTokens(historyPreview.items ?? [])))
+                      + (historyPreview.toolCalls > 0 ? t('historyTools').replace('{n}', String(historyPreview.toolCalls)) : ''),
+              ),
+              h(
+                'div',
+                { style: V.row },
+                h('button', { type: 'button', style: V.btn, 'data-prefill-history-save': '', onClick: saveHistoryPack }, t('historySave')),
+                h('button', { type: 'button', style: V.btnGhost, onClick: () => setHistoryOpen(false) }, t('manageHide')),
+              ),
+            )
+          : null,
         h('input', { ref: fileRef, type: 'file', accept: '.json,application/json', style: { display: 'none' }, onChange: importFile }),
       )
 
