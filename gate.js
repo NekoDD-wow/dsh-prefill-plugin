@@ -21,6 +21,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { checksOf, modeOf, replay, splitTurns } from './inject-auto.js'
 import { cleanMemory, matchLore, memoryDue, memoryInput, memorySystemPrompt, renderLore, renderMemory } from './character-cards.js'
 
 /** 内核代次：壳会在诊断里回报它，用来确认热换是否生效。 */
@@ -217,9 +218,10 @@ function keeper(state, message, sessionId) {
  * ```
  * 「仅在单个会话生效」由 key 就是会话 id 保证；`*` 只是给无头探针省事。
  */
-/** 每轮注入计数（会话 id → 已注入轮数）。只在内存里：插件重载后从 0 重数，首轮专用段会再发一次。 */
-const everyTurnCount = new Map()
-
+/**
+ * 每轮注入的轮数不再放内存计数（v0.9）：每次从会话事件重算（inject-auto.js `replay`），
+ * 插件重载后不会把首轮专用段再发一次，自动收放的状态也不丢。
+ */
 /**
  * 本会话的「每轮注入」配置：`state.everyTurn[会话] ?? state.everyTurn['*']`。
  * 形状 `{ enabled, text, firstText, untilTurn }`：第 1 轮发 `firstText`（空则发 `text`），之后每轮发 `text`。
@@ -235,7 +237,28 @@ export function everyTurnFor(state, agentId) {
   const firstText = typeof entry.firstText === 'string' ? entry.firstText.trim() : ''
   if (text === '' && firstText === '') return undefined
   const until = Number(entry.untilTurn)
-  return { text, firstText, untilTurn: Number.isFinite(until) && until > 0 ? Math.floor(until) : 0 }
+  const untilTurn = Number.isFinite(until) && until > 0 ? Math.floor(until) : 0
+  // 通配格 '*' 是新会话默认：它的 since / override 属于别的会话，不能带过来。
+  const own = entry === exact
+  return {
+    text,
+    firstText,
+    untilTurn,
+    mode: modeOf({ ...entry, untilTurn }),
+    checks: checksOf(entry),
+    auto: { ...(entry.auto ?? {}), override: own ? entry.auto?.override : undefined },
+    since: own ? Number(entry.since) || 0 : 0,
+  }
+}
+
+/** 本会话每轮注入的当前判定（给面板状态行；不改任何东西）。 */
+export function everyTurnStatus(state, agentId, events, currentTurn) {
+  const entry = everyTurnFor(state, agentId)
+  if (entry === undefined) return { enabled: false }
+  const turns = splitTurns(events)
+  const next = Number.isFinite(currentTurn) ? currentTurn : (turns.at(-1)?.turn ?? 0) + 1
+  const result = replay(turns, entry, next)
+  return { enabled: true, mode: entry.mode, checks: entry.checks, nextTurn: next, ...result }
 }
 
 /**
@@ -1156,19 +1179,30 @@ export async function step(api, payload, decision) {
   // （turn 1 不调模型、也不经过这里的 enter），用户真正的第一句是 turn 2 —— 实测 E2 里
   // 按 payload.turn===1 判首轮，首轮专用段一次都没发出去。
   const everyTurn = everyTurnFor(state, agent.id)
-  // 按**不同的轮号**计数：同一轮可能经过这里不止一次（双座位、标题生成等旁路请求），
-  // 只按次数数会让旁路请求先把「首轮专用段」吃掉（v0.6 实测：纯角色扮演的新会话里首轮段一次都没发出去）。
-  const seenTurns = everyTurnCount.get(agent.id) ?? { n: 0, first: undefined, last: undefined }
-  const sameAsLast = seenTurns.last !== undefined && seenTurns.last === payload?.turn
-  const injectedSoFar = sameAsLast ? seenTurns.n - 1 : seenTurns.n
-  const isFirst = injectedSoFar === 0
+  // 已注入几次、自动模式下这一轮发不发：都从会话事件重放（只看本轮之前的轮），
+  // 同一轮经过多次（双座位、标题生成等旁路请求）结果一样，不会被旁路请求先吃掉首轮专用段。
+  let plan
+  if (everyTurn !== undefined && Number.isFinite(payload?.turn) && (payload?.step ?? 1) === 1 && decision?.kind === 'enter') {
+    let events = []
+    try {
+      events = agent.session?.snapshotEvents?.() ?? []
+    } catch {
+      events = []
+    }
+    plan = replay(splitTurns(events), everyTurn, payload.turn)
+    if (everyTurn.mode === 'auto') {
+      const last = plan.history.at(-1)
+      note({ everyTurn: 'auto', id: agent.id, turn: payload.turn, state: plan.state, inject: plan.inject, streak: plan.streak, need: plan.need, resumes: plan.resumes, reason: plan.reason, lastTurn: last?.turn, lastVerdict: last?.verdict, lastScores: last?.scores })
+    }
+  }
+  const isFirst = plan?.isFirst === true
   const everyTurnText =
     everyTurn === undefined ? '' : isFirst && everyTurn.firstText !== '' ? everyTurn.firstText : everyTurn.text
   if (
     everyTurn !== undefined &&
     everyTurnText !== '' &&
     Number.isFinite(payload?.turn) &&
-    (everyTurn.untilTurn === 0 || injectedSoFar < everyTurn.untilTurn) &&
+    plan?.inject === true &&
     (payload?.step ?? 1) === 1 &&
     decision?.kind === 'enter' &&
     Array.isArray(next.messages) &&
@@ -1196,8 +1230,7 @@ export async function step(api, payload, decision) {
     if (at >= 0) messages.splice(at, 0, injected)
     else messages.push(injected)
     next = { ...next, messages }
-    everyTurnCount.set(agent.id, { n: injectedSoFar + 1, last: payload.turn })
-    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: injectedSoFar + 1, first: isFirst && everyTurn.firstText !== '', chars: everyTurnText.length, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
+    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: plan.nth, first: isFirst && everyTurn.firstText !== '', chars: everyTurnText.length, mode: everyTurn.mode, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
   }
 
   // ── 世界书关键词注入（v0.6 二期，只对套了角色卡的会话）────────────────────

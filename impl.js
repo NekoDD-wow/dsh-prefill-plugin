@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url'
 import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnPresets } from './builtin-presets.js'
 import { historyToItems } from './session-history.js'
+import { CHECK_IDS, autoParams, modeOf, splitTurns } from './inject-auto.js'
 import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
@@ -216,6 +217,83 @@ function sanitizeTools(raw) {
   if (raw === null) return null
   if (!Array.isArray(raw)) return undefined
   return raw.filter((name) => typeof name === 'string' && name !== '')
+}
+
+/**
+ * 预设里的每轮注入**配置**（v0.9 §A）：不含运行时状态（since / override）。
+ * 关掉或两段都空 ⇒ undefined（不存）。
+ */
+export function sanitizeEveryTurn(raw) {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const text = typeof raw.text === 'string' ? raw.text : ''
+  const firstText = typeof raw.firstText === 'string' ? raw.firstText : ''
+  if (raw.enabled !== true || (text.trim() === '' && firstText.trim() === '')) return undefined
+  const untilTurn = Math.max(0, Math.floor(Number(raw.untilTurn) || 0))
+  const checks = Array.isArray(raw.checks) ? CHECK_IDS.filter((id) => raw.checks.includes(id)) : []
+  let mode = modeOf({ ...raw, untilTurn })
+  if (mode === 'auto' && checks.length === 0) mode = untilTurn > 0 ? 'until' : 'always'
+  const { warmup, streak, probation } = autoParams(raw.auto)
+  return { enabled: true, text, firstText, mode, untilTurn, checks, auto: { warmup, streak, probation } }
+}
+
+/** 预设里的故事记忆摘要：{ text, throughTurn }；空 ⇒ undefined。 */
+export function sanitizeMemorySeed(raw) {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const text = typeof raw.text === 'string' ? raw.text.trim() : ''
+  if (text === '') return undefined
+  return { text, throughTurn: Math.max(0, Math.floor(Number(raw.throughTurn) || 0)) }
+}
+
+/** 会话里最后一轮的轮号（没有 = 0）。 */
+function lastTurnOf(events) {
+  try {
+    return splitTurns(events).at(-1)?.turn ?? 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * 写每轮注入时给自动模式盖章（v0.9 §B5）：
+ * - 配置「重新开始」（打开、换模式、改正文 / 首轮段 / 检查项）⇒ since = 下一轮，清掉手动覆盖；
+ * - 否则沿用旧的 since；
+ * - 带了 `auto.override = { action }` 但没轮号 ⇒ 盖上 atTurn = 下一轮；没带 ⇒ 沿用旧的。
+ * 通配格 '*' 不盖（它是新会话默认，不属于任何会话）。
+ */
+export function stampEveryTurn(previous, next, lastTurnFor) {
+  const out = {}
+  const lastOf = (key) => (typeof lastTurnFor === 'function' ? lastTurnFor(key) : Number(lastTurnFor) || 0)
+  for (const [key, entry] of Object.entries(next ?? {})) {
+    if (key === '*' || entry === null || typeof entry !== 'object') {
+      out[key] = entry
+      continue
+    }
+    const old = previous?.[key]
+    const sameChecks = JSON.stringify([...(entry.checks ?? [])].sort()) === JSON.stringify([...(old?.checks ?? [])].sort())
+    const restart =
+      old === undefined ||
+      old === null ||
+      (entry.enabled === true && old.enabled !== true) ||
+      modeOf(entry) !== modeOf(old) ||
+      String(entry.text ?? '') !== String(old.text ?? '') ||
+      String(entry.firstText ?? '') !== String(old.firstText ?? '') ||
+      !sameChecks
+    const auto = { ...(entry.auto ?? {}) }
+    let since
+    if (restart) {
+      since = lastOf(key) + 1
+      delete auto.override
+    } else {
+      since = Number(old?.since) || 0
+      const wanted = entry.auto?.override
+      if (wanted?.action === 'resume' || wanted?.action === 'pause') {
+        auto.override = Number.isFinite(Number(wanted.atTurn)) && wanted.atTurn !== null ? wanted : { action: wanted.action, atTurn: lastOf(key) + 1 }
+      } else if (old?.auto?.override !== undefined) auto.override = old.auto.override
+      else delete auto.override
+    }
+    out[key] = { ...entry, since, auto }
+  }
+  return out
 }
 
 /** 选择器需要的轻量摘要（不把 items 全丢给下拉框）。 */
@@ -777,6 +855,12 @@ export function apply(ctx) {
               patch = undefined
             }
             if (patch !== null && typeof patch === 'object' && Object.keys(patch).length > 0) {
+              if (patch.everyTurn !== null && typeof patch.everyTurn === 'object') {
+                const previous = readState()?.everyTurn ?? {}
+                // 只有要盖章的那格才去读会话（读落盘日志要解压，别对每个旧会话都读一遍）。
+                const lastTurnFor = (key) => lastTurnOf(sessionEvents(liveAgents.get(key), key))
+                patch = { ...patch, everyTurn: stampEveryTurn(previous, patch.everyTurn, lastTurnFor) }
+              }
               patchState(patch)
               // 【关键】写状态后当场重新挂载：让"点完开关再发"在该轮装配之前就位。
               await reprimeAll('state-write')
@@ -873,7 +957,7 @@ export function apply(ctx) {
             let packs = readPacks(workspace)
             let reason = ''
 
-            const upsert = (name, items, overrides, tools, gate) => {
+            const upsert = (name, items, overrides, tools, gate, extra = {}) => {
               // 预设 = 预填装内容 + 注入改写 + **工具放行**（§4-M5：换包=换权限）。
               const pack = {
                 name,
@@ -882,6 +966,8 @@ export function apply(ctx) {
                 ...(overrides === undefined ? {} : { overrides }),
                 ...(tools === undefined ? {} : { tools }),
                 ...(gate === 'pure' || gate === 'pass' || gate === 'replace' ? { gate } : {}),
+                ...(extra.everyTurn === undefined ? {} : { everyTurn: extra.everyTurn }),
+                ...(extra.memorySeed === undefined ? {} : { memorySeed: extra.memorySeed }),
               }
               const at = packs.findIndex((entry) => entry.name === name)
               if (at >= 0) packs[at] = pack
@@ -908,16 +994,35 @@ export function apply(ctx) {
                 fromTurn: body?.fromTurn,
                 toTurn: body?.toTurn,
               })
-              note({ seat: 'packs-route', op, sessionId, items: result.items.length, turnCount: result.turnCount, lastTurn: result.lastTurn, toolCalls: result.toolCalls })
-              return Response.json({ ok: true, op, ...result, ...envelope() }, noStore)
+              // 本会话的每轮注入配置（只认本会话自己那格，不认 '*'）和故事记忆摘要，给「带上……」两个复选框。
+              const everyTurn = sanitizeEveryTurn(readState()?.everyTurn?.[sessionId]) ?? null
+              const stored = memoryStore.read(sessionId)
+              const memory = typeof stored?.text === 'string' && stored.text.trim() !== '' ? { text: stored.text.trim(), throughTurn: Number(stored.throughTurn) || 0 } : null
+              const toTurn = Number(body?.toTurn) > 0 ? Math.floor(Number(body.toTurn)) : 0
+              // 截了轮次、而摘要覆盖到截取点之后 ⇒ 不许带（摘要里有分支点之后的剧情）。
+              const memoryAllowed = memory !== null && (toTurn === 0 || memory.throughTurn <= toTurn)
+              note({ seat: 'packs-route', op, sessionId, items: result.items.length, turnCount: result.turnCount, lastTurn: result.lastTurn, toolCalls: result.toolCalls, everyTurn: everyTurn?.mode ?? null, memory: memory?.throughTurn ?? null, memoryAllowed })
+              return Response.json({ ok: true, op, ...result, everyTurn, memory, memoryAllowed, ...envelope() }, noStore)
+            } else if (op === 'every-turn-status') {
+              // 面板状态行：本会话每轮注入的自动判定（只读）。
+              const gate = await loadGate()
+              const status =
+                typeof gate?.everyTurnStatus === 'function'
+                  ? gate.everyTurnStatus(readState(), sessionId, sessionEvents(liveAgents.get(sessionId), sessionId))
+                  : { enabled: false }
+              return Response.json({ ok: true, op, status, ...envelope() }, noStore)
             } else if (op === 'save') {
               const name = typeof body?.name === 'string' ? body.name.trim() : ''
               const items = sanitizeItems(body?.items)
               const overrides = sanitizeOverrides(body?.overrides)
               const tools = sanitizeTools(body?.tools)
+              const everyTurn = sanitizeEveryTurn(body?.everyTurn)
+              const memorySeed = sanitizeMemorySeed(body?.memorySeed)
+              const cut = Number(body?.toTurn) > 0 ? Math.floor(Number(body.toTurn)) : 0
               if (name === '') reason = 'missing name'
               else if (items === undefined) reason = 'invalid items[]'
-              else upsert(name, items, overrides, tools, body?.gate)
+              else if (memorySeed !== undefined && cut > 0 && memorySeed.throughTurn > cut) reason = 'memory summary covers turns after the cut'
+              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed })
             } else if (op === 'delete') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const next = packs.filter((entry) => entry.name !== name)
@@ -941,7 +1046,7 @@ export function apply(ctx) {
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
                 if (items === undefined || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides, tools, parsed?.gate)
+                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed) })
               }
             } else {
               reason = `unknown op "${op}"`

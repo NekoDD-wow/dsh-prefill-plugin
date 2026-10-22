@@ -183,6 +183,7 @@ export function cardSettings(card) {
       firstText: str(reinforce.firstText),
       text: str(reinforce.text),
       untilTurn: Math.max(0, Math.floor(Number(reinforce.untilTurn) || 0)),
+      mode: reinforce.mode === 'always' || reinforce.mode === 'until' || reinforce.mode === 'auto' ? reinforce.mode : null,
     },
     thinking: { language: thinking.language === 'zh' ? 'zh' : null, firstPerson: thinking.firstPerson === true },
     icon: typeof source.icon === 'string' && source.icon !== '' ? source.icon : 'user',
@@ -308,7 +309,13 @@ export function compileCard(card, options = {}) {
       ...extra,
     ].join('')
   }
-  const everyTurn = { enabled: reinforce.enabled === true, text, firstText, untilTurn: reinforce.untilTurn }
+  // v0.9：能用规则检查的要求（中文思考、第一人称）默认走「自动」——稳定后停注、跑偏再恢复；
+  // 卡里写了 untilTurn 的照旧「只注入前 N 轮」，写了 mode 的以卡为准。
+  const checks = [...(thinking.language === 'zh' ? ['zh'] : []), ...(thinking.firstPerson ? ['firstPerson'] : [])]
+  const untilTurn = Math.max(0, Math.floor(Number(reinforce.untilTurn) || 0))
+  let everyTurnMode = reinforce.mode ?? (untilTurn > 0 ? 'until' : checks.length > 0 ? 'auto' : 'always')
+  if (everyTurnMode === 'auto' && checks.length === 0) everyTurnMode = untilTurn > 0 ? 'until' : 'always'
+  const everyTurn = { enabled: reinforce.enabled === true, text, firstText, untilTurn, mode: everyTurnMode, checks }
 
   return {
     mode,

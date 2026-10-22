@@ -237,6 +237,7 @@ export function builtinSummaries() {
  *
  * `untilTurn`：只注入前 N 轮（0 = 一直注入）。
  * `firstText`（可选）：第 1 轮专用的注入正文；之后各轮发 `text`。
+ * `checks`（v0.9）：「自动」模式下用哪些规则判断行为是否已稳定（inject-auto.js）；没有 = 不支持自动。
  */
 export const EVERY_TURN_PRESETS = [
   {
@@ -245,6 +246,7 @@ export const EVERY_TURN_PRESETS = [
     name: '中文思考',
     desc: '思维链全程用中文（英文问题也一样）。',
     text: '【思考语言】本轮你的思维链（reasoning）请全程用中文，即使问题是英文。回答正文按用户的语言正常写。',
+    checks: ['zh'],
   },
   {
     id: 'four-section',
@@ -252,6 +254,7 @@ export const EVERY_TURN_PRESETS = [
     name: '四段式思考',
     desc: '思维链按【理解】【拆解】【验证】【结论】四段写，正文不受影响。',
     text: '【思考格式】本轮你的思维链（reasoning）请全程用中文，并按四段写：【理解】【拆解】【验证】【结论】，每段一到三句。回答正文正常写，不要把这四段放进回答里。',
+    checks: ['zh', 'four', 'noLeak'],
   },
   {
     id: 'first-person',
@@ -259,6 +262,7 @@ export const EVERY_TURN_PRESETS = [
     name: '第一人称思考（角色扮演）',
     desc: '思维链用角色的第一人称写，不说"用户"，改称"主人"；配合角色扮演人格用。',
     text: '【思考人称】本轮你的思维链（reasoning）请用你所扮演角色的第一人称、中文来写（"我觉得……""我该……"），把对方称为"主人"，不要出现"用户""the user"这类说法。回答正文保持角色口吻。',
+    checks: ['zh', 'firstPerson'],
   },
   {
     id: 'rp-reinforce',
@@ -270,6 +274,7 @@ export const EVERY_TURN_PRESETS = [
     // 后续段不能太短：实测 E2 只发一句「强化」时思维链中文占比跌到 3%–29%；
     // 发完整的第一人称要求（同 D4）则能保持。
     text: '【思考人称】本轮你的思维链（reasoning）继续用所扮演角色的第一人称、中文来写（"我觉得……""我该……"），把对方称为"主人"，不要出现旁观者式的称呼。回答正文保持角色口吻，任务照样做准。',
+    checks: ['zh', 'firstPerson'],
   },
   {
     id: 'brief-thinking',

@@ -542,6 +542,37 @@ window.__ModuleLoader__.load({
       everyTurnUntilUnit: '轮（0 = 一直注入）',
       everyTurnDefault: '新会话默认也开启',
       everyTurnSaved: '每轮注入已保存，下一条消息起生效',
+      everyTurnMode: '注入方式：',
+      everyTurnModeAlways: '一直注入',
+      everyTurnModeUntil: '只注入前 N 轮',
+      everyTurnModeAuto: '自动',
+      everyTurnAutoHint: '每轮结束后按规则检查上一轮的思维链：连续达标就先试停，停了还守得住才算暂停；跑偏了自动恢复。手动关掉每轮注入永远优先。',
+      everyTurnChecks: '检查：',
+      everyTurnCheck_zh: '中文思考',
+      everyTurnCheck_four: '四段格式',
+      everyTurnCheck_noLeak: '四段没漏进回答',
+      everyTurnCheck_firstPerson: '第一人称（不说"用户"）',
+      everyTurnNoChecks: '至少勾一项检查，否则自动模式等于一直注入',
+      everyTurnAdvanced: '高级',
+      everyTurnWarmup: '至少注入',
+      everyTurnStreak: '连续达标',
+      everyTurnProbation: '试停',
+      everyTurnTurns: '轮',
+      everyTurnResume: '立即恢复',
+      everyTurnPause: '立即暂停',
+      everyTurnState_injecting: '注入中 · 连续达标 {streak}/{need}',
+      everyTurnState_trial: '试停中',
+      everyTurnState_paused: '已暂停',
+      everyTurnState_always: '不稳定，已改为一直注入',
+      everyTurnStateNoReasoning: '看不到思维链，无法自动判断（一直注入）',
+      everyTurnStateNoChecks: '没有检查项（一直注入）',
+      everyTurnStateMeta: '自动 · {state}',
+      everyTurnOverrideSaved: '已记下，从下一条消息起生效',
+      historyWithEveryTurn: '带上每轮注入设置',
+      historyWithMemory: '带上故事记忆摘要',
+      historyMemoryLate: '摘要覆盖到第 {n} 轮，晚于截取点',
+      packWithEveryTurn: '连同每轮注入设置',
+      memorySeedApplied: '已带入故事记忆摘要',
       everyTurnOffSaved: '每轮注入已关闭',
       modeReplaceHint: '用下面这段替换 dsh 默认系统提示的正文，但工具、运行时上下文（工作区、权限）和审批全部照旧。适合换语言（如中文版官方提示）或整体重写规则。可以写 {{model}} 和 {{cwd}}，dsh 会自动填入。',
       noteReplace: '替换：系统提示只剩你写的那段（约 {n} tok），工具和运行时上下文照旧。',
@@ -734,6 +765,37 @@ window.__ModuleLoader__.load({
       everyTurnUntilUnit: 'turns (0 = always)',
       everyTurnDefault: 'Also on by default for new sessions',
       everyTurnSaved: 'Every-turn reminder saved — applies from your next message',
+      everyTurnMode: 'Mode:',
+      everyTurnModeAlways: 'Always',
+      everyTurnModeUntil: 'First N turns',
+      everyTurnModeAuto: 'Auto',
+      everyTurnAutoHint: 'After each turn the last reasoning is checked by rules: a streak of passes starts a trial stop, holding through the trial pauses it, drifting resumes it. Turning the reminder off always wins.',
+      everyTurnChecks: 'Check:',
+      everyTurnCheck_zh: 'Chinese reasoning',
+      everyTurnCheck_four: 'Four-section format',
+      everyTurnCheck_noLeak: 'Sections not in answer',
+      everyTurnCheck_firstPerson: 'First person (no "the user")',
+      everyTurnNoChecks: 'Pick at least one check, otherwise auto = always',
+      everyTurnAdvanced: 'Advanced',
+      everyTurnWarmup: 'Inject at least',
+      everyTurnStreak: 'Passes in a row',
+      everyTurnProbation: 'Trial stop',
+      everyTurnTurns: 'turns',
+      everyTurnResume: 'Resume now',
+      everyTurnPause: 'Pause now',
+      everyTurnState_injecting: 'injecting · streak {streak}/{need}',
+      everyTurnState_trial: 'trial stop',
+      everyTurnState_paused: 'paused',
+      everyTurnState_always: 'unstable, switched to always',
+      everyTurnStateNoReasoning: 'No reasoning visible, cannot judge (always on)',
+      everyTurnStateNoChecks: 'No checks (always on)',
+      everyTurnStateMeta: 'auto · {state}',
+      everyTurnOverrideSaved: 'Noted — applies from your next message',
+      historyWithEveryTurn: 'Include every-turn reminder settings',
+      historyWithMemory: 'Include story memory summary',
+      historyMemoryLate: 'Summary covers up to turn {n}, after the cut',
+      packWithEveryTurn: 'with every-turn settings',
+      memorySeedApplied: 'Story memory summary carried over',
       everyTurnOffSaved: 'Every-turn reminder off',
       modeReplaceHint: 'Replaces the body of the default dsh system prompt with the text below, while tools, runtime context (workspace, permissions) and approvals stay. {{model}} and {{cwd}} are filled in by dsh.',
       noteReplace: 'Replace: the system prompt is only your text (≈{n} tok); tools and runtime context stay.',
@@ -1847,6 +1909,11 @@ window.__ModuleLoader__.load({
     }
 
     /** 从 state 的"会话 → 值"表里删掉一个会话。 */
+    /** 预设带来的故事记忆摘要，作为开场背景时的外壳（与 character-cards.js renderMemory 同一说法）。 */
+    function memorySeedText(text) {
+      return `【故事记忆 · 前情提要】以下是此前剧情的摘要，帮你记住发生过的事。直接按它延续剧情，不要复述、不要提到这份摘要：\n${String(text ?? '').trim()}`
+    }
+
     function without(map, sessionId) {
       const next = { ...(map ?? {}) }
       delete next[sessionId]
@@ -2131,7 +2198,9 @@ window.__ModuleLoader__.load({
       const [packName, setPackName] = React.useState('')
       // 「从当前会话取」：把已发生的对话转成开场条目存成预设（v0.8）。
       const [historyOpen, setHistoryOpen] = React.useState(false)
-      const [historyOpts, setHistoryOpts] = React.useState({ reasoning: false, toTurn: '' })
+      const [historyOpts, setHistoryOpts] = React.useState({ reasoning: false, toTurn: '', everyTurn: true, memory: false })
+      const [packWithEveryTurn, setPackWithEveryTurn] = React.useState(true)
+      const [everyTurnStatus, setEveryTurnStatus] = React.useState(null)
       const [historyPreview, setHistoryPreview] = React.useState(null)
       // 角色卡（v0.6）：列表、选中、套用选项、编译预览。
       const [cards, setCards] = React.useState([])
@@ -2365,6 +2434,24 @@ window.__ModuleLoader__.load({
         }
       }, [open.usage, sessionId])
 
+      // 每轮注入的自动判定（v0.9）：每 4 秒刷新一次（只读，算一次很便宜）。折叠时也刷，节标题上要显示状态。
+      React.useEffect(() => {
+        if (sessionId === '') return undefined
+        let alive = true
+        const load = () =>
+          void postJson(PACKS_ROUTE, { sessionId, op: 'every-turn-status' })
+            .then((data) => {
+              if (alive) setEveryTurnStatus(data?.status ?? null)
+            })
+            .catch(() => {})
+        load()
+        const timer = setInterval(load, 4000)
+        return () => {
+          alive = false
+          clearInterval(timer)
+        }
+      }, [sessionId])
+
       if (sessionId === '' || !enabled || items === null) return null
 
       const collapseKey = `dsh-prefill:collapsed:${sessionId}`
@@ -2520,9 +2607,21 @@ window.__ModuleLoader__.load({
         }
         if (pack.gate === 'pure' || pack.gate === 'pass' || pack.gate === 'replace') patch.gate = { ...(fresh?.state?.gate ?? {}), [sessionId]: pack.gate }
         if (pack.tools !== undefined) patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: pack.tools }
+        // v0.9：预设里存的每轮注入**配置**（不含运行时状态）——套用后在本会话从头判断。
+        if (pack.everyTurn !== undefined && pack.everyTurn !== null) {
+          patch.everyTurn = { ...(fresh?.state?.everyTurn ?? {}), [sessionId]: pack.everyTurn }
+          setEveryTurnDraft(null)
+        }
+        // 故事记忆摘要：本会话开着故事记忆（套了角色卡）⇒ 写成初始记忆；否则作为一条背景放在开场对话最前面。
+        const seed = typeof pack.memorySeed?.text === 'string' && pack.memorySeed.text.trim() !== '' ? pack.memorySeed.text.trim() : ''
+        if (seed !== '' && fresh?.state?.memory?.[sessionId]?.enabled !== true && !injectMode) {
+          const base = Array.isArray(pack.items) ? pack.items : []
+          edit([{ role: 'user', text: memorySeedText(seed) }, ...base])
+        }
         setEnvelope(await postJson(STATE_ROUTE, patch))
+        if (seed !== '' && fresh?.state?.memory?.[sessionId]?.enabled === true) await memoryCall({ op: 'set', text: seed })
         notifyStateChanged()
-        flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
+        flash(seed !== '' ? t('memorySeedApplied') : injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
       }
 
       // ── 角色卡（v0.6）────────────────────────────────────────────────────────
@@ -2692,7 +2791,9 @@ window.__ModuleLoader__.load({
           return
         }
         void Promise.all([currentOverrides(), currentTools()])
-          .then(([overrides, tools]) => packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode }))
+          .then(([overrides, tools]) =>
+            packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, ...(packWithEveryTurn && everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}) }),
+          )
           .then((data) => {
             adoptPacks(data)
             flash(`${t('savedAs')}「${name}」`)
@@ -2727,7 +2828,13 @@ window.__ModuleLoader__.load({
           return
         }
         void Promise.all([currentOverrides(), currentTools()])
-          .then(([overrides, tools]) => packsCall({ op: 'save', name, items: historyItems, overrides, tools, gate: gateMode }))
+          .then(([overrides, tools]) => {
+            const toTurn = Number(historyOpts.toTurn) > 0 ? Math.floor(Number(historyOpts.toTurn)) : 0
+            const extra = {}
+            if (historyOpts.everyTurn !== false && historyPreview?.everyTurn) extra.everyTurn = historyPreview.everyTurn
+            if (historyOpts.memory === true && historyPreview?.memoryAllowed && historyPreview?.memory) extra.memorySeed = historyPreview.memory
+            return packsCall({ op: 'save', name, items: historyItems, overrides, tools, gate: gateMode, ...(toTurn > 0 ? { toTurn } : {}), ...extra })
+          })
           .then((data) => {
             adoptPacks(data)
             flash(`${t('savedAs')}「${name}」`)
@@ -2832,6 +2939,12 @@ window.__ModuleLoader__.load({
           ? [withIcon('folder', hoveredPack.name), `${t('myPresetDesc')} · ${hoveredPack.count}${t('countSuffix')}`, '']
           : ['', t('presetsHint'), '']
 
+      // 存预设用：本会话自己那格的配置（关着就不带）。
+      const ownEveryTurn = state?.everyTurn?.[sessionId]
+      const everyTurnStored =
+        ownEveryTurn?.enabled === true && (String(ownEveryTurn.text ?? '').trim() !== '' || String(ownEveryTurn.firstText ?? '').trim() !== '')
+          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {} }
+          : null
       const presetsSection = h(
         Section,
         {
@@ -2915,6 +3028,14 @@ window.__ModuleLoader__.load({
             },
           }),
           h('button', { type: 'button', style: V.btn, onClick: savePack }, t('savePack')),
+          everyTurnStored !== null
+            ? h(
+                'label',
+                { style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+                h('input', { type: 'checkbox', 'data-prefill-pack-everyturn': '', checked: packWithEveryTurn, onChange: (event) => setPackWithEveryTurn(event.target.checked) }),
+                t('packWithEveryTurn'),
+              )
+            : null,
           h('button', { type: 'button', style: V.btn, 'data-prefill-history-open': '', title: t('historyTip'), onClick: toggleHistory }, t('historyOpen')),
           h('button', { type: 'button', style: V.btn, onClick: () => void exportFile() }, t('exportFile')),
           h('button', { type: 'button', style: V.btn, onClick: () => fileRef.current?.click() }, t('importFile')),
@@ -2960,6 +3081,42 @@ window.__ModuleLoader__.load({
                   t('historyTurnUnit'),
                 ),
               ),
+              historyPreview?.everyTurn || historyPreview?.memory
+                ? h(
+                    'div',
+                    { style: V.row },
+                    historyPreview?.everyTurn
+                      ? h(
+                          'label',
+                          { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 } },
+                          h('input', {
+                            type: 'checkbox',
+                            'data-prefill-history-everyturn': '',
+                            checked: historyOpts.everyTurn !== false,
+                            onChange: (event) => setHistoryOpts({ ...historyOpts, everyTurn: event.target.checked }),
+                          }),
+                          `${t('historyWithEveryTurn')}（${t(`everyTurnMode${historyPreview.everyTurn.mode === 'auto' ? 'Auto' : historyPreview.everyTurn.mode === 'until' ? 'Until' : 'Always'}`)} · ≈${estimateTokens(historyPreview.everyTurn.text)} tok/${t('turnsUnit')}）`,
+                        )
+                      : null,
+                    historyPreview?.memory
+                      ? h(
+                          'label',
+                          {
+                            style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, opacity: historyPreview.memoryAllowed ? 1 : 0.55 },
+                            title: historyPreview.memoryAllowed ? '' : t('historyMemoryLate').replace('{n}', String(historyPreview.memory.throughTurn)),
+                          },
+                          h('input', {
+                            type: 'checkbox',
+                            'data-prefill-history-memory': '',
+                            disabled: !historyPreview.memoryAllowed,
+                            checked: historyOpts.memory === true && historyPreview.memoryAllowed === true,
+                            onChange: (event) => setHistoryOpts({ ...historyOpts, memory: event.target.checked }),
+                          }),
+                          historyPreview.memoryAllowed ? t('historyWithMemory') : `${t('historyWithMemory')}（${t('historyMemoryLate').replace('{n}', String(historyPreview.memory.throughTurn))}）`,
+                        )
+                      : null,
+                  )
+                : null,
               h(
                 'div',
                 { style: V.hint, 'data-prefill-history-meta': '' },
@@ -3421,21 +3578,51 @@ window.__ModuleLoader__.load({
 
       // ── 每轮注入（state.everyTurn[会话]；勾"新会话默认"时同时写 '*'）──
       const storedEveryTurn = state?.everyTurn?.[sessionId] ?? state?.everyTurn?.['*'] ?? null
+      const storedMode =
+        storedEveryTurn?.mode === 'auto' || storedEveryTurn?.mode === 'until' || storedEveryTurn?.mode === 'always'
+          ? storedEveryTurn.mode
+          : Number(storedEveryTurn?.untilTurn) > 0
+            ? 'until'
+            : 'always'
       const everyTurn = everyTurnDraft ?? {
         enabled: storedEveryTurn?.enabled === true,
         text: typeof storedEveryTurn?.text === 'string' ? storedEveryTurn.text : '',
         firstText: typeof storedEveryTurn?.firstText === 'string' ? storedEveryTurn.firstText : '',
         untilTurn: Number(storedEveryTurn?.untilTurn) > 0 ? Number(storedEveryTurn.untilTurn) : 0,
+        mode: storedMode,
+        checks: Array.isArray(storedEveryTurn?.checks) ? storedEveryTurn.checks : [],
+        auto: {
+          warmup: Number(storedEveryTurn?.auto?.warmup) >= 0 && storedEveryTurn?.auto?.warmup !== undefined ? Number(storedEveryTurn.auto.warmup) : 3,
+          streak: Number(storedEveryTurn?.auto?.streak) > 0 ? Number(storedEveryTurn.auto.streak) : 3,
+          probation: Number(storedEveryTurn?.auto?.probation) > 0 ? Number(storedEveryTurn.auto.probation) : 2,
+        },
         asDefault: state?.everyTurn?.['*']?.enabled === true,
       }
-      const writeEveryTurn = async (nextValue) => {
+      const writeEveryTurn = async (nextValue, override) => {
         setEveryTurnDraft(nextValue)
         const fresh = await postJson(STATE_ROUTE, undefined)
         const map = { ...(fresh?.state?.everyTurn ?? {}) }
-        const entry = { enabled: nextValue.enabled === true, text: String(nextValue.text ?? ''), firstText: String(nextValue.firstText ?? ''), untilTurn: Math.max(0, Math.floor(Number(nextValue.untilTurn) || 0)) }
+        const auto = {
+          warmup: Math.max(0, Math.floor(Number(nextValue.auto?.warmup) || 0)),
+          streak: Math.max(1, Math.floor(Number(nextValue.auto?.streak) || 3)),
+          probation: Math.max(1, Math.floor(Number(nextValue.auto?.probation) || 2)),
+          // 立即恢复 / 暂停：只给动作，轮号由服务端按「下一轮」盖章；没给就沿用服务端已有的。
+          ...(override ? { override: { action: override } } : {}),
+        }
+        const entry = {
+          enabled: nextValue.enabled === true,
+          text: String(nextValue.text ?? ''),
+          firstText: String(nextValue.firstText ?? ''),
+          untilTurn: Math.max(0, Math.floor(Number(nextValue.untilTurn) || 0)),
+          mode: nextValue.mode === 'auto' || nextValue.mode === 'until' ? nextValue.mode : 'always',
+          checks: Array.isArray(nextValue.checks) ? nextValue.checks : [],
+          auto,
+        }
         map[sessionId] = entry
-        if (nextValue.asDefault === true) map['*'] = entry
-        else delete map['*']
+        if (nextValue.asDefault === true) {
+          const { override: _ignored, ...autoForDefault } = auto
+          map['*'] = { ...entry, auto: autoForDefault }
+        } else delete map['*']
         const data = await postJson(STATE_ROUTE, { everyTurn: map })
         setEnvelope(data)
         notifyStateChanged()
@@ -3453,13 +3640,75 @@ window.__ModuleLoader__.load({
         else everyTurnTimer.current = setTimeout(run, 700)
       }
       const everyTurnActive = everyTurn.enabled && (everyTurn.text.trim() !== '' || everyTurn.firstText.trim() !== '')
+      // 自动模式的状态文字（来自 every-turn-status；只看本会话自己的判定）。
+      const autoStatus = everyTurnStatus?.enabled === true && everyTurnStatus?.mode === 'auto' ? everyTurnStatus : null
+      const autoNoReasoning =
+        autoStatus !== null && autoStatus.history.length >= 2 && autoStatus.history.every((row) => row.verdict === 'skip' && (row.scores?.steps ?? 0) === 0)
+      const autoStateText =
+        autoStatus === null
+          ? ''
+          : autoStatus.reason === 'no checks'
+            ? t('everyTurnStateNoChecks')
+            : autoNoReasoning
+              ? t('everyTurnStateNoReasoning')
+              : t(`everyTurnState_${autoStatus.state}`)
+                  .replace('{streak}', String(autoStatus.streak ?? 0))
+                  .replace('{need}', String(autoStatus.need ?? 0))
+      const verdictColor = { pass: '#16a34a', weak: '#d97706', fail: '#dc2626', skip: '#9ca3af' }
+      const verdictTitle = (row) => {
+        const parts = [`#${row.turn}`, row.verdict, row.injected ? '⚡' : '']
+        const sc = row.scores ?? {}
+        if (sc.zh !== undefined && sc.zh !== null) parts.push(`zh ${Math.round(sc.zh * 100)}%`)
+        if (sc.four !== undefined) parts.push(`4段 ${sc.four}`)
+        if (sc.leak === true) parts.push('漏进回答')
+        if (sc.outsider !== undefined) parts.push(`旁观词 ${sc.outsider + (sc.breakChar ?? 0)}`)
+        return parts.filter(Boolean).join(' · ')
+      }
+      const setMode = (mode) =>
+        editEveryTurn(
+          mode === 'until'
+            ? { mode, untilTurn: everyTurn.untilTurn > 0 ? everyTurn.untilTurn : 5 }
+            : mode === 'always'
+              ? { mode, untilTurn: 0 }
+              : { mode },
+          true,
+        )
+      const toggleCheck = (id, on) => {
+        const set = new Set(everyTurn.checks)
+        if (on) set.add(id)
+        else set.delete(id)
+        editEveryTurn({ checks: ['zh', 'four', 'noLeak', 'firstPerson'].filter((key) => set.has(key)) }, true)
+      }
+      const overrideNow = (action) =>
+        void writeEveryTurn(everyTurn, action)
+          .then(() => flash(t('everyTurnOverrideSaved')))
+          .catch(() => setStatus('error'))
+      const radio = (mode, label) =>
+        h(
+          'label',
+          { key: mode, style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+          h('input', { type: 'radio', name: `prefill-everyturn-mode-${sessionId}`, checked: everyTurn.mode === mode, 'data-prefill-everyturn-mode': mode, onChange: () => setMode(mode) }),
+          label,
+        )
+      const numberInput = (key, value, min, attr) =>
+        h('input', {
+          type: 'number',
+          min,
+          step: 1,
+          value: String(value),
+          style: { ...V.input, width: 52, flex: '0 0 auto' },
+          [attr]: '1',
+          onChange: (event) => editEveryTurn({ auto: { ...everyTurn.auto, [key]: event.target.value } }, false),
+        })
       const everyTurnSection = h(
         Section,
         {
           id: 'every-turn',
           title: t('everyTurnTitle'),
           meta: everyTurnActive
-            ? `≈${estimateTokens(everyTurn.text)} tok/${t('turnsUnit')}${everyTurn.untilTurn > 0 ? ` · ≤${everyTurn.untilTurn}` : ''}`
+            ? autoStatus !== null
+              ? t('everyTurnStateMeta').replace('{state}', autoStateText)
+              : `≈${estimateTokens(everyTurn.text)} tok/${t('turnsUnit')}${everyTurn.mode === 'until' && everyTurn.untilTurn > 0 ? ` · ≤${everyTurn.untilTurn}` : ''}`
             : t('everyTurnOffMeta'),
           open: open.everyTurn,
           onToggle: () => toggle('everyTurn'),
@@ -3489,7 +3738,18 @@ window.__ModuleLoader__.load({
                 style: everyTurn.text === preset.text && everyTurn.firstText === (preset.firstText ?? '') ? V.btn : V.btnGhost,
                 title: preset.desc,
                 'data-prefill-everyturn-preset': preset.id,
-                onClick: () => editEveryTurn({ enabled: true, text: preset.text, firstText: preset.firstText ?? '' }, true),
+                onClick: () =>
+                  editEveryTurn(
+                    {
+                      enabled: true,
+                      text: preset.text,
+                      firstText: preset.firstText ?? '',
+                      checks: Array.isArray(preset.checks) ? preset.checks : [],
+                      // 不支持自动的预设（简短思考）选中时，从自动退回一直注入。
+                      ...(everyTurn.mode === 'auto' && !Array.isArray(preset.checks) ? { mode: 'always', untilTurn: 0 } : {}),
+                    },
+                    true,
+                  ),
               },
               h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, glyph(preset, 13), preset.name),
             ),
@@ -3515,19 +3775,97 @@ window.__ModuleLoader__.load({
         }),
         h(
           'div',
-          { style: { ...V.row, gap: 6, fontSize: 12 } },
-          h('span', null, t('everyTurnUntil')),
-          h('input', {
-            type: 'number',
-            min: 0,
-            step: 1,
-            value: String(everyTurn.untilTurn),
-            style: { ...V.input, width: 64 },
-            'data-prefill-everyturn-until': '1',
-            onChange: (event) => editEveryTurn({ untilTurn: event.target.value }, false),
-          }),
-          h('span', null, t('everyTurnUntilUnit')),
+          { style: { ...V.row, gap: 10, fontSize: 12, flexWrap: 'wrap' } },
+          h('span', { style: V.sectionMeta }, t('everyTurnMode')),
+          radio('always', t('everyTurnModeAlways')),
+          radio('until', t('everyTurnModeUntil')),
+          radio('auto', t('everyTurnModeAuto')),
         ),
+        everyTurn.mode === 'until'
+          ? h(
+              'div',
+              { style: { ...V.row, gap: 6, fontSize: 12 } },
+              h('span', null, t('everyTurnUntil')),
+              h('input', {
+                type: 'number',
+                min: 1,
+                step: 1,
+                value: String(everyTurn.untilTurn),
+                style: { ...V.input, width: 64 },
+                'data-prefill-everyturn-until': '1',
+                onChange: (event) => editEveryTurn({ untilTurn: event.target.value }, false),
+              }),
+              h('span', null, t('turnsUnit')),
+            )
+          : null,
+        everyTurn.mode === 'auto'
+          ? h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-everyturn-auto': '1' },
+              h('div', { style: V.hint }, t('everyTurnAutoHint')),
+              h(
+                'div',
+                { style: { ...V.row, gap: 10, flexWrap: 'wrap', fontSize: 12 } },
+                h('span', { style: V.sectionMeta }, t('everyTurnChecks')),
+                ...['zh', 'four', 'noLeak', 'firstPerson'].map((id) =>
+                  h(
+                    'label',
+                    { key: id, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+                    h('input', { type: 'checkbox', checked: everyTurn.checks.includes(id), 'data-prefill-everyturn-check': id, onChange: (event) => toggleCheck(id, event.target.checked) }),
+                    t(`everyTurnCheck_${id}`),
+                  ),
+                ),
+              ),
+              everyTurn.checks.length === 0 ? h('div', { style: V.callout('warn') }, t('everyTurnNoChecks')) : null,
+              h(
+                'details',
+                { style: { fontSize: 12 } },
+                h('summary', { style: { cursor: 'pointer', color: 'var(--dsw-alias-label-secondary)' } }, t('everyTurnAdvanced')),
+                h(
+                  'div',
+                  { style: { ...V.row, gap: 6, flexWrap: 'wrap', marginTop: 4 } },
+                  h('span', null, t('everyTurnWarmup')),
+                  numberInput('warmup', everyTurn.auto.warmup, 0, 'data-prefill-everyturn-warmup'),
+                  h('span', null, `${t('everyTurnTurns')} ·`),
+                  h('span', null, t('everyTurnStreak')),
+                  numberInput('streak', everyTurn.auto.streak, 1, 'data-prefill-everyturn-streak'),
+                  h('span', null, `${t('everyTurnTurns')} ·`),
+                  h('span', null, t('everyTurnProbation')),
+                  numberInput('probation', everyTurn.auto.probation, 1, 'data-prefill-everyturn-probation'),
+                  h('span', null, t('everyTurnTurns')),
+                ),
+              ),
+              autoStatus !== null
+                ? h(
+                    'div',
+                    { style: { ...V.row, gap: 8, flexWrap: 'wrap', fontSize: 12 } },
+                    h('span', { 'data-prefill-everyturn-state': autoStatus.state, title: autoStatus.reason }, autoStateText),
+                    h(
+                      'span',
+                      { style: { display: 'inline-flex', gap: 3, alignItems: 'center' }, 'data-prefill-everyturn-dots': '1' },
+                      ...autoStatus.history.slice(-12).map((row) =>
+                        h('span', {
+                          key: row.turn,
+                          title: verdictTitle(row),
+                          style: {
+                            width: 8,
+                            height: 8,
+                            borderRadius: 4,
+                            boxSizing: 'border-box',
+                            // 实心 = 那一轮发了注入；空心 = 没发
+                            background: row.injected ? verdictColor[row.verdict] : 'transparent',
+                            border: `2px solid ${verdictColor[row.verdict]}`,
+                          },
+                        }),
+                      ),
+                    ),
+                    autoStatus.inject
+                      ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-everyturn-pause': '1', onClick: () => overrideNow('pause') }, t('everyTurnPause'))
+                      : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-everyturn-resume': '1', onClick: () => overrideNow('resume') }, t('everyTurnResume')),
+                  )
+                : null,
+            )
+          : null,
         h(
           'label',
           { style: { ...V.row, gap: 6, fontSize: 12 } },
