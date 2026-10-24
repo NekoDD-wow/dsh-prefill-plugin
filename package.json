@@ -16,6 +16,7 @@
     "builtin-presets.js",
     "character-cards.js",
     "session-history.js",
+    "inject-auto.js",
     "gate.js",
     "index.js",
     "client.js",
