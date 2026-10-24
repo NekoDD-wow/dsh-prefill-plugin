@@ -1,6 +1,12 @@
-# dsh-prefill · 预填装
+# dsh-prefill-plugin
 
-DSH（DeepSeek Harness）Web 端插件：在会话开始前替模型"准备好"它该知道的东西。
+DSH（DeepSeek Harness）Web 端「预填装」插件：在会话开始前替模型"准备好"它该知道的东西 —— 换系统提示、写开场对话、每轮注入提醒、套角色卡，都在同一个面板里；每项都能**单独停用但保留内容**。
+
+![预填装卡片](assets/panel.png)
+
+<sub>点输入框里的「预填装」芯片弹出卡片，左栏分项、右栏只显示选中那一项；上图是套了内置预设「温柔学姐」的样子。深色主题同样跟 DSH 的配色变量走：</sub>
+
+<img src="assets/panel-dark.png" width="720" alt="深色主题下的预填装卡片">
 
 - **预设**：一键套用纯净模式、自定义系统提示、中文版官方系统提示，或 7 个人格 / 角色扮演（温柔学姐、苏格拉底导师、毒舌代码审查官、猫娘助手小咪、武侠说书人、名侦探、文字冒险主持人），也能把自己的配置存成预设、导入导出。
 - **系统提示**：三种模式。「追加」在默认提示里加一段（工具、工作区、审批都照旧）；「替换正文·保留工具」用你的文字替换默认提示正文，工具和运行时上下文照旧（内置「🀄 中文版官方系统提示」就是这种）；「接管」让系统提示只剩你写的这段，不带工具和运行时上下文，效果等同用脚本直接调 API。要停用就关掉左栏「系统提示」的开关，正文保留。
@@ -8,20 +14,27 @@ DSH（DeepSeek Harness）Web 端插件：在会话开始前替模型"准备好"�
 - **改写注入**（高级）：把 harness 送进去的某条注入换成你的版本，只在本会话生效。
 - **用量与缓存**：逐轮显示未命中输入、缓存命中、输出、命中率、系统提示字数和工具个数，数据与 dsh 底栏同源。
 
-适配 DSH `0.2.0-rc.2`（同时保留 `0.1.7-rc.2` 的兼容声明）。
+适配 DSH `0.2.x`：`package.json` 里声明 `0.1.7-rc.2` / `0.2.0-rc.2`，日常开发与实测在 `0.2.1-rc.1` 上。
 
 ## 安装
 
 ```bash
-dsh plugin --profile web add /绝对路径/dsh-prefill/prefill-plugin
+git clone https://github.com/NekoDD-wow/dsh-prefill-plugin.git
+dsh plugin --profile web add /clone 下来的绝对路径/dsh-prefill-plugin
 ```
 
-装好后重启 `dsh web`。进入任意会话，输入框下方会多出两颗芯片：
+插件就在仓库根目录（不用再进子目录），Windows / WSL 路径都行。装好后**重启** `dsh web`（壳在启动时挂载；只改面板界面刷新页面即可）。
+
+进入任意会话，输入框下方会多出两颗芯片：
 
 | 芯片 | 作用 |
 |---|---|
 | 预填装 | 点一下在输入框上方弹出预填装卡片，再点收起；芯片上显示当前预设名和每项一个彩点（关掉的项是灰点） |
 | 纯净 | 一键切到纯净（不发系统提示、运行时上下文和工具）；有自定义系统提示时显示「接管·开」 |
+
+![芯片](assets/chip.png)
+
+芯片上显示当前预设名和每项一个彩点：关掉的项是灰点，开着但没内容的项是空心点。
 
 > 以前的 `pure-preset` 已经不需要了，纯净态由本插件完全接管。
 
@@ -72,14 +85,14 @@ dsh plugin --profile web add /绝对路径/dsh-prefill/prefill-plugin
 
 ## 控制思维链（实测）
 
-想让模型用中文思考、按固定格式思考、或用角色第一人称思考，在 step-5-preview 上**写进系统提示基本无效**，要用面板里的 **「每轮注入」**
+想让模型用中文思考、按固定格式思考、或用角色第一人称思考，在 step-5-preview 上**写进系统提示基本无效**，要用面板里的 **「每轮注入」**。
 
 不同模型差别（2026-10-18 实测 step-5-preview 与 DeepSeek V4.1 Flash）：
 - **思考语言**：两个都只认每轮注入，系统提示和工具说明全换中文也没用；
 - **第一人称 / 人设**：V4.1 Flash 写进系统提示就有效，step-5 不行；
 - **四段格式**：只有 step-5 能用每轮注入控住，V4.1 Flash 会把四段写进回答正文。
 
-：勾"启用"，点一个预设（中文思考 / 四段式思考 / 第一人称思考 / 角色扮演强化 / 简短思考）或自己写。
+用法：在左栏「每轮注入」里打开它，点一个预设（中文思考 / 四段式思考 / 第一人称思考 / 角色扮演强化 / 简短思考）或自己写。
 
 - 每轮在你的消息前插一条提醒，从下一条消息起生效；每轮多几十到一百多 token，缓存命中率基本不变（实测 94–95%）。
 - 注入方式三选一：**一直注入**；**只注入前 N 轮**（注入过的提醒会留在历史里，停掉后格式大体还能保持，实测 12 轮里停后 7 轮有 6 轮保持）；**自动**（v0.9，见下）。
@@ -106,7 +119,7 @@ dsh plugin --profile web add /绝对路径/dsh-prefill/prefill-plugin
 - 内置预设里「简短思考」不支持自动（判断问题难不难超出规则能力）；自己写的提醒要手动勾检查项。
 - 角色卡勾了「中文思考 / 第一人称思考」时，卡的强化提醒默认就是自动；卡里写了 `untilTurn` 的照旧「只注入前 N 轮」。
 
-实测数据和完整对话见 [`tests/reasoning-lab`](../tests/reasoning-lab/README.md)。
+实测数据和完整对话见实验室仓库的 [`tests/reasoning-lab`](https://github.com/NekoDD-wow/dsh-prefill/tree/main/tests/reasoning-lab)。
 
 ## 角色卡（角色扮演）
 
@@ -132,6 +145,7 @@ dsh plugin --profile web add /绝对路径/dsh-prefill/prefill-plugin
 | `builtin-presets.js` | 内置预设（纯净、自定义系统提示、7 个人格） |
 | `session-history.js` | 把会话事件转成开场对话条目（「从当前会话取」，纯函数） |
 | `inject-auto.js` | 每轮注入自动收放：按轮切分、规则打分、状态机重放（纯函数） |
+| `enabled.js` | 左栏每项的启用开关：折算后的状态视图（纯函数，状态本身不落盘） |
 | `character-cards.js` | 角色卡：解析 JSON / PNG 卡、编译成人设段 + 开场白 + 每轮提醒（纯函数） |
 | `client.js` | 浏览器端：输入框芯片、预填装面板、设置页、会话顶栏徽标 |
 
@@ -144,9 +158,20 @@ dsh plugin --profile web add /绝对路径/dsh-prefill/prefill-plugin
 ## 开发
 
 ```bash
-npm test        # node --test tests/*.test.mjs（75 项）
+npm test        # node --test tests/*.test.mjs（69 项）
 ```
 
 单测覆盖：每轮注入的规则打分与状态机（`inject-auto`）、左栏启用开关（`enabled`）、角色卡编译（`character-cards`）、会话转开场条目（`session-history`）、故事记忆（`story-memory`）、预设整体保存 / 套用（`preset-whole`）。
 
 真机点击的实测（拟人操作 + 会话日志核对）在实验室仓库 [dsh-prefill](https://github.com/NekoDD-wow/dsh-prefill) 的 `tests/reasoning-lab/`；本仓库只放插件本体与单测。
+
+## 两个仓库
+
+| 仓库 | 放什么 |
+|---|---|
+| **dsh-prefill-plugin**（本仓库） | 插件本体 + 单测（`npm test`）。安装就指这里。 |
+| [dsh-prefill](https://github.com/NekoDD-wow/dsh-prefill) | 实测实验室：拟人点击脚本、逐轮 transcript、思维链指标与报告、设计稿。 |
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。图标来自 [Lucide](https://lucide.dev)（ISC 许可），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；`samples/cards/` 里的社区卡各自署名见该目录的 README。
