@@ -2,7 +2,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { FEATURES, applyEnabled, everyTurnFingerprint, fingerprint, isEnabled, sanitizeEnabled, toolsFingerprint } from '../enabled.js'
+import { FEATURES, applyEnabled, everyTurnFingerprint, everyTurnOn, fingerprint, isEnabled, sanitizeEnabled, toolsFingerprint } from '../enabled.js'
 import { everyTurnFor, loreFor, memoryFor } from '../gate.js'
 
 const SID = 'session-a'
@@ -113,6 +113,30 @@ test('预设往返：只存关掉的项；套用时整体替换，缺 = 全开',
   assert.match(client, /patch\.enabled = pack\.enabled/)
   assert.match(client, /enabled: without\(st\?\.enabled, sessionId\)/)
   assert.match(client, /op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled/)
+})
+
+test('每轮注入只有一个开关：旧版 entry.enabled=false 也算关，且 client 与服务端同规则', () => {
+  const S = 'session-a'
+  assert.equal(everyTurnOn({}, S), true)
+  assert.equal(everyTurnOn({ enabled: { [S]: { everyTurn: false } } }, S), false)
+  assert.equal(everyTurnOn({ everyTurn: { [S]: { enabled: false } } }, S), false)
+  assert.equal(everyTurnOn({ everyTurn: { [S]: { enabled: true } }, enabled: { [S]: {} } }, S), true)
+  // 面板里那份实现（不能 import 服务端模块，规则抄一份）必须逐值一致
+  const client = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const body = client.slice(client.indexOf('function everyTurnSwitchOn('), client.indexOf('const tint ='))
+  // eslint-disable-next-line no-new-func
+  const clientFn = new Function(`${body}; return everyTurnSwitchOn`)()
+  for (const st of [{}, { enabled: { [S]: { everyTurn: false } } }, { everyTurn: { [S]: { enabled: false } } }, { everyTurn: { [S]: { enabled: true } } }, { everyTurn: { [S]: null } }]) {
+    assert.equal(clientFn(st, S), everyTurnOn(st, S), JSON.stringify(st))
+  }
+})
+
+test('面板里不再有第二个「启用」勾选框，写入也不再落 enabled:false', () => {
+  const client = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(client, /data-prefill-everyturn-toggle/)
+  assert.doesNotMatch(client, /enabled: nextValue\.enabled === true/)
+  // 打开左栏开关时顺手把旧值清成 true（否则「开关开着也不注入」）
+  assert.match(client, /ownTurn\.enabled !== true/)
 })
 
 test('client 与 enabled.js 用同一份指纹', () => {

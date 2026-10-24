@@ -22,14 +22,15 @@ window.__ModuleLoader__.load({
     /**
      * 图标：Lucide（https://lucide.dev，ISC 许可，见 THIRD_PARTY_NOTICES.md）。
      * 只内联用到的几个，按名字取；没有对应图标时回落到 emoji 文本（兼容旧的文件预设）。
+     * pin / chevron-down 取自 lucide-static 1.61.0（ISC），其余 1.59.0。
      */
-    const ICONS = {"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"castle":[["path",{"d":"M10 5V3"}],["path",{"d":"M14 5V3"}],["path",{"d":"M15 21v-3a3 3 0 0 0-6 0v3"}],["path",{"d":"M18 3v8"}],["path",{"d":"M18 5H6"}],["path",{"d":"M22 11H2"}],["path",{"d":"M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9"}],["path",{"d":"M6 3v8"}]],"cat":[["path",{"d":"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"}],["path",{"d":"M8 14v.5"}],["path",{"d":"M16 14v.5"}],["path",{"d":"M11.25 16.25h1.5L12 17l-.75-.75Z"}]],"contact":[["path",{"d":"M16 2v2"}],["path",{"d":"M7 21v-2a2 2 0 012-2h6a2 2 0 012 2v2"}],["path",{"d":"M8 2v2"}],["circle",{"cx":"12","cy":"10","r":"3"}],["rect",{"x":"3","y":"3","width":"18","height":"18","rx":"2"}]],"download":[["path",{"d":"M12 15V3"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}],["path",{"d":"m7 10 5 5 5-5"}]],"drama":[["path",{"d":"M10 11h.01"}],["path",{"d":"M14 6h.01"}],["path",{"d":"M18 6h.01"}],["path",{"d":"M6.5 13.1h.01"}],["path",{"d":"M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3"}],["path",{"d":"M17.4 9.9c-.8.8-2 .8-2.8 0"}],["path",{"d":"M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7"}],["path",{"d":"M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"flame":[["path",{"d":"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"}]],"flower-2":[["path",{"d":"M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"}],["circle",{"cx":"12","cy":"8","r":"2"}],["path",{"d":"M12 10v12"}],["path",{"d":"M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"}],["path",{"d":"M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"image":[["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2","ry":"2"}],["circle",{"cx":"9","cy":"9","r":"2"}],["path",{"d":"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"}]],"languages":[["path",{"d":"m5 8 6 6"}],["path",{"d":"m4 14 6-6 2-3"}],["path",{"d":"M2 5h12"}],["path",{"d":"M7 2h1"}],["path",{"d":"m22 22-5-10-5 10"}],["path",{"d":"M14 18h6"}]],"layout-list":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}],["path",{"d":"M14 4h7"}],["path",{"d":"M14 9h7"}],["path",{"d":"M14 15h7"}],["path",{"d":"M14 20h7"}]],"message-circle-question":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"message-circle":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}]],"paw-print":[["circle",{"cx":"11","cy":"4","r":"2"}],["circle",{"cx":"18","cy":"8","r":"2"}],["circle",{"cx":"20","cy":"16","r":"2"}],["path",{"d":"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"}]],"pen-line":[["path",{"d":"M13 21h8"}],["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}]],"play":[["path",{"d":"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"scan-search":[["path",{"d":"M3 7V5a2 2 0 0 1 2-2h2"}],["path",{"d":"M17 3h2a2 2 0 0 1 2 2v2"}],["path",{"d":"M21 17v2a2 2 0 0 1-2 2h-2"}],["path",{"d":"M7 21H5a2 2 0 0 1-2-2v-2"}],["circle",{"cx":"12","cy":"12","r":"3"}],["path",{"d":"m16 16-1.9-1.9"}]],"scroll-text":[["path",{"d":"M15 12h-5"}],["path",{"d":"M15 8h-5"}],["path",{"d":"M19 17V5a2 2 0 0 0-2-2H4"}],["path",{"d":"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"}]],"scissors":[["circle",{"cx":"6","cy":"6","r":"3"}],["path",{"d":"M8.12 8.12 12 12"}],["path",{"d":"M20 4 8.12 15.88"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M14.8 14.8 20 20"}]],"sword":[["path",{"d":"m11 19-6-6"}],["path",{"d":"m5 21-2-2"}],["path",{"d":"m8 16-4 4"}],["path",{"d":"M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5"}]],"trash-2":[["path",{"d":"M10 11v6"}],["path",{"d":"M14 11v6"}],["path",{"d":"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}],["path",{"d":"M3 6h18"}],["path",{"d":"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],"upload":[["path",{"d":"M12 3v12"}],["path",{"d":"m17 8-5-5-5 5"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"wrench":[["path",{"d":"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]]}
+    const ICONS = {"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"castle":[["path",{"d":"M10 5V3"}],["path",{"d":"M14 5V3"}],["path",{"d":"M15 21v-3a3 3 0 0 0-6 0v3"}],["path",{"d":"M18 3v8"}],["path",{"d":"M18 5H6"}],["path",{"d":"M22 11H2"}],["path",{"d":"M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9"}],["path",{"d":"M6 3v8"}]],"chevron-down":[["path",{"d":"m6 9 6 6 6-6"}]],"cat":[["path",{"d":"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"}],["path",{"d":"M8 14v.5"}],["path",{"d":"M16 14v.5"}],["path",{"d":"M11.25 16.25h1.5L12 17l-.75-.75Z"}]],"contact":[["path",{"d":"M16 2v2"}],["path",{"d":"M7 21v-2a2 2 0 012-2h6a2 2 0 012 2v2"}],["path",{"d":"M8 2v2"}],["circle",{"cx":"12","cy":"10","r":"3"}],["rect",{"x":"3","y":"3","width":"18","height":"18","rx":"2"}]],"download":[["path",{"d":"M12 15V3"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}],["path",{"d":"m7 10 5 5 5-5"}]],"drama":[["path",{"d":"M10 11h.01"}],["path",{"d":"M14 6h.01"}],["path",{"d":"M18 6h.01"}],["path",{"d":"M6.5 13.1h.01"}],["path",{"d":"M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3"}],["path",{"d":"M17.4 9.9c-.8.8-2 .8-2.8 0"}],["path",{"d":"M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7"}],["path",{"d":"M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"flame":[["path",{"d":"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"}]],"flower-2":[["path",{"d":"M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"}],["circle",{"cx":"12","cy":"8","r":"2"}],["path",{"d":"M12 10v12"}],["path",{"d":"M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"}],["path",{"d":"M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"image":[["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2","ry":"2"}],["circle",{"cx":"9","cy":"9","r":"2"}],["path",{"d":"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"}]],"languages":[["path",{"d":"m5 8 6 6"}],["path",{"d":"m4 14 6-6 2-3"}],["path",{"d":"M2 5h12"}],["path",{"d":"M7 2h1"}],["path",{"d":"m22 22-5-10-5 10"}],["path",{"d":"M14 18h6"}]],"layout-list":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}],["path",{"d":"M14 4h7"}],["path",{"d":"M14 9h7"}],["path",{"d":"M14 15h7"}],["path",{"d":"M14 20h7"}]],"message-circle-question":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"message-circle":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}]],"paw-print":[["circle",{"cx":"11","cy":"4","r":"2"}],["circle",{"cx":"18","cy":"8","r":"2"}],["circle",{"cx":"20","cy":"16","r":"2"}],["path",{"d":"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"}]],"pen-line":[["path",{"d":"M13 21h8"}],["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}]],"pin":[["path",{"d":"M12 17v5"}],["path",{"d":"M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"}]],"play":[["path",{"d":"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"scan-search":[["path",{"d":"M3 7V5a2 2 0 0 1 2-2h2"}],["path",{"d":"M17 3h2a2 2 0 0 1 2 2v2"}],["path",{"d":"M21 17v2a2 2 0 0 1-2 2h-2"}],["path",{"d":"M7 21H5a2 2 0 0 1-2-2v-2"}],["circle",{"cx":"12","cy":"12","r":"3"}],["path",{"d":"m16 16-1.9-1.9"}]],"scroll-text":[["path",{"d":"M15 12h-5"}],["path",{"d":"M15 8h-5"}],["path",{"d":"M19 17V5a2 2 0 0 0-2-2H4"}],["path",{"d":"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"}]],"scissors":[["circle",{"cx":"6","cy":"6","r":"3"}],["path",{"d":"M8.12 8.12 12 12"}],["path",{"d":"M20 4 8.12 15.88"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M14.8 14.8 20 20"}]],"sword":[["path",{"d":"m11 19-6-6"}],["path",{"d":"m5 21-2-2"}],["path",{"d":"m8 16-4 4"}],["path",{"d":"M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5"}]],"trash-2":[["path",{"d":"M10 11v6"}],["path",{"d":"M14 11v6"}],["path",{"d":"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}],["path",{"d":"M3 6h18"}],["path",{"d":"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],"upload":[["path",{"d":"M12 3v12"}],["path",{"d":"m17 8-5-5-5 5"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"wrench":[["path",{"d":"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]]}
     /** 有正文的条目数：空行（点了加行没填）发送时会被跳过，不算进「N 条」（issue #1）。 */
     function countFilled(items) {
       return Array.isArray(items) ? items.filter((item) => typeof item?.text === 'string' && item.text.trim() !== '').length : 0
     }
 
-    function Icon({ name, size = 14 }) {
+    function Icon({ name, size = 14, fill = 'none' }) {
       const shape = ICONS[name]
       if (shape === undefined) return null
       return h(
@@ -38,7 +39,7 @@ window.__ModuleLoader__.load({
           width: size,
           height: size,
           viewBox: '0 0 24 24',
-          fill: 'none',
+          fill,
           stroke: 'currentColor',
           strokeWidth: 2,
           strokeLinecap: 'round',
@@ -95,6 +96,15 @@ window.__ModuleLoader__.load({
     const CARD_EVENT = 'dsh-prefill:card'
     const cardOpenMap = new Map()
     const chipSummary = new Map()
+    /** 卡片被「点外面」关掉的时刻（按会话）：同一下点击落到芯片上时，芯片不再把它重新打开（v0.10.1 芯片收不起来的修复）。 */
+    const autoClosedAt = new Map()
+    /** 事件路径里有没有带某个属性的元素（composedPath：芯片在 shadow DOM 里时 event.target 会被改成宿主）。 */
+    function pathHas(event, attr) {
+      const path = typeof event?.composedPath === 'function' ? event.composedPath() : []
+      for (const node of path) if (node instanceof Element && node.hasAttribute(attr)) return true
+      const target = event?.target
+      return target instanceof Element && target.closest(`[${attr}]`) !== null
+    }
     function setCardOpen(sessionId, open) {
       cardOpenMap.set(sessionId, open === true)
       try {
@@ -141,6 +151,18 @@ window.__ModuleLoader__.load({
       let hash = 5381
       for (let at = 0; at < source.length; at += 1) hash = ((hash << 5) + hash + source.charCodeAt(at)) | 0
       return (hash >>> 0).toString(16)
+    }
+    /**
+     * 「每轮注入」这一项开没开：左栏开关（state.enabled）+ 旧版条目自带的 enabled 一起看。
+     * 0.11 之前这个开关是面板里那个「启用」勾选框，写的是 state.everyTurn[会话].enabled；
+     * 两个开关并存会打架：勾选框关过、之后用左栏开关打开时 entry.enabled 还是 false
+     * ⇒ everyTurnFor() 返回 undefined，开关是开的、芯片点也亮着，却一轮都不注入。
+     * 规则与 enabled.js 的 everyTurnOn 一致（面板不能 import 服务端模块，抄一份，测试比对）。
+     */
+    function everyTurnSwitchOn(state, sessionId) {
+      if (state?.enabled?.[sessionId]?.everyTurn === false) return false
+      const own = state?.everyTurn?.[sessionId]
+      return !(own !== null && typeof own === 'object' && own.enabled === false)
     }
     const tint = (color, pct = 12) => `color-mix(in srgb, ${color} ${pct}%, var(--dsw-alias-bg-base))`
     const num = (value) => (Number.isFinite(value) ? Math.round(value).toLocaleString('en-US') : '—')
@@ -546,7 +568,6 @@ window.__ModuleLoader__.load({
       presetClear: '取消预设',
       groupBuiltin: '内置',
       groupMine: '我的',
-      manageHide: '收起',
       presetsHint: '点一下即套用：下面的角色卡、系统提示、每轮注入、开场对话、改写注入内容和工具权限整体换成这个预设。首轮前套用从第一轮生效；会话开跑后套用从下一轮生效。',
       footPure: '系统提示 0 · 工具 0',
       footTakeover: '系统提示完全由你写',
@@ -560,14 +581,42 @@ window.__ModuleLoader__.load({
       savePack: '保存为预设',
       needName: '先在左边输入预设名',
       historyOpen: '从当前会话取',
-      historyTip: '把这个会话里已经发生的对话存成预设的开场对话，新会话套用后从这里接着聊',
-      historyHint: '取用户原话和 AI 回答，存成开场对话（预设名用上面输入框里的）。插件注入（每轮注入、世界书、故事记忆）和工具调用不会带上；系统提示、工具权限照「保存为预设」一并保存。新会话套用后，首轮写进历史。',
+      historyTip: '取这个会话第 N–M 轮的用户原话和 AI 回答，放进下面的开场对话（可编辑）；再点「保存 / 另存为」存进预设，新会话套用后从这里接着聊。插件注入和工具调用不带，也不会改动本会话已经发出的历史。',
       historyReasoning: '带上思维链',
-      historyToTurn: '截至第',
-      historyTurnUnit: '轮（留空 = 全部）',
+      rangeFrom: '第',
+      rangeTo: '轮 到 第',
+      rangeUnit: '轮',
+      rangeEnd: '末',
+      fetchGot: '已取到',
+      fetchBig: '内容约 {tok} tok，超过 {limit} tok：套用这个预设后每个新会话首轮都要多付这么多输入，列表也会变长。确定要放进来吗？',
+      fetchReplace: '替换现有',
+      fetchInsert: '插入到',
+      fetchAtTop: '最前面',
+      fetchAfterN: '第 {n} 条后',
+      fetchAtEnd: '（末尾）',
+      fetchPut: '放进开场对话',
+      fetchPlaced: '已放进 {n} 条，记得保存预设',
+      fetchReplaced: '已替换开场对话。',
+      fetchInserted: '已插入开场对话。',
+      fetchCleared: '已清空开场对话。',
+      undo: '撤销',
+      cancel: '取消',
+      rowExpand: '展开全文（≈{tok} tok）',
+      rowCollapse: '收起',
+      rowsLoading: '还有 {n} 条正在载入…',
+      seedFetch: '从当前会话取摘要',
+      seedTip: '把本会话的故事记忆摘要随预设保存；新会话套用后作为前情提要。开场对话是从会话里截取的，摘要就不能晚于截取的末轮。',
+      seedReady: '保存预设时会带上摘要（覆盖到第 {n} 轮，≈{tok} tok）',
+      seedNone: '这个会话还没有故事记忆摘要',
+      seedLate: '摘要覆盖到第 {n} 轮，晚于开场对话截取的第 {m} 轮，不能带上',
+      seedDropped: '开场对话改成只到第 {m} 轮，摘要（到第 {n} 轮）已不再带上',
+      seedDrop: '不带',
+      collapseCard: '收起卡片',
+      pinOn: '钉住',
+      pinOff: '取消钉住',
+      markerTip: '预填装（已钉住）· 悬停或点一下展开',
       historyMeta: '{turns} 轮 · {n} 条 · ≈{tok} tok',
       historyTools: ' · 已略过 {n} 次工具调用',
-      historySave: '存为预设',
       historyEmpty: '这个会话还没有可取的对话',
       savedAs: '已保存为',
       deleted: '已删除',
@@ -588,7 +637,6 @@ window.__ModuleLoader__.load({
       modeReplace: '替换正文·保留工具',
       everyTurnTitle: '每轮注入',
       everyTurnOffMeta: '关',
-      everyTurnOn: '启用',
       everyTurnHint: '每轮在你的消息之前自动插一条提醒，模型每轮都会重新看到。实测在 step-5 上比系统提示管用得多：思维链语言、格式、人称都靠它稳住。代价：每轮多几十到一百多 token（会写进历史），前缀不变，缓存命中率基本不受影响。',
       everyTurnPresets: '常用：',
       everyTurnPlaceholder: '每轮要提醒模型的话。例如：本轮思维链请全程用中文。',
@@ -625,9 +673,6 @@ window.__ModuleLoader__.load({
       everyTurnStateNoChecks: '没有检查项（一直注入）',
       everyTurnStateMeta: '自动 · {state}',
       everyTurnOverrideSaved: '已记下，从下一条消息起生效',
-      historyWithEveryTurn: '带上每轮注入设置',
-      historyWithMemory: '带上故事记忆摘要',
-      historyMemoryLate: '摘要覆盖到第 {n} 轮，晚于截取点',
       packCardMissing: '已套用；预设里的角色卡找不到了，这一项跳过',
       presetContentHint: '下面这些都属于当前预设：保存时一起存，套用时整体替换（预设里没有的项恢复默认）。',
       memorySeedApplied: '已带入故事记忆摘要',
@@ -766,7 +811,6 @@ window.__ModuleLoader__.load({
       presetClear: 'Clear preset',
       groupBuiltin: 'Built-in',
       groupMine: 'Mine',
-      manageHide: 'Hide',
       presetsHint: 'Click to apply it: the character card, system prompt, every-turn injection, opening dialogue, injection rewrites and tool access below are all replaced by this preset. Before the first turn it applies from turn 1; afterwards from the next turn.',
       footPure: 'system 0 · tools 0',
       footTakeover: 'you write the whole system prompt',
@@ -779,14 +823,42 @@ window.__ModuleLoader__.load({
       packNamePlaceholder: 'Name the current setup, e.g. Weekly report helper',
       needName: 'Type a preset name first',
       historyOpen: 'From this session',
-      historyTip: 'Save the conversation so far as the opening dialogue of a preset, so a new session can pick up from here',
-      historyHint: 'Takes your messages and the AI answers and saves them as opening dialogue (named by the box above). Plugin injects (every-turn, lore, story memory) and tool calls are left out; the system prompt and tool access are saved like "Save as preset". A new session that applies it writes them into history on turn 1.',
+      historyTip: 'Take your messages and the AI answers from turns N–M of this session into the opening dialogue below (editable); then Save / Save as to keep them in a preset. Plugin injects and tool calls are left out, and the history this session already sent is not changed.',
       historyReasoning: 'Include reasoning',
-      historyToTurn: 'Up to turn',
-      historyTurnUnit: '(empty = all)',
+      rangeFrom: 'Turns',
+      rangeTo: 'to',
+      rangeUnit: '',
+      rangeEnd: 'end',
+      fetchGot: 'Fetched',
+      fetchBig: 'About {tok} tok, more than {limit} tok: every new session using this preset pays that much extra input on turn 1, and the list gets long. Add it anyway?',
+      fetchReplace: 'Replace',
+      fetchInsert: 'Insert',
+      fetchAtTop: 'at the top',
+      fetchAfterN: 'after row {n}',
+      fetchAtEnd: ' (end)',
+      fetchPut: 'Add to opening dialogue',
+      fetchPlaced: 'Added {n} rows — remember to save the preset',
+      fetchReplaced: 'Opening dialogue replaced.',
+      fetchInserted: 'Rows inserted.',
+      fetchCleared: 'Opening dialogue cleared.',
+      undo: 'Undo',
+      cancel: 'Cancel',
+      rowExpand: 'Show all (≈{tok} tok)',
+      rowCollapse: 'Collapse',
+      rowsLoading: '{n} more rows loading…',
+      seedFetch: 'Take summary from this session',
+      seedTip: 'Save this session\'s story memory summary with the preset; a new session gets it as a recap. When the opening dialogue is a cut of this session, the summary must not run past its last turn.',
+      seedReady: 'The summary (through turn {n}, ≈{tok} tok) will be saved with the preset',
+      seedNone: 'No story memory summary in this session yet',
+      seedLate: 'The summary covers through turn {n}, after turn {m} where the opening dialogue ends — it cannot be included',
+      seedDropped: 'The opening dialogue now ends at turn {m}; the summary (through turn {n}) is no longer included',
+      seedDrop: 'Drop',
+      collapseCard: 'Collapse card',
+      pinOn: 'Pin',
+      pinOff: 'Unpin',
+      markerTip: 'Prefill (pinned) · hover or click to expand',
       historyMeta: '{turns} turns · {n} rows · ≈{tok} tok',
       historyTools: ' · {n} tool calls skipped',
-      historySave: 'Save as preset',
       historyEmpty: 'Nothing to take from this session yet',
       savedAs: 'Saved as',
       deleted: 'Deleted',
@@ -807,7 +879,6 @@ window.__ModuleLoader__.load({
       modeReplace: 'Replace text, keep tools',
       everyTurnTitle: 'Every-turn reminder',
       everyTurnOffMeta: 'off',
-      everyTurnOn: 'Enabled',
       everyTurnHint: 'Inserts a short reminder before your message on every turn. On step-5 this steers reasoning language, format and person far better than the system prompt. Cost: a few dozen to ~100 tokens per turn (kept in history); the prefix is unchanged, so cache hits barely move.',
       everyTurnPresets: 'Presets:',
       everyTurnPlaceholder: 'What to remind the model each turn, e.g. think in Chinese this turn.',
@@ -844,9 +915,6 @@ window.__ModuleLoader__.load({
       everyTurnStateNoChecks: 'No checks (always on)',
       everyTurnStateMeta: 'auto · {state}',
       everyTurnOverrideSaved: 'Noted — applies from your next message',
-      historyWithEveryTurn: 'Include every-turn reminder settings',
-      historyWithMemory: 'Include story memory summary',
-      historyMemoryLate: 'Summary covers up to turn {n}, after the cut',
       packCardMissing: 'Applied; the character card in this preset is gone, so it was skipped',
       presetContentHint: 'Everything below belongs to the current preset: saving stores all of it, applying replaces all of it (anything the preset lacks goes back to default).',
       memorySeedApplied: 'Story memory summary carried over',
@@ -1014,9 +1082,7 @@ window.__ModuleLoader__.load({
       badgeFirst: '首轮',
       badgeTurn: '每轮',
       badgeCache: '缓存',
-      pin: '钉住',
-      pinned: '已钉住',
-      pinTip: '钉住后点卡片外面、按 Esc 都不会关',
+      pinTip: '点外面、按 Esc 都不会关；鼠标移开会缩成小标记',
       closeCard: '关闭',
       chipCardTip: '点一下打开 / 收起预填装卡片',
       chipNoPreset: '未套用预设',
@@ -1076,9 +1142,7 @@ window.__ModuleLoader__.load({
       badgeFirst: 'First',
       badgeTurn: 'Per turn',
       badgeCache: 'Cache',
-      pin: 'Pin',
-      pinned: 'Pinned',
-      pinTip: 'When pinned, clicking outside or pressing Esc does not close the card',
+      pinTip: 'Clicking outside or Esc will not close it; moving the mouse away shrinks it to a small marker',
       closeCard: 'Close',
       chipCardTip: 'Click to open / close the prefill card',
       chipNoPreset: 'no preset',
@@ -1865,9 +1929,22 @@ window.__ModuleLoader__.load({
           'aria-expanded': cardOpen ? 'true' : 'false',
           'data-prefill-chip': '1',
           title,
-          style: { ...S.gatePill(on), ...COLOR_VARS, gap: 6, maxWidth: 320, ...(cardOpen ? { boxShadow: '0 0 0 2px color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent)' } : {}) },
-          // 点一下 = 开 / 关悬浮卡片；本会话还没用预填装时先打开它，再弹出卡片。
+          'data-open': cardOpen ? 'true' : 'false',
+          style: {
+            ...S.gatePill(on),
+            ...COLOR_VARS,
+            gap: 6,
+            maxWidth: 320,
+            ...(cardOpen ? { boxShadow: '0 0 0 2px color-mix(in srgb, var(--dsw-alias-label-primary) 22%, transparent)', background: 'color-mix(in srgb, var(--dsw-alias-label-primary) 8%, var(--dsw-alias-bg-base))' } : {}),
+          },
+          // 纯开关：开着就收起（不看 on）；关着才打开，本会话还没用预填装时先打开它，再弹出卡片。
           onClick: () => {
+            if (cardOpen) {
+              setCardOpen(sessionId, false)
+              return
+            }
+            // 同一下点击已经被「点外面」关过了（芯片没被认出来时的兜底）：保持关着。
+            if (Date.now() - (autoClosedAt.get(sessionId) ?? 0) < 400) return
             if (!on) {
               void call({ prefill: { ...map, [sessionId]: 'default' } })
                 .then((data) => {
@@ -1907,6 +1984,7 @@ window.__ModuleLoader__.load({
                   }),
                 ),
               ),
+              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: 'transform 150ms ease', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
             ],
       )
     }
@@ -2080,16 +2158,65 @@ window.__ModuleLoader__.load({
      * 粗估 token：中日韩字符 ≈ 0.7 token/字，其余 ≈ 1 token/3.5 字符。
      * 只用于"大概多花多少"的提示，真实计费以底栏 / 用量卡里的接口读数为准。
      */
+    const tokenCache = new Map()
     function estimateTokens(text) {
       if (typeof text !== 'string' || text === '') return 0
+      // 长文本（取来的几百条思维链）每次渲染都逐字扫一遍会卡：按原文缓存，满了整表清掉。
+      const cached = text.length > 64 ? tokenCache.get(text) : undefined
+      if (cached !== undefined) return cached
       let cjk = 0
       for (const char of text) if (/[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(char)) cjk += 1
-      return Math.round(cjk * 0.7 + (text.length - cjk) / 3.5)
+      const value = Math.round(cjk * 0.7 + (text.length - cjk) / 3.5)
+      if (text.length > 64) {
+        if (tokenCache.size > 4000) tokenCache.clear()
+        tokenCache.set(text, value)
+      }
+      return value
     }
 
     function itemsTokens(items) {
       return (items ?? []).reduce((sum, item) => sum + estimateTokens(item?.text) + estimateTokens(item?.reasoning), 0)
     }
+
+    // <fetch-helpers> 开场对话「从当前会话取」用到的纯函数（tests/card-ux.test.mjs 从源码切出来跑）。
+    /** 取来的内容超过这么多 token（估算）就先提醒，确认后才放进列表。 */
+    const FETCH_WARN_TOK = 20000
+    /** 列表分批渲染：先画这么多条，之后每帧再加一批。 */
+    const ROW_BATCH = 40
+    /** 「第 N 轮 到 第 M 轮」→ from-session 的参数。N 缺省 1；M 留空 / 0 = 到最后；M < N 时对调。toTurn 0 = 到最后。 */
+    function fetchRange(fromRaw, toRaw) {
+      const num = (raw) => {
+        const value = Math.floor(Number(String(raw ?? '').trim()))
+        return Number.isFinite(value) && value > 0 ? value : 0
+      }
+      let fromTurn = num(fromRaw) || 1
+      let toTurn = num(toRaw)
+      if (toTurn > 0 && toTurn < fromTurn) [fromTurn, toTurn] = [toTurn, fromTurn]
+      return { fromTurn, toTurn }
+    }
+    /** 把取来的条目放进列表：replace = 整个换掉；insert = 插在第 k 条后（0 = 最前，k ≥ 条数 = 追加）。不改原数组。 */
+    function placeFetched(items, fetched, mode, k) {
+      const list = Array.isArray(items) ? items : []
+      const add = Array.isArray(fetched) ? fetched.map((item) => ({ ...item })) : []
+      if (mode === 'replace') return add
+      const at = Math.max(0, Math.min(list.length, Math.floor(Number(k)) || 0))
+      return [...list.slice(0, at), ...add, ...list.slice(at)]
+    }
+    /** 故事记忆摘要能不能随预设带上：摘要覆盖到的轮次不能晚于截取范围的末轮 M（M = 0 = 到最后，总可以）。 */
+    function seedAllowed(memory, toTurn) {
+      if (memory === null || memory === undefined || typeof memory.text !== 'string' || memory.text.trim() === '') return false
+      const to = Math.floor(Number(toTurn)) || 0
+      return to <= 0 || (Number(memory.throughTurn) || 0) <= to
+    }
+    /** 长卡片默认折叠：超过 6 行或 360 字。 */
+    function isLongText(text) {
+      if (typeof text !== 'string') return false
+      if (text.length > 360) return true
+      let lines = 1
+      for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) if ((lines += 1) > 6) return true
+      return false
+    }
+    // </fetch-helpers>
 
     /** 1234 → "1.2K"。 */
     function fmt(value) {
@@ -2407,11 +2534,42 @@ window.__ModuleLoader__.load({
       const everyTurnTimer = React.useRef(0)
       React.useEffect(() => setEveryTurnDraft(null), [sessionId])
       const [packName, setPackName] = React.useState('')
-      // 「从当前会话取」：把已发生的对话转成开场条目存成预设（v0.8）。
-      const [historyOpen, setHistoryOpen] = React.useState(false)
-      const [historyOpts, setHistoryOpts] = React.useState({ reasoning: false, toTurn: '', everyTurn: true, memory: false })
+      // 「从当前会话取」（v0.10.1 起在开场对话里）：取第 N–M 轮的原话和回答，直接放进开场对话列表。
+      const [fetchOpts, setFetchOpts] = React.useState({ reasoning: false, fromTurn: '1', toTurn: '' })
+      const [fetchBusy, setFetchBusy] = React.useState(false)
+      // 列表里已经有东西时先问：替换 / 插在第 k 条后 / 取消；超过 FETCH_WARN_TOK 也先问。
+      const [fetchPending, setFetchPending] = React.useState(null)
+      const [placeAt, setPlaceAt] = React.useState(0)
+      const [undoSnap, setUndoSnap] = React.useState(null)
+      // 最近一次放进列表的范围（故事记忆摘要不能晚于它的末轮）。
+      const [fetchCut, setFetchCut] = React.useState(null)
+      // 故事记忆里「从当前会话取摘要」：保存预设时带上的摘要。
+      const [seedDraft, setSeedDraft] = React.useState(null)
+      const [seedNote, setSeedNote] = React.useState('')
+      // 长卡片展开的行（按下标）；分批渲染已画出的条数。
+      const [expandedRows, setExpandedRows] = React.useState(() => new Set())
+      const [shownRows, setShownRows] = React.useState(ROW_BATCH)
+      React.useEffect(() => {
+        setFetchPending(null)
+        setUndoSnap(null)
+        setFetchCut(null)
+        setSeedDraft(null)
+        setSeedNote('')
+        setExpandedRows(new Set())
+        setShownRows(ROW_BATCH)
+      }, [sessionId])
+      const itemCount = Array.isArray(items) ? items.length : 0
+      React.useEffect(() => {
+        if (shownRows >= itemCount) return undefined
+        const timer = setTimeout(() => setShownRows((value) => value + ROW_BATCH), 16)
+        return () => clearTimeout(timer)
+      }, [shownRows, itemCount])
+      React.useEffect(() => {
+        if (undoSnap === null) return undefined
+        const timer = setTimeout(() => setUndoSnap((current) => (current === undoSnap ? null : current)), 8000)
+        return () => clearTimeout(timer)
+      }, [undoSnap])
       const [everyTurnStatus, setEveryTurnStatus] = React.useState(null)
-      const [historyPreview, setHistoryPreview] = React.useState(null)
       // 角色卡（v0.6）：列表、选中、套用选项、编译预览。
       const [cards, setCards] = React.useState([])
       const [cardPick, setCardPick] = React.useState('')
@@ -2462,16 +2620,17 @@ window.__ModuleLoader__.load({
         if (summaryRef.current !== null && sessionId !== '') publishSummary(sessionId, summaryRef.current)
       })
 
-      // 卡片外点击 / Esc 关闭（钉住时不关）；Esc 先关下拉菜单。只监听事件，不改别人的 DOM。
+      // 卡片外点击 / Esc 关闭（钉住时不关）；Esc 先关下拉菜单 / 放置确认。只监听事件，不改别人的 DOM。
       React.useEffect(() => {
         if (!cardOpen) return undefined
         const onDown = (event) => {
           if (pinned) return
+          // 点芯片本身由芯片的 onClick 切换，这里不抢（composedPath：芯片在 shadow DOM 里也认得出）。
+          if (pathHas(event, 'data-prefill-chip')) return
+          if (pathHas(event, 'data-prefill-card-panel') || pathHas(event, 'data-prefill-marker')) return
           const target = event.target
-          if (!(target instanceof Node)) return
-          if (cardRef.current?.contains(target)) return
-          // 点芯片本身由芯片的 onClick 切换，这里不抢。
-          if (target instanceof Element && target.closest('[data-prefill-chip]') !== null) return
+          if (target instanceof Node && cardRef.current?.contains(target)) return
+          autoClosedAt.set(sessionId, Date.now())
           closeCard()
         }
         const onKey = (event) => {
@@ -2480,15 +2639,60 @@ window.__ModuleLoader__.load({
             setMenu('')
             return
           }
+          if (fetchPending !== null) {
+            setFetchPending(null)
+            return
+          }
           if (!pinned) closeCard()
         }
+        document.addEventListener('pointerdown', onDown, true)
         document.addEventListener('mousedown', onDown, true)
         document.addEventListener('keydown', onKey, true)
         return () => {
+          document.removeEventListener('pointerdown', onDown, true)
           document.removeEventListener('mousedown', onDown, true)
           document.removeEventListener('keydown', onKey, true)
         }
-      }, [cardOpen, pinned, menu, closeCard])
+      }, [cardOpen, pinned, menu, closeCard, fetchPending, sessionId])
+
+      // 钉住后鼠标离开卡片 ~500ms：缩成一个小标记（预设名 + 彩点），淡出的卡片不挡点击；悬停 / 点标记恢复。
+      // 焦点在卡片里（正在打字）、下拉菜单 / 放置确认 / 二次确认开着时不缩。
+      const [shrunk, setShrunk] = React.useState(false)
+      const hoverRef = React.useRef(false)
+      const shrinkTimer = React.useRef(0)
+      const holdOpen = menu !== '' || fetchPending !== null || confirming !== ''
+      const holdRef = React.useRef(holdOpen)
+      holdRef.current = holdOpen
+      const scheduleShrink = React.useCallback(() => {
+        clearTimeout(shrinkTimer.current)
+        shrinkTimer.current = setTimeout(() => {
+          if (hoverRef.current || holdRef.current) return
+          // 只认「正在输入」的焦点（输入框 / 文本框 / 下拉 / 可编辑）；刚点过的按钮带着焦点不算。
+          const active = document.activeElement
+          const typing = active instanceof HTMLElement && (active.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]), textarea, select') || active.isContentEditable)
+          if (typing && cardRef.current?.contains(active)) return
+          setShrunk(true)
+        }, 500)
+      }, [])
+      const restoreCard = React.useCallback(() => {
+        clearTimeout(shrinkTimer.current)
+        setShrunk(false)
+      }, [])
+      React.useEffect(() => {
+        if (!pinned || !cardOpen) {
+          clearTimeout(shrinkTimer.current)
+          setShrunk(false)
+        }
+      }, [pinned, cardOpen])
+      React.useEffect(() => {
+        if (holdOpen) restoreCard()
+      }, [holdOpen, restoreCard])
+      React.useEffect(() => () => clearTimeout(shrinkTimer.current), [])
+      React.useEffect(() => {
+        if (!holdOpen && pinned && cardOpen && !hoverRef.current) scheduleShrink()
+        // 只在「菜单 / 确认关上」这一刻补一次：鼠标早已在外面时也会缩。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [holdOpen])
 
       // 几何：宽 clamp(560px, 62vw, 920px) 但不超过视口；以输入框为中线、贴在输入框上方 10px；
       // 高度上限 = min(70vh, 输入框上方剩余空间 − 20px)。只读几何。
@@ -2517,9 +2721,9 @@ window.__ModuleLoader__.load({
           const maxHeight = Math.round(Math.max(200, Math.min(vh * 0.7, top - 20)))
           const narrow = vw < 820
           setBounds((current) =>
-            current !== null && current.width === width && current.left === left && current.bottom === bottom && current.maxHeight === maxHeight && current.narrow === narrow
+            current !== null && current.width === width && current.left === left && current.bottom === bottom && current.maxHeight === maxHeight && current.narrow === narrow && current.vw === vw
               ? current
-              : { width, left, bottom, maxHeight, narrow },
+              : { width, left, bottom, maxHeight, narrow, vw },
           )
         }
         measure()
@@ -2667,7 +2871,7 @@ window.__ModuleLoader__.load({
       const activePreset = state?.activePreset?.[sessionId] ?? ''
       // 左栏启用开关（缺 = 开）。
       const ownEnabled = state?.enabled?.[sessionId] ?? {}
-      const isOn = (key) => ownEnabled[key] !== false
+      const isOn = (key) => (key === 'everyTurn' ? everyTurnSwitchOn(state, sessionId) : ownEnabled[key] !== false)
       // 角色卡（已套用的那张）与它留下的指纹。
       const appliedRef = state?.cardRef?.[sessionId] ?? null
       const appliedCardName = appliedRef ? (cards.find((card) => card.id === appliedRef.id)?.name ?? appliedRef.id) : ''
@@ -2745,10 +2949,15 @@ window.__ModuleLoader__.load({
         dirty.current = true
         setItems(next)
       }
-      const patchAt = (index, patch) => edit(items.map((item, at) => (at === index ? { ...item, ...patch } : item)))
+      const patchAt = (index, patch) => {
+        // 正在改的这条算「已展开」：打字打过折叠阈值时不会突然缩成预览。
+        if (!expandedRows.has(index)) setExpandedRows((current) => new Set(current).add(index))
+        edit(items.map((item, at) => (at === index ? { ...item, ...patch } : item)))
+      }
       const move = (index, delta) => {
         const target = index + delta
         if (target < 0 || target >= items.length) return
+        setExpandedRows(new Set())
         const next = [...items]
         const [moved] = next.splice(index, 1)
         next.splice(target, 0, moved)
@@ -2867,7 +3076,14 @@ window.__ModuleLoader__.load({
         else own[key] = false
         if (Object.keys(own).length === 0) delete all[sessionId]
         else all[sessionId] = own
-        const data = await postJson(STATE_ROUTE, { enabled: all })
+        const patch = { enabled: all }
+        // 每轮注入在 0.11 之前另有一个面板内的「启用」勾选框（写 state.everyTurn[会话].enabled）。
+        // 现在开关只剩左栏这一个：打开时把旧值清成 true，否则会出现「开关开着、点也亮着，却一轮都不注入」。
+        const ownTurn = fresh?.state?.everyTurn?.[sessionId]
+        if (key === 'everyTurn' && on && ownTurn !== null && typeof ownTurn === 'object' && ownTurn.enabled !== true) {
+          patch.everyTurn = { ...(fresh?.state?.everyTurn ?? {}), [sessionId]: { ...ownTurn, enabled: true } }
+        }
+        const data = await postJson(STATE_ROUTE, patch)
         setEnvelope(data)
         notifyStateChanged()
         flash(on ? t('featureOnSaved') : t('featureOffSaved'))
@@ -3128,7 +3344,7 @@ window.__ModuleLoader__.load({
         // 保存 = 面板上挂在预设下的**全部**内容：角色卡（引用）、系统提示、每轮注入（只存配置）、开场对话、改写注入内容、工具权限。
         void Promise.all([currentOverrides(), currentTools(), currentCardRef()])
           .then(([overrides, tools, card]) =>
-            packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}) }),
+            packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}), ...(seedDraft !== null ? { memorySeed: seedDraft, ...(cutTo > 0 ? { toTurn: cutTo } : {}) } : {}) }),
           )
           .then((data) => {
             adoptPacks(data)
@@ -3144,46 +3360,73 @@ window.__ModuleLoader__.load({
           })
           .catch(() => setStatus('error'))
       }
-      const loadHistory = (opts) => {
-        const next = { ...historyOpts, ...(opts ?? {}) }
-        setHistoryOpts(next)
-        const toTurn = Number(next.toTurn)
-        void packsCall({ op: 'from-session', reasoning: next.reasoning === true, ...(toTurn > 0 ? { toTurn } : {}) })
-          .then((data) => setHistoryPreview(Array.isArray(data?.items) ? data : { items: [], turnCount: 0, lastTurn: 0, toolCalls: 0 }))
-          .catch(() => setStatus('error'))
+      // ── 「从当前会话取」→ 开场对话列表（只改预设的开场对话草稿，不动会话里已经发出的历史）──
+      const cutTo = fetchCut !== null && fetchCut.toTurn > 0 ? fetchCut.toTurn : 0
+      const commitFetch = (pending, mode, k) => {
+        const before = items
+        edit(placeFetched(items, pending.items, mode, k))
+        setExpandedRows(new Set())
+        setShownRows(ROW_BATCH)
+        setFetchPending(null)
+        setFetchCut({ fromTurn: pending.range.fromTurn, toTurn: pending.range.toTurn, lastTurn: pending.lastTurn })
+        if (seedDraft !== null && !seedAllowed(seedDraft, pending.range.toTurn)) {
+          setSeedDraft(null)
+          setSeedNote(t('seedDropped').replace('{n}', String(seedDraft.throughTurn)).replace('{m}', String(pending.range.toTurn)))
+        }
+        // 放置后都能撤销一小会儿（空列表直接放进来也算，撤销 = 回到空）。
+        setUndoSnap({ items: before, mode })
+        flash(t('fetchPlaced').replace('{n}', String(pending.items.length)))
       }
-      const toggleHistory = () => {
-        if (historyOpen) {
-          setHistoryOpen(false)
-          return
-        }
-        setHistoryOpen(true)
-        loadHistory()
-      }
-      const saveHistoryPack = () => {
-        const name = packName.trim()
-        if (name === '') {
-          flash(t('needName'))
-          return
-        }
-        const historyItems = historyPreview?.items ?? []
-        if (historyItems.length === 0) {
-          flash(t('historyEmpty'))
-          return
-        }
-        void Promise.all([currentOverrides(), currentTools(), currentCardRef()])
-          .then(([overrides, tools, card]) => {
-            const toTurn = Number(historyOpts.toTurn) > 0 ? Math.floor(Number(historyOpts.toTurn)) : 0
-            const extra = {}
-            if (historyOpts.everyTurn !== false && historyPreview?.everyTurn) extra.everyTurn = historyPreview.everyTurn
-            if (historyOpts.memory === true && historyPreview?.memoryAllowed && historyPreview?.memory) extra.memorySeed = historyPreview.memory
-            if (card) extra.card = card
-            return packsCall({ op: 'save', name, items: historyItems, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(toTurn > 0 ? { toTurn } : {}), ...extra })
-          })
+      const fetchFromSession = () => {
+        const range = fetchRange(fetchOpts.fromTurn, fetchOpts.toTurn)
+        setFetchBusy(true)
+        void packsCall({ op: 'from-session', reasoning: fetchOpts.reasoning === true, fromTurn: range.fromTurn, ...(range.toTurn > 0 ? { toTurn: range.toTurn } : {}) })
           .then((data) => {
-            adoptPacks(data)
-            flash(`${t('savedAs')}「${name}」`)
-            setHistoryOpen(false)
+            const got = Array.isArray(data?.items) ? data.items : []
+            if (got.length === 0) {
+              flash(t('historyEmpty'))
+              return
+            }
+            const pending = {
+              items: got,
+              range,
+              turnCount: Number(data?.turnCount) || 0,
+              lastTurn: Number(data?.lastTurn) || 0,
+              toolCalls: Number(data?.toolCalls) || 0,
+              tok: itemsTokens(got),
+            }
+            if (items.length === 0 && pending.tok <= FETCH_WARN_TOK) commitFetch(pending, 'replace')
+            else {
+              setPlaceAt(items.length)
+              setFetchPending(pending)
+            }
+          })
+          .catch(() => setStatus('error'))
+          .finally(() => setFetchBusy(false))
+      }
+      const undoFetch = () => {
+        if (undoSnap === null) return
+        edit(undoSnap.items)
+        setExpandedRows(new Set())
+        setUndoSnap(null)
+      }
+      // 故事记忆：取本会话的摘要，保存预设时带上（不能晚于开场对话取到的末轮 M）。
+      const fetchSeed = () => {
+        void packsCall({ op: 'from-session', ...(cutTo > 0 ? { toTurn: cutTo } : {}) })
+          .then((data) => {
+            const memory = data?.memory ?? null
+            if (memory === null || typeof memory.text !== 'string' || memory.text.trim() === '') {
+              setSeedDraft(null)
+              setSeedNote(t('seedNone'))
+              return
+            }
+            if (!seedAllowed(memory, cutTo)) {
+              setSeedDraft(null)
+              setSeedNote(t('seedLate').replace('{n}', String(memory.throughTurn)).replace('{m}', String(cutTo)))
+              return
+            }
+            setSeedNote('')
+            setSeedDraft({ text: memory.text.trim(), throughTurn: Number(memory.throughTurn) || 0 })
           })
           .catch(() => setStatus('error'))
       }
@@ -3203,8 +3446,10 @@ window.__ModuleLoader__.load({
         // 角色卡引用 / 每轮注入配置 / 故事记忆摘要，否则导出再导入会悄悄丢东西。
         const [overrides, tools, card] = await Promise.all([currentOverrides(), currentTools(), currentCardRef()])
         const remembered = await memoryCall({ op: 'get' }).catch(() => null)
-        const memorySeed =
-          typeof remembered?.memory?.text === 'string' && remembered.memory.text.trim() !== ''
+        // 故事记忆里取过「本会话摘要」就用那一份（它已按开场对话的截取末轮核过）。
+        const memorySeed = seedDraft !== null
+          ? seedDraft
+          : typeof remembered?.memory?.text === 'string' && remembered.memory.text.trim() !== ''
             ? { text: remembered.memory.text.trim(), throughTurn: Number(remembered.memory.throughTurn) || 0 }
             : undefined
         const payload = {
@@ -3304,10 +3549,11 @@ window.__ModuleLoader__.load({
           ? [withIcon('folder', hoveredPack.name), `${t('myPresetDesc')} · ${hoveredPack.count}${t('countSuffix')}`, '']
           : ['', t('presetsHint'), '']
 
-      // 存预设用：本会话自己那格的配置（关着就不带）。
+      // 存预设用：本会话自己那格的配置。开关关着也带 —— 关的状态由 pack.enabled 带走，
+      // 不再看条目里的 enabled（那是旧版勾选框留下的字段）。
       const ownEveryTurn = state?.everyTurn?.[sessionId]
       const everyTurnStored =
-        ownEveryTurn?.enabled === true && (String(ownEveryTurn.text ?? '').trim() !== '' || String(ownEveryTurn.firstText ?? '').trim() !== '')
+        (String(ownEveryTurn?.text ?? '').trim() !== '' || String(ownEveryTurn?.firstText ?? '').trim() !== '')
           ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {} }
           : null
       // 预设下拉（头部「当前预设 ▾」点开）：内置 + 我的，点一下即整体套用。
@@ -3372,7 +3618,7 @@ window.__ModuleLoader__.load({
         h('div', { style: { ...V.hint, maxWidth: '68ch' }, 'data-prefill-preset-content': '' }, t('presetContentHint')),
       )
 
-      // 「另存为…」：起名保存 / 从当前会话取 / 导入导出文件。
+      // 「另存为…」：起名保存 / 导入导出文件（「从当前会话取」v0.10.1 起挪到开场对话里）。
       const saveAsPanel = h(
         'div',
         { 'data-prefill-section': 'presets', 'data-prefill-menu': 'saveas', style: { ...V.popover, width: 'min(560px, calc(100% - 24px))' } },
@@ -3396,100 +3642,9 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: V.row },
-          h('button', { type: 'button', style: V.btn, 'data-prefill-history-open': '', title: t('historyTip'), onClick: toggleHistory }, t('historyOpen')),
           h('button', { type: 'button', style: V.btnGhost, onClick: () => void exportFile() }, withIcon('download', t('exportFile'), 12)),
           h('button', { type: 'button', style: V.btnGhost, onClick: () => fileRef.current?.click() }, withIcon('upload', t('importFile'), 12)),
         ),
-        historyOpen
-          ? h(
-              'div',
-              { style: { ...V.callout('brand'), display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-history': '' },
-              h('div', { style: V.hint }, t('historyHint')),
-              h(
-                'div',
-                { style: V.row },
-                h(
-                  'label',
-                  { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 } },
-                  h('input', {
-                    type: 'checkbox',
-                    'data-prefill-history-reasoning': '',
-                    checked: historyOpts.reasoning === true,
-                    onChange: (event) => loadHistory({ reasoning: event.target.checked }),
-                  }),
-                  t('historyReasoning'),
-                ),
-                h(
-                  'label',
-                  { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 } },
-                  t('historyToTurn'),
-                  h('input', {
-                    type: 'number',
-                    min: 1,
-                    'data-prefill-history-to': '',
-                    style: { ...V.input, width: 64, flex: '0 0 auto' },
-                    value: historyOpts.toTurn,
-                    placeholder: String(historyPreview?.lastTurn ?? ''),
-                    onChange: (event) => loadHistory({ toTurn: event.target.value }),
-                  }),
-                  t('historyTurnUnit'),
-                ),
-              ),
-              historyPreview?.everyTurn || historyPreview?.memory
-                ? h(
-                    'div',
-                    { style: V.row },
-                    historyPreview?.everyTurn
-                      ? h(
-                          'label',
-                          { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 } },
-                          h('input', {
-                            type: 'checkbox',
-                            'data-prefill-history-everyturn': '',
-                            checked: historyOpts.everyTurn !== false,
-                            onChange: (event) => setHistoryOpts({ ...historyOpts, everyTurn: event.target.checked }),
-                          }),
-                          `${t('historyWithEveryTurn')}（${t(`everyTurnMode${historyPreview.everyTurn.mode === 'auto' ? 'Auto' : historyPreview.everyTurn.mode === 'until' ? 'Until' : 'Always'}`)} · ≈${estimateTokens(historyPreview.everyTurn.text)} tok/${t('turnsUnit')}）`,
-                        )
-                      : null,
-                    historyPreview?.memory
-                      ? h(
-                          'label',
-                          {
-                            style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, opacity: historyPreview.memoryAllowed ? 1 : 0.55 },
-                            title: historyPreview.memoryAllowed ? '' : t('historyMemoryLate').replace('{n}', String(historyPreview.memory.throughTurn)),
-                          },
-                          h('input', {
-                            type: 'checkbox',
-                            'data-prefill-history-memory': '',
-                            disabled: !historyPreview.memoryAllowed,
-                            checked: historyOpts.memory === true && historyPreview.memoryAllowed === true,
-                            onChange: (event) => setHistoryOpts({ ...historyOpts, memory: event.target.checked }),
-                          }),
-                          historyPreview.memoryAllowed ? t('historyWithMemory') : `${t('historyWithMemory')}（${t('historyMemoryLate').replace('{n}', String(historyPreview.memory.throughTurn))}）`,
-                        )
-                      : null,
-                  )
-                : null,
-              h(
-                'div',
-                { style: V.hint, 'data-prefill-history-meta': '' },
-                historyPreview === null
-                  ? '…'
-                  : t('historyMeta')
-                      .replace('{turns}', String(historyPreview.turnCount ?? 0))
-                      .replace('{n}', String(historyPreview.items?.length ?? 0))
-                      .replace('{tok}', String(itemsTokens(historyPreview.items ?? [])))
-                      + (historyPreview.toolCalls > 0 ? t('historyTools').replace('{n}', String(historyPreview.toolCalls)) : ''),
-              ),
-              h(
-                'div',
-                { style: V.row },
-                h('button', { type: 'button', style: V.btn, 'data-prefill-history-save': '', onClick: saveHistoryPack }, t('historySave')),
-                h('button', { type: 'button', style: V.btnGhost, onClick: () => setHistoryOpen(false) }, t('manageHide')),
-              ),
-            )
-          : null,
         h('input', { ref: fileRef, type: 'file', accept: '.json,application/json', style: { display: 'none' }, onChange: importFile }),
       )
 
@@ -3819,12 +3974,37 @@ window.__ModuleLoader__.load({
         const color = isAssistant ? 'var(--pf-ai)' : 'var(--pf-user)'
         const tok = estimateTokens(item?.text) + estimateTokens(item?.reasoning)
         const bare = { ...V.textarea, background: 'transparent', border: '1px solid transparent', padding: '4px 6px', minHeight: 44, maxWidth: '90ch', resize: 'vertical' }
+        const long = isLongText(item?.text) || isLongText(item?.reasoning)
+        const collapsed = long && !expandedRows.has(index)
+        const setExpanded = (on) =>
+          setExpandedRows((current) => {
+            const next = new Set(current)
+            if (on) next.add(index)
+            else next.delete(index)
+            return next
+          })
+        // 折叠的长卡片：只画前几行文字（不画 textarea），点「展开全文」才能编辑。
+        const clamp = (lines) => ({ overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: lines, WebkitBoxOrient: 'vertical', whiteSpace: 'pre-wrap', wordBreak: 'break-word' })
+        const body = collapsed
+          ? [
+              isAssistant && String(item?.reasoning ?? '').trim() !== ''
+                ? h('div', { key: 'r', style: { ...clamp(2), fontSize: 12, color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-1)', border: '1px dashed var(--dsw-alias-border-l2)', borderRadius: 8, padding: '4px 6px' } }, item.reasoning)
+                : null,
+              h('div', { key: 't', style: { ...clamp(3), fontSize: 13, padding: '2px 6px', color: 'var(--dsw-alias-label-primary)' } }, item?.text ?? ''),
+              h(
+                'button',
+                { key: 'x', type: 'button', style: { ...V.btnGhost, alignSelf: 'flex-start', fontSize: 12 }, 'data-prefill-item-expand': '', onClick: () => setExpanded(true) },
+                t('rowExpand').replace('{tok}', String(tok)),
+              ),
+            ]
+          : null
         return h(
           'div',
           {
             key: index,
             'data-prefill-item': isAssistant ? 'assistant' : 'user',
-            style: { maxWidth: '90ch', borderRadius: 10, padding: '6px 8px 8px 10px', borderLeft: `3px solid ${color}`, background: tint(color, 10), display: 'flex', flexDirection: 'column', gap: 4 },
+            'data-collapsed': collapsed ? 'true' : 'false',
+            style: { maxWidth: '90ch', borderRadius: 10, padding: '6px 8px 8px 10px', borderLeft: `3px solid ${color}`, background: tint(color, 10), display: 'flex', flexDirection: 'column', gap: 4, contentVisibility: 'auto', containIntrinsicSize: 'auto 96px' },
           },
           h(
             'div',
@@ -3839,13 +4019,17 @@ window.__ModuleLoader__.load({
               },
               isAssistant ? withIcon('bot', t('roleAssistant'), 13) : withIcon('user', t('roleUser'), 13),
             ),
-            h('span', { style: V.sectionMeta }, `≈${tok} tok`),
+            h('span', { style: V.sectionMeta }, `#${index + 1} · ≈${tok} tok`),
             h('span', { style: { flex: '1 1 auto' } }),
+            long && !collapsed ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5, padding: '0 6px', height: 22 }, 'data-prefill-item-collapse': '', onClick: () => setExpanded(false) }, t('rowCollapse')) : null,
             h('button', { type: 'button', style: S.dockMini, title: t('moveUp'), onClick: () => move(index, -1) }, '↑'),
             h('button', { type: 'button', style: S.dockMini, title: t('moveDown'), onClick: () => move(index, 1) }, '↓'),
-            h('button', { type: 'button', style: S.dockMini, title: t('removeItem'), onClick: () => edit(items.filter((_unused, at) => at !== index)) }, h(Icon, { name: 'x', size: 12 })),
+            h('button', { type: 'button', style: S.dockMini, title: t('removeItem'), onClick: () => { setExpandedRows(new Set()); edit(items.filter((_unused, at) => at !== index)) } }, h(Icon, { name: 'x', size: 12 })),
           ),
-          isAssistant
+          ...(body ?? []),
+          body !== null
+            ? null
+            : isAssistant
             ? h('textarea', {
                 style: { ...bare, minHeight: 34, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-1)', border: '1px dashed var(--dsw-alias-border-l2)' },
                 value: item?.reasoning ?? '',
@@ -3854,16 +4038,95 @@ window.__ModuleLoader__.load({
                 onChange: (event) => patchAt(index, { reasoning: event.target.value }),
               })
             : null,
-          h('textarea', {
-            style: bare,
-            value: item?.text ?? '',
-            spellCheck: false,
-            placeholder: isAssistant ? t('textAssistantPh') : t('textUserPh'),
-            onChange: (event) => patchAt(index, { text: event.target.value }),
-          }),
+          body !== null
+            ? null
+            : h('textarea', {
+                style: bare,
+                value: item?.text ?? '',
+                spellCheck: false,
+                placeholder: isAssistant ? t('textAssistantPh') : t('textUserPh'),
+                onChange: (event) => patchAt(index, { text: event.target.value }),
+              }),
         )
       }
 
+      // 开场对话头部：「从当前会话取」+ 带上思维链 + 第 N 轮 到 第 M 轮。
+      const numInput = (attr, value, placeholder, onChange) =>
+        h('input', {
+          type: 'number',
+          min: 1,
+          [attr]: '',
+          style: { ...V.input, width: 58, flex: '0 0 auto', padding: '0 6px' },
+          value,
+          placeholder,
+          onChange: (event) => onChange(event.target.value),
+        })
+      const lastKnownTurn = fetchCut?.lastTurn || turns || 0
+      const fetchBar = h(
+        'div',
+        { style: { ...V.row, gap: 10, rowGap: 6 }, 'data-prefill-fetch-bar': '' },
+        h(
+          'button',
+          { type: 'button', style: { ...V.btn, opacity: fetchBusy ? 0.6 : 1 }, disabled: fetchBusy, 'data-prefill-history-open': '', title: t('historyTip'), onClick: fetchFromSession },
+          fetchBusy ? '…' : t('historyOpen'),
+        ),
+        h(
+          'label',
+          { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
+          h('input', { type: 'checkbox', 'data-prefill-history-reasoning': '', checked: fetchOpts.reasoning === true, onChange: (event) => setFetchOpts({ ...fetchOpts, reasoning: event.target.checked }) }),
+          t('historyReasoning'),
+        ),
+        h(
+          'span',
+          { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } },
+          t('rangeFrom'),
+          numInput('data-prefill-history-from', fetchOpts.fromTurn, '1', (value) => setFetchOpts({ ...fetchOpts, fromTurn: value })),
+          t('rangeTo'),
+          numInput('data-prefill-history-to', fetchOpts.toTurn, lastKnownTurn > 0 ? String(lastKnownTurn) : t('rangeEnd'), (value) => setFetchOpts({ ...fetchOpts, toTurn: value })),
+          t('rangeUnit'),
+        ),
+      )
+      const pendingTok = fetchPending?.tok ?? 0
+      const fetchConfirm =
+        fetchPending === null
+          ? null
+          : h(
+              'div',
+              { style: { ...V.callout(pendingTok > FETCH_WARN_TOK ? 'warn' : 'brand'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' }, 'data-prefill-fetch-confirm': '' },
+              h(
+                'div',
+                { 'data-prefill-history-meta': '' },
+                h('b', null, t('fetchGot')),
+                ' ',
+                t('historyMeta').replace('{turns}', String(fetchPending.turnCount)).replace('{n}', String(fetchPending.items.length)).replace('{tok}', num(pendingTok)),
+                fetchPending.toolCalls > 0 ? t('historyTools').replace('{n}', String(fetchPending.toolCalls)) : '',
+              ),
+              pendingTok > FETCH_WARN_TOK ? h('div', { 'data-prefill-fetch-warn': '' }, t('fetchBig').replace('{tok}', num(pendingTok)).replace('{limit}', num(FETCH_WARN_TOK))) : null,
+              h(
+                'div',
+                { style: { ...V.row, gap: 8 } },
+                items.length > 0 ? h('button', { type: 'button', style: V.btnPrimary, 'data-prefill-fetch-replace': '', onClick: () => commitFetch(fetchPending, 'replace') }, t('fetchReplace')) : null,
+                items.length > 0
+                  ? h(
+                      'span',
+                      { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+                      h('button', { type: 'button', style: V.btn, 'data-prefill-fetch-insert': '', onClick: () => commitFetch(fetchPending, 'insert', placeAt) }, t('fetchInsert')),
+                      h(
+                        'select',
+                        {
+                          'data-prefill-fetch-at': '',
+                          value: String(placeAt),
+                          style: { ...V.input, width: 'auto', flex: '0 0 auto', padding: '0 4px' },
+                          onChange: (event) => setPlaceAt(Number(event.target.value)),
+                        },
+                        h('option', { key: 0, value: '0' }, t('fetchAtTop')),
+                        ...items.map((_item, index) => h('option', { key: index + 1, value: String(index + 1) }, t('fetchAfterN').replace('{n}', String(index + 1)) + (index + 1 === items.length ? t('fetchAtEnd') : ''))),
+                      ),
+                    )
+                  : h('button', { type: 'button', style: V.btnPrimary, 'data-prefill-fetch-replace': '', onClick: () => commitFetch(fetchPending, 'replace') }, t('fetchPut')),
+                h('button', { type: 'button', style: V.btnGhost, 'data-prefill-fetch-cancel': '', onClick: () => setFetchPending(null) }, t('cancel')),
+              ),
+            )
       const itemsSection = h(
         Section,
         {
@@ -3885,12 +4148,24 @@ window.__ModuleLoader__.load({
                       event.stopPropagation()
                       if (!armConfirm('clear')) return
                       setConfirming('')
+                      const before = items
                       edit([])
+                      setUndoSnap({ items: before, mode: 'clear' })
                     },
                   },
                   confirming === 'clear' ? t('confirmYes') : t('dockClear'),
                 ),
         },
+        fetchBar,
+        fetchPending !== null ? fetchConfirm : null,
+        undoSnap !== null
+          ? h(
+              'div',
+              { style: { ...V.row, ...V.callout('brand'), maxWidth: '68ch' }, 'data-prefill-fetch-undo-bar': '' },
+              h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, undoSnap.mode === 'replace' ? t('fetchReplaced') : undoSnap.mode === 'clear' ? t('fetchCleared') : t('fetchInserted')),
+              h('button', { type: 'button', style: V.btn, 'data-prefill-fetch-undo': '', onClick: undoFetch }, t('undo')),
+            )
+          : null,
         injectMode && (envelope?.materialized?.[sessionId] ?? 0) > 0
           ? h('div', { style: V.callout('brand') }, t('itemsWrittenHint').replace('{n}', String(envelope.materialized[sessionId])))
           : null,
@@ -3915,7 +4190,13 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
-        h('div', { ref: listRef, style: { display: 'flex', flexDirection: 'column', gap: 6 } }, ...items.map(itemRow)),
+        h(
+          'div',
+          { ref: listRef, style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-items': '', 'data-rendered': String(Math.min(items.length, shownRows)) },
+          // 分批渲染：一次只画 ROW_BATCH 条，之后每帧再加一批（200 条带长思维链也不会一下卡住）。
+          ...items.slice(0, shownRows).map(itemRow),
+          items.length > shownRows ? h('div', { key: 'more', style: V.hint }, t('rowsLoading').replace('{n}', String(items.length - shownRows))) : null,
+        ),
         h(
           'div',
           { style: V.row },
@@ -3949,7 +4230,8 @@ window.__ModuleLoader__.load({
             ? 'until'
             : 'always'
       const everyTurn = everyTurnDraft ?? {
-        enabled: storedEveryTurn?.enabled === true,
+        // 开/关归左栏那一个开关（state.enabled）；条目里的 enabled 只是旧值，由 everyTurnSwitchOn 兜住。
+        enabled: true,
         text: typeof storedEveryTurn?.text === 'string' ? storedEveryTurn.text : '',
         firstText: typeof storedEveryTurn?.firstText === 'string' ? storedEveryTurn.firstText : '',
         untilTurn: Number(storedEveryTurn?.untilTurn) > 0 ? Number(storedEveryTurn.untilTurn) : 0,
@@ -3974,7 +4256,8 @@ window.__ModuleLoader__.load({
           ...(override ? { override: { action: override } } : {}),
         }
         const entry = {
-          enabled: nextValue.enabled === true,
+          // 永远 true：关由左栏开关负责（写 false 会变成「开关开着也不注入」的旧状态）。
+          enabled: true,
           text: String(nextValue.text ?? ''),
           firstText: String(nextValue.firstText ?? ''),
           untilTurn: Math.max(0, Math.floor(Number(nextValue.untilTurn) || 0)),
@@ -3998,12 +4281,13 @@ window.__ModuleLoader__.load({
         clearTimeout(everyTurnTimer.current)
         const run = () =>
           void writeEveryTurn(nextValue)
-            .then(() => flash(nextValue.enabled && (String(nextValue.text).trim() !== '' || String(nextValue.firstText ?? '').trim() !== '') ? t('everyTurnSaved') : t('everyTurnOffSaved')))
+            .then(() => flash(isOn('everyTurn') && (String(nextValue.text).trim() !== '' || String(nextValue.firstText ?? '').trim() !== '') ? t('everyTurnSaved') : t('everyTurnOffSaved')))
             .catch(() => setStatus('error'))
         if (immediate) run()
         else everyTurnTimer.current = setTimeout(run, 700)
       }
-      const everyTurnActive = everyTurn.enabled && (everyTurn.text.trim() !== '' || everyTurn.firstText.trim() !== '')
+      // 「开着没」看左栏开关（旧版 entry.enabled 也算关）；有没有内容是另一回事。
+      const everyTurnActive = isOn('everyTurn') && (everyTurn.text.trim() !== '' || everyTurn.firstText.trim() !== '')
       // 自动模式的状态文字（来自 every-turn-status；只看本会话自己的判定）。
       const autoStatus = everyTurnStatus?.enabled === true && everyTurnStatus?.mode === 'auto' ? everyTurnStatus : null
       const autoNoReasoning =
@@ -4079,17 +4363,6 @@ window.__ModuleLoader__.load({
           offBody: !isOn('everyTurn') ? t('everyTurnOffBody') : t('offByCardBody'),
         },
         h('div', { style: V.hint }, t('everyTurnHint')),
-        h(
-          'label',
-          { style: { ...V.row, gap: 6, fontSize: 12 } },
-          h('input', {
-            type: 'checkbox',
-            checked: everyTurn.enabled,
-            'data-prefill-everyturn-toggle': '1',
-            onChange: (event) => editEveryTurn({ enabled: event.target.checked }, true),
-          }),
-          t('everyTurnOn'),
-        ),
         h(
           'div',
           { style: { ...V.row, flexWrap: 'wrap', gap: 6 } },
@@ -4320,6 +4593,22 @@ window.__ModuleLoader__.load({
         },
         h('div', { style: V.hint }, memoryOn ? t('memoryHint') : t('memoryEmpty')),
         memoryBlock,
+        // 预设带上故事记忆摘要（原来在「另存为 → 从当前会话取」里）：不能晚于开场对话截取的末轮。
+        h(
+          'div',
+          { style: { ...V.row, gap: 8 }, 'data-prefill-seed': '' },
+          h('button', { type: 'button', style: V.btn, title: t('seedTip'), 'data-prefill-seed-fetch': '', onClick: fetchSeed }, t('seedFetch')),
+          seedDraft !== null
+            ? h(
+                'span',
+                { style: { ...V.sectionMeta, fontSize: 12 }, 'data-prefill-seed-status': 'ready' },
+                t('seedReady').replace('{n}', String(seedDraft.throughTurn)).replace('{tok}', num(estimateTokens(seedDraft.text))),
+              )
+            : seedNote !== ''
+              ? h('span', { style: { ...V.sectionMeta, fontSize: 12, color: 'var(--dsw-alias-state-warn-primary)' }, 'data-prefill-seed-status': 'note' }, seedNote)
+              : null,
+          seedDraft !== null ? h('button', { type: 'button', style: V.btnGhost, onClick: () => setSeedDraft(null) }, t('seedDrop')) : null,
+        ),
       )
 
       // ── 左栏：每项一个色条 + 粗标题 + 开关 + 状态行 ──
@@ -4488,6 +4777,10 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', style: V.btnGhost, 'data-prefill-save-as': '', 'aria-expanded': menu === 'saveas' ? 'true' : 'false', onClick: () => setMenu(menu === 'saveas' ? '' : 'saveas') }, t('saveAs')),
         activePreset === '' ? null : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-preset-clear': '', onClick: () => void clearPreset().catch(() => setStatus('error')) }, t('presetClear')),
         h('span', { style: { flex: '1 1 auto' } }),
+        // 右侧一组（读数 + ? + 钉住 + 收起 + 关闭）不拆开：窄屏换行时整组挪到第二行靠右，关闭按钮不会单独掉下去。
+        h(
+          'span',
+          { 'data-prefill-header-tools': '', style: { display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap', marginLeft: 'auto' } },
         h(
           'span',
           { style: { display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
@@ -4496,8 +4789,23 @@ window.__ModuleLoader__.load({
           narrow ? null : badge('var(--pf-ai)', t('badgeCache'), cacheHit === null ? '—' : `${cacheHit}%`, '', 'cache'),
         ),
         h('button', { type: 'button', style: V.btnGhost, 'aria-expanded': open.guide ? 'true' : 'false', title: t('guideShow'), onClick: () => toggle('guide') }, '?'),
-        h('button', { type: 'button', style: { ...V.btnGhost, fontWeight: pinned ? 700 : 400, color: pinned ? 'var(--dsw-alias-label-primary)' : V.btnGhost.color, background: pinned ? 'var(--dsw-alias-bg-layer-2)' : 'transparent' }, 'aria-pressed': pinned ? 'true' : 'false', 'data-prefill-pin': '', title: t('pinTip'), onClick: () => setPinned(!pinned) }, pinned ? t('pinned') : t('pin')),
-        h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 14 }, 'aria-label': t('closeCard'), title: t('closeCard'), 'data-prefill-close': '', onClick: closeCard }, h(Icon, { name: 'x', size: 14 })),
+        h(
+          'button',
+          {
+            type: 'button',
+            style: { ...V.btnGhost, padding: '0 6px', color: pinned ? 'var(--pf-system)' : V.btnGhost.color, background: pinned ? tint('var(--pf-system)', 14) : 'transparent' },
+            'aria-pressed': pinned ? 'true' : 'false',
+            'aria-label': pinned ? t('pinOff') : t('pinOn'),
+            'data-prefill-pin': '',
+            title: `${pinned ? t('pinOff') : t('pinOn')} · ${t('pinTip')}`,
+            onClick: () => setPinned(!pinned),
+          },
+          // Lucide pin：未钉住描边，钉住填色（强调色）；图标缺失时回落 📌。
+          ICONS.pin ? h(Icon, { name: 'pin', size: 15, fill: pinned ? 'currentColor' : 'none' }) : h('span', { style: { fontSize: 13, lineHeight: 1, opacity: pinned ? 1 : 0.55 } }, '📌'),
+        ),
+        h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'aria-label': t('collapseCard'), title: t('collapseCard'), 'data-prefill-collapse': '', onClick: closeCard }, h(Icon, { name: 'chevron-down', size: 15 })),
+        h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 14, padding: '0 6px' }, 'aria-label': t('closeCard'), title: t('closeCard'), 'data-prefill-close': '', onClick: closeCard }, h(Icon, { name: 'x', size: 14 })),
+        ),
       )
 
       const nav = narrow
@@ -4531,6 +4839,7 @@ window.__ModuleLoader__.load({
       )
 
       if (!cardOpen) return h('div', { 'data-prefill-anchor': '1', style: { height: 0, width: '100%' } })
+      const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
       return h(
         'div',
@@ -4546,12 +4855,33 @@ window.__ModuleLoader__.load({
               if (target instanceof Element && target.closest('[data-prefill-menu],[data-prefill-preset-select],[data-prefill-save-as]') !== null) return
               setMenu('')
             },
+            onMouseEnter: () => {
+              hoverRef.current = true
+              clearTimeout(shrinkTimer.current)
+            },
+            onMouseLeave: () => {
+              hoverRef.current = false
+              if (pinned) scheduleShrink()
+            },
+            // 焦点离开卡片（打完字点到别处）而鼠标也不在卡片上：照样缩。
+            onBlur: () => {
+              if (pinned && !hoverRef.current) scheduleShrink()
+            },
             'data-prefill-dock': '1',
             'data-prefill-card-panel': '1',
+            'data-shrunk': shrunk ? 'true' : 'false',
+            'aria-hidden': shrunk ? 'true' : undefined,
             role: 'dialog',
             'aria-label': t('dockTitle'),
             style: {
               ...COLOR_VARS,
+              // 钉住缩成标记时：淡出、不接收点击（下面的对话照常可点）。
+              opacity: shrunk ? 0 : 1,
+              transform: shrunk ? 'translateY(6px) scale(0.98)' : 'none',
+              transformOrigin: 'bottom right',
+              pointerEvents: shrunk ? 'none' : 'auto',
+              visibility: shrunk ? 'hidden' : 'visible',
+              transition: reduceMotion ? 'none' : shrunk ? 'opacity 150ms ease, transform 150ms ease, visibility 0s linear 150ms' : 'opacity 150ms ease, transform 150ms ease',
               position: 'fixed',
               zIndex: 60,
               left: bounds?.left ?? 12,
@@ -4576,8 +4906,59 @@ window.__ModuleLoader__.load({
           menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : null,
           toast === '' ? null : h('div', { 'data-prefill-toast': '', style: { position: 'absolute', right: 14, bottom: 10, zIndex: 6, padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)', boxShadow: '0 2px 8px rgba(0,0,0,.15)' } }, toast),
         ),
+        shrunk
+          ? h(
+              'button',
+              {
+                type: 'button',
+                'data-prefill-marker': '1',
+                title: t('markerTip'),
+                'aria-label': t('markerTip'),
+                onMouseEnter: restoreCard,
+                onFocus: restoreCard,
+                onClick: restoreCard,
+                style: {
+                  ...COLOR_VARS,
+                  position: 'fixed',
+                  zIndex: 61,
+                  // 停在卡片区域的右下角（紧贴输入框上方、卡片右沿），不挡对话正文。
+                  right: bounds ? Math.max(12, (bounds.vw ?? window.innerWidth) - bounds.left - bounds.width) : 12,
+                  bottom: bounds?.bottom ?? 160,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  maxWidth: 260,
+                  height: 28,
+                  padding: '0 10px',
+                  borderRadius: 999,
+                  border: '1px solid var(--dsw-alias-border-l2)',
+                  background: 'var(--dsw-alias-bg-base)',
+                  color: 'var(--dsw-alias-label-primary)',
+                  boxShadow: '0 4px 14px rgba(0,0,0,.12)',
+                  fontFamily: 'inherit',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  animation: reduceMotion ? 'none' : 'dsh-prefill-pop 150ms ease',
+                },
+              },
+              h('span', { style: { display: 'inline-flex', color: 'var(--pf-system)' } }, h(Icon, { name: 'pin', size: 12, fill: 'currentColor' })),
+              h('b', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, activeName || t('presetsNone')),
+              h(
+                'span',
+                { style: { display: 'inline-flex', gap: 3, flex: '0 0 auto' } },
+                ...summaryDots.map((dot) =>
+                  h('i', {
+                    key: dot.key,
+                    style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', boxSizing: 'border-box', background: dot.on && dot.filled ? dot.color : dot.on ? 'transparent' : 'var(--pf-off)', border: `1.5px solid ${dot.on ? dot.color : 'var(--pf-off)'}` },
+                  }),
+                ),
+              ),
+              reduceMotion ? null : h('style', null, '@keyframes dsh-prefill-pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}'),
+            )
+          : null,
       )
     }
+
 
     /** 「用量与缓存」：逐轮读数 + 按当前配置解释"多花了多少、缓存还命不命中"。 */
     function UsagePanel(props) {

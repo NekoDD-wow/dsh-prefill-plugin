@@ -92,3 +92,18 @@ export function historyToItems(events, opts = {}) {
   flush()
   return { items, turnCount: taken.size, lastTurn, toolCalls, skipped }
 }
+
+/**
+ * from-session 的轮次范围：{ fromTurn, toTurn } → 规整后的 { from, to }（to = 0 表示到最后）。
+ * 兼容旧调用（只给 toTurn）；from 缺省 1；to < from 时对调。
+ */
+export function turnRange(body) {
+  const num = (raw) => {
+    const value = Math.floor(Number(raw))
+    return Number.isFinite(value) && value > 0 ? value : 0
+  }
+  let from = num(body?.fromTurn) || 1
+  let to = num(body?.toTurn)
+  if (to > 0 && to < from) [from, to] = [to, from]
+  return { from, to }
+}

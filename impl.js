@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnPresets } from './builtin-presets.js'
-import { historyToItems } from './session-history.js'
+import { historyToItems, turnRange } from './session-history.js'
 import { CHECK_IDS, autoParams, modeOf, splitTurns } from './inject-auto.js'
 import { applyEnabled, sanitizeEnabled } from './enabled.js'
 import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
@@ -1010,20 +1010,22 @@ export function apply(ctx) {
               return Response.json({ ok: true, op, name, pack: found ?? null, file, ...envelope() }, noStore)
             } else if (op === 'from-session') {
               // 把当前会话已发生的对话转成开场条目（只读，不存）；客户端预览后再走 save。
+              // 范围「第 N 轮 到 第 M 轮」（v0.10.1）：fromTurn 缺省 1，toTurn 缺省 = 到最后；旧调用只给 toTurn 照旧。
+              const range = turnRange(body)
               const result = historyToItems(sessionEvents(liveAgents.get(sessionId), sessionId), {
                 reasoning: body?.reasoning === true,
-                fromTurn: body?.fromTurn,
-                toTurn: body?.toTurn,
+                fromTurn: range.from,
+                toTurn: range.to,
               })
               // 本会话的每轮注入配置（只认本会话自己那格，不认 '*'）和故事记忆摘要，给「带上……」两个复选框。
               const everyTurn = sanitizeEveryTurn(readState()?.everyTurn?.[sessionId]) ?? null
               const stored = memoryStore.read(sessionId)
               const memory = typeof stored?.text === 'string' && stored.text.trim() !== '' ? { text: stored.text.trim(), throughTurn: Number(stored.throughTurn) || 0 } : null
-              const toTurn = Number(body?.toTurn) > 0 ? Math.floor(Number(body.toTurn)) : 0
-              // 截了轮次、而摘要覆盖到截取点之后 ⇒ 不许带（摘要里有分支点之后的剧情）。
+              const toTurn = range.to
+              // 截了轮次、而摘要覆盖到截取末轮 M 之后 ⇒ 不许带（摘要里有分支点之后的剧情）。
               const memoryAllowed = memory !== null && (toTurn === 0 || memory.throughTurn <= toTurn)
               note({ seat: 'packs-route', op, sessionId, items: result.items.length, turnCount: result.turnCount, lastTurn: result.lastTurn, toolCalls: result.toolCalls, everyTurn: everyTurn?.mode ?? null, memory: memory?.throughTurn ?? null, memoryAllowed })
-              return Response.json({ ok: true, op, ...result, everyTurn, memory, memoryAllowed, ...envelope() }, noStore)
+              return Response.json({ ok: true, op, ...result, fromTurn: range.from, toTurn: range.to, everyTurn, memory, memoryAllowed, ...envelope() }, noStore)
             } else if (op === 'every-turn-status') {
               // 面板状态行：本会话每轮注入的自动判定（只读）。
               const gate = await loadGate()

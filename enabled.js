@@ -53,6 +53,21 @@ export function isEnabled(state, sessionId, key) {
   return state?.enabled?.[sessionId]?.[key] !== false
 }
 
+/**
+ * 「每轮注入」这一项开没开：左栏开关（state.enabled）与旧版条目自带的 enabled 一起看。
+ *
+ * 0.11 之前这个开关是面板里那个「启用」勾选框，写的是 state.everyTurn[会话].enabled；
+ * 0.11 把开关搬到左栏，写的是 state.enabled[会话].everyTurn。两个开关并存会互相打架：
+ * 勾选框关过、后来用左栏开关打开时，entry.enabled 还是 false ⇒ everyTurnFor() 返回 undefined，
+ * 开关是开的、芯片点也是亮的，却一轮都不注入。所以旧值也算「关」，由左栏开关负责清掉它。
+ * client.js 里有一份同规则的 everyTurnSwitchOn（面板不能 import 服务端模块），测试比对两者。
+ */
+export function everyTurnOn(state, sessionId) {
+  if (state?.enabled?.[sessionId]?.everyTurn === false) return false
+  const own = state?.everyTurn?.[sessionId]
+  return !(own !== null && typeof own === 'object' && own.enabled === false)
+}
+
 const VIEWS = new WeakMap()
 
 function withoutKey(map, key) {

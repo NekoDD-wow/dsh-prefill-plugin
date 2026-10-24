@@ -2,7 +2,7 @@
 
 ## Lucide Icons
 
-`client.js` 内联了部分 [Lucide](https://lucide.dev) 图标（lucide-static 1.59.0）的路径数据。
+`client.js` 内联了部分 [Lucide](https://lucide.dev) 图标（lucide-static 1.59.0；pin、chevron-down 取自 1.61.0）的路径数据。
 
 ```
 ISC License
