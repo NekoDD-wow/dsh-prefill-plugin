@@ -245,7 +245,7 @@ export function sanitizeMemorySeed(raw) {
 }
 
 /**
- * 预设里的角色卡引用（v0.9）：只存卡片 id + 面板上的套用选项，不存卡片内容 ——
+ * 预设里的角色卡引用（0.10）：只存卡片 id + 面板上的套用选项，不存卡片内容 ——
  * 套用预设时按 id 现编译（世界书、故事记忆开关跟卡走），卡片删了就跳过这一项。
  */
 export function sanitizeCardRef(raw) {

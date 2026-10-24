@@ -2609,7 +2609,7 @@ window.__ModuleLoader__.load({
         setPackName(name)
         const fresh = await postJson(STATE_ROUTE, undefined)
         const st = fresh?.state ?? {}
-        // 套用 = **整体替换**（v0.9）：面板上挂在预设下的每一项都以预设为准，预设里没有的一项恢复默认，
+        // 套用 = **整体替换**（0.10）：面板上挂在预设下的每一项都以预设为准，预设里没有的一项恢复默认，
         // 不再保留上一个预设 / 手动设置的残留。运行时状态（自动收放的 since / override）不在预设里，从头判断。
         const patch = { activePreset: { ...(st.activePreset ?? {}), [sessionId]: `pack:${name}` } }
         // ① 角色卡：只存引用，按 id + 选项现编译，世界书和故事记忆跟卡走；卡片不在了就跳过。
@@ -2890,7 +2890,25 @@ window.__ModuleLoader__.load({
       }
       const exportFile = async () => {
         const name = packName.trim() === '' ? 'prefill' : packName.trim()
-        const payload = { version: 2, name, items, overrides: await currentOverrides(), tools: await currentTools(), gate: gateMode }
+        // 导出 = 和「保存为预设」同一套内容：既然「预设 = 面板下面全部东西」，导出文件也要带上
+        // 角色卡引用 / 每轮注入配置 / 故事记忆摘要，否则导出再导入会悄悄丢东西。
+        const [overrides, tools, card] = await Promise.all([currentOverrides(), currentTools(), currentCardRef()])
+        const remembered = await memoryCall({ op: 'get' }).catch(() => null)
+        const memorySeed =
+          typeof remembered?.memory?.text === 'string' && remembered.memory.text.trim() !== ''
+            ? { text: remembered.memory.text.trim(), throughTurn: Number(remembered.memory.throughTurn) || 0 }
+            : undefined
+        const payload = {
+          version: 2,
+          name,
+          items,
+          overrides,
+          tools,
+          gate: gateMode,
+          ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}),
+          ...(card === null || card === undefined ? {} : { card }),
+          ...(memorySeed === undefined ? {} : { memorySeed }),
+        }
         const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
         const anchor = document.createElement('a')
