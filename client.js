@@ -3227,6 +3227,8 @@ window.__ModuleLoader__.load({
           ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}),
           ...(card === null || card === undefined ? {} : { card }),
           ...(memorySeed === undefined ? {} : { memorySeed }),
+          // 启用开关同样属于「面板下面的东西」：导出不带它，导入后关掉的项会悄悄全开。
+          ...(ownEnabled && Object.keys(ownEnabled).length > 0 ? { enabled: ownEnabled } : {}),
         }
         const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
