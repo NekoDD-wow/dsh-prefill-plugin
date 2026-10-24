@@ -244,6 +244,23 @@ export function sanitizeMemorySeed(raw) {
   return { text, throughTurn: Math.max(0, Math.floor(Number(raw.throughTurn) || 0)) }
 }
 
+/**
+ * 预设里的角色卡引用（v0.9）：只存卡片 id + 面板上的套用选项，不存卡片内容 ——
+ * 套用预设时按 id 现编译（世界书、故事记忆开关跟卡走），卡片删了就跳过这一项。
+ */
+export function sanitizeCardRef(raw) {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const id = typeof raw.id === 'string' ? raw.id.trim() : ''
+  if (id === '' || id.length > 200) return undefined
+  const src = raw.opts !== null && typeof raw.opts === 'object' ? raw.opts : {}
+  const opts = {}
+  for (const key of ['reinforce', 'thinkZh', 'firstPerson', 'lore', 'memory']) if (typeof src[key] === 'boolean') opts[key] = src[key]
+  if (src.mode === 'agent' || src.mode === 'pure') opts.mode = src.mode
+  if (Number.isFinite(Number(src.greeting))) opts.greeting = Math.max(0, Math.floor(Number(src.greeting)))
+  for (const key of ['userName', 'tools']) if (typeof src[key] === 'string') opts[key] = src[key].slice(0, 500)
+  return { id, opts }
+}
+
 /** 会话里最后一轮的轮号（没有 = 0）。 */
 function lastTurnOf(events) {
   try {
@@ -968,6 +985,7 @@ export function apply(ctx) {
                 ...(gate === 'pure' || gate === 'pass' || gate === 'replace' ? { gate } : {}),
                 ...(extra.everyTurn === undefined ? {} : { everyTurn: extra.everyTurn }),
                 ...(extra.memorySeed === undefined ? {} : { memorySeed: extra.memorySeed }),
+                ...(extra.card === undefined ? {} : { card: extra.card }),
               }
               const at = packs.findIndex((entry) => entry.name === name)
               if (at >= 0) packs[at] = pack
@@ -1022,7 +1040,7 @@ export function apply(ctx) {
               if (name === '') reason = 'missing name'
               else if (items === undefined) reason = 'invalid items[]'
               else if (memorySeed !== undefined && cut > 0 && memorySeed.throughTurn > cut) reason = 'memory summary covers turns after the cut'
-              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed })
+              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed, card: sanitizeCardRef(body?.card) })
             } else if (op === 'delete') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const next = packs.filter((entry) => entry.name !== name)
@@ -1046,7 +1064,7 @@ export function apply(ctx) {
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
                 if (items === undefined || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed) })
+                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card) })
               }
             } else {
               reason = `unknown op "${op}"`

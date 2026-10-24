@@ -490,7 +490,7 @@ window.__ModuleLoader__.load({
       groupMine: '我的',
       manageShow: '＋ 保存 / 导入 / 导出预设',
       manageHide: '收起',
-      presetsHint: '点一下即套用：会一并设置系统提示、开场对话和工具权限。首轮前套用从第一轮生效；会话开跑后套用从下一轮生效。',
+      presetsHint: '点一下即套用：下面的角色卡、系统提示、每轮注入、开场对话、改写注入内容和工具权限整体换成这个预设。首轮前套用从第一轮生效；会话开跑后套用从下一轮生效。',
       footPure: '系统提示 0 · 工具 0',
       footTakeover: '系统提示完全由你写',
       footReplace: '替换系统提示正文，工具照旧',
@@ -571,7 +571,8 @@ window.__ModuleLoader__.load({
       historyWithEveryTurn: '带上每轮注入设置',
       historyWithMemory: '带上故事记忆摘要',
       historyMemoryLate: '摘要覆盖到第 {n} 轮，晚于截取点',
-      packWithEveryTurn: '连同每轮注入设置',
+      packCardMissing: '已套用；预设里的角色卡找不到了，这一项跳过',
+      presetContentHint: '下面这些都属于当前预设：保存时一起存，套用时整体替换（预设里没有的项恢复默认）。',
       memorySeedApplied: '已带入故事记忆摘要',
       everyTurnOffSaved: '每轮注入已关闭',
       modeReplaceHint: '用下面这段替换 dsh 默认系统提示的正文，但工具、运行时上下文（工作区、权限）和审批全部照旧。适合换语言（如中文版官方提示）或整体重写规则。可以写 {{model}} 和 {{cwd}}，dsh 会自动填入。',
@@ -714,7 +715,7 @@ window.__ModuleLoader__.load({
       groupMine: 'Mine',
       manageShow: '+ Save / import / export',
       manageHide: 'Hide',
-      presetsHint: 'Click to apply it: it sets the system prompt, opening dialogue and tool access together. Before the first turn it applies from turn 1; afterwards from the next turn.',
+      presetsHint: 'Click to apply it: the character card, system prompt, every-turn injection, opening dialogue, injection rewrites and tool access below are all replaced by this preset. Before the first turn it applies from turn 1; afterwards from the next turn.',
       footPure: 'system 0 · tools 0',
       footTakeover: 'you write the whole system prompt',
       footReplace: 'replaces the system prompt body, tools stay',
@@ -794,7 +795,8 @@ window.__ModuleLoader__.load({
       historyWithEveryTurn: 'Include every-turn reminder settings',
       historyWithMemory: 'Include story memory summary',
       historyMemoryLate: 'Summary covers up to turn {n}, after the cut',
-      packWithEveryTurn: 'with every-turn settings',
+      packCardMissing: 'Applied; the character card in this preset is gone, so it was skipped',
+      presetContentHint: 'Everything below belongs to the current preset: saving stores all of it, applying replaces all of it (anything the preset lacks goes back to default).',
       memorySeedApplied: 'Story memory summary carried over',
       everyTurnOffSaved: 'Every-turn reminder off',
       modeReplaceHint: 'Replaces the body of the default dsh system prompt with the text below, while tools, runtime context (workspace, permissions) and approvals stay. {{model}} and {{cwd}} are filled in by dsh.',
@@ -2144,6 +2146,9 @@ window.__ModuleLoader__.load({
       }),
     }
 
+    /** 角色卡面板选项的默认值（预设里的角色卡引用按它补全）。 */
+    const DEFAULT_CARD_OPTS = { mode: 'agent', greeting: 0, userName: '', reinforce: true, thinkZh: false, firstPerson: false, tools: '', lore: true, memory: true }
+
     /** 可折叠的小节。 */
     function Section(props) {
       return h(
@@ -2199,13 +2204,12 @@ window.__ModuleLoader__.load({
       // 「从当前会话取」：把已发生的对话转成开场条目存成预设（v0.8）。
       const [historyOpen, setHistoryOpen] = React.useState(false)
       const [historyOpts, setHistoryOpts] = React.useState({ reasoning: false, toTurn: '', everyTurn: true, memory: false })
-      const [packWithEveryTurn, setPackWithEveryTurn] = React.useState(true)
       const [everyTurnStatus, setEveryTurnStatus] = React.useState(null)
       const [historyPreview, setHistoryPreview] = React.useState(null)
       // 角色卡（v0.6）：列表、选中、套用选项、编译预览。
       const [cards, setCards] = React.useState([])
       const [cardPick, setCardPick] = React.useState('')
-      const [cardOpts, setCardOpts] = React.useState({ mode: 'agent', greeting: 0, userName: '', reinforce: true, thinkZh: false, firstPerson: false, tools: '', lore: true, memory: true })
+      const [cardOpts, setCardOpts] = React.useState(DEFAULT_CARD_OPTS)
       const [avatars, setAvatars] = React.useState({})
       const [cardPreview, setCardPreview] = React.useState(null)
       const cardFileRef = React.useRef(null)
@@ -2545,9 +2549,11 @@ window.__ModuleLoader__.load({
           // 纯净：系统提示 0、上下文 0、工具 0、只放行你的话（与预填装）。
           systemDirty.current = false
           setSystemDraft('')
+          setEveryTurnDraft(null)
           await writeSystem('', 'takeover', {
             activePreset: activeMap,
             injects: without(fresh?.state?.injects, sessionId),
+            ...presetLeftovers(fresh?.state),
           })
           flash(injectMode ? t('appliedNextTurn') : t('pureApplied'))
           return
@@ -2563,7 +2569,8 @@ window.__ModuleLoader__.load({
           setItems(preset.items)
         }
         const nextMode = preset.takeover === true ? 'takeover' : preset.replace === true ? 'replace' : mode
-        await writeSystem(text, nextMode, { activePreset: activeMap })
+        setEveryTurnDraft(null)
+        await writeSystem(text, nextMode, { activePreset: activeMap, ...presetLeftovers(fresh?.state) })
         if (opening) {
           // 草稿后写：草稿路由会按**已生效的新系统提示**预热合成轮。
           await postJson(DRAFT_ROUTE, { sessionId, items: preset.items })
@@ -2574,18 +2581,22 @@ window.__ModuleLoader__.load({
         flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
       }
 
+      /** 挂在预设下、但不经 writeSystem 的几项：角色卡引用、世界书、故事记忆、每轮注入——换 / 取消预设时一并归位。 */
+      const presetLeftovers = (st) => ({
+        cardRef: without(st?.cardRef, sessionId),
+        lore: without(st?.lore, sessionId),
+        memory: without(st?.memory, sessionId),
+        // 回到「新会话默认」（'*'），不是硬关。
+        everyTurn: without(st?.everyTurn, sessionId),
+      })
+
       const clearPreset = async () => {
         const fresh = await postJson(STATE_ROUTE, undefined)
         systemDirty.current = false
         setSystemDraft('')
-        const extra = { activePreset: without(fresh?.state?.activePreset, sessionId) }
-        // 角色卡套用时顺带开了本会话的每轮提醒：取消时一并关掉（只对角色卡；内置/文件预设照旧）。
-        if (String(fresh?.state?.activePreset?.[sessionId] ?? '').startsWith('card:')) {
-          extra.everyTurn = { ...(fresh?.state?.everyTurn ?? {}), [sessionId]: { enabled: false, text: '', firstText: '', untilTurn: 0 } }
-          extra.lore = without(fresh?.state?.lore, sessionId)
-          extra.memory = without(fresh?.state?.memory, sessionId)
-          setEveryTurnDraft(null)
-        }
+        // 取消套用 = 预设带来的东西全部归位（开场对话留着：那是你正在写的草稿 / 已发生的历史）。
+        const extra = { activePreset: without(fresh?.state?.activePreset, sessionId), ...presetLeftovers(fresh?.state) }
+        setEveryTurnDraft(null)
         await writeSystem('', 'off', extra)
         flash(t('presetCleared'))
       }
@@ -2597,31 +2608,46 @@ window.__ModuleLoader__.load({
         edit(Array.isArray(pack.items) ? pack.items : [])
         setPackName(name)
         const fresh = await postJson(STATE_ROUTE, undefined)
-        const patch = { activePreset: { ...(fresh?.state?.activePreset ?? {}), [sessionId]: `pack:${name}` } }
-        if (pack.overrides !== undefined && pack.overrides !== null) {
-          injectionDrafts.set(sessionId, pack.overrides)
-          patch.overrides = { ...(fresh?.state?.overrides ?? {}), [sessionId]: pack.overrides }
-          const text = pack.overrides?.sections?.[PERSONA_SECTION]
-          systemDirty.current = false
-          setSystemDraft(typeof text === 'string' ? text : '')
+        const st = fresh?.state ?? {}
+        // 套用 = **整体替换**（v0.9）：面板上挂在预设下的每一项都以预设为准，预设里没有的一项恢复默认，
+        // 不再保留上一个预设 / 手动设置的残留。运行时状态（自动收放的 since / override）不在预设里，从头判断。
+        const patch = { activePreset: { ...(st.activePreset ?? {}), [sessionId]: `pack:${name}` } }
+        // ① 角色卡：只存引用，按 id + 选项现编译，世界书和故事记忆跟卡走；卡片不在了就跳过。
+        let cardMissing = false
+        let compiled = null
+        if (pack.card?.id) {
+          const res = await cardsCall({ op: 'compile', id: pack.card.id, options: cardOptions({ ...DEFAULT_CARD_OPTS, ...(pack.card.opts ?? {}) }) }).catch(() => null)
+          compiled = res?.compiled ?? null
+          cardMissing = compiled === null
         }
-        if (pack.gate === 'pure' || pack.gate === 'pass' || pack.gate === 'replace') patch.gate = { ...(fresh?.state?.gate ?? {}), [sessionId]: pack.gate }
-        if (pack.tools !== undefined) patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: pack.tools }
-        // v0.9：预设里存的每轮注入**配置**（不含运行时状态）——套用后在本会话从头判断。
-        if (pack.everyTurn !== undefined && pack.everyTurn !== null) {
-          patch.everyTurn = { ...(fresh?.state?.everyTurn ?? {}), [sessionId]: pack.everyTurn }
-          setEveryTurnDraft(null)
-        }
-        // 故事记忆摘要：本会话开着故事记忆（套了角色卡）⇒ 写成初始记忆；否则作为一条背景放在开场对话最前面。
+        patch.cardRef = compiled ? { ...(st.cardRef ?? {}), [sessionId]: { id: pack.card.id, opts: pack.card.opts ?? {} } } : without(st.cardRef, sessionId)
+        patch.lore = compiled?.lore ? { ...(st.lore ?? {}), [sessionId]: compiled.lore } : without(st.lore, sessionId)
+        patch.memory = compiled?.memory?.enabled ? { ...(st.memory ?? {}), [sessionId]: compiled.memory } : without(st.memory, sessionId)
+        // ② 系统提示 + 改写注入内容。
+        const overrides = pack.overrides !== undefined && pack.overrides !== null ? pack.overrides : { messages: {}, sections: {}, contexts: {} }
+        injectionDrafts.set(sessionId, overrides)
+        patch.overrides = pack.overrides ? { ...(st.overrides ?? {}), [sessionId]: pack.overrides } : without(st.overrides, sessionId)
+        const text = overrides?.sections?.[PERSONA_SECTION]
+        systemDirty.current = false
+        setSystemDraft(typeof text === 'string' ? text : '')
+        patch.gate = { ...(st.gate ?? {}), [sessionId]: pack.gate === 'pure' || pack.gate === 'replace' ? pack.gate : 'pass' }
+        patch.armed = (st.armed ?? []).filter((id) => id !== sessionId)
+        // ③ 工具权限：预设没存 = 默认放行。
+        patch.sessionTools = pack.tools !== undefined && pack.tools !== null ? { ...(st.sessionTools ?? {}), [sessionId]: pack.tools } : without(st.sessionTools, sessionId)
+        // ④ 每轮注入：只有配置；预设没存 = 回到「新会话默认」。
+        patch.everyTurn = pack.everyTurn ? { ...(st.everyTurn ?? {}), [sessionId]: pack.everyTurn } : without(st.everyTurn, sessionId)
+        setEveryTurnDraft(null)
+        // 故事记忆摘要：本会话开着故事记忆（预设带了角色卡）⇒ 写成初始记忆；否则作为一条背景放在开场对话最前面。
+        const memoryOn = compiled?.memory?.enabled === true
         const seed = typeof pack.memorySeed?.text === 'string' && pack.memorySeed.text.trim() !== '' ? pack.memorySeed.text.trim() : ''
-        if (seed !== '' && fresh?.state?.memory?.[sessionId]?.enabled !== true && !injectMode) {
+        if (seed !== '' && !memoryOn && !injectMode) {
           const base = Array.isArray(pack.items) ? pack.items : []
           edit([{ role: 'user', text: memorySeedText(seed) }, ...base])
         }
         setEnvelope(await postJson(STATE_ROUTE, patch))
-        if (seed !== '' && fresh?.state?.memory?.[sessionId]?.enabled === true) await memoryCall({ op: 'set', text: seed })
+        if (seed !== '' && memoryOn) await memoryCall({ op: 'set', text: seed })
         notifyStateChanged()
-        flash(seed !== '' ? t('memorySeedApplied') : injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
+        flash(cardMissing ? t('packCardMissing') : seed !== '' ? t('memorySeedApplied') : injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
       }
 
       // ── 角色卡（v0.6）────────────────────────────────────────────────────────
@@ -2680,7 +2706,7 @@ window.__ModuleLoader__.load({
         const loreMap = compiled.lore ? { ...(fresh?.state?.lore ?? {}), [sessionId]: compiled.lore } : without(fresh?.state?.lore, sessionId)
         // 故事记忆（三期）：开着就写 state.memory[会话]，闸门每 N 轮在后台总结一次；关掉就清这一格（已有摘要文件保留，可在面板清空）。
         const memoryMap = compiled.memory?.enabled ? { ...(fresh?.state?.memory ?? {}), [sessionId]: compiled.memory } : without(fresh?.state?.memory, sessionId)
-        await writeSystem(compiled.systemText, compiled.systemMode, { activePreset: activeMap, everyTurn: everyTurnMap, lore: loreMap, memory: memoryMap })
+        await writeSystem(compiled.systemText, compiled.systemMode, { activePreset: activeMap, everyTurn: everyTurnMap, lore: loreMap, memory: memoryMap, cardRef: { ...(fresh?.state?.cardRef ?? {}), [sessionId]: { id: cardPick, opts: cardOpts } } })
         if (compiled.mode === 'agent' && Array.isArray(compiled.tools)) {
           const again = await postJson(STATE_ROUTE, undefined)
           setEnvelope(await postJson(STATE_ROUTE, { sessionTools: { ...(again?.state?.sessionTools ?? {}), [sessionId]: compiled.tools } }))
@@ -2774,6 +2800,14 @@ window.__ModuleLoader__.load({
           return fresh
         }
       }
+      const currentCardRef = async () => {
+        try {
+          const snapshot = await postJson(STATE_ROUTE, undefined)
+          return snapshot?.state?.cardRef?.[sessionId] ?? null
+        } catch {
+          return null
+        }
+      }
       const currentTools = async () => {
         try {
           const snapshot = await postJson(STATE_ROUTE, undefined)
@@ -2790,9 +2824,10 @@ window.__ModuleLoader__.load({
           flash(t('needName'))
           return
         }
-        void Promise.all([currentOverrides(), currentTools()])
-          .then(([overrides, tools]) =>
-            packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, ...(packWithEveryTurn && everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}) }),
+        // 保存 = 面板上挂在预设下的**全部**内容：角色卡（引用）、系统提示、每轮注入（只存配置）、开场对话、改写注入内容、工具权限。
+        void Promise.all([currentOverrides(), currentTools(), currentCardRef()])
+          .then(([overrides, tools, card]) =>
+            packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}) }),
           )
           .then((data) => {
             adoptPacks(data)
@@ -2827,12 +2862,13 @@ window.__ModuleLoader__.load({
           flash(t('historyEmpty'))
           return
         }
-        void Promise.all([currentOverrides(), currentTools()])
-          .then(([overrides, tools]) => {
+        void Promise.all([currentOverrides(), currentTools(), currentCardRef()])
+          .then(([overrides, tools, card]) => {
             const toTurn = Number(historyOpts.toTurn) > 0 ? Math.floor(Number(historyOpts.toTurn)) : 0
             const extra = {}
             if (historyOpts.everyTurn !== false && historyPreview?.everyTurn) extra.everyTurn = historyPreview.everyTurn
             if (historyOpts.memory === true && historyPreview?.memoryAllowed && historyPreview?.memory) extra.memorySeed = historyPreview.memory
+            if (card) extra.card = card
             return packsCall({ op: 'save', name, items: historyItems, overrides, tools, gate: gateMode, ...(toTurn > 0 ? { toTurn } : {}), ...extra })
           })
           .then((data) => {
@@ -2945,7 +2981,7 @@ window.__ModuleLoader__.load({
         ownEveryTurn?.enabled === true && (String(ownEveryTurn.text ?? '').trim() !== '' || String(ownEveryTurn.firstText ?? '').trim() !== '')
           ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {} }
           : null
-      const presetsSection = h(
+      const presetsSection = (nested) => h(
         Section,
         {
           id: 'presets',
@@ -3013,6 +3049,12 @@ window.__ModuleLoader__.load({
               )
             : null,
         ),
+        h(
+          'div',
+          { 'data-prefill-preset-content': '', style: { display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 10, borderLeft: '2px solid var(--dsw-alias-border-l1)' } },
+          h('div', { style: V.hint }, t('presetContentHint')),
+          ...nested,
+        ),
         open.manage
           ? h(
           'div',
@@ -3028,14 +3070,6 @@ window.__ModuleLoader__.load({
             },
           }),
           h('button', { type: 'button', style: V.btn, onClick: savePack }, t('savePack')),
-          everyTurnStored !== null
-            ? h(
-                'label',
-                { style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
-                h('input', { type: 'checkbox', 'data-prefill-pack-everyturn': '', checked: packWithEveryTurn, onChange: (event) => setPackWithEveryTurn(event.target.checked) }),
-                t('packWithEveryTurn'),
-              )
-            : null,
           h('button', { type: 'button', style: V.btn, 'data-prefill-history-open': '', title: t('historyTip'), onClick: toggleHistory }, t('historyOpen')),
           h('button', { type: 'button', style: V.btn, onClick: () => void exportFile() }, t('exportFile')),
           h('button', { type: 'button', style: V.btn, onClick: () => fileRef.current?.click() }, t('importFile')),
@@ -3968,7 +4002,7 @@ window.__ModuleLoader__.load({
               conflict.advice ? h('span', { style: S.dockHint }, String(conflict.advice)) : null,
             )
           : null,
-        ...(isCollapsed ? [] : [guideSection, presetsSection, cardsSection, systemSection, everyTurnSection, itemsSection, injectSection, usageSection]),
+        ...(isCollapsed ? [] : [guideSection, presetsSection([cardsSection, systemSection, everyTurnSection, itemsSection, injectSection]), usageSection]),
       )
     }
 
