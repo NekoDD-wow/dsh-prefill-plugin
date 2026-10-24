@@ -22,6 +22,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { checksOf, modeOf, replay, splitTurns } from './inject-auto.js'
+import { applyEnabled, isEnabled } from './enabled.js'
 import { cleanMemory, matchLore, memoryDue, memoryInput, memorySystemPrompt, renderLore, renderMemory } from './character-cards.js'
 
 /** 内核代次：壳会在诊断里回报它，用来确认热换是否生效。 */
@@ -929,7 +930,7 @@ export async function prime(api, agent) {
   } catch {
     // 拿不到就算了（清单还能靠装配观察补）。
   }
-  const state = effectiveStateFor(api.readState(), agent.id)
+  const state = effectiveStateFor(applyEnabled(api.readState()), agent.id)
   // 与 step() 的武装判定保持一致：**只配了注入改写（例如人格预设）**的会话也要急切挂载，
   // 否则首个请求的装配抢在 pre-step 之前 ⇒ 人格段"首轮不生效、第二轮才生效"。
   const hasOverrides = overridesFor(state, agent.id) !== undefined
@@ -993,7 +994,7 @@ export async function step(api, payload, decision) {
   // 无论是否武装都要挂"装配观察者"：Q17 的注入清单（段/上下文名）靠它拿。
   ensureToolsBlocker(api)
   // M2：`state` 已经是"折算过按会话闸门"的有效状态（见 effectiveStateFor）。
-  const state0 = effectiveStateFor(readState(), payload?.agent?.id)
+  const state0 = effectiveStateFor(applyEnabled(readState()), payload?.agent?.id)
   // 三种情况都算"要接管这个会话"：
   //   ① 显式列进 armed；② 通配 `*`（探针）；③ **该会话配了注入改写** ——
   // ③ 是必需的：用户要的是"预填装留空、只改系统提示"，那种情况下没有任何 lever，
@@ -1648,6 +1649,8 @@ function prefillWanted(state, agentId) {
  *   ③ 都没有 → 空。
  */
 function resolveItems(state, agentId) {
+  // 左栏「开场对话」关着：内容留在草稿里，不写进历史。
+  if (!isEnabled(state, agentId, 'items')) return []
   if (DRAFTS.has(agentId)) return filledItems(DRAFTS.get(agentId))
   if (state?.levers?.prefillProbe === true) return resolveProbeItems()
   return []
@@ -1711,7 +1714,7 @@ async function computeRendered(agent) {
  */
 export async function preparePrefillPrompt(api, agent) {
   if (typeof agent?.id !== 'string') return
-  if (!prefillWanted(api.readState(), agent.id)) return
+  if (!prefillWanted(applyEnabled(api.readState()), agent.id)) return
   try {
     const rendered = await computeRendered(agent)
     PROMPTS.set(agent.id, rendered)
@@ -1734,7 +1737,7 @@ export async function preparePrefillPrompt(api, agent) {
  */
 export function onInboxInserted(api, agent, message) {
   if (typeof agent?.id !== 'string') return
-  const state = api.readState()
+  const state = applyEnabled(api.readState())
   if (!prefillWanted(state, agent.id)) return
   // 只在**用户原话**上物化；注入（runtime-context / skill-catalog 等）不算"发出"。
   if (message?.source?.kind !== 'user') return
@@ -1793,7 +1796,7 @@ function pinTitle(api, agent, session, message) {
  */
 export async function materializePrefill(api, agent) {
   if (typeof agent?.id !== 'string') return
-  const state = api.readState()
+  const state = applyEnabled(api.readState())
   if (!prefillWanted(state, agent.id)) return
   const session = agent.session
   if (session === null || typeof session?.append !== 'function') {

@@ -29,6 +29,7 @@ import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnPresets } from './builtin-presets.js'
 import { historyToItems } from './session-history.js'
 import { CHECK_IDS, autoParams, modeOf, splitTurns } from './inject-auto.js'
+import { applyEnabled, sanitizeEnabled } from './enabled.js'
 import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
@@ -986,6 +987,8 @@ export function apply(ctx) {
                 ...(extra.everyTurn === undefined ? {} : { everyTurn: extra.everyTurn }),
                 ...(extra.memorySeed === undefined ? {} : { memorySeed: extra.memorySeed }),
                 ...(extra.card === undefined ? {} : { card: extra.card }),
+                // 左栏启用开关（v0.10）：只存关掉的项；全开 = 不存。
+                ...(extra.enabled === undefined ? {} : { enabled: extra.enabled }),
               }
               const at = packs.findIndex((entry) => entry.name === name)
               if (at >= 0) packs[at] = pack
@@ -1026,7 +1029,7 @@ export function apply(ctx) {
               const gate = await loadGate()
               const status =
                 typeof gate?.everyTurnStatus === 'function'
-                  ? gate.everyTurnStatus(readState(), sessionId, sessionEvents(liveAgents.get(sessionId), sessionId))
+                  ? gate.everyTurnStatus(applyEnabled(readState()), sessionId, sessionEvents(liveAgents.get(sessionId), sessionId))
                   : { enabled: false }
               return Response.json({ ok: true, op, status, ...envelope() }, noStore)
             } else if (op === 'save') {
@@ -1040,7 +1043,7 @@ export function apply(ctx) {
               if (name === '') reason = 'missing name'
               else if (items === undefined) reason = 'invalid items[]'
               else if (memorySeed !== undefined && cut > 0 && memorySeed.throughTurn > cut) reason = 'memory summary covers turns after the cut'
-              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed, card: sanitizeCardRef(body?.card) })
+              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed, card: sanitizeCardRef(body?.card), enabled: sanitizeEnabled(body?.enabled) })
             } else if (op === 'delete') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const next = packs.filter((entry) => entry.name !== name)
@@ -1064,7 +1067,7 @@ export function apply(ctx) {
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
                 if (items === undefined || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card) })
+                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), enabled: sanitizeEnabled(parsed?.enabled) })
               }
             } else {
               reason = `unknown op "${op}"`

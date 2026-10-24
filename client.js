@@ -88,6 +88,64 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 悬浮卡片（v0.10）：芯片和卡片是两个槽位组件，靠模块级表 + 窗口事件通信（不读别人的 DOM）。
+     *   cardOpen[会话]   = 卡片开着没有（芯片点一下切换）；
+     *   chipSummary[会话] = 卡片算好的「预设名 + 每项开关」，芯片拿来画名字和彩点。
+     */
+    const CARD_EVENT = 'dsh-prefill:card'
+    const cardOpenMap = new Map()
+    const chipSummary = new Map()
+    function setCardOpen(sessionId, open) {
+      cardOpenMap.set(sessionId, open === true)
+      try {
+        window.dispatchEvent(new CustomEvent(CARD_EVENT, { detail: { sessionId, open: open === true } }))
+      } catch {
+        // 忽略。
+      }
+    }
+    function publishSummary(sessionId, summary) {
+      const before = chipSummary.get(sessionId)
+      if (before !== undefined && JSON.stringify(before) === JSON.stringify(summary)) return
+      chipSummary.set(sessionId, summary)
+      try {
+        window.dispatchEvent(new CustomEvent(CARD_EVENT, { detail: { sessionId, summary: true } }))
+      } catch {
+        // 忽略。
+      }
+    }
+
+    /** 左栏各项的颜色（CSS 变量；深浅色主题里 warn / success / tertiary 跟随 DSH）。 */
+    const COLOR_VARS = {
+      '--pf-card': '#e0457b',
+      '--pf-system': '#7c5cff',
+      '--pf-turn': 'var(--dsw-alias-state-warn-primary, #f59e0b)',
+      '--pf-lore': '#0fa3a3',
+      '--pf-user': '#3b82f6',
+      '--pf-ai': 'var(--dsw-alias-state-success-primary, #22a06b)',
+      '--pf-adv': 'var(--dsw-alias-label-secondary, #6b6b6b)',
+      '--pf-off': 'var(--dsw-alias-border-l2, #cfcfcf)',
+    }
+    /** 左栏顺序（用量与缓存单列在分隔线下面，没有开关）。 */
+    const FEATURE_NAV = [
+      ['card', 'cards', 'var(--pf-card)'],
+      ['lore', 'lore', 'var(--pf-lore)'],
+      ['memory', 'memory', 'var(--pf-lore)'],
+      ['system', 'system', 'var(--pf-system)'],
+      ['everyTurn', 'every-turn', 'var(--pf-turn)'],
+      ['items', 'items', 'var(--pf-user)'],
+      ['inject', 'inject', 'var(--pf-adv)'],
+    ]
+    /** 与 enabled.js 同一份指纹（djb2）：角色卡关掉时，服务端靠它认出「仍是套卡时原样」的几项。 */
+    function fingerprint(text) {
+      const source = String(text ?? '')
+      let hash = 5381
+      for (let at = 0; at < source.length; at += 1) hash = ((hash << 5) + hash + source.charCodeAt(at)) | 0
+      return (hash >>> 0).toString(16)
+    }
+    const tint = (color, pct = 12) => `color-mix(in srgb, ${color} ${pct}%, var(--dsw-alias-bg-base))`
+    const num = (value) => (Number.isFinite(value) ? Math.round(value).toLocaleString('en-US') : '—')
+
+    /**
      * 每个会话**当前的注入改写草稿**（`{messages, sections, contexts}`）。
      *
      * 为什么要有这个模块级表：注入改写现在是**预填装面板里的一节**，而"预设"要把它
@@ -915,6 +973,132 @@ window.__ModuleLoader__.load({
       pureApplied: 'Pure mode active',
     })
 
+    // ── v0.10 悬浮卡片 ──
+    Object.assign(zh, {
+      itemsTitle: '开场对话',
+      itemsNavTitle: '开场对话',
+      loreTitle: '世界书',
+      loreMeta: '{n} 条关键词条目',
+      loreHint: '角色卡里带关键词的设定条目：每轮扫描最近 {depth} 条消息，命中关键词的条目才注入，没命中不花 token。',
+      loreEmpty: '还没有世界书。套用一张带世界书（character_book）的角色卡后，这里会列出它的关键词条目。',
+      loreKeys: '关键词',
+      loreOffBody: '条目都还在，只是不再匹配、不再注入。打开开关即恢复。',
+      loreByCardBody: '角色卡关着，它带来的这一项也一起停用；打开角色卡即恢复。',
+      memoryEveryMeta: '每 {n} 轮总结一次',
+      memoryHint: '每隔几轮在后台把前情总结成一段摘要，之后每轮作为背景带上，长对话也不忘事。可以查看、手改或清空。',
+      memoryEmpty: '还没有故事记忆。套用角色卡时勾选「故事记忆」后，这里会显示总结进度和摘要。',
+      memoryOffBody: '摘要和设置都保留，只是不再总结、不再注入。打开开关即恢复。',
+      offTitle: '已停用。',
+      offByCardTitle: '随角色卡停用。',
+      offByCardBody: '这段仍是套用角色卡时的原样，角色卡关着时不发送；你改过之后就算你自己的，不再跟着角色卡开关。',
+      cardOffBody: '套用记录还在：世界书、故事记忆，以及仍是套卡原样的系统提示和每轮注入都不发送。打开开关即恢复。',
+      cardCurrent: '当前：',
+      systemOffBody: '正文和模式都保留，只是不发送（替换 / 接管也退回默认提示）。打开开关即恢复。',
+      everyTurnOffBody: '设置都保留，只是不再注入。打开开关即恢复。',
+      itemsOffBody: '内容都保留，只是不写入历史、不注入。打开开关即恢复。',
+      injectOffBody: '改写都保留，只是不生效，harness 发原文。打开开关即恢复。',
+      featureOnSaved: '已打开，从下一条消息起生效',
+      featureOffSaved: '已停用（内容保留），从下一条消息起生效',
+      switchOnTip: '打开：恢复这一项',
+      switchOffTip: '关掉：停用这一项，内容保留',
+      navNone: '未套用',
+      navWithCard: '随角色卡',
+      navLore: ' 条 · 命中才注入',
+      navMemoryEvery: '每 {n} 轮总结',
+      navMemoryThrough: '已总结到第 {n} 轮',
+      navSystemEmpty: '未填写',
+      navModeAlways: '一直',
+      navModeUntil: '前 {n} 轮',
+      navNotInjected: '待点注入',
+      navChanged: '改了 {n}',
+      navChangedUnit: ' 处',
+      navDisabled: '已停用',
+      navOffByCard: '随角色卡停用',
+      usageShort: '用量',
+      kindMine: '我的预设',
+      saveShort: '保存',
+      saveAs: '另存为…',
+      saveAsTip: '还没有在用的「我的预设」：起个名字存一份',
+      saveOverTip: '覆盖保存到当前预设',
+      saveAsHint: '把当前整套配置（角色卡、系统提示、每轮注入、开场对话、改写注入内容、工具权限和左栏开关）存成一个预设。',
+      badgeFirst: '首轮',
+      badgeTurn: '每轮',
+      badgeCache: '缓存',
+      pin: '钉住',
+      pinned: '已钉住',
+      pinTip: '钉住后点卡片外面、按 Esc 都不会关',
+      closeCard: '关闭',
+      chipCardTip: '点一下打开 / 收起预填装卡片',
+      chipNoPreset: '未套用预设',
+      chipWritten: '已写入历史',
+      chipOn: '开',
+      chipOff: '关',
+      chipEmpty: '开（未配置）',
+      chipOffByCard: '随角色卡停用',
+    })
+    Object.assign(en, {
+      itemsTitle: 'Opening dialogue',
+      itemsNavTitle: 'Opening dialogue',
+      loreTitle: 'Lorebook',
+      loreMeta: '{n} keyword entries',
+      loreHint: 'Keyword entries from the character card: each turn the last {depth} messages are scanned and only matching entries are injected.',
+      loreEmpty: 'No lorebook yet. Apply a character card that has a character_book to see its keyword entries here.',
+      loreKeys: 'Keys',
+      loreOffBody: 'Entries are kept; they are just not matched or injected. Turn it back on to restore.',
+      loreByCardBody: 'The character card is off, so this is paused with it; turn the card on to restore.',
+      memoryEveryMeta: 'summarizes every {n} turns',
+      memoryHint: 'Every few turns the story so far is summarized in the background and sent as background each turn. You can view, edit or clear it.',
+      memoryEmpty: 'No story memory yet. Tick "Story memory" when applying a character card.',
+      memoryOffBody: 'The summary and settings are kept; nothing is summarized or injected. Turn it back on to restore.',
+      offTitle: 'Disabled.',
+      offByCardTitle: 'Paused with the character card.',
+      offByCardBody: 'This is still exactly what the card set, so it is not sent while the card is off. Once you edit it, it is yours and no longer follows the card switch.',
+      cardOffBody: 'The applied card is kept: its lorebook, story memory and the unchanged card system prompt / reminder are not sent. Turn it back on to restore.',
+      cardCurrent: 'Current:',
+      systemOffBody: 'Text and mode are kept, just not sent (replace / take over fall back to the default prompt). Turn it back on to restore.',
+      everyTurnOffBody: 'Settings are kept; nothing is injected. Turn it back on to restore.',
+      itemsOffBody: 'Content is kept; it is not written into history or injected. Turn it back on to restore.',
+      injectOffBody: 'Rewrites are kept but not applied; the harness sends the originals. Turn it back on to restore.',
+      featureOnSaved: 'Enabled, from the next message',
+      featureOffSaved: 'Disabled (content kept), from the next message',
+      switchOnTip: 'Turn on: restore this item',
+      switchOffTip: 'Turn off: disable this item, keep its content',
+      navNone: 'not applied',
+      navWithCard: 'comes with a card',
+      navLore: ' entries · on match',
+      navMemoryEvery: 'every {n} turns',
+      navMemoryThrough: 'summarized to turn {n}',
+      navSystemEmpty: 'empty',
+      navModeAlways: 'Always',
+      navModeUntil: 'First {n}',
+      navNotInjected: 'not injected',
+      navChanged: '{n}',
+      navChangedUnit: ' changed',
+      navDisabled: 'disabled',
+      navOffByCard: 'paused with card',
+      usageShort: 'Usage',
+      kindMine: 'My preset',
+      saveShort: 'Save',
+      saveAs: 'Save as…',
+      saveAsTip: 'No preset of yours in use yet: name it and save',
+      saveOverTip: 'Overwrite the current preset',
+      saveAsHint: 'Save the whole setup (card, system prompt, every-turn reminder, opening dialogue, injection rewrites, tool permissions and the item switches) as a preset.',
+      badgeFirst: 'First',
+      badgeTurn: 'Per turn',
+      badgeCache: 'Cache',
+      pin: 'Pin',
+      pinned: 'Pinned',
+      pinTip: 'When pinned, clicking outside or pressing Esc does not close the card',
+      closeCard: 'Close',
+      chipCardTip: 'Click to open / close the prefill card',
+      chipNoPreset: 'no preset',
+      chipWritten: 'written',
+      chipOn: 'on',
+      chipOff: 'off',
+      chipEmpty: 'on (empty)',
+      chipOffByCard: 'paused with card',
+    })
+
     const S = {
       page: {
         display: 'flex',
@@ -1661,60 +1845,83 @@ window.__ModuleLoader__.load({
         }
       }, [call, sessionId])
 
+      // 卡片开没开 / 卡片发来的摘要（预设名 + 彩点）：都走 CARD_EVENT。
+      const [, setTick] = React.useState(0)
+      React.useEffect(() => {
+        const onCard = (event) => {
+          if (event?.detail?.sessionId === sessionId) setTick((value) => value + 1)
+        }
+        window.addEventListener(CARD_EVENT, onCard)
+        return () => window.removeEventListener(CARD_EVENT, onCard)
+      }, [sessionId])
+
       if (sessionId === '') return null
       const state = envelope?.state ?? null
       const map = state?.prefill !== null && typeof state?.prefill === 'object' ? state.prefill : {}
       const on = typeof map[sessionId] === 'string' && map[sessionId] !== ''
-      // 会话开跑过就没有"写进历史"这条路了 ⇒ 同一颗键自动改叫「预注入」，并要求手动触发。
       const injected = (envelope?.injects?.[sessionId] ?? 0) > 0
       const injectMode = (envelope?.turns?.[sessionId] ?? 0) > 0
-      // 首轮前写好的预填装已经变成真实历史：不用再点注入，别拿警示色催人。
       const written = (envelope?.materialized?.[sessionId] ?? 0) > 0
-      // 输入框芯片不知道面板里有没有内容，所以不在这里催；催促只在面板里（有内容、没注入时才高亮「注入」按钮）。
-      const pending = false
-      const label = injectMode
-        ? written && !injected
-          ? t('prefillWritten')
-          : pending
-            ? t('injectOn')
-            : injected
-              ? t('injectDone')
-              : t('injectOff')
-        : on
-          ? t('prefillOn')
-          : t('prefillOff')
-      const title = injectMode
-        ? written && !injected
-          ? t('prefillWrittenTip')
-          : on
-          ? t('injectTitleOn')
-          : t('injectTitleOff')
-        : on
-          ? t('prefillTitleOn')
-          : t('prefillTitleOff')
+      const cardOpen = cardOpenMap.get(sessionId) === true
+      const summary = on ? chipSummary.get(sessionId) : undefined
+      const fallback = injectMode ? (written && !injected ? t('prefillWritten') : injected ? t('injectDone') : t('injectOff')) : on ? t('prefillOn') : t('prefillOff')
+      const title = on ? `${t('chipCardTip')}${summary?.tip ? `\n${summary.tip}` : ''}` : t('prefillTitleOff')
 
       return h(
         'button',
         {
           type: 'button',
           'aria-pressed': on ? 'true' : 'false',
+          'aria-expanded': cardOpen ? 'true' : 'false',
+          'data-prefill-chip': '1',
           title,
-          // 待触发时用警示色描边：**不点「注入」就不会生效**，这个状态必须刺眼。
-          style: pending
-            ? { ...S.gatePill(on), borderColor: 'var(--dsw-alias-state-warn-primary)' }
-            : S.gatePill(on),
+          style: { ...S.gatePill(on), ...COLOR_VARS, gap: 6, maxWidth: 320, ...(cardOpen ? { boxShadow: '0 0 0 2px color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent)' } : {}) },
+          // 点一下 = 开 / 关悬浮卡片；本会话还没用预填装时先打开它，再弹出卡片。
           onClick: () => {
-            void call({ prefill: { ...map, [sessionId]: on ? '' : 'default' } })
-              .then((data) => {
-                setEnvelope(data)
-                notifyStateChanged()
-              })
-              .catch(() => {})
+            if (!on) {
+              void call({ prefill: { ...map, [sessionId]: 'default' } })
+                .then((data) => {
+                  setEnvelope(data)
+                  notifyStateChanged()
+                  setCardOpen(sessionId, true)
+                })
+                .catch(() => {})
+              return
+            }
+            setCardOpen(sessionId, !cardOpen)
           },
         },
-        h('span', { style: S.gateDot(on) }),
-        label,
+        summary === undefined
+          ? [h('span', { key: 'dot', style: S.gateDot(on) }), h('span', { key: 'label' }, fallback)]
+          : [
+              h('b', { key: 'name', style: { fontWeight: 700 } }, t('nav')),
+              h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
+              h('span', { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, summary.name || fallbackName(t, injectMode, written, injected)),
+              h(
+                'span',
+                { key: 'dots', style: { display: 'inline-flex', gap: 3, marginLeft: 2, flex: '0 0 auto' }, 'data-prefill-chip-dots': '1' },
+                ...summary.dots.map((dot) =>
+                  h('i', {
+                    key: dot.key,
+                    'data-prefill-chip-dot': dot.key,
+                    'data-on': dot.on ? 'true' : 'false',
+                    style: {
+                      width: 7,
+                      height: 7,
+                      borderRadius: '50%',
+                      display: 'inline-block',
+                      boxSizing: 'border-box',
+                      background: dot.on && dot.filled ? dot.color : dot.on ? 'transparent' : 'var(--pf-off)',
+                      border: `1.5px solid ${dot.on ? dot.color : 'var(--pf-off)'}`,
+                    },
+                  }),
+                ),
+              ),
+            ],
       )
+    }
+    function fallbackName(t, injectMode, written, injected) {
+      return injectMode ? (written && !injected ? t('chipWritten') : t('chipNoPreset')) : t('chipNoPreset')
     }
 
     /**
@@ -1943,7 +2150,24 @@ window.__ModuleLoader__.load({
         transform: open ? 'rotate(90deg)' : 'none',
         transition: 'transform 120ms ease',
       }),
-      hint: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11.5, lineHeight: 1.6 },
+      hint: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12.5, lineHeight: 1.6, maxWidth: '68ch' },
+      popover: {
+        position: 'absolute',
+        top: 48,
+        left: 12,
+        zIndex: 5,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        padding: 12,
+        boxSizing: 'border-box',
+        maxHeight: 'calc(100% - 60px)',
+        overflowY: 'auto',
+        borderRadius: 12,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-base)',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.16)',
+      },
       grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 8 },
       pills: { display: 'flex', flexWrap: 'wrap', gap: 6 },
       pill: (active) => ({
@@ -2106,6 +2330,7 @@ window.__ModuleLoader__.load({
       },
       row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
       callout: (tone) => ({
+        maxWidth: '68ch',
         padding: '7px 10px',
         borderRadius: 8,
         fontSize: 11.5,
@@ -2149,33 +2374,24 @@ window.__ModuleLoader__.load({
     /** 角色卡面板选项的默认值（预设里的角色卡引用按它补全）。 */
     const DEFAULT_CARD_OPTS = { mode: 'agent', greeting: 0, userName: '', reinforce: true, thinkZh: false, firstPerson: false, tools: '', lore: true, memory: true }
 
-    /** 可折叠的小节。 */
+    /**
+     * 悬浮卡片右栏的一节（v0.10）：标题 + 右侧控件 + 内容，不再折叠——左栏选哪项就只渲染哪一节。
+     * `data-prefill-section` 保持旧的 id，实测脚本和单测照旧能找到。
+     */
     function Section(props) {
       return h(
-        'div',
-        { style: V.section, 'data-prefill-section': props.id },
+        'section',
+        { style: { display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }, 'data-prefill-section': props.id },
         h(
           'div',
-          {
-            style: V.sectionHead,
-            role: 'button',
-            tabIndex: 0,
-            'aria-expanded': props.open ? 'true' : 'false',
-            onClick: props.onToggle,
-            onKeyDown: (event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                props.onToggle()
-              }
-            },
-          },
-          h('span', { style: V.caret(props.open) }, '▸'),
-          h('span', { style: V.sectionTitle }, props.title),
-          props.meta ? h('span', { style: V.sectionMeta }, props.meta) : null,
+          { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+          h('h3', { style: { margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } }, props.title),
+          props.meta ? h('span', { style: { ...V.sectionMeta, fontSize: 12 } }, props.meta) : null,
           h('span', { style: { flex: '1 1 auto' } }),
           props.right ?? null,
         ),
-        props.open ? props.children : null,
+        props.off ? h('div', { style: { ...V.callout('warn'), maxWidth: '68ch' }, 'data-prefill-off-note': props.id }, h('b', null, props.offTitle), props.offBody ? ` ${props.offBody}` : '') : null,
+        props.children,
       )
     }
 
@@ -2218,7 +2434,6 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = React.useState({ guide: false, presets: true, system: false, items: true, inject: false, everyTurn: false, usage: false, manage: false })
       const [hovered, setHovered] = React.useState('')
       // 整个面板可收起成一行：会话开跑后默认收起（否则它会盖住对话）。用户手动展开/收起后按会话记住。
-      const [collapsed, setCollapsed] = React.useState(null)
       const [systemDraft, setSystemDraft] = React.useState(null)
       const [usage, setUsage] = React.useState(null)
       const [confirming, setConfirming] = React.useState('')
@@ -2235,37 +2450,97 @@ window.__ModuleLoader__.load({
         setTimeout(() => setToast((current) => (current === text ? '' : current)), 3200)
       }, [])
 
-      // 面板宽度对齐输入框卡片、高度上限 = 输入框上沿到顶栏（只读几何，不写别人的 DOM）。
+      // ── 悬浮卡片（v0.10）：开关、钉住、左栏选中项、下拉菜单 ──
+      const [cardOpen, setCardOpenLocal] = React.useState(() => cardOpenMap.get(sessionId) === true)
+      const [pinned, setPinned] = React.useState(false)
+      const [pane, setPane] = React.useState('items')
+      const [menu, setMenu] = React.useState('')
+      const cardRef = React.useRef(null)
       React.useEffect(() => {
+        setCardOpenLocal(cardOpenMap.get(sessionId) === true)
+        const onCard = (event) => {
+          if (event?.detail?.sessionId !== sessionId || event.detail.open === undefined) return
+          setCardOpenLocal(event.detail.open === true)
+          if (event.detail.open !== true) setMenu('')
+        }
+        window.addEventListener(CARD_EVENT, onCard)
+        return () => window.removeEventListener(CARD_EVENT, onCard)
+      }, [sessionId])
+      const closeCard = React.useCallback(() => setCardOpen(sessionId, false), [sessionId])
+      // 芯片的摘要：渲染时算好放进 ref，提交后再广播（不在渲染里改别的组件）。
+      const summaryRef = React.useRef(null)
+      React.useEffect(() => {
+        if (summaryRef.current !== null && sessionId !== '') publishSummary(sessionId, summaryRef.current)
+      })
+
+      // 卡片外点击 / Esc 关闭（钉住时不关）；Esc 先关下拉菜单。只监听事件，不改别人的 DOM。
+      React.useEffect(() => {
+        if (!cardOpen) return undefined
+        const onDown = (event) => {
+          if (pinned) return
+          const target = event.target
+          if (!(target instanceof Node)) return
+          if (cardRef.current?.contains(target)) return
+          // 点芯片本身由芯片的 onClick 切换，这里不抢。
+          if (target instanceof Element && target.closest('[data-prefill-chip]') !== null) return
+          closeCard()
+        }
+        const onKey = (event) => {
+          if (event.key !== 'Escape') return
+          if (menu !== '') {
+            setMenu('')
+            return
+          }
+          if (!pinned) closeCard()
+        }
+        document.addEventListener('mousedown', onDown, true)
+        document.addEventListener('keydown', onKey, true)
+        return () => {
+          document.removeEventListener('mousedown', onDown, true)
+          document.removeEventListener('keydown', onKey, true)
+        }
+      }, [cardOpen, pinned, menu, closeCard])
+
+      // 几何：宽 clamp(560px, 62vw, 920px) 但不超过视口；以输入框为中线、贴在输入框上方 10px；
+      // 高度上限 = min(70vh, 输入框上方剩余空间 − 20px)。只读几何。
+      React.useEffect(() => {
+        if (!cardOpen) return undefined
         const measure = () => {
           const input = document.querySelector('[contenteditable="true"]')
-          if (!(input instanceof HTMLElement)) return
-          let width
-          let node = input
+          const vw = window.innerWidth
+          const vh = window.innerHeight
+          let box = null
+          let node = input instanceof HTMLElement ? input : null
           for (let depth = 0; depth < 8 && node instanceof HTMLElement; depth += 1) {
             const rect = node.getBoundingClientRect()
             const radius = Number.parseFloat(window.getComputedStyle(node).borderTopLeftRadius || '0')
             if (rect.width > 300 && Number.isFinite(radius) && radius > 4) {
-              width = Math.round(rect.width)
+              box = rect
               break
             }
             node = node.parentElement
           }
-          const pane = document.querySelector('[data-conversation-session]')
-          const ceiling = pane === null ? 56 : pane.getBoundingClientRect().top + 52
-          const maxHeight = Math.max(240, Math.round(input.getBoundingClientRect().top - ceiling))
+          const top = box?.top ?? (input instanceof HTMLElement ? input.getBoundingClientRect().top : vh - 160)
+          const center = box ? box.left + box.width / 2 : vw / 2
+          const width = Math.round(Math.min(Math.max(560, vw * 0.62), 920, vw - 24))
+          const left = Math.round(Math.min(Math.max(12, center - width / 2), vw - 12 - width))
+          const bottom = Math.round(vh - top + 10)
+          const maxHeight = Math.round(Math.max(200, Math.min(vh * 0.7, top - 20)))
+          const narrow = vw < 820
           setBounds((current) =>
-            current !== null && current.width === width && current.maxHeight === maxHeight ? current : { width, maxHeight },
+            current !== null && current.width === width && current.left === left && current.bottom === bottom && current.maxHeight === maxHeight && current.narrow === narrow
+              ? current
+              : { width, left, bottom, maxHeight, narrow },
           )
         }
         measure()
         window.addEventListener('resize', measure)
-        const timer = setInterval(measure, 1200)
+        const timer = setInterval(measure, 500)
         return () => {
           window.removeEventListener('resize', measure)
           clearInterval(timer)
         }
-      }, [])
+      }, [cardOpen])
 
       React.useEffect(() => {
         const onChanged = () => setRevision((value) => value + 1)
@@ -2401,6 +2676,24 @@ window.__ModuleLoader__.load({
       const gateMode = state?.gate?.[sessionId] === 'pure' ? 'pure' : state?.gate?.[sessionId] === 'replace' ? 'replace' : 'pass'
       const storedSystem = state?.overrides?.[sessionId]?.sections?.[PERSONA_SECTION]
       const activePreset = state?.activePreset?.[sessionId] ?? ''
+      // 左栏启用开关（缺 = 开）。
+      const ownEnabled = state?.enabled?.[sessionId] ?? {}
+      const isOn = (key) => ownEnabled[key] !== false
+      // 角色卡（已套用的那张）与它留下的指纹。
+      const appliedRef = state?.cardRef?.[sessionId] ?? null
+      const appliedCardName = appliedRef ? (cards.find((card) => card.id === appliedRef.id)?.name ?? appliedRef.id) : ''
+      const appliedCardDesc = appliedRef
+        ? [appliedRef.opts?.mode === 'pure' ? t('cardModePure') : t('cardModeAgent'), appliedRef.opts?.thinkZh ? t('cardThinkZh') : '', appliedRef.opts?.firstPerson ? t('cardFirstPerson') : '']
+            .filter((part) => part !== '')
+            .join(' · ')
+        : ''
+      const prints = appliedRef?.applied ?? null
+      const storedPersona = state?.overrides?.[sessionId]?.sections?.[PERSONA_SECTION]
+      const ownTurnRaw = state?.everyTurn?.[sessionId]
+      // 角色卡关着时，仍是套卡原样的系统提示 / 每轮注入随它停用（与 enabled.js 同一规则）。
+      const systemFromCardOff = !isOn('card') && prints !== null && typeof storedPersona === 'string' && fingerprint(storedPersona) === prints.system
+      const everyTurnFromCardOff =
+        !isOn('card') && prints !== null && ownTurnRaw !== undefined && ownTurnRaw !== null && fingerprint(`${String(ownTurnRaw.text ?? '')}\u0000${String(ownTurnRaw.firstText ?? '')}`) === prints.everyTurn
       const turns = envelope?.turns?.[sessionId] ?? 0
       const injectMode = turns > 0
       const injectCount = envelope?.injects?.[sessionId] ?? 0
@@ -2422,7 +2715,7 @@ window.__ModuleLoader__.load({
 
       // 用量：展开时每 4 秒刷新一次。
       React.useEffect(() => {
-        if (!open.usage || sessionId === '') return undefined
+        if (!cardOpen || sessionId === '') return undefined
         let alive = true
         const load = () =>
           void postJson(USAGE_ROUTE, { sessionId })
@@ -2436,7 +2729,7 @@ window.__ModuleLoader__.load({
           alive = false
           clearInterval(timer)
         }
-      }, [open.usage, sessionId])
+      }, [cardOpen, sessionId])
 
       // 每轮注入的自动判定（v0.9）：每 4 秒刷新一次（只读，算一次很便宜）。折叠时也刷，节标题上要显示状态。
       React.useEffect(() => {
@@ -2457,23 +2750,6 @@ window.__ModuleLoader__.load({
       }, [sessionId])
 
       if (sessionId === '' || !enabled || items === null) return null
-
-      const collapseKey = `dsh-prefill:collapsed:${sessionId}`
-      let remembered = null
-      try {
-        remembered = window.localStorage.getItem(collapseKey)
-      } catch {
-        remembered = null
-      }
-      const isCollapsed = collapsed ?? (remembered === null ? (envelope?.turns?.[sessionId] ?? 0) > 0 : remembered === '1')
-      const setCollapsedRemembered = (value) => {
-        setCollapsed(value)
-        try {
-          window.localStorage.setItem(collapseKey, value ? '1' : '0')
-        } catch {
-          // 存不了就只在本次生效。
-        }
-      }
 
       const toggle = (key) => setOpen((current) => ({ ...current, [key]: !current[key] }))
       const edit = (next) => {
@@ -2588,7 +2864,25 @@ window.__ModuleLoader__.load({
         memory: without(st?.memory, sessionId),
         // 回到「新会话默认」（'*'），不是硬关。
         everyTurn: without(st?.everyTurn, sessionId),
+        // 左栏启用开关也归位（缺 = 全开）。
+        enabled: without(st?.enabled, sessionId),
       })
+
+      /** 左栏开关：关 = 停用但保留内容（state.enabled[会话][项] = false）；开 = 删掉这一键。 */
+      const writeEnabled = async (key, on) => {
+        const fresh = await postJson(STATE_ROUTE, undefined)
+        const all = { ...(fresh?.state?.enabled ?? {}) }
+        const own = { ...(all[sessionId] ?? {}) }
+        if (on) delete own[key]
+        else own[key] = false
+        if (Object.keys(own).length === 0) delete all[sessionId]
+        else all[sessionId] = own
+        const data = await postJson(STATE_ROUTE, { enabled: all })
+        setEnvelope(data)
+        notifyStateChanged()
+        flash(on ? t('featureOnSaved') : t('featureOffSaved'))
+        return data
+      }
 
       const clearPreset = async () => {
         const fresh = await postJson(STATE_ROUTE, undefined)
@@ -2620,7 +2914,9 @@ window.__ModuleLoader__.load({
           compiled = res?.compiled ?? null
           cardMissing = compiled === null
         }
-        patch.cardRef = compiled ? { ...(st.cardRef ?? {}), [sessionId]: { id: pack.card.id, opts: pack.card.opts ?? {} } } : without(st.cardRef, sessionId)
+        patch.cardRef = compiled ? { ...(st.cardRef ?? {}), [sessionId]: { id: pack.card.id, opts: pack.card.opts ?? {}, applied: appliedPrints(compiled) } } : without(st.cardRef, sessionId)
+        // 左栏启用开关：预设里只存关掉的项；没存 = 全开（整体替换）。
+        patch.enabled = pack.enabled && typeof pack.enabled === 'object' && Object.keys(pack.enabled).length > 0 ? { ...(st.enabled ?? {}), [sessionId]: pack.enabled } : without(st.enabled, sessionId)
         patch.lore = compiled?.lore ? { ...(st.lore ?? {}), [sessionId]: compiled.lore } : without(st.lore, sessionId)
         patch.memory = compiled?.memory?.enabled ? { ...(st.memory ?? {}), [sessionId]: compiled.memory } : without(st.memory, sessionId)
         // ② 系统提示 + 改写注入内容。
@@ -2651,6 +2947,12 @@ window.__ModuleLoader__.load({
       }
 
       // ── 角色卡（v0.6）────────────────────────────────────────────────────────
+      /** 套卡时写下的指纹：左栏关掉角色卡时，服务端只停用「仍是套卡时原样」的系统提示 / 每轮注入 / 工具。 */
+      const appliedPrints = (compiled) => ({
+        system: fingerprint(compiled?.systemText ?? ''),
+        everyTurn: fingerprint(`${String(compiled?.everyTurn?.text ?? '')}\u0000${String(compiled?.everyTurn?.firstText ?? '')}`),
+        tools: compiled?.mode === 'agent' && Array.isArray(compiled?.tools) ? fingerprint(JSON.stringify(compiled.tools)) : '',
+      })
       const cardOptions = (opts) => ({
         mode: opts.mode,
         greeting: opts.greeting,
@@ -2706,7 +3008,7 @@ window.__ModuleLoader__.load({
         const loreMap = compiled.lore ? { ...(fresh?.state?.lore ?? {}), [sessionId]: compiled.lore } : without(fresh?.state?.lore, sessionId)
         // 故事记忆（三期）：开着就写 state.memory[会话]，闸门每 N 轮在后台总结一次；关掉就清这一格（已有摘要文件保留，可在面板清空）。
         const memoryMap = compiled.memory?.enabled ? { ...(fresh?.state?.memory ?? {}), [sessionId]: compiled.memory } : without(fresh?.state?.memory, sessionId)
-        await writeSystem(compiled.systemText, compiled.systemMode, { activePreset: activeMap, everyTurn: everyTurnMap, lore: loreMap, memory: memoryMap, cardRef: { ...(fresh?.state?.cardRef ?? {}), [sessionId]: { id: cardPick, opts: cardOpts } } })
+        await writeSystem(compiled.systemText, compiled.systemMode, { activePreset: activeMap, everyTurn: everyTurnMap, lore: loreMap, memory: memoryMap, cardRef: { ...(fresh?.state?.cardRef ?? {}), [sessionId]: { id: cardPick, opts: cardOpts, applied: appliedPrints(compiled) } }, enabled: enabledWith(fresh?.state?.enabled, 'card') })
         if (compiled.mode === 'agent' && Array.isArray(compiled.tools)) {
           const again = await postJson(STATE_ROUTE, undefined)
           setEnvelope(await postJson(STATE_ROUTE, { sessionTools: { ...(again?.state?.sessionTools ?? {}), [sessionId]: compiled.tools } }))
@@ -2719,6 +3021,15 @@ window.__ModuleLoader__.load({
         }
         notifyStateChanged()
         flash(t('cardApplied').replace('{name}', summary.name))
+      }
+      /** 把某一项重新打开（套角色卡时角色卡这一项自动打开）。 */
+      const enabledWith = (all, key) => {
+        const next = { ...(all ?? {}) }
+        const own = { ...(next[sessionId] ?? {}) }
+        delete own[key]
+        if (Object.keys(own).length === 0) delete next[sessionId]
+        else next[sessionId] = own
+        return next
       }
       const importCardFile = (event) => {
         const file = event?.target?.files?.[0]
@@ -2818,8 +3129,8 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const savePack = () => {
-        const name = packName.trim()
+      const savePack = (nameArg) => {
+        const name = (typeof nameArg === 'string' ? nameArg : packName).trim()
         if (name === '') {
           flash(t('needName'))
           return
@@ -2827,11 +3138,19 @@ window.__ModuleLoader__.load({
         // 保存 = 面板上挂在预设下的**全部**内容：角色卡（引用）、系统提示、每轮注入（只存配置）、开场对话、改写注入内容、工具权限。
         void Promise.all([currentOverrides(), currentTools(), currentCardRef()])
           .then(([overrides, tools, card]) =>
-            packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}) }),
+            packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}) }),
           )
           .then((data) => {
             adoptPacks(data)
             flash(`${t('savedAs')}「${name}」`)
+            // 存完即视为在用这个预设（头部显示它的名字，「保存」直接覆盖它）。
+            return postJson(STATE_ROUTE, undefined).then((fresh) =>
+              postJson(STATE_ROUTE, { activePreset: { ...(fresh?.state?.activePreset ?? {}), [sessionId]: `pack:${name}` } }).then((next) => {
+                setEnvelope(next)
+                setPackName(name)
+                setMenu('')
+              }),
+            )
           })
           .catch(() => setStatus('error'))
       }
@@ -2869,7 +3188,7 @@ window.__ModuleLoader__.load({
             if (historyOpts.everyTurn !== false && historyPreview?.everyTurn) extra.everyTurn = historyPreview.everyTurn
             if (historyOpts.memory === true && historyPreview?.memoryAllowed && historyPreview?.memory) extra.memorySeed = historyPreview.memory
             if (card) extra.card = card
-            return packsCall({ op: 'save', name, items: historyItems, overrides, tools, gate: gateMode, ...(toTurn > 0 ? { toTurn } : {}), ...extra })
+            return packsCall({ op: 'save', name, items: historyItems, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(toTurn > 0 ? { toTurn } : {}), ...extra })
           })
           .then((data) => {
             adoptPacks(data)
@@ -2999,33 +3318,18 @@ window.__ModuleLoader__.load({
         ownEveryTurn?.enabled === true && (String(ownEveryTurn.text ?? '').trim() !== '' || String(ownEveryTurn.firstText ?? '').trim() !== '')
           ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {} }
           : null
-      const presetsSection = (nested) => h(
-        Section,
+      // 预设下拉（头部「当前预设 ▾」点开）：内置 + 我的，点一下即整体套用。
+      const presetsMenu = h(
+        'div',
         {
-          id: 'presets',
-          title: t('presetsTitle'),
-          meta: activePreset === '' ? t('presetsNone') : t('presetsActive'),
-          open: open.presets,
-          onToggle: () => toggle('presets'),
-          right:
-            activePreset === ''
-              ? null
-              : h(
-                  'button',
-                  {
-                    type: 'button',
-                    style: V.btnGhost,
-                    onClick: (event) => {
-                      event.stopPropagation()
-                      void clearPreset().catch(() => setStatus('error'))
-                    },
-                  },
-                  t('presetClear'),
-                ),
+          'data-prefill-section': 'presets',
+          'data-prefill-menu': 'presets',
+          style: { ...V.popover, width: 'min(560px, calc(100% - 24px))' },
+          onMouseLeave: () => setHovered(''),
         },
         h(
           'div',
-          { style: V.pills, onMouseLeave: () => setHovered('') },
+          { style: V.pills },
           h('span', { style: V.pillGroup }, t('groupBuiltin')),
           ...builtins.map((preset) =>
             presetPill(`builtin:${preset.id}`, {
@@ -3038,21 +3342,27 @@ window.__ModuleLoader__.load({
               onClick: () => void applyBuiltin(preset, systemMode === 'takeover' ? 'takeover' : 'append').catch(() => setStatus('error')),
             }),
           ),
-          packs.length > 0 ? h('span', { style: { ...V.pillGroup, marginLeft: 6 } }, t('groupMine')) : null,
-          ...packs.map((pack) =>
-            presetPill(`pack:${pack.name}`, {
-              icon: 'folder',
-              name: pack.name,
-              active: activePreset === `pack:${pack.name}`,
-              onHover: () => setHovered(`pack:${pack.name}`),
-              onClick: () => void applyPack(pack.name).catch(() => setStatus('error')),
-            }),
-          ),
         ),
+        packs.length > 0
+          ? h(
+              'div',
+              { style: V.pills },
+              h('span', { style: V.pillGroup }, t('groupMine')),
+              ...packs.map((pack) =>
+                presetPill(`pack:${pack.name}`, {
+                  icon: 'folder',
+                  name: pack.name,
+                  active: activePreset === `pack:${pack.name}`,
+                  onHover: () => setHovered(`pack:${pack.name}`),
+                  onClick: () => void applyPack(pack.name).catch(() => setStatus('error')),
+                }),
+              ),
+            )
+          : null,
         h(
           'div',
-          { style: V.detail },
-          detail[0] ? h('span', { style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, detail[0]) : null,
+          { style: { ...V.detail, maxWidth: '68ch' } },
+          detail[0] ? h('span', { style: { fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } }, detail[0]) : null,
           h('span', null, detail[1]),
           detail[2] ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, `· ${detail[2]}`) : null,
           hoveredPack
@@ -3067,38 +3377,38 @@ window.__ModuleLoader__.load({
               )
             : null,
         ),
+        h('div', { style: { ...V.hint, maxWidth: '68ch' }, 'data-prefill-preset-content': '' }, t('presetContentHint')),
+      )
+
+      // 「另存为…」：起名保存 / 从当前会话取 / 导入导出文件。
+      const saveAsPanel = h(
+        'div',
+        { 'data-prefill-section': 'presets', 'data-prefill-menu': 'saveas', style: { ...V.popover, width: 'min(560px, calc(100% - 24px))' } },
+        h('div', { style: { ...V.hint, maxWidth: '68ch' } }, t('saveAsHint')),
         h(
-          'div',
-          { 'data-prefill-preset-content': '', style: { display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 10, borderLeft: '2px solid var(--dsw-alias-border-l1)' } },
-          h('div', { style: V.hint }, t('presetContentHint')),
-          ...nested,
-        ),
-        open.manage
-          ? h(
           'div',
           { style: V.row },
           h('input', {
-            style: { ...V.input, flex: '1 1 160px' },
+            style: { ...V.input, flex: '1 1 180px' },
             value: packName,
             placeholder: t('packNamePlaceholder'),
             spellCheck: false,
+            'data-prefill-pack-name': '',
             onChange: (event) => setPackName(event.target.value),
             onKeyDown: (event) => {
               if (event.key === 'Enter') savePack()
             },
           }),
-          h('button', { type: 'button', style: V.btn, onClick: savePack }, t('savePack')),
+          h('button', { type: 'button', style: V.btnPrimary, onClick: () => savePack() }, t('savePack')),
+        ),
+        h(
+          'div',
+          { style: V.row },
           h('button', { type: 'button', style: V.btn, 'data-prefill-history-open': '', title: t('historyTip'), onClick: toggleHistory }, t('historyOpen')),
-          h('button', { type: 'button', style: V.btn, onClick: () => void exportFile() }, t('exportFile')),
-          h('button', { type: 'button', style: V.btn, onClick: () => fileRef.current?.click() }, t('importFile')),
-          h('button', { type: 'button', style: V.btnGhost, onClick: () => toggle('manage') }, t('manageHide')),
-        )
-          : h(
-              'div',
-              { style: V.row },
-              h('button', { type: 'button', style: V.btnGhost, onClick: () => toggle('manage') }, t('manageShow')),
-            ),
-        open.manage && historyOpen
+          h('button', { type: 'button', style: V.btnGhost, onClick: () => void exportFile() }, withIcon('download', t('exportFile'), 12)),
+          h('button', { type: 'button', style: V.btnGhost, onClick: () => fileRef.current?.click() }, withIcon('upload', t('importFile'), 12)),
+        ),
+        historyOpen
           ? h(
               'div',
               { style: { ...V.callout('brand'), display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-history': '' },
@@ -3199,29 +3509,7 @@ window.__ModuleLoader__.load({
           h('input', { type: 'checkbox', checked: cardOpts[key] === true, onChange: (event) => editCardOpts({ [key]: event.target.checked }), ...(extraProps ?? {}) }),
           label,
         )
-      const cardsSection = h(
-        Section,
-        {
-          id: 'cards',
-          title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h(Icon, { name: 'contact', size: 13 }), t('cardsTitle')),
-          meta: cards.length > 0 ? t('cardsMeta').replace('{n}', String(cards.length)) : '',
-          open: open.cards === true,
-          onToggle: () => toggle('cards'),
-          right: h(
-            'button',
-            {
-              type: 'button',
-              style: V.btnGhost,
-              'data-prefill-card-import': '',
-              onClick: (event) => {
-                event.stopPropagation()
-                cardFileRef.current?.click()
-              },
-            },
-            withIcon('upload', t('cardImport'), 12),
-          ),
-        },
-        h('div', { style: V.hint }, cards.length === 0 ? t('cardsEmpty') : t('cardsHint')),
+      const memoryBlock =
         memoryOn
           ? h(
               'div',
@@ -3311,6 +3599,34 @@ window.__ModuleLoader__.load({
                   )
                 : null,
             )
+          : null
+
+      const cardsSection = h(
+        Section,
+        {
+          id: 'cards',
+          title: t('cardsTitle'),
+          meta: cards.length > 0 ? t('cardsMeta').replace('{n}', String(cards.length)) : '',
+          off: !isOn('card'),
+          offTitle: t('offTitle'),
+          offBody: t('cardOffBody'),
+          right: h(
+            'button',
+            {
+              type: 'button',
+              style: V.btnGhost,
+              'data-prefill-card-import': '',
+              onClick: (event) => {
+                event.stopPropagation()
+                cardFileRef.current?.click()
+              },
+            },
+            withIcon('upload', t('cardImport'), 12),
+          ),
+        },
+        h('div', { style: V.hint }, cards.length === 0 ? t('cardsEmpty') : t('cardsHint')),
+        appliedCardName !== ''
+          ? h('div', { style: { ...V.row, fontSize: 12.5 }, 'data-prefill-card-current': '' }, h('span', { style: V.sectionMeta }, t('cardCurrent')), h('b', null, appliedCardName), h('span', { style: V.sectionMeta }, appliedCardDesc))
           : null,
         cards.length > 0
           ? h(
@@ -3459,8 +3775,9 @@ window.__ModuleLoader__.load({
           id: 'system',
           title: t('systemTitle'),
           meta: systemMode === 'off' ? t('systemOffMeta') : systemMode === 'append' ? `${t('systemAppendMeta')} · ≈${systemTok} tok` : systemMode === 'replace' ? `${t('systemReplaceMeta')} · ≈${systemTok} tok` : `${t('systemTakeoverMeta')} · ≈${systemTok} tok`,
-          open: open.system,
-          onToggle: () => toggle('system'),
+          off: !isOn('system') || systemFromCardOff,
+          offTitle: !isOn('system') ? t('offTitle') : t('offByCardTitle'),
+          offBody: !isOn('system') ? t('systemOffBody') : t('offByCardBody'),
         },
         h(
           'div',
@@ -3468,8 +3785,8 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: V.seg, role: 'radiogroup' },
+            // 「不改」不再是一种模式：要停用就关左栏开关（正文保留）。
             ...[
-              ['off', t('modeOff')],
               ['append', t('modeAppend')],
               ['replace', t('modeReplace')],
               ['takeover', t('modeTakeover')],
@@ -3480,8 +3797,8 @@ window.__ModuleLoader__.load({
                   key,
                   type: 'button',
                   role: 'radio',
-                  'aria-checked': systemMode === key ? 'true' : 'false',
-                  style: V.segBtn(systemMode === key),
+                  'aria-checked': (systemMode === 'off' ? 'append' : systemMode) === key ? 'true' : 'false',
+                  style: V.segBtn((systemMode === 'off' ? 'append' : systemMode) === key),
                   'data-prefill-mode': key,
                   onClick: () => setSystemMode(key),
                 },
@@ -3491,9 +3808,9 @@ window.__ModuleLoader__.load({
           ),
           pending ? h('span', { style: { ...V.sectionMeta, color: 'var(--dsw-alias-state-warn-primary)' } }, t('nextTurnNotice')) : null,
         ),
-        h('div', { style: V.hint }, systemMode === 'off' ? t('modeOffHint') : systemMode === 'append' ? t('modeAppendHint') : systemMode === 'replace' ? t('modeReplaceHint') : t('modeTakeoverHint')),
+        h('div', { style: V.hint }, systemMode === 'off' ? t('modeAppendHint') : systemMode === 'append' ? t('modeAppendHint') : systemMode === 'replace' ? t('modeReplaceHint') : t('modeTakeoverHint')),
         h('textarea', {
-          style: { ...V.textarea, minHeight: 90 },
+          style: { ...V.textarea, minHeight: 120, maxWidth: '90ch', opacity: isOn('system') ? 1 : 0.7 },
           value: systemText,
           spellCheck: false,
           placeholder: t('systemPlaceholder'),
@@ -3503,53 +3820,55 @@ window.__ModuleLoader__.load({
             setSystemDraft(event.target.value)
           },
         }),
-        systemMode === 'off' && systemText.trim() !== ''
-          ? h('div', { style: V.callout('warn') }, t('systemNotActive'))
-          : null,
       )
 
       const itemRow = (item, index) => {
         const isAssistant = item?.role === 'assistant'
+        const color = isAssistant ? 'var(--pf-ai)' : 'var(--pf-user)'
+        const tok = estimateTokens(item?.text) + estimateTokens(item?.reasoning)
+        const bare = { ...V.textarea, background: 'transparent', border: '1px solid transparent', padding: '4px 6px', minHeight: 44, maxWidth: '90ch', resize: 'vertical' }
         return h(
           'div',
-          { key: index, style: V.itemCard(isAssistant) },
-          h(
-            'button',
-            {
-              type: 'button',
-              style: S.dockRole(isAssistant),
-              title: isAssistant ? t('toUser') : t('toAssistant'),
-              onClick: () => patchAt(index, isAssistant ? { role: 'user', reasoning: undefined } : { role: 'assistant', reasoning: '' }),
-            },
-            isAssistant ? withIcon('bot', t('roleAssistant'), 13) : withIcon('user', t('roleUser'), 13),
-          ),
+          {
+            key: index,
+            'data-prefill-item': isAssistant ? 'assistant' : 'user',
+            style: { maxWidth: '90ch', borderRadius: 10, padding: '6px 8px 8px 10px', borderLeft: `3px solid ${color}`, background: tint(color, 10), display: 'flex', flexDirection: 'column', gap: 4 },
+          },
           h(
             'div',
-            { style: S.dockBody },
-            h('textarea', {
-              style: { ...V.textarea, minHeight: 44 },
-              value: item?.text ?? '',
-              spellCheck: false,
-              placeholder: isAssistant ? t('textAssistantPh') : t('textUserPh'),
-              onChange: (event) => patchAt(index, { text: event.target.value }),
-            }),
-            isAssistant
-              ? h('textarea', {
-                  style: S.dockThink,
-                  value: item?.reasoning ?? '',
-                  spellCheck: false,
-                  placeholder: t('reasoningPh'),
-                  onChange: (event) => patchAt(index, { reasoning: event.target.value }),
-                })
-              : null,
-          ),
-          h(
-            'div',
-            { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+            { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: { border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, color: `color-mix(in srgb, ${color} 75%, var(--dsw-alias-label-primary))` },
+                title: isAssistant ? t('toUser') : t('toAssistant'),
+                onClick: () => patchAt(index, isAssistant ? { role: 'user', reasoning: undefined } : { role: 'assistant', reasoning: '' }),
+              },
+              isAssistant ? withIcon('bot', t('roleAssistant'), 13) : withIcon('user', t('roleUser'), 13),
+            ),
+            h('span', { style: V.sectionMeta }, `≈${tok} tok`),
+            h('span', { style: { flex: '1 1 auto' } }),
             h('button', { type: 'button', style: S.dockMini, title: t('moveUp'), onClick: () => move(index, -1) }, '↑'),
             h('button', { type: 'button', style: S.dockMini, title: t('moveDown'), onClick: () => move(index, 1) }, '↓'),
             h('button', { type: 'button', style: S.dockMini, title: t('removeItem'), onClick: () => edit(items.filter((_unused, at) => at !== index)) }, h(Icon, { name: 'x', size: 12 })),
           ),
+          isAssistant
+            ? h('textarea', {
+                style: { ...bare, minHeight: 34, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-1)', border: '1px dashed var(--dsw-alias-border-l2)' },
+                value: item?.reasoning ?? '',
+                spellCheck: false,
+                placeholder: t('reasoningPh'),
+                onChange: (event) => patchAt(index, { reasoning: event.target.value }),
+              })
+            : null,
+          h('textarea', {
+            style: bare,
+            value: item?.text ?? '',
+            spellCheck: false,
+            placeholder: isAssistant ? t('textAssistantPh') : t('textUserPh'),
+            onChange: (event) => patchAt(index, { text: event.target.value }),
+          }),
         )
       }
 
@@ -3559,8 +3878,9 @@ window.__ModuleLoader__.load({
           id: 'items',
           title: t('itemsTitle'),
           meta: `${countFilled(items)}${t('countSuffix')}${countFilled(items) < items.length ? t('emptyRowsSkipped').replace('%N', String(items.length - countFilled(items))) : ''} · ≈${itemsTok} tok · ${injectMode ? t('modeInject') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
-          open: open.items,
-          onToggle: () => toggle('items'),
+          off: !isOn('items'),
+          offTitle: t('offTitle'),
+          offBody: t('itemsOffBody'),
           right:
             items.length === 0
               ? null
@@ -3762,8 +4082,9 @@ window.__ModuleLoader__.load({
               ? t('everyTurnStateMeta').replace('{state}', autoStateText)
               : `≈${estimateTokens(everyTurn.text)} tok/${t('turnsUnit')}${everyTurn.mode === 'until' && everyTurn.untilTurn > 0 ? ` · ≤${everyTurn.untilTurn}` : ''}`
             : t('everyTurnOffMeta'),
-          open: open.everyTurn,
-          onToggle: () => toggle('everyTurn'),
+          off: !isOn('everyTurn') || everyTurnFromCardOff,
+          offTitle: !isOn('everyTurn') ? t('offTitle') : t('offByCardTitle'),
+          offBody: !isOn('everyTurn') ? t('everyTurnOffBody') : t('offByCardBody'),
         },
         h('div', { style: V.hint }, t('everyTurnHint')),
         h(
@@ -3933,7 +4254,7 @@ window.__ModuleLoader__.load({
 
       const injectSection = h(
         Section,
-        { id: 'inject', title: t('injectTitle'), meta: t('advanced'), open: open.inject, onToggle: () => toggle('inject') },
+        { id: 'inject', title: t('injectTitle'), meta: t('advanced'), off: !isOn('inject'), offTitle: t('offTitle'), offBody: t('injectOffBody') },
         h('div', { style: V.hint }, t('injectHint')),
         h(InjectionSection, { t, sessionId }),
       )
@@ -3944,8 +4265,6 @@ window.__ModuleLoader__.load({
           id: 'usage',
           title: t('usageTitle'),
           meta: turns > 0 ? `${turns} ${t('turnsUnit')}` : t('usageNoTurns'),
-          open: open.usage,
-          onToggle: () => toggle('usage'),
         },
         h(UsagePanel, { t, usage, systemMode, systemTok, itemsTok, injectMode, injectCount, gateMode, written: (envelope?.materialized?.[sessionId] ?? 0) > 0 }),
       )
@@ -3957,70 +4276,314 @@ window.__ModuleLoader__.load({
         if (activePreset.startsWith('card:')) return cards.find((card) => `card:${card.id}` === activePreset)?.name ?? activePreset.slice(5)
         return ''
       })()
-      const collapsedSummary = [
-        activeName,
-        systemMode === 'off' || (systemMode === 'takeover' && systemText.trim() === '')
-          ? ''
-          : `${t('systemTitle')}·${systemMode === 'append' ? t('systemAppendMeta') : systemMode === 'replace' ? t('systemReplaceMeta') : t('systemTakeoverMeta')}`,
-        countFilled(items) > 0 ? `${countFilled(items)}${t('countSuffix')}` : '',
-        everyTurnActive ? t('everyTurnTitle') : '',
-      ]
-        .filter((part) => part !== '')
-        .join(' · ')
+      const activeKind = activePreset.startsWith('builtin:') ? t('groupBuiltin') : activePreset.startsWith('pack:') ? t('kindMine') : activePreset.startsWith('card:') ? t('cardsTitle') : ''
 
       const guideSection = open.guide
         ? h(
             'div',
             { style: V.callout('brand') },
-            h('div', { style: { fontWeight: 600, marginBottom: 4, color: 'var(--dsw-alias-label-primary)' } }, t('guideTitle')),
+            h('div', { style: { fontWeight: 700, marginBottom: 4, color: 'var(--dsw-alias-label-primary)' } }, t('guideTitle')),
             h('ol', { style: V.steps }, ...[1, 2, 3, 4, 5].map((n) => h('li', { key: n }, t(`guide${n}`)))),
           )
         : null
 
-      return h(
-        'div',
+      // ── 世界书 / 故事记忆（从角色卡拆出来的两项）──
+      const loreEntry = state?.lore?.[sessionId] ?? null
+      const loreEntries = Array.isArray(loreEntry?.entries) ? loreEntry.entries : []
+      const loreSection = h(
+        Section,
         {
-          'data-prefill-dock': '1',
-          style: {
-            ...S.dock,
-            gap: 8,
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            width: bounds?.width === undefined ? '100%' : `${bounds.width}px`,
-            maxWidth: '100%',
-            maxHeight: bounds?.maxHeight === undefined ? '62vh' : `${bounds.maxHeight}px`,
-            margin: '0 auto',
-          },
+          id: 'lore',
+          title: t('loreTitle'),
+          meta: loreEntries.length > 0 ? t('loreMeta').replace('{n}', String(loreEntries.length)) : '',
+          off: !isOn('lore') || (!isOn('card') && loreEntries.length > 0),
+          offTitle: !isOn('lore') ? t('offTitle') : t('offByCardTitle'),
+          offBody: !isOn('lore') ? t('loreOffBody') : t('loreByCardBody'),
         },
-        h(
-          'div',
-          { style: V.row },
-          h('span', { style: S.dockTitle }, withIcon('puzzle', t('dockTitle'))),
-          h('span', { style: S.modeChip(injectMode), title: injectMode ? t('modeInjectTip') : t('modeHistoryTip') }, injectMode ? t('modeInject') : t('modeHistory')),
-          gateMode === 'pure'
-            ? h('span', { style: S.modeChip(true) }, systemMode === 'takeover' && systemText.trim() !== '' ? t('chipTakeover') : t('chipPure'))
-            : null,
-          toast === '' ? null : h('span', { style: { ...S.dockStatus('saved'), fontWeight: 600 } }, toast),
-          isCollapsed ? h('span', { style: V.sectionMeta }, collapsedSummary) : null,
-          h('span', { style: { flex: '1 1 auto' } }),
-          isCollapsed
-            ? null
-            : h('button', { type: 'button', style: V.btnGhost, onClick: () => toggle('guide'), 'aria-expanded': open.guide ? 'true' : 'false' }, open.guide ? t('guideHide') : t('guideShow')),
+        h('div', { style: V.hint }, loreEntries.length === 0 ? t('loreEmpty') : t('loreHint').replace('{depth}', String(loreEntry?.scanDepth ?? '—'))),
+        ...loreEntries.slice(0, 40).map((entry, index) =>
           h(
-            'button',
-            { type: 'button', style: V.btn, onClick: () => setCollapsedRemembered(!isCollapsed), 'aria-expanded': isCollapsed ? 'false' : 'true', 'data-prefill-collapse': '1' },
-            isCollapsed ? t('expandPanel') : t('collapsePanel'),
+            'div',
+            { key: `${entry.id ?? index}`, 'data-prefill-lore-entry': '', style: { maxWidth: '90ch', borderRadius: 10, padding: '6px 10px', borderLeft: '3px solid var(--pf-lore)', background: tint('var(--pf-lore)', 9), display: 'flex', flexDirection: 'column', gap: 2 } },
+            h(
+              'div',
+              { style: { display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } },
+              h('b', { style: { fontSize: 12.5 } }, entry.title || `#${index + 1}`),
+              h('span', { style: V.sectionMeta }, `${t('loreKeys')}：${(entry.keys ?? []).slice(0, 6).join(' / ')}`),
+            ),
+            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' } }, entry.content),
           ),
         ),
+        loreEntries.length > 40 ? h('div', { style: V.hint }, `… +${loreEntries.length - 40}`) : null,
+      )
+      const memorySection = h(
+        Section,
+        {
+          id: 'memory',
+          title: t('memoryTitle'),
+          meta: memoryOn ? t('memoryEveryMeta').replace('{n}', String(memoryConfig.every ?? 8)) : '',
+          off: !isOn('memory') || (!isOn('card') && memoryOn),
+          offTitle: !isOn('memory') ? t('offTitle') : t('offByCardTitle'),
+          offBody: !isOn('memory') ? t('memoryOffBody') : t('loreByCardBody'),
+        },
+        h('div', { style: V.hint }, memoryOn ? t('memoryHint') : t('memoryEmpty')),
+        memoryBlock,
+      )
+
+      // ── 左栏：每项一个色条 + 粗标题 + 开关 + 状态行 ──
+      const filledCount = countFilled(items)
+      const overrideCount = (() => {
+        const entry = state?.overrides?.[sessionId] ?? {}
+        let n = Object.keys(entry.messages ?? {}).length + Object.keys(entry.contexts ?? {}).length
+        for (const key of Object.keys(entry.sections ?? {})) if (key !== PERSONA_SECTION) n += 1
+        return n
+      })()
+      const everyTurnModeLabel = everyTurn.mode === 'auto' ? t('everyTurnModeAuto') : everyTurn.mode === 'until' ? t('navModeUntil').replace('{n}', String(everyTurn.untilTurn)) : t('navModeAlways')
+      const B = (text) => h('b', null, text)
+      const navStatus = {
+        card: appliedCardName !== '' ? [B(appliedCardName), appliedCardDesc ? ` · ${appliedCardDesc}` : ''] : [t('navNone')],
+        lore: loreEntries.length > 0 ? [B(String(loreEntries.length)), t('navLore')] : [t('navWithCard')],
+        memory: memoryOn
+          ? [typeof memoryView?.memory?.text === 'string' && memoryView.memory.text !== '' ? t('navMemoryThrough').replace('{n}', String(memoryView.memory.throughTurn ?? 0)) : t('navMemoryEvery').replace('{n}', String(memoryConfig.every ?? 8))]
+          : [t('navWithCard')],
+        system:
+          systemMode === 'off' && systemText.trim() === ''
+            ? [t('navSystemEmpty')]
+            : [B(systemMode === 'replace' ? t('systemReplaceMeta') : systemMode === 'takeover' ? t('systemTakeoverMeta') : t('systemAppendMeta')), ' · ≈', B(num(systemTok)), ' tok'],
+        everyTurn: everyTurnActive
+          ? [B(everyTurnModeLabel), autoStatus !== null ? ` · ${autoStateText}` : ` · ≈${num(estimateTokens(everyTurn.text))} tok/${t('turnsUnit')}`]
+          : [t('everyTurnOffMeta')],
+        items: [B(String(filledCount)), t('countSuffix'), ' · ≈', B(num(itemsTok)), ' tok · ', injectMode ? (injectCount > 0 ? t('modeInject') : t('navNotInjected')) : t('modeHistory')],
+        inject: [t('advanced'), overrideCount > 0 ? [' · ', t('navChanged').replace('{n}', '')] : '', overrideCount > 0 ? B(String(overrideCount)) : '', overrideCount > 0 ? t('navChangedUnit') : ''],
+      }
+      const offBy = { system: systemFromCardOff, everyTurn: everyTurnFromCardOff, lore: !isOn('card') && loreEntries.length > 0, memory: !isOn('card') && memoryOn }
+      const hasContent = {
+        card: appliedCardName !== '',
+        lore: loreEntries.length > 0,
+        memory: memoryOn,
+        system: systemText.trim() !== '' || gateMode === 'pure',
+        everyTurn: everyTurnActive,
+        items: filledCount > 0,
+        inject: overrideCount > 0,
+      }
+      const featureTitle = { card: t('cardsTitle'), lore: t('loreTitle'), memory: t('memoryTitle'), system: t('systemTitle'), everyTurn: t('everyTurnTitle'), items: t('itemsNavTitle'), inject: t('injectTitle') }
+      const sections = { cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection }
+
+      // 芯片的摘要：预设名 + 每项一个点（关 = 灰；开但没内容 = 空心）。
+      const summaryDots = FEATURE_NAV.map(([key, , color]) => ({ key, color, on: isOn(key) && offBy[key] !== true, filled: hasContent[key] === true }))
+      summaryRef.current = {
+        name: activeName,
+        dots: summaryDots,
+        tip: FEATURE_NAV.map(([key]) => `${featureTitle[key]}：${!isOn(key) ? t('chipOff') : offBy[key] ? t('chipOffByCard') : hasContent[key] ? t('chipOn') : t('chipEmpty')}`).join('\n'),
+      }
+
+      const switchEl = (key, color) => {
+        const on = isOn(key)
+        return h('button', {
+          type: 'button',
+          role: 'switch',
+          'aria-checked': on ? 'true' : 'false',
+          'aria-label': `${featureTitle[key]} ${on ? t('chipOn') : t('chipOff')}`,
+          title: on ? t('switchOffTip') : t('switchOnTip'),
+          'data-prefill-enable': key,
+          onClick: (event) => {
+            event.stopPropagation()
+            void writeEnabled(key, !on).catch(() => setStatus('error'))
+          },
+          style: {
+            marginLeft: 'auto',
+            flex: '0 0 auto',
+            width: 28,
+            height: 16,
+            borderRadius: 8,
+            border: 'none',
+            padding: 0,
+            cursor: 'pointer',
+            position: 'relative',
+            background: on ? color : 'var(--pf-off)',
+            transition: 'background 120ms ease',
+          },
+        }, h('span', { style: { position: 'absolute', top: 2, left: on ? 14 : 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transition: 'left 120ms ease' } }))
+      }
+      const navItem = (key, paneId, color) => {
+        const selected = pane === paneId
+        const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
+        const stripe = key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? 'var(--pf-off)' : color
+        return h(
+          'div',
+          {
+            key: paneId,
+            role: 'tab',
+            tabIndex: 0,
+            'aria-selected': selected ? 'true' : 'false',
+            'data-prefill-nav': paneId,
+            'data-off': off ? 'true' : 'false',
+            onClick: () => setPane(paneId),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                setPane(paneId)
+              }
+            },
+            style: {
+              position: 'relative',
+              display: 'block',
+              padding: '6px 10px 6px 14px',
+              borderRadius: 8,
+              cursor: 'pointer',
+              background: selected ? 'var(--dsw-alias-bg-base)' : 'transparent',
+              boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none',
+            },
+          },
+          h('span', { style: { position: 'absolute', left: 4, top: 9, bottom: 9, width: 3, borderRadius: 2, background: stripe } }),
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: off ? 'var(--dsw-alias-label-tertiary)' : selected ? `color-mix(in srgb, ${color} 70%, var(--dsw-alias-label-primary))` : 'var(--dsw-alias-label-primary)' } },
+            h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, key === 'usage' ? t('usageTitle') : featureTitle[key]),
+            key === 'usage' ? null : switchEl(key, color),
+          ),
+          h(
+            'div',
+            { style: { fontSize: 11.5, lineHeight: 1.45, marginTop: 1, color: 'var(--dsw-alias-label-tertiary)', opacity: off ? 0.85 : 1 }, 'data-prefill-nav-status': paneId },
+            ...(key === 'usage' ? [turns > 0 ? [B(String(turns)), ` ${t('turnsUnit')}`] : t('usageNoTurns')] : navStatus[key]),
+            off ? ` · ${!isOn(key) ? t('navDisabled') : t('navOffByCard')}` : '',
+          ),
+        )
+      }
+      const tabItem = (key, paneId, color) => {
+        const selected = pane === paneId
+        const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
+        return h(
+          'span',
+          { key: paneId, style: { display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '3px 6px 3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)', background: selected ? 'var(--dsw-alias-bg-base)' : 'transparent', boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none' } },
+          h('span', { role: 'tab', 'aria-selected': selected ? 'true' : 'false', 'data-prefill-nav': paneId, 'data-off': off ? 'true' : 'false', onClick: () => setPane(paneId), style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
+            h('i', { style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', background: key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? 'var(--pf-off)' : color } }),
+            key === 'usage' ? t('usageShort') : featureTitle[key],
+          ),
+          key === 'usage' ? null : h('span', { style: { display: 'inline-flex', transform: 'scale(0.85)' } }, switchEl(key, color)),
+        )
+      }
+
+      // ── 头部：当前预设 ▾ · 保存 / 另存为… / 取消预设 · 用量徽标 · 钉住 / ✕ ──
+      const firstTok =
+        (isOn('system') && !systemFromCardOff ? systemTok : 0) +
+        (isOn('items') && !injectMode ? itemsTok : 0) +
+        (everyTurnActive && isOn('everyTurn') && !everyTurnFromCardOff ? estimateTokens(everyTurn.firstText.trim() !== '' ? everyTurn.firstText : everyTurn.text) : 0)
+      const perTurnTok =
+        (everyTurnActive && isOn('everyTurn') && !everyTurnFromCardOff ? estimateTokens(everyTurn.text) : 0) + (isOn('items') && injectCount > 0 ? itemsTok : 0)
+      const usageTotal = usage?.total ?? null
+      const usagePrompt = usageTotal ? usageTotal.input + usageTotal.cacheRead : 0
+      const cacheHit = usagePrompt > 0 ? Math.round((usageTotal.cacheRead / usagePrompt) * 100) : null
+      const badge = (color, label, value, unit, attr) =>
+        h('span', { key: attr, 'data-prefill-badge': attr, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', background: tint(color, 14), color: 'var(--dsw-alias-label-secondary)' } }, label, h('b', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 700 } }, value), unit)
+      const narrow = bounds?.narrow === true
+      const header = h(
+        'div',
+        { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '9px 12px', borderBottom: '1px solid var(--dsw-alias-border-l1)', flexWrap: 'wrap', rowGap: 6 } },
+        h(
+          'button',
+          {
+            type: 'button',
+            'data-prefill-preset-select': '',
+            'aria-expanded': menu === 'presets' ? 'true' : 'false',
+            onClick: () => setMenu(menu === 'presets' ? '' : 'presets'),
+            style: { display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: narrow ? 200 : 280, height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer' },
+          },
+          h('b', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, activeName || t('presetsNone')),
+          h('small', { style: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, whiteSpace: 'nowrap' } }, `${activeKind || t('presetsTitle')} ▾`),
+        ),
+        h('button', { type: 'button', style: V.btn, 'data-prefill-save': '', title: activePreset.startsWith('pack:') ? t('saveOverTip') : t('saveAsTip'), onClick: () => (activePreset.startsWith('pack:') ? savePack(activePreset.slice(5)) : setMenu('saveas')) }, t('saveShort')),
+        h('button', { type: 'button', style: V.btnGhost, 'data-prefill-save-as': '', 'aria-expanded': menu === 'saveas' ? 'true' : 'false', onClick: () => setMenu(menu === 'saveas' ? '' : 'saveas') }, t('saveAs')),
+        activePreset === '' ? null : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-preset-clear': '', onClick: () => void clearPreset().catch(() => setStatus('error')) }, t('presetClear')),
+        h('span', { style: { flex: '1 1 auto' } }),
+        h(
+          'span',
+          { style: { display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
+          badge('var(--pf-system)', t('badgeFirst'), `+${num(firstTok)}`, 'tok', 'first'),
+          narrow ? null : badge('var(--pf-turn)', t('badgeTurn'), `+${num(perTurnTok)}`, 'tok', 'turn'),
+          narrow ? null : badge('var(--pf-ai)', t('badgeCache'), cacheHit === null ? '—' : `${cacheHit}%`, '', 'cache'),
+        ),
+        h('button', { type: 'button', style: V.btnGhost, 'aria-expanded': open.guide ? 'true' : 'false', title: t('guideShow'), onClick: () => toggle('guide') }, '?'),
+        h('button', { type: 'button', style: { ...V.btnGhost, fontWeight: pinned ? 700 : 400, color: pinned ? 'var(--dsw-alias-label-primary)' : V.btnGhost.color, background: pinned ? 'var(--dsw-alias-bg-layer-2)' : 'transparent' }, 'aria-pressed': pinned ? 'true' : 'false', 'data-prefill-pin': '', title: t('pinTip'), onClick: () => setPinned(!pinned) }, pinned ? t('pinned') : t('pin')),
+        h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 14 }, 'aria-label': t('closeCard'), title: t('closeCard'), 'data-prefill-close': '', onClick: closeCard }, h(Icon, { name: 'x', size: 14 })),
+      )
+
+      const nav = narrow
+        ? h(
+            'div',
+            { role: 'tablist', style: { display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 10px', borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)', flex: '0 0 auto' } },
+            ...FEATURE_NAV.map(([key, paneId, color]) => tabItem(key, paneId, color)),
+            tabItem('usage', 'usage', 'var(--dsw-alias-label-tertiary)'),
+          )
+        : h(
+            'div',
+            { role: 'tablist', 'aria-orientation': 'vertical', style: { width: 214, flex: '0 0 214px', boxSizing: 'border-box', overflowY: 'auto', borderRight: '1px solid var(--dsw-alias-border-l1)', padding: 8, display: 'flex', flexDirection: 'column', gap: 2, background: 'var(--dsw-alias-bg-layer-1)' } },
+            ...FEATURE_NAV.map(([key, paneId, color]) => navItem(key, paneId, color)),
+            h('div', { key: 'sep', style: { height: 1, background: 'var(--dsw-alias-border-l1)', margin: '6px 4px' } }),
+            navItem('usage', 'usage', 'var(--dsw-alias-label-tertiary)'),
+          )
+
+      const main = h(
+        'div',
+        { style: { flex: '1 1 auto', minWidth: 0, overflowY: 'auto', padding: narrow ? '12px 14px' : '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 } },
         conflict
           ? h(
               'div',
               { style: S.conflictBanner },
-              h('span', { style: { fontWeight: 600 } }, `${t('conflictTitle')}：${conflict.kind === 'complete-section' ? t('conflictCompleteSection') : String(conflict.kind ?? '')}`),
+              h('span', { style: { fontWeight: 700 } }, `${t('conflictTitle')}：${conflict.kind === 'complete-section' ? t('conflictCompleteSection') : String(conflict.kind ?? '')}`),
               conflict.advice ? h('span', { style: S.dockHint }, String(conflict.advice)) : null,
             )
           : null,
-        ...(isCollapsed ? [] : [guideSection, presetsSection([cardsSection, systemSection, everyTurnSection, itemsSection, injectSection]), usageSection]),
+        guideSection,
+        sections[pane] ?? itemsSection,
+      )
+
+      if (!cardOpen) return h('div', { 'data-prefill-anchor': '1', style: { height: 0, width: '100%' } })
+
+      return h(
+        'div',
+        { 'data-prefill-anchor': '1', style: { height: 0, width: '100%', position: 'relative' } },
+        h(
+          'div',
+          {
+            ref: cardRef,
+            // 卡片里点下拉菜单以外的地方 = 收起菜单。
+            onMouseDown: (event) => {
+              if (menu === '') return
+              const target = event.target
+              if (target instanceof Element && target.closest('[data-prefill-menu],[data-prefill-preset-select],[data-prefill-save-as]') !== null) return
+              setMenu('')
+            },
+            'data-prefill-dock': '1',
+            'data-prefill-card-panel': '1',
+            role: 'dialog',
+            'aria-label': t('dockTitle'),
+            style: {
+              ...COLOR_VARS,
+              position: 'fixed',
+              zIndex: 60,
+              left: bounds?.left ?? 12,
+              bottom: bounds?.bottom ?? 160,
+              width: bounds?.width ?? 'min(920px, calc(100vw - 24px))',
+              maxHeight: bounds?.maxHeight ?? '60vh',
+              boxSizing: 'border-box',
+              display: 'flex',
+              flexDirection: 'column',
+              background: 'var(--dsw-alias-bg-base)',
+              color: 'var(--dsw-alias-label-primary)',
+              border: '1px solid var(--dsw-alias-border-l1)',
+              borderRadius: 14,
+              boxShadow: '0 12px 40px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.06)',
+              overflow: 'hidden',
+              fontSize: 13,
+              lineHeight: 1.55,
+            },
+          },
+          header,
+          h('div', { style: { display: 'flex', flexDirection: narrow ? 'column' : 'row', minHeight: 0, flex: '1 1 auto' } }, nav, main),
+          menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : null,
+          toast === '' ? null : h('div', { 'data-prefill-toast': '', style: { position: 'absolute', right: 14, bottom: 10, zIndex: 6, padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)', boxShadow: '0 2px 8px rgba(0,0,0,.15)' } }, toast),
+        ),
       )
     }
 

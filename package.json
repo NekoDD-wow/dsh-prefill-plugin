@@ -17,6 +17,7 @@
     "character-cards.js",
     "session-history.js",
     "inject-auto.js",
+    "enabled.js",
     "gate.js",
     "index.js",
     "client.js",
