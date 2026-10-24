@@ -100,7 +100,7 @@ dsh plugin --profile web add /clone 下来的绝对路径/dsh-prefill-plugin
 
 ### 自动收放（v0.9）
 
-选「自动」后，每轮结束时按规则检查上一轮的思维链（不调模型，和实验室 `analyze.py` 同一口径）：
+选「自动」后，每轮结束时按规则检查上一轮的思维链（不调模型，用的是同一套离线分析口径）：
 
 | 检查 | 达标 | 跑偏 |
 |---|---|---|
@@ -119,7 +119,6 @@ dsh plugin --profile web add /clone 下来的绝对路径/dsh-prefill-plugin
 - 内置预设里「简短思考」不支持自动（判断问题难不难超出规则能力）；自己写的提醒要手动勾检查项。
 - 角色卡勾了「中文思考 / 第一人称思考」时，卡的强化提醒默认就是自动；卡里写了 `untilTurn` 的照旧「只注入前 N 轮」。
 
-实测数据和完整对话见实验室仓库的 [`tests/reasoning-lab`](https://github.com/NekoDD-wow/dsh-prefill/tree/main/tests/reasoning-lab)。
 
 ## 角色卡（角色扮演）
 
@@ -163,14 +162,8 @@ npm test        # node --test tests/*.test.mjs（69 项）
 
 单测覆盖：每轮注入的规则打分与状态机（`inject-auto`）、左栏启用开关（`enabled`）、角色卡编译（`character-cards`）、会话转开场条目（`session-history`）、故事记忆（`story-memory`）、预设整体保存 / 套用（`preset-whole`）。
 
-真机点击的实测（拟人操作 + 会话日志核对）在实验室仓库 [dsh-prefill](https://github.com/NekoDD-wow/dsh-prefill) 的 `tests/reasoning-lab/`；本仓库只放插件本体与单测。
+本仓库只放插件本体与单测；真机点击的实测（拟人操作 + 会话日志核对）不随本仓库分发。
 
-## 两个仓库
-
-| 仓库 | 放什么 |
-|---|---|
-| **dsh-prefill-plugin**（本仓库） | 插件本体 + 单测（`npm test`）。安装就指这里。 |
-| [dsh-prefill](https://github.com/NekoDD-wow/dsh-prefill) | 实测实验室：拟人点击脚本、逐轮 transcript、思维链指标与报告、设计稿。 |
 
 ## 许可
 

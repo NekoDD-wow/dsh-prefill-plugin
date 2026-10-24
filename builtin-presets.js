@@ -65,7 +65,7 @@ export const BUILTIN_PRESETS = [
     icon: 'languages',
     name: '中文版官方系统提示',
     tag: '模式',
-    desc: '把 dsh 默认系统提示换成中文译本（替换模式）：工具、工作区、审批照旧。约 2000 字，比英文原版少一半多。注意：单靠它不能让 step-5 用中文思考，见 tests/reasoning-lab。',
+    desc: '把 dsh 默认系统提示换成中文译本（替换模式）：工具、工作区、审批照旧。约 2000 字，比英文原版少一半多。注意：单靠它不能让 step-5 用中文思考。',
     builtin: true,
     replace: true,
     items: [],
@@ -230,7 +230,7 @@ export function builtinSummaries() {
  *
  * 为什么要单独做：step-5-preview 上系统提示和开场示范都管不住思维链（中文约 5–54%、
  * 长对话四段格式 0/15），只有每轮重复提醒稳定（中文 86–91%、四段 13/14、第一人称从第 4 轮起
- * 再没出现"用户"）。见 tests/reasoning-lab/README.md。
+ * 再没出现"用户"）。
  *
  * 代价：注入会写进会话日志、作为后续历史重放 ⇒ 每轮多几十到一百多 token；前缀不变，缓存命中率基本不受影响
  * （实测 94–95%，与不注入的组相同）。

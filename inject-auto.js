@@ -7,7 +7,7 @@
  * - `replay(turns, config, currentTurn)`：把历史从头喂给状态机，决定本轮发不发。
  *
  * 状态**不落盘**：每次都从会话事件重算 ⇒ 插件重载、DSH 重启不丢，双座位 / 旁路请求多次经过同一轮结果一致。
- * 规则与 tests/reasoning-lab/analyze.py 保持同一口径（中文占比公式、四段标题判定、旁观者词）。
+ * 规则与离线分析脚本（analyze.py）保持同一口径（中文占比公式、四段标题判定、旁观者词）。
  */
 
 export const CHECK_IDS = ['zh', 'four', 'noLeak', 'firstPerson']
