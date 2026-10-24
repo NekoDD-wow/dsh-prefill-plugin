@@ -546,7 +546,6 @@ window.__ModuleLoader__.load({
       presetClear: '取消预设',
       groupBuiltin: '内置',
       groupMine: '我的',
-      manageShow: '＋ 保存 / 导入 / 导出预设',
       manageHide: '收起',
       presetsHint: '点一下即套用：下面的角色卡、系统提示、每轮注入、开场对话、改写注入内容和工具权限整体换成这个预设。首轮前套用从第一轮生效；会话开跑后套用从下一轮生效。',
       footPure: '系统提示 0 · 工具 0',
@@ -639,7 +638,6 @@ window.__ModuleLoader__.load({
       modeAppendHint: '在 dsh 默认系统提示里追加下面这段（排在靠后位置）：工具、工作区、审批都照旧，模型只是多了这些设定（适合人格、口吻、团队规范）。默认提示的前缀不变，缓存照样能命中。',
       modeTakeoverHint: '系统提示只剩下面这段，不发运行时上下文、不给工具、只放行你的话（和开场对话）。效果等同用脚本直接调 API。留空 = 纯净模式（完全没有系统提示）。',
       systemPlaceholder: '在这里写系统提示。例如：\n你是一位耐心的 Python 老师，回答先给结论，再给 5 行以内的示例代码；遇到术语用括号解释。\n\n小提示：点上面的预设卡片可以一键填入现成的人格。',
-      systemNotActive: '当前是「不改」，这段文字不会发送。选「追加」或「接管」后生效。',
       takeoverEmpty: '已接管：系统提示为空（= 纯净模式）。在框里写内容即成为唯一的系统提示',
       // 角色卡（v0.6）
       cardsTitle: '角色卡',
@@ -736,10 +734,9 @@ window.__ModuleLoader__.load({
       noteSwitch: '切换预设 / 纯净 / 接管的那一轮，系统提示变了，缓存基本不命中，下一轮恢复。',
       noteMinCache: '很短的请求（例如纯净模式的头几轮）可能达不到服务商的最小缓存长度，命中 0% 属正常。',
       guideShow: '新手指南',
-      guideHide: '收起指南',
       guideTitle: '三步上手',
       guide1: '在「预设」里点一张卡片：想换人格选人格卡，想完全自己写系统提示选「自定义系统提示」，想什么都不发选「纯净模式」。',
-      guide2: '「系统提示」里选模式：不改 / 追加（保留 dsh 能力）/ 接管（像直接调 API）。框里的文字可以随时改，800 毫秒后自动保存。',
+      guide2: '「系统提示」里选模式：追加（保留 dsh 能力）/ 替换正文（工具照旧）/ 接管（像直接调 API）。框里的文字可以随时改，800 毫秒后自动保存；要停用就关掉这一项的开关，正文会保留。',
       guide3: '「开场对话」写你希望 AI 一开始就记得的对话，在发第一条消息前写好，会变成真实历史。',
       guide4: '会话已经聊过了也能改：系统提示从下一轮生效；开场对话要点「注入」才会每轮带上。',
       guide5: '展开「用量与缓存」能看到每轮实际花了多少、缓存命中多少，跟底栏的数字同源。',
@@ -749,8 +746,6 @@ window.__ModuleLoader__.load({
       resetTip: '关掉所有全局开关、清空「生效会话」——旧版「纯净模式」会在这里留下全局开关，导致之后套人格时连工具一起被拦。',
       toolsZero: '无工具',
       toolsUnit: '个工具',
-      expandPanel: '展开',
-      collapsePanel: '收起',
       prefillWritten: '预填装 · 已写入历史',
       itemsWrittenHint: '✓ 首轮已把 {n} 条开场对话写成真实历史（在对话里可以看到）。',
       prefillWrittenTip: '开场对话已在首轮写成真实历史，之后每轮作为历史前缀发送（通常命中缓存）。想再追加内容可在面板里改为每轮注入。',
@@ -771,7 +766,6 @@ window.__ModuleLoader__.load({
       presetClear: 'Clear preset',
       groupBuiltin: 'Built-in',
       groupMine: 'Mine',
-      manageShow: '+ Save / import / export',
       manageHide: 'Hide',
       presetsHint: 'Click to apply it: the character card, system prompt, every-turn injection, opening dialogue, injection rewrites and tool access below are all replaced by this preset. Before the first turn it applies from turn 1; afterwards from the next turn.',
       footPure: 'system 0 · tools 0',
@@ -863,7 +857,6 @@ window.__ModuleLoader__.load({
       modeAppendHint: 'Appends the text below after the default dsh system prompt: tools, workspace and approvals stay; the model just gains these instructions. The default prefix is unchanged, so caching still works.',
       modeTakeoverHint: 'The system prompt becomes only the text below: no runtime context, no tools, only your messages (and the opening dialogue) pass. Same as calling the API from a script. Empty = pure mode.',
       systemPlaceholder: 'Write the system prompt here, e.g.\nYou are a patient Python teacher. Lead with the answer, then a code sample under 5 lines.\n\nTip: the preset cards above fill in ready-made personas.',
-      systemNotActive: 'Mode is "Unchanged", so this text is not sent. Pick Append or Take over.',
       takeoverEmpty: 'Taken over with an empty prompt (= pure). Whatever you type becomes the only system prompt',
       // character cards (v0.6)
       cardsTitle: 'Character cards',
@@ -951,10 +944,9 @@ window.__ModuleLoader__.load({
       noteSwitch: 'The turn where you switch preset / pure / take over changes the system prompt and mostly misses the cache; the next turn recovers.',
       noteMinCache: 'Very short requests may be below the provider minimum cache length; 0% is normal then.',
       guideShow: 'Guide',
-      guideHide: 'Hide guide',
       guideTitle: 'Get started',
       guide1: 'Pick a preset card: personas change the voice, "Custom system prompt" lets you write it all, "Pure" sends nothing.',
-      guide2: 'Choose the system-prompt mode: unchanged / append (keeps dsh abilities) / take over (like a raw API call). Edits autosave.',
+      guide2: 'Choose the system-prompt mode: append (keeps dsh abilities) / replace body (tools stay) / take over (like a raw API call). Edits autosave; to stop sending it, turn this item’s switch off — the text is kept.',
       guide3: 'Write the opening dialogue before your first message; it becomes real history.',
       guide4: 'After the session has run: system prompt changes apply next turn; the opening dialogue needs Inject.',
       guide5: 'Open "Usage & cache" to see per-turn spend and cache hits, from the same data as the footer.',
@@ -964,8 +956,6 @@ window.__ModuleLoader__.load({
       resetTip: 'Turn every global switch off and clear the affected-session list (older pure mode left them on).',
       toolsZero: 'no tools',
       toolsUnit: 'tools',
-      expandPanel: 'Expand',
-      collapsePanel: 'Collapse',
       prefillWritten: 'Prefill · in history',
       itemsWrittenHint: '✓ {n} opening rows were written into history on turn 1 (visible in the conversation).',
       prefillWrittenTip: 'The opening dialogue was written into history on turn 1 and is sent as cached history prefix from then on.',
@@ -2431,9 +2421,8 @@ window.__ModuleLoader__.load({
       const cardFileRef = React.useRef(null)
       const [envelope, setEnvelope] = React.useState(null)
       const [toast, setToast] = React.useState('')
-      const [open, setOpen] = React.useState({ guide: false, presets: true, system: false, items: true, inject: false, everyTurn: false, usage: false, manage: false })
+      const [open, setOpen] = React.useState({ guide: false })
       const [hovered, setHovered] = React.useState('')
-      // 整个面板可收起成一行：会话开跑后默认收起（否则它会盖住对话）。用户手动展开/收起后按会话记住。
       const [systemDraft, setSystemDraft] = React.useState(null)
       const [usage, setUsage] = React.useState(null)
       const [confirming, setConfirming] = React.useState('')
@@ -2853,7 +2842,8 @@ window.__ModuleLoader__.load({
           dirty.current = false
           setStatus('saved')
         }
-        if (preset.takeover === true || preset.replace === true) setOpen((current) => ({ ...current, system: true }))
+        // 套了带系统提示的预设：把左栏切到「系统提示」，让人看见改了什么都不用猜。
+        if (preset.takeover === true || preset.replace === true) setPane('system')
         flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
       }
 
