@@ -140,3 +140,13 @@ dsh plugin --profile web add /绝对路径/dsh-prefill/prefill-plugin
 ## 设置页
 
 「设置 → 预填装」是开发 / 排查用的全局开关，日常使用不需要进去。如果你用过旧版「纯净模式」，后来发现套人格时工具也一起没了，点一次「把全局开关恢复默认」就好。
+
+## 开发
+
+```bash
+npm test        # node --test tests/*.test.mjs（75 项）
+```
+
+单测覆盖：每轮注入的规则打分与状态机（`inject-auto`）、左栏启用开关（`enabled`）、角色卡编译（`character-cards`）、会话转开场条目（`session-history`）、故事记忆（`story-memory`）、预设整体保存 / 套用（`preset-whole`）。
+
+真机点击的实测（拟人操作 + 会话日志核对）在实验室仓库 [dsh-prefill](https://github.com/NekoDD-wow/dsh-prefill) 的 `tests/reasoning-lab/`；本仓库只放插件本体与单测。

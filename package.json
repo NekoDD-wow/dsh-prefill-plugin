@@ -5,6 +5,9 @@
   "type": "module",
   "description": "DSH Web 会话预填装 + 注入闸门（Prefill Pack + Gate）",
   "icon": "./icon.svg",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

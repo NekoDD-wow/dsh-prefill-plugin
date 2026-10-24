@@ -1,0 +1,29 @@
+# 换行统一为 LF —— 与 core.autocrlf 无关，Windows / Linux 检出结果一致，diff 不再来回抖
+* text=auto eol=lf
+
+# 二进制：显式声明，避免被当文本处理
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.zstd  binary
+*.woff  binary
+*.woff2 binary
+
+# 明确按文本处理
+*.md    text eol=lf
+*.mjs   text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.jsonl text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.svg   text eol=lf
+*.py    text eol=lf
+
+# GitHub 侧：生成物折叠 diff、数据与转录不计入语言统计
+tests/generated/*.prefill.json          linguist-generated
+samples/*.jsonl                         linguist-documentation
+tests/reasoning-lab/transcripts/*.md    linguist-documentation
