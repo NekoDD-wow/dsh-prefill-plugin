@@ -9,7 +9,7 @@ import { everyTurnPresets } from '../builtin-presets.js'
 import { compileCard, parseCard } from '../character-cards.js'
 
 const FIXTURE = JSON.parse(readFileSync(new URL('./fixtures/inject-auto/sessions.json', import.meta.url), 'utf8'))
-const METRICS = JSON.parse(readFileSync(new URL('./reasoning-lab/metrics.json', import.meta.url), 'utf8'))
+const METRICS = JSON.parse(readFileSync(new URL('./fixtures/inject-auto/metrics.json', import.meta.url), 'utf8'))
 
 // ── 打分：和 analyze.py 同一口径 ────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ test('D1（裸注入）：每一轮都判「四段漏进回答」⇒ fail', () =
 })
 
 test('去掉代码 / 路径 / 标识符后再算中文占比', () => {
-  const text = '我先看一下 `src/gate.js` 里的 everyTurnFor 函数，再改 prefill-plugin/impl.js。\n```js\nconst value = readState()\nfunction foo_bar() { return value }\n```\n然后跑一遍单测确认没有回归，最后把结论写进说明文档里给主人看。'
+  const text = '我先看一下 `src/gate.js` 里的 everyTurnFor 函数，再改 impl.js。\n```js\nconst value = readState()\nfunction foo_bar() { return value }\n```\n然后跑一遍单测确认没有回归，最后把结论写进说明文档里给主人看。'
   assert.ok(zhRatio(text) < 0.8)
   assert.ok(zhRatio(stripCode(text)) > 0.95)
 })
