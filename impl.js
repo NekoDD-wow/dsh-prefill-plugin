@@ -258,7 +258,8 @@ export function sanitizeCardRef(raw) {
   const opts = {}
   for (const key of ['reinforce', 'thinkZh', 'firstPerson', 'lore', 'memory']) if (typeof src[key] === 'boolean') opts[key] = src[key]
   if (src.mode === 'agent' || src.mode === 'pure') opts.mode = src.mode
-  if (Number.isFinite(Number(src.greeting))) opts.greeting = Math.max(0, Math.floor(Number(src.greeting)))
+  // -1 = 面板上的「不要开场白」（compileCard 认负数），不能被夹成 0（= 第一句开场白）。
+  if (Number.isFinite(Number(src.greeting))) opts.greeting = Math.max(-1, Math.floor(Number(src.greeting)))
   for (const key of ['userName', 'tools']) if (typeof src[key] === 'string') opts[key] = src[key].slice(0, 500)
   return { id, opts }
 }
