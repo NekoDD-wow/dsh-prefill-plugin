@@ -150,3 +150,9 @@ test('PNG export round-trips through cardFromPng and replaces old chunks', () =>
   assert.equal(back.data.character_book.entries.length, other.data.character_book.entries.length)
   assert.equal(embedCardInPng(new Uint8Array([1, 2, 3]), other), undefined)
 })
+
+test('expandMacros: names containing $ are inserted literally', () => {
+  assert.equal(expandMacros('{{char}} meets {{user}}', { char: 'Ca$$h', user: 'A$&B' }), 'Ca$$h meets A$&B')
+  assert.equal(expandMacros('<USER>!', { char: 'x', user: "$'tail" }), "$'tail!")
+  assert.equal(expandMacros('hi <BOT>', { char: '$`x', user: 'u' }), 'hi $`x')
+})
