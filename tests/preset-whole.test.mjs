@@ -17,7 +17,7 @@ test('sanitizeCardRef 只留 id 和已知选项', () => {
 test('面板：挂在预设下的各项都在悬浮卡片里，保存不再有「连同每轮注入」开关', () => {
   const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   // v0.10 悬浮卡片：左栏每项对应右栏一节（世界书 / 故事记忆从角色卡拆出），预设下拉在头部。
-  assert.match(src, /const sections = \{ cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection \}/)
+  assert.match(src, /const sections = \{ cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, workspace: workspaceSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection \}/)
   assert.match(src, /const presetsMenu = h\(/)
   assert.doesNotMatch(src, /packWithEveryTurn/)
   // 套用 = 整体替换：预设里没有的项恢复默认（不再 `if (pack.x !== undefined)` 才覆盖）。

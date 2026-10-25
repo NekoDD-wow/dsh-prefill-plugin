@@ -3,6 +3,10 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.13 — 2026-10-25
+- **工作区说明（AGENTS.md / CLAUDE.md）**：卡片左栏新增一项（带启用开关，关掉 = 按原样发、设置保留），三种模式：原样（默认）/ 关闭（丢掉所有 `agent-instructions` 消息，含会话中途补发的）/ 改写（本会话第一条换成你的正文，source 保留 baseline 标记，所以只进历史一次、不每步重发；之后补发的丢掉）。只读显示 DSH 读到的原文。会话中途切换不改历史（前缀缓存不受影响），下一轮补一条说明告诉模型以新设置为准，卡片上有提示。预设 / 导出只带模式和改写正文，从不带文件原文；旧预设没有这一项 = 原样。高级「改写注入内容」里给 `agent-instructions` 写的改写，在这一项设了关闭 / 改写时不再叠加。新增 `workspace-instructions.js`、`state.workspaceInstructions`、`enabled.workspace`、pack 字段 `workspaceInstructions`；单测 `tests/workspace-instructions.test.mjs`。
+- 修：注入清单里 `agent-instructions` 的说明原来写成「当前 agent 预设 / 人设的补充说明」，其实是工作区说明，改成「工作区说明（AGENTS.md / CLAUDE.md）」（中英）。
+
 ## 0.12 — 2026-10-25
 - 修：**每轮注入有两个开关**。0.11 把开关搬到左栏，但面板里 0.11 之前那个「启用」勾选框还留着，两个开关写的是两套状态（`state.enabled[会话].everyTurn` vs `state.everyTurn[会话].enabled`）—— 勾选框关过之后，用左栏开关打开也会一轮都不注入（`everyTurnFor()` 要求 `entry.enabled === true`），而且芯片点是亮的、标题写「关」、还没有停用横幅。现在开关只剩左栏一个：面板里的勾选框删掉，打开开关时自动把旧值清成 true，读状态时旧值也算「关」。单测 `tests/enabled.test.mjs` 增补（含 client 与服务端规则逐值比对）。
 - **开场对话里直接「从当前会话取」**：按钮挪进开场对话，取到的原话和回答直接变成可编辑的消息卡片；可选带上思维链、取「第 N 轮 到 第 M 轮」（N 缺省 1，M 留空 = 到最后；packs 路由 `from-session` 新增 `fromTurn`，只给 `toTurn` 的旧调用照旧）。列表里已经有内容时先问：替换 / 插在第 k 条后（默认末尾 = 追加）/ 取消；放进去之后几秒内可以撤销（清空也能撤销）。只改预设的开场对话草稿，不动本会话已经发出的历史。「另存为」只剩起名保存和导入导出；带上故事记忆摘要挪到「故事记忆」里（摘要不能晚于截取的末轮 M）。

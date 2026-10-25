@@ -132,6 +132,7 @@ window.__ModuleLoader__.load({
       '--pf-lore': '#0fa3a3',
       '--pf-user': '#3b82f6',
       '--pf-ai': 'var(--dsw-alias-state-success-primary, #22a06b)',
+      '--pf-ws': '#8b5e34',
       '--pf-adv': 'var(--dsw-alias-label-secondary, #6b6b6b)',
       '--pf-off': 'var(--dsw-alias-border-l2, #cfcfcf)',
     }
@@ -141,6 +142,7 @@ window.__ModuleLoader__.load({
       ['lore', 'lore', 'var(--pf-lore)'],
       ['memory', 'memory', 'var(--pf-lore)'],
       ['system', 'system', 'var(--pf-system)'],
+      ['workspace', 'workspace', 'var(--pf-ws)'],
       ['everyTurn', 'every-turn', 'var(--pf-turn)'],
       ['items', 'items', 'var(--pf-user)'],
       ['inject', 'inject', 'var(--pf-adv)'],
@@ -204,7 +206,7 @@ window.__ModuleLoader__.load({
       zh: {
         'runtime-context': '运行时上下文：每轮由 harness 生成的当前环境信息（工作目录、时间、沙箱等）',
         'skill-catalog': '技能清单：可用 skill 的名字与一句说明',
-        'agent-instructions': 'Agent 说明：当前 agent 预设 / 人设的补充说明',
+        'agent-instructions': '工作区说明（AGENTS.md / CLAUDE.md）',
         'time-context': '时间上下文：当前日期与时间',
         'session-reference': '会话引用：被 @ 提到的会话内容',
         'tmux-context': '终端上下文：tmux 会话状态',
@@ -226,7 +228,7 @@ window.__ModuleLoader__.load({
       en: {
         'runtime-context': 'Runtime context: environment info the harness generates each turn (cwd, time, sandbox…)',
         'skill-catalog': 'Skill catalog: available skills and one-line descriptions',
-        'agent-instructions': 'Agent instructions: extra notes for the current agent preset/persona',
+        'agent-instructions': 'Workspace instructions (AGENTS.md / CLAUDE.md)',
         'time-context': 'Time context: current date and time',
         'session-reference': 'Session reference: content of sessions you @-mentioned',
         'tmux-context': 'Terminal context: tmux session state',
@@ -1091,6 +1093,28 @@ window.__ModuleLoader__.load({
       chipOff: '关',
       chipEmpty: '开（未配置）',
       chipOffByCard: '随角色卡停用',
+      wsTitle: '工作区说明',
+      wsMeta: 'AGENTS.md / CLAUDE.md',
+      wsHint: 'DSH 会把 ~/.dsh/AGENTS.md 和项目里从根目录到工作目录的 AGENTS.md / CLAUDE.md（含 .local）读进来，在第一条请求前发给模型；会话中途碰到子目录里的说明或文件改了，还会再补。这里决定它们怎么发。',
+      wsModePass: '原样',
+      wsModeOff: '关闭',
+      wsModeRewrite: '改写',
+      wsPassHint: '原样发送，不做改动。',
+      wsOffHint: '一条都不发，包括会话中途补发的。',
+      wsRewriteHint: '本会话第一条换成下面的正文（只进历史一次）；之后补发的不再发，免得和改写重复。正文留空 = 等同关闭。',
+      wsRewritePlaceholder: '写给模型的工作区说明，代替 AGENTS.md / CLAUDE.md……',
+      wsRewriteEmpty: '正文是空的：现在等同关闭。',
+      wsMidSession: '本会话已经发过工作区说明。新设置从下一条请求起生效：插件补发一条说明告诉模型以新设置为准，之前那份仍留在历史里（不改历史，前缀缓存不受影响，但多一条消息）。想要干净的效果，开个新会话。',
+      wsNewSessionNote: '一般在开新会话、发第一条消息前设好：这条说明在最前面，进了历史后中途再改只能追加，不能替换。',
+      wsOriginal: 'DSH 读到的原文（只读）',
+      wsOriginalNone: '本会话还没发出请求，或者工作区里没有 AGENTS.md / CLAUDE.md。发出第一条消息后这里显示读到的原文。',
+      wsOriginalReplaced: '已被改写替换',
+      wsOriginalDropped: '已关闭，不发送',
+      wsOffBody: '模式和改写正文都保留，现在按原样发送。打开开关即恢复。',
+      wsSaved: '工作区说明已保存',
+      navWsPass: '原样',
+      navWsOff: '关闭',
+      navWsRewrite: '改写',
     })
     Object.assign(en, {
       itemsTitle: 'Opening dialogue',
@@ -1151,6 +1175,28 @@ window.__ModuleLoader__.load({
       chipOff: 'off',
       chipEmpty: 'on (empty)',
       chipOffByCard: 'paused with card',
+      wsTitle: 'Workspace instructions',
+      wsMeta: 'AGENTS.md / CLAUDE.md',
+      wsHint: 'DSH reads ~/.dsh/AGENTS.md and the AGENTS.md / CLAUDE.md files (and .local) from the project root down to the working directory, and sends them before the first request; mid-session it adds more when a nested directory is touched or a file changes. This decides how they are sent.',
+      wsModePass: 'As is',
+      wsModeOff: 'Off',
+      wsModeRewrite: 'Rewrite',
+      wsPassHint: 'Sent unchanged.',
+      wsOffHint: 'None are sent, including the ones added mid-session.',
+      wsRewriteHint: 'The first one in this session is replaced by the text below (it enters history once); later additions are not sent so the rewrite is not duplicated. Empty text = off.',
+      wsRewritePlaceholder: 'Workspace instructions for the model, in place of AGENTS.md / CLAUDE.md…',
+      wsRewriteEmpty: 'The text is empty, so this currently acts as Off.',
+      wsMidSession: 'Workspace instructions were already sent in this session. The new setting applies from the next request: the plugin adds a note telling the model to follow it, and the earlier copy stays in history (history is not edited, so the prefix cache is kept, at the cost of one extra message). Start a new session for a clean result.',
+      wsNewSessionNote: 'Best set in a new session before the first message: these instructions sit at the very start, and once they are in history a later change can only be appended, not replaced.',
+      wsOriginal: 'What DSH read (read-only)',
+      wsOriginalNone: 'No request has been sent in this session yet, or the workspace has no AGENTS.md / CLAUDE.md. The original text shows up here after the first message.',
+      wsOriginalReplaced: 'replaced by your rewrite',
+      wsOriginalDropped: 'off, not sent',
+      wsOffBody: 'Mode and rewrite text are kept; the instructions are sent as is for now. Turn it back on to restore.',
+      wsSaved: 'Workspace instructions saved',
+      navWsPass: 'As is',
+      navWsOff: 'Off',
+      navWsRewrite: 'Rewrite',
     })
 
     const S = {
@@ -2240,6 +2286,19 @@ window.__ModuleLoader__.load({
       return `【故事记忆 · 前情提要】以下是此前剧情的摘要，帮你记住发生过的事。直接按它延续剧情，不要复述、不要提到这份摘要：\n${String(text ?? '').trim()}`
     }
 
+    // <workspace-preset>
+    /**
+     * 工作区说明在预设 / 导出文件里的形状：`{ mode: 'off' }` 或 `{ mode: 'rewrite', text }`；
+     * 原样 / 缺 / 认不出 ⇒ null（不存；旧预设没有这一键 ⇒ 套用时回到原样）。从不带 AGENTS.md 原文。
+     */
+    function presetWorkspace(raw) {
+      if (raw === null || typeof raw !== 'object') return null
+      if (raw.mode === 'off') return { mode: 'off' }
+      if (raw.mode === 'rewrite') return { mode: 'rewrite', text: typeof raw.text === 'string' ? raw.text : '' }
+      return null
+    }
+    // </workspace-preset>
+
     function without(map, sessionId) {
       const next = { ...(map ?? {}) }
       delete next[sessionId]
@@ -2533,6 +2592,15 @@ window.__ModuleLoader__.load({
       const [everyTurnDraft, setEveryTurnDraft] = React.useState(null)
       const everyTurnTimer = React.useRef(0)
       React.useEffect(() => setEveryTurnDraft(null), [sessionId])
+      // 工作区说明（AGENTS.md / CLAUDE.md）：改写正文的草稿（700ms 落盘）。
+      const [wsDraft, setWsDraft] = React.useState(null)
+      const wsTimer = React.useRef(0)
+      // 这个会话里，说明已经发出之后用户又改过设置 ⇒ 显示「中途切换」提示。
+      const [wsMidChanged, setWsMidChanged] = React.useState(false)
+      React.useEffect(() => {
+        setWsDraft(null)
+        setWsMidChanged(false)
+      }, [sessionId])
       const [packName, setPackName] = React.useState('')
       // 「从当前会话取」（v0.10.1 起在开场对话里）：取第 N–M 轮的原话和回答，直接放进开场对话列表。
       const [fetchOpts, setFetchOpts] = React.useState({ reasoning: false, fromTurn: '1', toTurn: '' })
@@ -2872,6 +2940,8 @@ window.__ModuleLoader__.load({
       // 左栏启用开关（缺 = 开）。
       const ownEnabled = state?.enabled?.[sessionId] ?? {}
       const isOn = (key) => (key === 'everyTurn' ? everyTurnSwitchOn(state, sessionId) : ownEnabled[key] !== false)
+      // 工作区说明进预设的那一份（只有模式 + 改写正文；原样 = 不存）。
+      const wsPreset = presetWorkspace(state?.workspaceInstructions?.[sessionId])
       // 角色卡（已套用的那张）与它留下的指纹。
       const appliedRef = state?.cardRef?.[sessionId] ?? null
       const appliedCardName = appliedRef ? (cards.find((card) => card.id === appliedRef.id)?.name ?? appliedRef.id) : ''
@@ -3065,6 +3135,8 @@ window.__ModuleLoader__.load({
         everyTurn: without(st?.everyTurn, sessionId),
         // 左栏启用开关也归位（缺 = 全开）。
         enabled: without(st?.enabled, sessionId),
+        // 工作区说明回到原样。
+        workspaceInstructions: without(st?.workspaceInstructions, sessionId),
       })
 
       /** 左栏开关：关 = 停用但保留内容（state.enabled[会话][项] = false）；开 = 删掉这一键。 */
@@ -3139,6 +3211,10 @@ window.__ModuleLoader__.load({
         // ④ 每轮注入：只有配置；预设没存 = 回到「新会话默认」。
         patch.everyTurn = pack.everyTurn ? { ...(st.everyTurn ?? {}), [sessionId]: pack.everyTurn } : without(st.everyTurn, sessionId)
         setEveryTurnDraft(null)
+        // ⑤ 工作区说明：只有模式 + 改写正文；预设没存（旧预设）= 原样。
+        const wsPack = presetWorkspace(pack.workspaceInstructions)
+        patch.workspaceInstructions = wsPack ? { ...(st.workspaceInstructions ?? {}), [sessionId]: wsPack } : without(st.workspaceInstructions, sessionId)
+        setWsDraft(null)
         // 故事记忆摘要：本会话开着故事记忆（预设带了角色卡）⇒ 写成初始记忆；否则作为一条背景放在开场对话最前面。
         const memoryOn = compiled?.memory?.enabled === true
         const seed = typeof pack.memorySeed?.text === 'string' && pack.memorySeed.text.trim() !== '' ? pack.memorySeed.text.trim() : ''
@@ -3344,7 +3420,7 @@ window.__ModuleLoader__.load({
         // 保存 = 面板上挂在预设下的**全部**内容：角色卡（引用）、系统提示、每轮注入（只存配置）、开场对话、改写注入内容、工具权限。
         void Promise.all([currentOverrides(), currentTools(), currentCardRef()])
           .then(([overrides, tools, card]) =>
-            packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}), ...(seedDraft !== null ? { memorySeed: seedDraft, ...(cutTo > 0 ? { toTurn: cutTo } : {}) } : {}) }),
+            packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(wsPreset ? { workspaceInstructions: wsPreset } : {}), ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}), ...(seedDraft !== null ? { memorySeed: seedDraft, ...(cutTo > 0 ? { toTurn: cutTo } : {}) } : {}) }),
           )
           .then((data) => {
             adoptPacks(data)
@@ -3464,6 +3540,8 @@ window.__ModuleLoader__.load({
           ...(memorySeed === undefined ? {} : { memorySeed }),
           // 启用开关同样属于「面板下面的东西」：导出不带它，导入后关掉的项会悄悄全开。
           ...(ownEnabled && Object.keys(ownEnabled).length > 0 ? { enabled: ownEnabled } : {}),
+          // 工作区说明：只带模式 + 改写正文，从不带 AGENTS.md 原文。
+          ...(wsPreset ? { workspaceInstructions: wsPreset } : {}),
         }
         const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
@@ -4611,6 +4689,121 @@ window.__ModuleLoader__.load({
         ),
       )
 
+      // ── 工作区说明（state.workspaceInstructions[会话]；缺 = 原样）──
+      const storedWs = state?.workspaceInstructions?.[sessionId]
+      const wsStored = storedWs?.mode === 'off' ? { mode: 'off', text: '' } : storedWs?.mode === 'rewrite' ? { mode: 'rewrite', text: typeof storedWs.text === 'string' ? storedWs.text : '' } : { mode: 'pass', text: '' }
+      const ws = wsDraft ?? { ...wsStored, text: wsStored.text !== '' ? wsStored.text : typeof storedWs?.text === 'string' ? storedWs.text : '' }
+      const wsOriginal = envelope?.injections?.sessions?.[sessionId]?.texts?.messages?.['agent-instructions']
+      const wsSent = typeof wsOriginal === 'string' && wsOriginal !== ''
+      const wsMid = turns > 0 || wsSent
+      const writeWs = async (value) => {
+        const fresh = await postJson(STATE_ROUTE, undefined)
+        const map = { ...(fresh?.state?.workspaceInstructions ?? {}) }
+        // 原样不存（缺 = 原样）；改写时留着正文，切回原样 / 关闭也把正文留在草稿里不丢。
+        if (value.mode === 'off') map[sessionId] = { mode: 'off', ...(String(value.text ?? '') !== '' ? { text: String(value.text) } : {}) }
+        else if (value.mode === 'rewrite') map[sessionId] = { mode: 'rewrite', text: String(value.text ?? '') }
+        else if (String(value.text ?? '') !== '') map[sessionId] = { mode: 'pass', text: String(value.text) }
+        else delete map[sessionId]
+        const data = await postJson(STATE_ROUTE, { workspaceInstructions: map })
+        setEnvelope(data)
+        notifyStateChanged()
+        return data
+      }
+      const editWs = (patch, immediate) => {
+        const value = { ...ws, ...patch }
+        if (wsMid) setWsMidChanged(true)
+        setWsDraft(value)
+        clearTimeout(wsTimer.current)
+        const run = () =>
+          void writeWs(value)
+            .then(() => {
+              setWsDraft(null)
+              flash(t('wsSaved'))
+            })
+            .catch(() => setStatus('error'))
+        if (immediate) run()
+        else wsTimer.current = setTimeout(run, 700)
+      }
+      const wsActive = ws.mode !== 'pass'
+      const workspaceSection = h(
+        Section,
+        {
+          id: 'workspace',
+          title: t('wsTitle'),
+          meta: t('wsMeta'),
+          off: !isOn('workspace'),
+          offTitle: t('offTitle'),
+          offBody: t('wsOffBody'),
+        },
+        h('div', { style: V.hint }, t('wsHint')),
+        h(
+          'div',
+          { style: V.row },
+          h(
+            'div',
+            { style: V.seg, role: 'radiogroup' },
+            ...[
+              ['pass', t('wsModePass')],
+              ['off', t('wsModeOff')],
+              ['rewrite', t('wsModeRewrite')],
+            ].map(([key, label]) =>
+              h(
+                'button',
+                {
+                  key,
+                  type: 'button',
+                  role: 'radio',
+                  'aria-checked': ws.mode === key ? 'true' : 'false',
+                  style: V.segBtn(ws.mode === key),
+                  'data-prefill-ws-mode': key,
+                  onClick: () => editWs({ mode: key }, true),
+                },
+                label,
+              ),
+            ),
+          ),
+        ),
+        h('div', { style: V.hint }, ws.mode === 'off' ? t('wsOffHint') : ws.mode === 'rewrite' ? t('wsRewriteHint') : t('wsPassHint')),
+        // 会话已经发过说明 ⇒ 中途切换的提示；还没发 ⇒ 建议在新会话首条消息前设好。
+        wsMid && wsMidChanged
+          ? h('div', { style: V.callout('warn'), 'data-prefill-ws-note': 'mid-session' }, t('wsMidSession'))
+          : !wsMid
+            ? h('div', { style: V.callout(), 'data-prefill-ws-note': 'new-session' }, t('wsNewSessionNote'))
+            : null,
+        ws.mode === 'rewrite'
+          ? h('textarea', {
+              style: { ...V.textarea, minHeight: 110, maxWidth: '90ch', opacity: isOn('workspace') ? 1 : 0.7 },
+              value: ws.text,
+              spellCheck: false,
+              placeholder: t('wsRewritePlaceholder'),
+              'data-prefill-ws-text': '1',
+              onChange: (event) => editWs({ text: event.target.value }, false),
+            })
+          : null,
+        ws.mode === 'rewrite' && ws.text.trim() === '' ? h('div', { style: V.callout('warn') }, t('wsRewriteEmpty')) : null,
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, maxWidth: '90ch' } },
+          h(
+            'div',
+            { style: { ...V.sectionMeta, fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' } },
+            h('b', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('wsOriginal')),
+            wsSent ? `≈${num(estimateTokens(wsOriginal))} tok` : null,
+            wsSent && isOn('workspace') && ws.mode !== 'pass' ? `· ${ws.mode === 'off' || ws.text.trim() === '' ? t('wsOriginalDropped') : t('wsOriginalReplaced')}` : null,
+          ),
+          wsSent
+            ? h(
+                'pre',
+                {
+                  'data-prefill-ws-original': '1',
+                  style: { margin: 0, maxHeight: 220, overflow: 'auto', padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-secondary)', fontSize: 11.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)', opacity: ws.mode !== 'pass' && isOn('workspace') ? 0.7 : 1, textDecoration: 'none' },
+                },
+                wsOriginal,
+              )
+            : h('div', { style: { ...V.hint, fontSize: 12 }, 'data-prefill-ws-original': 'none' }, t('wsOriginalNone')),
+        ),
+      )
+
       // ── 左栏：每项一个色条 + 粗标题 + 开关 + 状态行 ──
       const filledCount = countFilled(items)
       const overrideCount = (() => {
@@ -4635,6 +4828,7 @@ window.__ModuleLoader__.load({
           ? [B(everyTurnModeLabel), autoStatus !== null ? ` · ${autoStateText}` : ` · ≈${num(estimateTokens(everyTurn.text))} tok/${t('turnsUnit')}`]
           : [t('everyTurnOffMeta')],
         items: [B(String(filledCount)), t('countSuffix'), ' · ≈', B(num(itemsTok)), ' tok · ', injectMode ? (injectCount > 0 ? t('modeInject') : t('navNotInjected')) : t('modeHistory')],
+        workspace: [B(ws.mode === 'off' ? t('navWsOff') : ws.mode === 'rewrite' ? t('navWsRewrite') : t('navWsPass')), ws.mode === 'rewrite' && ws.text.trim() !== '' ? ` · ≈${num(estimateTokens(ws.text))} tok` : '', ws.mode === 'pass' ? ' · AGENTS.md' : ''],
         inject: [t('advanced'), overrideCount > 0 ? [' · ', t('navChanged').replace('{n}', '')] : '', overrideCount > 0 ? B(String(overrideCount)) : '', overrideCount > 0 ? t('navChangedUnit') : ''],
       }
       const offBy = { system: systemFromCardOff, everyTurn: everyTurnFromCardOff, lore: !isOn('card') && loreEntries.length > 0, memory: !isOn('card') && memoryOn }
@@ -4645,10 +4839,11 @@ window.__ModuleLoader__.load({
         system: systemText.trim() !== '' || gateMode === 'pure',
         everyTurn: everyTurnActive,
         items: filledCount > 0,
+        workspace: wsActive,
         inject: overrideCount > 0,
       }
-      const featureTitle = { card: t('cardsTitle'), lore: t('loreTitle'), memory: t('memoryTitle'), system: t('systemTitle'), everyTurn: t('everyTurnTitle'), items: t('itemsNavTitle'), inject: t('injectTitle') }
-      const sections = { cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection }
+      const featureTitle = { card: t('cardsTitle'), lore: t('loreTitle'), memory: t('memoryTitle'), system: t('systemTitle'), everyTurn: t('everyTurnTitle'), items: t('itemsNavTitle'), workspace: t('wsTitle'), inject: t('injectTitle') }
+      const sections = { cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, workspace: workspaceSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection }
 
       // 芯片的摘要：预设名 + 每项一个点（关 = 灰；开但没内容 = 空心）。
       const summaryDots = FEATURE_NAV.map(([key, , color]) => ({ key, color, on: isOn(key) && offBy[key] !== true, filled: hasContent[key] === true }))

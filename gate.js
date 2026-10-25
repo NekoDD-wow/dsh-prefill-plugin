@@ -23,6 +23,7 @@
 import { randomUUID } from 'node:crypto'
 import { checksOf, modeOf, replay, splitTurns } from './inject-auto.js'
 import { applyEnabled, isEnabled } from './enabled.js'
+import { WORKSPACE_KIND, WORKSPACE_MARK, applyWorkspaceInstructions, lastWorkspaceInHistory, workspaceInstructionsFor } from './workspace-instructions.js'
 import { cleanMemory, matchLore, memoryDue, memoryInput, memorySystemPrompt, renderLore, renderMemory } from './character-cards.js'
 
 /** 内核代次：壳会在诊断里回报它，用来确认热换是否生效。 */
@@ -424,6 +425,16 @@ function rememberOriginal(sessionId, group, name, text) {
     ORIGINALS.set(sessionId, entry)
   }
   entry[group][name] = text.length > ORIGINAL_MAX ? text.slice(0, ORIGINAL_MAX) : text
+}
+
+/** 工作区说明的原文：只记 DSH 发来的（不记我方改写 / 补发的），baseline 优先，中途补的不顶掉它。 */
+function rememberWorkspaceOriginal(sessionId, messages) {
+  if (!Array.isArray(messages)) return
+  for (const message of messages) {
+    if (message?.source?.kind !== WORKSPACE_KIND || message?.source?.prefill === WORKSPACE_MARK) continue
+    if (message?.source?.baseline !== true && ORIGINALS.get(sessionId)?.messages?.[WORKSPACE_KIND] !== undefined) continue
+    rememberOriginal(sessionId, 'messages', WORKSPACE_KIND, messageText(message))
+  }
 }
 
 /** 往注册表里记名字。 */
@@ -1005,9 +1016,11 @@ export async function step(api, payload, decision) {
   const hasInjects =
     (Array.isArray(state0?.injects?.[agent?.id]) && state0.injects[agent.id].length > 0) ||
     everyTurnFor(state0, agent?.id) !== undefined
+  // ⑤ 工作区说明设成关闭 / 改写：同样要进来（否则 AGENTS.md 原样照发）。
+  const hasWorkspace = workspaceInstructionsFor(state0, agent?.id) !== undefined
   const armed =
     typeof agent?.id === 'string' &&
-    (state0.armed.includes(agent.id) || state0.armed.includes('*') || hasOverrides || hasInjects)
+    (state0.armed.includes(agent.id) || state0.armed.includes('*') || hasOverrides || hasInjects || hasWorkspace)
 
   if (!armed) {
     note({
@@ -1018,6 +1031,8 @@ export async function step(api, payload, decision) {
       armed: false,
       armedList: state0.armed,
     })
+    // 工作区说明的原文照样记（面板「工作区说明」要给原样模式的会话也显示读到了什么）。
+    rememberWorkspaceOriginal(agent?.id, decision?.messages)
     // 未武装 = 完全不干预 ⇒ 角标显示"全放行"。
     const idleKinds = Array.isArray(decision?.messages)
       ? decision.messages.map((message) => message?.source?.kind ?? '(none)')
@@ -1088,6 +1103,11 @@ export async function step(api, payload, decision) {
         ? message.content.map((part) => part?.text ?? '').join('')
         : ''
       if (typeof kind === 'string' && kind !== '' && !kind.startsWith('prefill')) {
+        // 工作区说明：我方写的不算原文；记 baseline（首条），中途补的那几条不顶掉它。
+        if (kind === WORKSPACE_KIND) {
+          if (message?.source?.prefill === WORKSPACE_MARK) continue
+          if (message?.source?.baseline !== true && ORIGINALS.get(agent.id)?.messages?.[kind] !== undefined) continue
+        }
         rememberOriginal(agent.id, 'messages', kind, text)
       }
     }
@@ -1101,15 +1121,36 @@ export async function step(api, payload, decision) {
   // 再决定放不放行。
   // practices P4：必须 spread，否则丢 `startsRequestSeries`。
   const overrides = overridesFor(state, agent.id)
+  const workspace = workspaceInstructionsFor(state, agent.id)
   if (overrides?.messages !== undefined && decision?.kind === 'enter' && Array.isArray(decision.messages)) {
     const rewrites = overrides.messages
     const messages = decision.messages.map((message) => {
       const kind = message?.source?.kind
       if (typeof kind !== 'string' || !Object.hasOwn(rewrites, kind)) return message
+      // 工作区说明设了关闭 / 改写：由下面那段管，高级改写不再套一层。
+      if (kind === WORKSPACE_KIND && workspace !== undefined) return message
       overrode.push(kind)
       return { ...message, content: [{ type: 'text', text: String(rewrites[kind]) }] }
     })
     if (overrode.length > 0) next = { ...next, messages }
+  }
+
+  // ── 工作区说明（AGENTS.md / CLAUDE.md）：关闭 = 全丢；改写 = 首条换正文、之后的丢 ───────
+  // 中途切换补一条说明（只追加，不改历史）。见 workspace-instructions.js。
+  if (workspace !== undefined && decision?.kind === 'enter' && Array.isArray(next.messages)) {
+    let history
+    try {
+      history = lastWorkspaceInHistory(agent.session)
+    } catch {
+      history = undefined
+    }
+    const result = applyWorkspaceInstructions(next.messages, workspace, { history, firstStep: (payload?.step ?? 1) === 1 })
+    if (result.changed) {
+      next = { ...next, messages: result.messages }
+      if (result.rewritten || result.noticed) overrode.push(WORKSPACE_KIND)
+      for (let index = 0; index < result.dropped; index += 1) droppedKinds.push(WORKSPACE_KIND)
+      note({ workspace: workspace.mode, id: agent.id, turn: payload?.turn, step: payload?.step, dropped: result.dropped, rewritten: result.rewritten, noticed: result.noticed, history: history === undefined ? 'none' : history.ours ? 'ours' : 'original' })
+    }
   }
 
   // "拦注入"只拦**非本插件**的注入：我方改写过的 kind 照发（发的是我们的版本）。

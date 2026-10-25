@@ -1,7 +1,7 @@
 /**
  * 面板左栏每一项的「启用开关」（v0.10 悬浮卡片）：关掉 = 停用但**保留内容**。
  *
- * 形状：`state.enabled[会话] = { card, lore, memory, system, everyTurn, items, inject }`，
+ * 形状：`state.enabled[会话] = { card, lore, memory, system, everyTurn, items, inject, workspace }`，
  * 只有 `false` 才算关；缺键 / 缺整格 = 开（与旧状态兼容）。
  *
  * 服务端只在**组装提示 / 注入**时看它：闸门拿到的是 `applyEnabled(state)` 折算过的视图，
@@ -14,12 +14,13 @@
  *   items     —— 开场对话不写入历史，会话开跑后的注入（injects）也不发。
  *   lore      —— 世界书不匹配、不注入。
  *   memory    —— 故事记忆不总结、不注入（已有摘要文件保留）。
+ *   workspace —— 工作区说明（AGENTS.md / CLAUDE.md）按原样发，关闭 / 改写设置保留。角色卡开关不影响它。
  *   card      —— 角色卡只是角色扮演扩展：关掉它 = 世界书、故事记忆停用，另外**仍是套卡时原样**的
  *                系统提示 / 每轮注入 / 工具清单（按 cardRef.applied 里的指纹判断）也停用；
  *                你在套卡之后自己改过的那几项算你的，不受角色卡开关影响。
  */
 
-export const FEATURES = ['card', 'lore', 'memory', 'system', 'everyTurn', 'items', 'inject']
+export const FEATURES = ['card', 'lore', 'memory', 'system', 'everyTurn', 'items', 'inject', 'workspace']
 export const PERSONA_SECTION = 'prefill:persona'
 
 /** 简短指纹（djb2，32 位，十六进制）：客户端 client.js 里有同一份实现。 */
@@ -149,5 +150,6 @@ function maskSession(state, sid, flags) {
     next.everyTurn = { ...next.everyTurn, [sid]: { enabled: false } }
   } else if (dropEveryTurn) next.everyTurn = { [sid]: { enabled: false } }
   if (flags.items === false) next.injects = withoutKey(next.injects, sid)
+  if (flags.workspace === false) next.workspaceInstructions = withoutKey(next.workspaceInstructions, sid)
   return next
 }
