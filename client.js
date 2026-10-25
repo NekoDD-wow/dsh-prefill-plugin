@@ -3559,7 +3559,10 @@ window.__ModuleLoader__.load({
           try {
             const parsed = JSON.parse(String(reader.result))
             const name = typeof parsed?.name === 'string' && parsed.name.trim() !== '' ? parsed.name.trim() : file.name.replace(/\.prefill\.json$|\.json$/i, '')
-            void packsCall({ op: 'import', name, json: { ...parsed, name } })
+            // 只有开场条目的裸数组（服务端 `parsed.items ?? parsed` 认它）：不能直接 spread，
+            // 否则数组被摊成 { '0': …, '1': … }，服务端就找不到 items[] 了。
+            const json = Array.isArray(parsed) ? { name, items: parsed } : { ...parsed, name }
+            void packsCall({ op: 'import', name, json })
               .then((data) => {
                 adoptPacks(data)
                 if (data?.reason) flash(String(data.reason))
