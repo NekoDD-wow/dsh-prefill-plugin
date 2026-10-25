@@ -1808,7 +1808,12 @@ export function onInboxInserted(api, agent, message) {
  * 触发自动生成（源码注释原文："pins the title"）。于是在物化那一刻，用触发本次物化的
  * **真实提问**去钉标题。
  */
-function pinTitle(api, agent, session, message) {
+/**
+ * 从用户消息取会话标题：文本块拼起来、压空白，取前 24 个**字符**（按码点切，
+ * 不按 UTF-16 码元 —— 否则 emoji 等代理对会被切成半个，标题末尾出现乱码 `\uFFFD`）。
+ * 没有文本 ⇒ ''。
+ */
+export function titleOf(message, limit = 24) {
   const blocks = Array.isArray(message?.content) ? message.content : []
   const text = blocks
     .filter((block) => block?.type === 'text' && typeof block.text === 'string')
@@ -1816,8 +1821,12 @@ function pinTitle(api, agent, session, message) {
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
-  if (text === '') return
-  const title = text.slice(0, 24)
+  return Array.from(text).slice(0, limit).join('')
+}
+
+function pinTitle(api, agent, session, message) {
+  const title = titleOf(message)
+  if (title === '') return
   const service = typeof api.rootCtx?.get === 'function' ? api.rootCtx.get('sessionTitle') : undefined
   if (service === undefined || typeof service.rename !== 'function') {
     api.note({ prefill: 'no-title-service', id: agent.id })
