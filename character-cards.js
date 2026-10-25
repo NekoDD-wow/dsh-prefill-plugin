@@ -122,9 +122,12 @@ export function cardFromPng(bytes) {
 
 /** `{{char}}` / `{{user}}` / `{{original}}` 和 V1 的 `<BOT>` / `<USER>`，大小写不敏感。 */
 export function expandMacros(text, { char, user }) {
+  // 用函数做替换值：名字里的 `$&` / `$$` / `` $` `` / `$'` 不能被当成 replace 的特殊替换模式。
+  const charName = str(char)
+  const userName = str(user)
   return str(text)
-    .replace(/\{\{\s*char\s*\}\}|<bot>/gi, char)
-    .replace(/\{\{\s*user\s*\}\}|<user>/gi, user)
+    .replace(/\{\{\s*char\s*\}\}|<bot>/gi, () => charName)
+    .replace(/\{\{\s*user\s*\}\}|<user>/gi, () => userName)
     .replace(/\{\{\s*original\s*\}\}/gi, '')
 }
 
@@ -233,7 +236,7 @@ const AGENT_RULE =
  * @param {object} [options.thinking]           覆盖卡上的思维链设置
  * @param {string[]|null} [options.tools]       覆盖卡上的工具放行（只对 agent 模式有效）
  * @param {boolean} [options.keepHtml]          开场白保留 HTML，缺省转纯文本
- * @returns {{ mode, systemMode, systemText, items, tools, everyTurn, greetings, warnings }}
+ * @returns {{ mode, systemMode, systemText, items, tools, everyTurn, greetings, greetingTexts, warnings }}
  */
 export function compileCard(card, options = {}) {
   const data = card?.data
@@ -325,6 +328,8 @@ export function compileCard(card, options = {}) {
     tools,
     everyTurn,
     greetings: greetings.map((g) => snippet(stripHtml(m(g)), 40)),
+    // 0.14：开场白全文（和 items 里那条同样处理），开场对话顶部的开场白下拉靠它认出第一条 AI 回答是第几句。
+    greetingTexts: greetings.map((g) => (options.keepHtml === true ? m(g) : stripHtml(m(g)))),
     lore: keywordLore.entries.length > 0 ? { ...keywordLore, enabled: options.lore !== false, char } : null,
     // 故事记忆（三期）：每 every 轮把新发生的剧情并进一段摘要，闸门每轮把摘要作为背景注入。
     memory: {

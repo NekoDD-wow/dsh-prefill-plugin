@@ -110,8 +110,9 @@ test('预设往返：只存关掉的项；套用时整体替换，缺 = 全开',
   const impl = readFileSync(new URL('../impl.js', import.meta.url), 'utf8')
   assert.equal((impl.match(/enabled: sanitizeEnabled\(/g) ?? []).length, 2)
   const client = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  assert.match(client, /patch\.enabled = pack\.enabled/)
-  assert.match(client, /enabled: without\(st\?\.enabled, sessionId\)/)
+  // 0.14：套用 / 取消都走 presetPatch（唯一写入路径），enabled 是其中一格。
+  assert.match(client, /enabled: put\(st\?\.enabled, enabled\)/)
+  assert.match(client, /const LAYER_KEYS = \[[^\]]*'enabled'/)
   assert.match(client, /op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled/)
 })
 

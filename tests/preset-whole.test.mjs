@@ -12,6 +12,9 @@ test('sanitizeCardRef 只留 id 和已知选项', () => {
     opts: { thinkZh: true, mode: 'pure', greeting: 2, tools: 'read,bash' },
   })
   assert.deepEqual(sanitizeCardRef({ id: 'x', opts: { mode: 'chat' } }), { id: 'x', opts: {} })
+  // 「不要开场白」= -1，存预设 / 导入时要原样保留；更小的值收成 -1。
+  assert.deepEqual(sanitizeCardRef({ id: 'x', opts: { greeting: -1 } }), { id: 'x', opts: { greeting: -1 } })
+  assert.deepEqual(sanitizeCardRef({ id: 'x', opts: { greeting: -5 } }), { id: 'x', opts: { greeting: -1 } })
 })
 
 test('面板：挂在预设下的各项都在悬浮卡片里，保存不再有「连同每轮注入」开关', () => {
@@ -21,8 +24,11 @@ test('面板：挂在预设下的各项都在悬浮卡片里，保存不再有�
   assert.match(src, /const presetsMenu = h\(/)
   assert.doesNotMatch(src, /packWithEveryTurn/)
   // 套用 = 整体替换：预设里没有的项恢复默认（不再 `if (pack.x !== undefined)` 才覆盖）。
+  // 0.14：内置 / 我的预设 / 角色卡 / 取消都走 applyLayered → presetPatch，每一格都写（没有 = 恢复默认）。
+  const patchFn = src.slice(src.indexOf('    function presetPatch('), src.indexOf('    function cardDiff('))
+  for (const key of ['cardRef', 'lore', 'memory', 'overrides', 'gate', 'sessionTools', 'everyTurn', 'enabled', 'workspaceInstructions', 'slotSource']) assert.match(patchFn, new RegExp(`\\b${key}: `), key)
   const apply = src.slice(src.indexOf('const applyPack = async'), src.indexOf('// ── 角色卡（v0.6）'))
-  for (const key of ['cardRef', 'lore', 'memory', 'overrides', 'gate', 'sessionTools', 'everyTurn', 'enabled']) assert.match(apply, new RegExp(`patch\\.${key} =`), key)
+  assert.match(apply, /applyLayered\(\{ card: got\?\.layer \?\? null, pack,/)
 })
 
 test('导出文件和「保存为预设」带同样的字段（角色卡 / 每轮注入 / 故事记忆摘要）', () => {

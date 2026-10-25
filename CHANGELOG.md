@@ -3,6 +3,22 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.14 — 2026-10-25
+- 修：**取消预设也清开场对话**。之前「取消预设」故意保留开场对话，套过角色卡 / 预设之后开场白会一直留在草稿里；现在开场对话草稿也一起清空（会话已经开跑时只清草稿，已经写进历史的不动）。清空后头部下方出现「撤销」，8 秒内点它把取消前的全部放回：系统提示、闸门、工具、角色卡、世界书、故事记忆、每轮注入、左栏开关、工作区说明和开场对话。新增选择器 `data-prefill-preset-undo-bar` / `data-prefill-preset-undo`。单测 `tests/clear-preset.test.mjs`。
+- **角色卡 = 预设的子集**。之前套卡（`applyCard`）和套预设（`applyPack`）是两条写入路径，各写各的系统提示 / 每轮注入 / 开场对话 / 世界书 / 故事记忆，规则还不一样（卡只在开场对话为空时填、取消预设保留开场对话），互相留残留。现在：
+  - **分层**：默认 ← 角色卡编译结果 ← 预设覆盖 ← 本会话手改。角色卡编译成一个预设形状的稀疏对象（系统提示、闸门、工具、每轮注入、开场对话 + 世界书 / 故事记忆），和预设走**同一条**整体替换的写入路径（`applyLayered` → `presetPatch`）。内置预设、我的预设、角色卡、取消预设都只走这一条。
+  - **只有一个套用入口**：头部预设下拉分三组「内置 / 我的预设 / 角色卡」，选哪个都整体替换（上一个的东西不留）。角色卡面板去掉「套用到本会话」，只留选卡 / 导入 / 导出 / 删除和「我的名字」（改名字会重新编译，只更新还是卡原样的格）。
+  - **基于角色卡的预设**：套着卡另存为时默认勾「基于角色卡」，只存和卡不一样的格，其余套用时从卡现编译。没写的格 = 从卡来，写成 null / [] = 明确用默认。packs 路由 `save` / `import` 新增 `layered: true`（这种预设可以不带 `items`、可以存 `everyTurn: null`），下拉里这种预设用人像图标。
+  - **选项搬回对应的格**：每轮提醒 / 中文思考 / 第一人称思考 → 「每轮注入」顶部的「角色卡：」一行（点一下 = 换成卡按这些选项编译的提醒）；开场白下拉 → 「开场对话」顶部（选一句 = 换掉第一条 AI 回答；手改第一条后下拉显示「已改过」）；带工具 / 纯角色扮演 → 「系统提示」顶部（按模式重新编译人设，闸门 / 工具跟着换）；工具白名单 → 「改写注入内容 → 工具放行」（卡上自带的白名单照旧生效）。世界书 / 故事记忆的勾选框去掉，用左栏开关。
+  - **左栏**：世界书 / 故事记忆缩进挂在「角色卡」下，只在套用的卡带了它们时出现（窄屏标签同样）。设置不变。
+  - **来源标签**：系统提示、每轮注入、开场对话、工作区说明、改写注入内容（工具）标题旁标「来自角色卡 / 来自预设 / 本会话改过」；套用时在 `state.slotSource[会话]` 记每格的来源和指纹，之后和当前值比。
+  - **迁移**：旧预设 / 旧导出文件里 `card.opts` 的 greeting / reinforce / thinkZh / firstPerson / mode / tools 读的时候映射成编译选项，效果落到开场对话 / 每轮注入 / 系统提示 / 工具这几格；预设里本来就存了的格以预设为准。state 里的卡引用之后只带 `userName` / `lore` / `memory`。旧导出文件照样能导入。`sanitizeCardRef` 的 greeting 允许 -1（不要开场白，之前会被夹成 0）。
+  - 角色卡只填格，不改通用功能（卡这一层没有改写注入内容、开关、工作区说明）。
+  - 行为变化：套不带开场白的内置预设也会清空开场对话草稿（整体替换）；普通内置预设的系统提示模式按预设来（追加），不再沿用当前的接管。
+  - 角色卡编译结果新增 `greetingTexts`（开场白全文）。
+  - **删掉的选择器**：`data-prefill-card-apply`、`data-prefill-card-tools`、`data-prefill-card-lore`、`data-prefill-card-memory`。**搬走的选择器**（名字不变）：`data-prefill-card-greeting`（→ 开场对话，`<select>`，值 -1 = 不要、-2 = 已改过）、`data-prefill-card-mode`（→ 系统提示，`aria-checked`）、`data-prefill-card-reinforce` / `data-prefill-card-zh` / `data-prefill-card-firstperson`（→ 每轮注入，从勾选框变成按钮，`aria-pressed`）。**新增**：`data-prefill-source`、`data-prefill-nav-parent`、`data-prefill-preset-group`、`data-prefill-greeting-bar`、`data-prefill-everyturn-card`、`data-prefill-card-mode-row`、`data-prefill-save-on-card`。实测脚本的公用步骤加了 `card.mjs` 的 `applyCardPreset` / `setCardOptions`，run.mjs / whole-preset.mjs / clear-preset.mjs 已改用。
+  - 单测 `tests/card-as-preset.test.mjs`。
+
 ## 0.13 — 2026-10-25
 - **工作区说明（AGENTS.md / CLAUDE.md）**：卡片左栏新增一项（带启用开关，关掉 = 按原样发、设置保留），三种模式：原样（默认）/ 关闭（丢掉所有 `agent-instructions` 消息，含会话中途补发的）/ 改写（本会话第一条换成你的正文，source 保留 baseline 标记，所以只进历史一次、不每步重发；之后补发的丢掉）。只读显示 DSH 读到的原文。会话中途切换不改历史（前缀缓存不受影响），下一轮补一条说明告诉模型以新设置为准，卡片上有提示。预设 / 导出只带模式和改写正文，从不带文件原文；旧预设没有这一项 = 原样。高级「改写注入内容」里给 `agent-instructions` 写的改写，在这一项设了关闭 / 改写时不再叠加。新增 `workspace-instructions.js`、`state.workspaceInstructions`、`enabled.workspace`、pack 字段 `workspaceInstructions`；单测 `tests/workspace-instructions.test.mjs`。
 - 修：注入清单里 `agent-instructions` 的说明原来写成「当前 agent 预设 / 人设的补充说明」，其实是工作区说明，改成「工作区说明（AGENTS.md / CLAUDE.md）」（中英）。

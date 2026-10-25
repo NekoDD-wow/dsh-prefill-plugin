@@ -258,9 +258,15 @@ export function sanitizeCardRef(raw) {
   const opts = {}
   for (const key of ['reinforce', 'thinkZh', 'firstPerson', 'lore', 'memory']) if (typeof src[key] === 'boolean') opts[key] = src[key]
   if (src.mode === 'agent' || src.mode === 'pure') opts.mode = src.mode
-  if (Number.isFinite(Number(src.greeting))) opts.greeting = Math.max(0, Math.floor(Number(src.greeting)))
+  // -1 = 不要开场白（0.14 之前这里会被夹成 0）。
+  if (Number.isFinite(Number(src.greeting))) opts.greeting = Math.max(-1, Math.floor(Number(src.greeting)))
   for (const key of ['userName', 'tools']) if (typeof src[key] === 'string') opts[key] = src[key].slice(0, 500)
   return { id, opts }
+}
+
+/** 基于角色卡的预设（0.14）：`layered: true` + 有效的角色卡引用。这种预设可以不带 items、可以存 everyTurn: null。 */
+export function isLayered(body) {
+  return body !== null && typeof body === 'object' && body.layered === true && sanitizeCardRef(body.card) !== undefined
 }
 
 /** 会话里最后一轮的轮号（没有 = 0）。 */
@@ -321,6 +327,8 @@ function packSummaries(packs) {
     name: pack.name,
     count: Array.isArray(pack.items) ? pack.items.length : 0,
     updatedAt: pack.updatedAt ?? null,
+    // 0.14：基于角色卡的预设（没写的格从卡来），下拉里标出来。
+    ...(typeof pack.card?.id === 'string' && pack.card.id !== '' ? { card: pack.card.id } : {}),
   }))
 }
 
@@ -981,7 +989,8 @@ export function apply(ctx) {
               const pack = {
                 name,
                 updatedAt: new Date().toISOString(),
-                items,
+                // 基于角色卡的预设（0.14）可以不带 items：没写的格套用时从卡现编译。
+                ...(items === undefined ? {} : { items }),
                 ...(overrides === undefined ? {} : { overrides }),
                 ...(tools === undefined ? {} : { tools }),
                 ...(gate === 'pure' || gate === 'pass' || gate === 'replace' ? { gate } : {}),
@@ -1039,14 +1048,16 @@ export function apply(ctx) {
               return Response.json({ ok: true, op, status, ...envelope() }, noStore)
             } else if (op === 'save') {
               const name = typeof body?.name === 'string' ? body.name.trim() : ''
-              const items = sanitizeItems(body?.items)
+              // 基于角色卡（0.14）：只存和卡不一样的格；没写的格 = 从卡来，null = 明确用默认。
+              const layered = isLayered(body)
+              const items = layered && body?.items === undefined ? undefined : sanitizeItems(body?.items)
               const overrides = sanitizeOverrides(body?.overrides)
               const tools = sanitizeTools(body?.tools)
-              const everyTurn = sanitizeEveryTurn(body?.everyTurn)
+              const everyTurn = layered && body?.everyTurn === null ? null : sanitizeEveryTurn(body?.everyTurn)
               const memorySeed = sanitizeMemorySeed(body?.memorySeed)
               const cut = Number(body?.toTurn) > 0 ? Math.floor(Number(body.toTurn)) : 0
               if (name === '') reason = 'missing name'
-              else if (items === undefined) reason = 'invalid items[]'
+              else if (items === undefined && !layered) reason = 'invalid items[]'
               else if (memorySeed !== undefined && cut > 0 && memorySeed.throughTurn > cut) reason = 'memory summary covers turns after the cut'
               else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed, card: sanitizeCardRef(body?.card), enabled: sanitizeEnabled(body?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(body?.workspaceInstructions) })
             } else if (op === 'delete') {
@@ -1066,13 +1077,14 @@ export function apply(ctx) {
                 reason = `bad json: ${String(error?.message ?? error)}`
               }
               if (parsed !== undefined) {
-                const items = sanitizeItems(parsed?.items ?? parsed)
+                const layered = isLayered(parsed)
+                const items = layered && parsed?.items === undefined ? undefined : sanitizeItems(parsed?.items ?? parsed)
                 const overrides = sanitizeOverrides(parsed?.overrides)
                 const tools = sanitizeTools(parsed?.tools)
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
-                if (items === undefined || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
+                if ((items === undefined && !layered) || name === '') reason = 'import needs { name, items[] }'
+                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: layered && parsed?.everyTurn === null ? null : sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
               }
             } else {
               reason = `unknown op "${op}"`

@@ -164,18 +164,18 @@ test('预设往返：只存模式 + 改写正文，不存原文；旧预设没�
     assert.deepEqual(presetWorkspace(saved), value)
   }
   // 套用：预设里没有 ⇒ 回到原样（整体替换，不保留上一个预设的设置）。
-  const apply = src.slice(src.indexOf('const applyPack = async'), src.indexOf('// ── 角色卡（v0.6）'))
-  assert.match(apply, /patch\.workspaceInstructions = wsPack \? .* : without\(st\.workspaceInstructions, sessionId\)/)
+  const patchFn = src.slice(src.indexOf('    function presetPatch('), src.indexOf('    function cardDiff('))
+  assert.match(patchFn, /workspaceInstructions: put\(st\?\.workspaceInstructions, presetWorkspace\(resolved\.workspaceInstructions\)\)/)
   // 保存 / 导出 / 取消预设都带上它。
   const save = src.slice(src.indexOf('const savePack = (nameArg)'), src.indexOf('const savePack = (nameArg)') + 2000)
   assert.match(save, /workspaceInstructions: wsPreset/)
   const exportFn = src.slice(src.indexOf('const exportFile = async'), src.indexOf('const importFile = (event)'))
   assert.match(exportFn, /workspaceInstructions: wsPreset/)
-  const leftovers = src.slice(src.indexOf('const presetLeftovers = (st)'), src.indexOf('const writeEnabled = async'))
-  assert.match(leftovers, /workspaceInstructions: without\(st\?\.workspaceInstructions, sessionId\)/)
-  // 角色卡套用不碰它（角色卡不改通用功能）。
-  const applyCard = src.slice(src.indexOf('const applyCard = async'), src.indexOf('const applyCard = async') + 6000)
-  assert.doesNotMatch(applyCard, /workspaceInstructions/)
+  // 取消预设 = 空预设 ⇒ 回到原样；撤销快照也带它。
+  assert.match(src, /const PRESET_KEYS = \[[^\]]*'workspaceInstructions'/)
+  // 角色卡这一层不碰它（角色卡不改通用功能）：cardLayer 里没有这一格。
+  const layer = src.slice(src.indexOf('    function cardLayer('), src.indexOf('    function builtinLayer('))
+  assert.doesNotMatch(layer, /workspaceInstructions/)
 })
 
 test('文案：agent-instructions 的标签是「工作区说明（AGENTS.md / CLAUDE.md）」', () => {
