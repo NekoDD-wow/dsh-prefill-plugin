@@ -122,9 +122,12 @@ export function cardFromPng(bytes) {
 
 /** `{{char}}` / `{{user}}` / `{{original}}` 和 V1 的 `<BOT>` / `<USER>`，大小写不敏感。 */
 export function expandMacros(text, { char, user }) {
+  // 用函数做替换值：名字里的 `$&` / `$$` / `` $` `` / `$'` 不能被当成 replace 的特殊替换模式。
+  const charName = str(char)
+  const userName = str(user)
   return str(text)
-    .replace(/\{\{\s*char\s*\}\}|<bot>/gi, char)
-    .replace(/\{\{\s*user\s*\}\}|<user>/gi, user)
+    .replace(/\{\{\s*char\s*\}\}|<bot>/gi, () => charName)
+    .replace(/\{\{\s*user\s*\}\}|<user>/gi, () => userName)
     .replace(/\{\{\s*original\s*\}\}/gi, '')
 }
 
