@@ -12,6 +12,9 @@ test('sanitizeCardRef 只留 id 和已知选项', () => {
     opts: { thinkZh: true, mode: 'pure', greeting: 2, tools: 'read,bash' },
   })
   assert.deepEqual(sanitizeCardRef({ id: 'x', opts: { mode: 'chat' } }), { id: 'x', opts: {} })
+  // 「不要开场白」= -1，存预设 / 导入时要原样保留；更小的值收成 -1。
+  assert.deepEqual(sanitizeCardRef({ id: 'x', opts: { greeting: -1 } }), { id: 'x', opts: { greeting: -1 } })
+  assert.deepEqual(sanitizeCardRef({ id: 'x', opts: { greeting: -5 } }), { id: 'x', opts: { greeting: -1 } })
 })
 
 test('面板：挂在预设下的各项都在悬浮卡片里，保存不再有「连同每轮注入」开关', () => {
