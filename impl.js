@@ -29,6 +29,7 @@ import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnBlocks, everyTurnPresets, everyTurnTowers } from './builtin-presets.js'
 import { compileBench, makeBlock, normalizeChecks } from './blocks.js'
 import { historyToItems, turnRange } from './session-history.js'
+import { detectConstraints, mergeCarried } from './constraint-carry.js'
 import { CHECK_IDS, autoParams, modeOf, splitTurns } from './inject-auto.js'
 import { applyEnabled, sanitizeEnabled } from './enabled.js'
 import { sanitizeWorkspaceInstructions } from './workspace-instructions.js'
@@ -251,7 +252,24 @@ export function sanitizeEveryTurn(raw) {
     checks,
     auto: { warmup, streak, probation },
     ...(bench.length > 0 ? { bench, benchTowers } : {}),
+    // 约束承接：来自会话的预设，新会话第一条真实消息那轮发「首轮段 + 接缝提醒」（constraint-carry.js）。
+    ...(raw.seam === true ? { seam: true } : {}),
   }
+}
+
+/**
+ * 存预设 / 导入时的「约束承接」字段（constraint-carry.js）。
+ * - 给了 `carried`（面板「从当前会话取」后列出的约束，勾上的那些）⇒ 每轮注入由它们编成，
+ *   模式沿用 body.everyTurn（本会话那格）；一条都没勾 = 不带（基于角色卡的预设存 null，免得回落到卡的提醒）；
+ * - 没给 ⇒ 照旧只看 body.everyTurn；
+ * - `fromSession: true` 原样保留（标记「这份预设来自会话」）。
+ */
+export function carriedPresetFields(body, { layered = false } = {}) {
+  const base = layered && body?.everyTurn === null ? null : sanitizeEveryTurn(body?.everyTurn)
+  const fromSession = body?.fromSession === true ? true : undefined
+  if (!Array.isArray(body?.carried)) return { everyTurn: base, fromSession }
+  const merged = sanitizeEveryTurn(mergeCarried(body.carried, base))
+  return { everyTurn: merged ?? (layered ? null : undefined), fromSession }
 }
 
 /** v0.15：工作台（面板层数据）—— 每块只留已知字段，文字截断防呆。 */
@@ -820,6 +838,21 @@ export function apply(ctx) {
     { prepend: true },
   )
 
+  // 开场历史的系统提示对齐（gate.alignOnRequest）：第一条真实消息那一步，把物化时写的那条 system
+  // 换成本步的渲染结果，免得 DSH 在本轮末尾追加一整份系统提示（之后每轮历史里都带着两份）。
+  ctx.on('agent/request', async (payload, next) => {
+    const config = await next()
+    const gate = gateCache.module
+    if (typeof gate?.alignOnRequest === 'function') {
+      try {
+        await gate.alignOnRequest(api(), payload)
+      } catch (error) {
+        note({ alignSystem: 'threw', error: String(error?.message ?? error) })
+      }
+    }
+    return config
+  })
+
   // 注入审计：盯着落进会话、会进模型的消息（含绕过 pre-step 直接写入的），未登记的记下来给面板。
   ctx.on('session/event', (session, event) => {
     const gate = gateCache.module
@@ -1155,6 +1188,8 @@ export function apply(ctx) {
                 ...(extra.enabled === undefined ? {} : { enabled: extra.enabled }),
                 // 工作区说明（AGENTS.md / CLAUDE.md）：只存模式 + 改写正文，从不存文件原文；原样 = 不存。
                 ...(extra.workspaceInstructions === undefined ? {} : { workspaceInstructions: extra.workspaceInstructions }),
+                // 约束承接：这份预设是从会话存下来的（开场里带着那段历史）。
+                ...(extra.fromSession === true ? { fromSession: true } : {}),
               }
               const at = packs.findIndex((entry) => entry.name === name)
               if (at >= 0) packs[at] = pack
@@ -1235,20 +1270,23 @@ export function apply(ctx) {
               // 把当前会话已发生的对话转成开场条目（只读，不存）；客户端预览后再走 save。
               // 范围「第 N 轮 到 第 M 轮」（v0.10.1）：fromTurn 缺省 1，toTurn 缺省 = 到最后；旧调用只给 toTurn 照旧。
               const range = turnRange(body)
-              const result = historyToItems(sessionEvents(liveAgents.get(sessionId), sessionId), {
+              const events = sessionEvents(liveAgents.get(sessionId), sessionId)
+              const result = historyToItems(events, {
                 reasoning: body?.reasoning === true,
                 fromTurn: range.from,
                 toTurn: range.to,
               })
               // 本会话的每轮注入配置（只认本会话自己那格，不认 '*'）和故事记忆摘要，给「带上……」两个复选框。
               const everyTurn = sanitizeEveryTurn(readState()?.everyTurn?.[sessionId]) ?? null
+              // 约束承接：会话里实际发过的每轮注入 → 当时生效的积木（不论来自本会话、'*' 还是角色卡），面板默认勾上带进预设。
+              const { constraints } = detectConstraints(events, readState(), sessionId, { fromTurn: range.from, toTurn: range.to, catalog: everyTurnBlocks() })
               const stored = memoryStore.read(sessionId)
               const memory = typeof stored?.text === 'string' && stored.text.trim() !== '' ? { text: stored.text.trim(), throughTurn: Number(stored.throughTurn) || 0 } : null
               const toTurn = range.to
               // 截了轮次、而摘要覆盖到截取末轮 M 之后 ⇒ 不许带（摘要里有分支点之后的剧情）。
               const memoryAllowed = memory !== null && (toTurn === 0 || memory.throughTurn <= toTurn)
               note({ seat: 'packs-route', op, sessionId, items: result.items.length, turnCount: result.turnCount, lastTurn: result.lastTurn, toolCalls: result.toolCalls, everyTurn: everyTurn?.mode ?? null, memory: memory?.throughTurn ?? null, memoryAllowed })
-              return Response.json({ ok: true, op, ...result, fromTurn: range.from, toTurn: range.to, everyTurn, memory, memoryAllowed, ...envelope() }, noStore)
+              return Response.json({ ok: true, op, ...result, fromTurn: range.from, toTurn: range.to, everyTurn, constraints, memory, memoryAllowed, ...envelope() }, noStore)
             } else if (op === 'every-turn-status') {
               // 面板状态行：本会话每轮注入的自动判定（只读）。
               const gate = await loadGate()
@@ -1264,13 +1302,14 @@ export function apply(ctx) {
               const items = layered && body?.items === undefined ? undefined : sanitizeItems(body?.items)
               const overrides = sanitizeOverrides(body?.overrides)
               const tools = sanitizeTools(body?.tools)
-              const everyTurn = layered && body?.everyTurn === null ? null : sanitizeEveryTurn(body?.everyTurn)
+              // 约束承接：「从当前会话取」后勾上的约束（carried）编成每轮注入，并记下 fromSession。
+              const { everyTurn, fromSession } = carriedPresetFields(body, { layered })
               const memorySeed = sanitizeMemorySeed(body?.memorySeed)
               const cut = Number(body?.toTurn) > 0 ? Math.floor(Number(body.toTurn)) : 0
               if (name === '') reason = 'missing name'
               else if (items === undefined && !layered) reason = 'invalid items[]'
               else if (memorySeed !== undefined && cut > 0 && memorySeed.throughTurn > cut) reason = 'memory summary covers turns after the cut'
-              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed, card: sanitizeCardRef(body?.card), lore: sanitizeLore(body?.lore), enabled: sanitizeEnabled(body?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(body?.workspaceInstructions) })
+              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, fromSession, memorySeed, card: sanitizeCardRef(body?.card), lore: sanitizeLore(body?.lore), enabled: sanitizeEnabled(body?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(body?.workspaceInstructions) })
             } else if (op === 'delete') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const next = packs.filter((entry) => entry.name !== name)
@@ -1295,7 +1334,7 @@ export function apply(ctx) {
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
                 if ((items === undefined && !layered) || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: layered && parsed?.everyTurn === null ? null : sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), lore: sanitizeLore(parsed?.lore), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
+                else upsert(name, items, overrides, tools, parsed?.gate, { ...carriedPresetFields(parsed, { layered }), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), lore: sanitizeLore(parsed?.lore), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
               }
             } else {
               reason = `unknown op "${op}"`
