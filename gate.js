@@ -24,6 +24,18 @@ import { randomUUID } from 'node:crypto'
 import { checksOf, modeOf, replay, splitTurns } from './inject-auto.js'
 import { applyEnabled, isEnabled } from './enabled.js'
 import { WORKSPACE_KIND, WORKSPACE_MARK, applyWorkspaceInstructions, lastWorkspaceInHistory, workspaceInstructionsFor } from './workspace-instructions.js'
+import {
+  KNOWN_MESSAGE_KINDS as AUDIT_KNOWN_KINDS,
+  auditSnapshot,
+  blocksFor,
+  classifyAssembly,
+  classifySurfaceEvent,
+  dropBlockedMessages,
+  hasBlocks,
+  notePrestepKinds,
+  prestepKindsOf,
+  recordFindings,
+} from './injection-audit.js'
 import { cleanMemory, matchLore, memoryDue, memoryInput, memorySystemPrompt, renderLore, renderMemory } from './character-cards.js'
 
 /** 内核代次：壳会在诊断里回报它，用来确认热换是否生效。 */
@@ -711,7 +723,16 @@ const BLOCKERS = (globalThis[Symbol.for('dsh-prefill.tools-blockers')] ??= new M
  * 恢复动作挂进 latch.disposers，随下一轮 unlatch 一起撤。返回本次新处理的名字。
  */
 export function neutralizeRequiredContexts(api, scope, latch) {
-  const done = (latch.neutralizedContexts ??= new Set())
+  return neutralizeEntries(api, scope, latch, 'contexts', (name, entry) => entry?.required === true)
+}
+
+/**
+ * 按条件把某个 agent 能看到的段 / 上下文注册清空（同上：本作用域改正文，继承项注册空遮蔽）。
+ * `holder` 需有 `disposers` 数组；处理过的名字记在 `holder.neutralizedContexts` / `neutralizedSections`。
+ */
+export function neutralizeEntries(api, scope, holder, group, match) {
+  const doneKey = group === 'sections' ? 'neutralizedSections' : 'neutralizedContexts'
+  const done = (holder[doneKey] ??= new Set())
   const fresh = []
   let layers
   let sp
@@ -725,22 +746,23 @@ export function neutralizeRequiredContexts(api, scope, latch) {
   if (typeof layers?.merge !== 'function') return fresh
   let merged
   try {
-    merged = layers.merge(scope, (layer) => layer.contexts)
+    merged = layers.merge(scope, (layer) => layer[group])
   } catch {
     return fresh
   }
-  const own = typeof layers.peek === 'function' ? layers.peek(scope)?.contexts : undefined
+  const own = typeof layers.peek === 'function' ? layers.peek(scope)?.[group] : undefined
+  const register = group === 'sections' ? sp?.section : sp?.context
   for (const [name, entry] of merged) {
-    if (entry?.required !== true || done.has(name) || String(name).startsWith('prefill:')) continue
+    if (done.has(name) || String(name).startsWith('prefill:') || !match(name, entry)) continue
     try {
       if (own !== undefined && own.get(name) === entry) {
         const original = entry.text
         entry.text = ''
-        latch.disposers.push(() => {
+        holder.disposers.push(() => {
           if (entry.text === '') entry.text = original
         })
-      } else if (typeof sp?.context === 'function') {
-        latch.disposers.push(sp.context({ name, order: Number.isFinite(entry.order) ? entry.order : 1000, text: '' }))
+      } else if (typeof register === 'function') {
+        holder.disposers.push(register.call(sp, { name, order: Number.isFinite(entry.order) ? entry.order : 1000, text: '' }))
       } else {
         continue
       }
@@ -752,6 +774,95 @@ export function neutralizeRequiredContexts(api, scope, latch) {
   }
   return fresh
 }
+
+/** 每个 agent 一份「按名阻断」的挂载（名单变了就整份撤掉重挂）。 */
+const BLOCK_HOLDERS = (globalThis[Symbol.for('dsh-prefill.block-holders')] ??= new Map())
+
+function releaseBlockHolder(id) {
+  const holder = BLOCK_HOLDERS.get(id)
+  if (holder === undefined) return
+  BLOCK_HOLDERS.delete(id)
+  for (const dispose of holder.disposers.splice(0)) {
+    try {
+      dispose()
+    } catch {
+      // 随 scope 释放过的 disposer 会抛，忽略。
+    }
+  }
+}
+
+/** 已登记的名字：全局 prompt 层的段 / 上下文 + 常见消息来源。 */
+function knownInjectionNames(rootCtx) {
+  const layer = globalPromptLayer(rootCtx)
+  return {
+    messages: new Set(AUDIT_KNOWN_KINDS),
+    sections: new Set(entryNames(layer?.sections)),
+    contexts: new Set(entryNames(layer?.contexts)),
+  }
+}
+
+/** 装配观察者里调用：审计作用域内注册的段 / 上下文，并按名阻断。返回过滤后的装配结果。 */
+function applyAssemblyBlocks(api, id, scope, result, latch) {
+  if (typeof id !== 'string') return result
+  try {
+    // 只记**真会进模型**的：段被本插件的 complete 段整份顶掉 / 上下文被 suppress 时，装配里列着也不算。
+    const seen = {
+      sections: latch?.frozenLevers?.blockSections === true ? [] : result?.sections,
+      contexts: latch?.contextsSuppressed === true ? [] : result?.contexts,
+    }
+    const fresh = recordFindings(id, classifyAssembly(seen, knownInjectionNames(api.rootCtx)))
+    if (fresh.length > 0) api.note({ audit: 'assembly', id, fresh })
+  } catch {
+    // 审计失败不影响装配。
+  }
+  const blocks = blocksFor(api.readState?.(), id)
+  const signature = JSON.stringify([[...blocks.sections].sort(), [...blocks.contexts].sort()])
+  let holder = BLOCK_HOLDERS.get(id)
+  if (holder !== undefined && holder.signature !== signature) {
+    releaseBlockHolder(id)
+    holder = undefined
+  }
+  if (blocks.sections.size === 0 && blocks.contexts.size === 0) return result
+  if (holder === undefined) {
+    holder = { signature, disposers: [] }
+    BLOCK_HOLDERS.set(id, holder)
+  }
+  if (scope !== undefined) {
+    neutralizeEntries(api, scope, holder, 'sections', (name) => blocks.sections.has(name))
+    neutralizeEntries(api, scope, holder, 'contexts', (name) => blocks.contexts.has(name))
+  }
+  return {
+    ...result,
+    sections: (result?.sections ?? []).filter((entry) => !blocks.sections.has(entry?.name)),
+    contexts: (result?.contexts ?? []).filter((entry) => !blocks.contexts.has(entry?.name)),
+  }
+}
+
+/** `session/event` 观察者：把落进会话、会进模型的未登记注入记下来。 */
+export function auditEvent(api, session, event) {
+  const id = session?.id
+  if (typeof id !== 'string') return
+  const findings = classifySurfaceEvent(event, knownInjectionNames(api.rootCtx), prestepKindsOf(id))
+  const fresh = recordFindings(id, findings, event?.seq)
+  if (fresh.length > 0) api.note({ audit: 'session', id, fresh })
+}
+
+/**
+ * pre-step 的最外层：记下进来的消息来源（判断"能不能提前拦"），再按阻断名单丢消息。
+ * 不论会话是否武装都跑 —— 阻断是会话级 / 全局的用户选择，跟纯净与否无关。
+ */
+export function applyMessageBlocks(api, payload, incoming, decision) {
+  const id = payload?.agent?.id
+  if (typeof id !== 'string') return decision
+  notePrestepKinds(id, incoming?.messages)
+  const blocks = blocksFor(api.readState?.(), id)
+  if (!hasBlocks(blocks)) return decision
+  const { decision: next, dropped } = dropBlockedMessages(decision, blocks)
+  if (dropped.length > 0) api.note({ blocked: 'messages', id, dropped })
+  return next
+}
+
+export { auditSnapshot }
 
 /**
  * 挂在**插件根 ctx**（无标签监听器 ⇒ 必然收到每一次 `system-prompt/assemble` 派发），
@@ -817,9 +928,11 @@ function ensureToolsBlocker(api) {
       if (latch?.contextsSuppressed === true && context?.scope !== undefined) {
         neutralized = neutralizeRequiredContexts(api, context.scope, latch)
       }
-      const filtered = neutralized.length > 0 || latch?.neutralizedContexts?.size > 0
+      const unrequired = neutralized.length > 0 || latch?.neutralizedContexts?.size > 0
         ? { ...result, contexts: (result?.contexts ?? []).filter((entry) => !latch.neutralizedContexts.has(entry?.name)) }
         : result
+      // 用户点过「阻断」的段 / 上下文（会话级 + 全局记住），顺带审计作用域内注册的贡献者。
+      const filtered = applyAssemblyBlocks(api, id, context?.scope, unrequired, latch)
       const hit = frozen?.blockTools === true
       api.note({ blocker: 'system-prompt/assemble', id: typeof id === 'string' ? id : '(none)', frozen: frozen !== undefined, hit, ...(neutralized.length > 0 ? { neutralized } : {}) })
       if (!hit) return filtered
@@ -1005,6 +1118,8 @@ function mountLevers(agent, state, api, sink) {
  */
 export async function prime(api, agent) {
   if (typeof agent?.id !== 'string') return
+  // 装配观察者要赶在会话第一次装配之前挂上：注入审计 / 按名阻断都靠它，晚了首轮就漏。
+  ensureToolsBlocker(api)
   // 工具清单在**武装判定之前**登记：清单与"放不放行"无关，且这样"开会话就有"，
   // 不必先跑一轮（拦注入开着的会话也一样能扫到）。
   try {
