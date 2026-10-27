@@ -225,6 +225,9 @@ export function replay(turns, entry, currentTurn) {
   const override = entry?.auto?.override
   const overrideAt = Number.isFinite(Number(override?.atTurn)) ? Number(override.atTurn) : undefined
   const hasFirstText = typeof entry?.firstText === 'string' && entry.firstText.trim() !== ''
+  // 约束承接：来自会话的预设，第一次注入是「首轮段 + 接缝提醒」，和首轮专用段一样不参与判定；
+  // 导入的开场历史（合成轮）本来就不判（见下面 synthetic）。
+  const seamFirst = entry?.seam === true && list.some((turn) => turn.synthetic)
 
   let state = 'injecting'
   let streak = 0
@@ -266,7 +269,7 @@ export function replay(turns, entry, currentTurn) {
       let verdict = 'skip'
       let scored
       // 首轮专用段那一轮不参与判定（它和后续段不是同一句提醒）。
-      const firstSpecial = turn.injected && hasFirstText && seenInjected === 0
+      const firstSpecial = turn.injected && (hasFirstText || seamFirst) && seenInjected === 0
       if (turn.injected) seenInjected += 1
       if (turn.completed && turn.hasUser && !firstSpecial) {
         scored = scoreTurn(turn, checks)
