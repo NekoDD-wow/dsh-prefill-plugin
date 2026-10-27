@@ -388,6 +388,18 @@ window.__ModuleLoader__.load({
       injectOriginalHint: '框里显示的是**当前原文**；改动即覆盖，改回原文 / 留空 = 不修改',
       // ── 注入内容改写（Q17，只在本会话生效）──
       injectTitle: '改写注入内容',
+      auditLabel: '检测到的疑似未登记注入',
+      auditHint: '不在默认注入清单里、却进了模型上下文的内容（例如其他插件在会话作用域里注册的上下文、直接写进会话的消息）。默认放行，只做记录。',
+      auditPureLeak: '纯净模式下仍出现，请反馈',
+      auditBlockSession: '本会话阻断',
+      auditUnblockSession: '取消本会话阻断',
+      auditRemember: '全局记住',
+      auditForget: '取消全局阻断',
+      auditBlockedGlobal: '已全局阻断',
+      auditBlockedSession: '本会话已阻断',
+      auditDirect: 'DSH 直接写入，只能记录',
+      auditCount: '{n} 次',
+      auditNextTurn: '下一轮生效',
       injectHint: '把 harness 送进去的内容改掉，只在本会话生效；留空＝不修改。下面列的是默认注入清单，还没出现过的也能先改（命中即生效）。',
       injectNone: '（没拿到可改清单）',
       injectMessages: '消息类注入',
@@ -533,6 +545,18 @@ window.__ModuleLoader__.load({
       injectOriginalHint: 'The box shows the CURRENT original text; edit it to override, or match the original / clear it to leave it alone',
       // ── rewrite injections (Q17, this session only) ──
       injectTitle: 'Rewrite injections',
+      auditLabel: 'Suspected unregistered injections',
+      auditHint: 'Content that reached the model context without being in the default injection catalog (e.g. contexts another plugin registered in the session scope, messages written straight into the session). Allowed by default and only recorded.',
+      auditPureLeak: 'still present in pure mode, please report',
+      auditBlockSession: 'Block in this session',
+      auditUnblockSession: 'Unblock in this session',
+      auditRemember: 'Remember globally',
+      auditForget: 'Stop blocking globally',
+      auditBlockedGlobal: 'blocked globally',
+      auditBlockedSession: 'blocked in this session',
+      auditDirect: 'written directly by DSH, record only',
+      auditCount: '{n}×',
+      auditNextTurn: 'applies next turn',
       injectHint:
         'Override what the harness feeds in — this session only. Empty means leave it alone. The rows below are the default injection catalog: you can pre-set an override before it ever appears.',
       injectNone: '(no catalog available)',
@@ -641,6 +665,67 @@ window.__ModuleLoader__.load({
       everyTurnOffMeta: '关',
       everyTurnHint: '每轮在你的消息之前自动插一条提醒，模型每轮都会重新看到。实测在 step-5 上比系统提示管用得多：思维链语言、格式、人称都靠它稳住。代价：每轮多几十到一百多 token（会写进历史），前缀不变，缓存命中率基本不受影响。',
       everyTurnPresets: '常用：',
+      everyTurnTowers: '积木塔：',
+      benchCustom: '自己写一段',
+      benchEmpty: '工作台是空的：点上面的积木按钮放一块进来。',
+      benchCost: '第 1 轮 ≈{first} 字 · 之后 ≈{rest} 字/轮',
+      benchChecks: '自动检查：{list}',
+      benchPreview: '预览',
+      benchPreviewHide: '收起预览',
+      benchPreviewFirst: '第 1 轮实际发送',
+      benchPreviewRest: '第 2 轮起实际发送',
+      benchPreviewEmpty: '（空）',
+      benchTowerLabel: '塔框：{name}',
+      benchTowerRemove: '拿走整组',
+      benchFromBuiltin: '内置',
+      benchFromMine: '我的',
+      benchEdited: '改过',
+      benchFirstTag: '首轮 ▾',
+      benchSaveMine: '存为我的积木',
+      benchMySuffix: '（我的）',
+      benchOverlap: '⇄ 与「{name}」重叠',
+      benchOverlapDrop: '拿掉它',
+      benchPriority: '冲突时以此为准',
+      blockSaved: '已存为我的积木',
+      benchTowerGroup: '塔',
+      benchBlockGroup: '积木',
+      benchFromCard: '来自角色卡',
+      benchOverlapTag: '重叠',
+      benchOverlapIcon: '与台上的另一块内容重叠',
+      benchOverlapNarrow: '⇄ 与 {name} 重叠',
+      benchHiddenToggle: '隐藏的内置（{n}）',
+      benchHiddenList: '已隐藏：',
+      benchPreviewShell: '以下是本轮的背景提醒，不是用户说的话：',
+      benchMoveUp: '上移',
+      benchMoveDown: '下移',
+      benchMenuTitle: '菜单',
+      benchMenuSaveTo: '保存到「{name}」',
+      benchMenuSaveToMine: '改的是我的积木，引用它的塔都会跟着变',
+      benchMenuSaveToBuiltin: '内置积木 → 存为「我的版本」',
+      benchMenuTowerOnly: '只改「塔」里的这块',
+      benchMenuTowerOnlySub: '原积木不动',
+      benchMenuSaveNewBlock: '另存为新积木…',
+      benchNewBlockAsk: '新积木的名字',
+      benchMenuSaveFrame: '把这个塔框存为新塔…',
+      benchMenuSaveBench: '把整个工作台存为新塔…',
+      benchMenuRevert: '放弃修改',
+      benchMenuDrop: '从工作台拿走',
+      benchMenuDeleteBlock: '删除这个积木…',
+      benchMenuRename: '重命名…',
+      benchMenuHide: '隐藏（设置里可找回）',
+      benchMenuDeleteTower: '删除这座塔…',
+      benchMenuRemoveTower: '拿走整组',
+      benchMenuClose: '关闭菜单',
+      benchTowerNameAsk: '给这座塔起个名字',
+      benchTowerDefaultName: '我的塔',
+      benchRenameAsk: '改名',
+      cardTowerName: '角色卡：{name}',
+      blockDeleted: '已删除我的积木',
+      towerSaved: '已存为我的塔',
+      check_zh: '中文',
+      check_four: '四段',
+      check_noLeak: '四段没漏进回答',
+      check_firstPerson: '第一人称',
       everyTurnPlaceholder: '每轮要提醒模型的话。例如：本轮思维链请全程用中文。',
       everyTurnFirstLabel: '首轮专用（可选）：第 1 轮发这段，之后每轮发下面那段',
       everyTurnFirstPlaceholder: '第 1 轮要讲清楚的完整要求。例如：整场对话守住人设，思维链用角色第一人称、中文……\n留空 = 第 1 轮也发下面那段。',
@@ -900,6 +985,67 @@ window.__ModuleLoader__.load({
       everyTurnOffMeta: 'off',
       everyTurnHint: 'Inserts a short reminder before your message on every turn. On step-5 this steers reasoning language, format and person far better than the system prompt. Cost: a few dozen to ~100 tokens per turn (kept in history); the prefix is unchanged, so cache hits barely move.',
       everyTurnPresets: 'Presets:',
+      everyTurnTowers: 'Towers:',
+      benchCustom: 'Write your own',
+      benchEmpty: 'The bench is empty - click a block above to stack one.',
+      benchCost: 'Turn 1 ≈{first} chars · after ≈{rest}/turn',
+      benchChecks: 'Auto checks: {list}',
+      benchPreview: 'Preview',
+      benchPreviewHide: 'Hide preview',
+      benchPreviewFirst: 'Sent on turn 1',
+      benchPreviewRest: 'Sent from turn 2 on',
+      benchPreviewEmpty: '(empty)',
+      benchTowerLabel: 'Tower: {name}',
+      benchTowerRemove: 'Remove all',
+      benchFromBuiltin: 'built-in',
+      benchFromMine: 'mine',
+      benchEdited: 'edited',
+      benchFirstTag: 'first turn ▾',
+      benchSaveMine: 'Save as my block',
+      benchMySuffix: ' (mine)',
+      benchOverlap: '⇄ overlaps "{name}"',
+      benchOverlapDrop: 'remove it',
+      benchPriority: 'Takes precedence on conflict',
+      blockSaved: 'Saved to my blocks',
+      benchTowerGroup: 'Towers',
+      benchBlockGroup: 'Blocks',
+      benchFromCard: 'from card',
+      benchOverlapTag: 'overlap',
+      benchOverlapIcon: 'Overlaps another block on the bench',
+      benchOverlapNarrow: '⇄ overlaps {name}',
+      benchHiddenToggle: 'Hidden built-ins ({n})',
+      benchHiddenList: 'Hidden:',
+      benchPreviewShell: 'background reminder for this turn, not the user:',
+      benchMoveUp: 'Move up',
+      benchMoveDown: 'Move down',
+      benchMenuTitle: 'Menu',
+      benchMenuSaveTo: 'Save to “{name}”',
+      benchMenuSaveToMine: 'Changes my block; every tower using it follows',
+      benchMenuSaveToBuiltin: 'Built-in → save as “my version”',
+      benchMenuTowerOnly: 'Only this one in the tower',
+      benchMenuTowerOnlySub: 'The block itself stays unchanged',
+      benchMenuSaveNewBlock: 'Save as a new block…',
+      benchNewBlockAsk: 'Name for the new block',
+      benchMenuSaveFrame: 'Save this tower frame as a new tower…',
+      benchMenuSaveBench: 'Save the whole bench as a new tower…',
+      benchMenuRevert: 'Discard changes',
+      benchMenuDrop: 'Remove from bench',
+      benchMenuDeleteBlock: 'Delete this block…',
+      benchMenuRename: 'Rename…',
+      benchMenuHide: 'Hide (findable in settings)',
+      benchMenuDeleteTower: 'Delete this tower…',
+      benchMenuRemoveTower: 'Remove all',
+      benchMenuClose: 'Close menu',
+      benchTowerNameAsk: 'Name for this tower',
+      benchTowerDefaultName: 'My tower',
+      benchRenameAsk: 'Rename',
+      cardTowerName: 'Card: {name}',
+      blockDeleted: 'My block deleted',
+      towerSaved: 'Saved as my tower',
+      check_zh: 'Chinese',
+      check_four: 'Four sections',
+      check_noLeak: 'Sections not leaked',
+      check_firstPerson: 'First person',
       everyTurnPlaceholder: 'What to remind the model each turn, e.g. think in Chinese this turn.',
       everyTurnFirstLabel: 'First turn only (optional): sent on turn 1, the text below on later turns',
       everyTurnFirstPlaceholder: 'The full requirement to state on turn 1.\nEmpty = turn 1 also gets the text below.',
@@ -2868,7 +3014,54 @@ window.__ModuleLoader__.load({
       const [packs, setPacks] = React.useState([])
       const [builtins, setBuiltins] = React.useState([])
       const [everyTurnList, setEveryTurnList] = React.useState([])
+      // v0.15：内置积木 / 内置塔（服务端 packs list 返回；旧壳没有就退回 everyTurnList）
+      const [everyTurnBlockList, setEveryTurnBlockList] = React.useState([])
+      const [everyTurnTowerList, setEveryTurnTowerList] = React.useState([])
       const [everyTurnDraft, setEveryTurnDraft] = React.useState(null)
+      // v0.15 工作台：这些 hook 必须放在组件早退之前，否则 hook 数量会变（React #310）。
+      const [benchPreview, setBenchPreview] = React.useState(false)
+      const [benchMenu, setBenchMenu] = React.useState(null)
+      const [benchFocus, setBenchFocus] = React.useState('')
+      const [dragKey, setDragKey] = React.useState('')
+      const [dropIndex, setDropIndex] = React.useState(-1)
+      const [hiddenOpen, setHiddenOpen] = React.useState(false)
+      const benchListRef = React.useRef(null)
+      const dragInfo = React.useRef(null)
+      const benchRects = React.useRef(new Map())
+      const benchSig = React.useRef('')
+      // 拖动/排序后做 FLIP 滑动。三条约束（否则整屏乱跳）：
+      //   ① 只在「工作台顺序真的变了」时动画（切格、套预设、面板重排都不算）；
+      //   ② 只比相对列表的位置（卡片被别的格顶上去、面板整体位移不算位移）；
+      //   ③ 位移超过一块高度太多 ⇒ 当成布局抖动，不做动画。
+      React.useLayoutEffect(() => {
+        const list = benchListRef.current
+        if (list === null) return
+        const nodes = [...list.querySelectorAll('[data-prefill-bench-block]')]
+        const listTop = list.getBoundingClientRect().top
+        const order = nodes.map((node) => node.getAttribute('data-prefill-bench-block') ?? '')
+        const sig = order.join('|')
+        const reordered = benchSig.current !== '' && benchSig.current !== sig && dragInfo.current === null
+        const next = new Map()
+        for (const node of nodes) {
+          const key = node.getAttribute('data-prefill-bench-block') ?? ''
+          const rect = node.getBoundingClientRect()
+          const top = rect.top - listTop
+          next.set(key, { top, height: rect.height })
+          const before = benchRects.current.get(key)
+          if (reordered && before !== undefined) {
+            const delta = before.top - top
+            if (Math.abs(delta) > 1 && Math.abs(delta) < rect.height * 3) {
+              node.animate([{ transform: 'translateY(' + delta + 'px)' }, { transform: 'none' }], {
+                duration: 170,
+                easing: 'cubic-bezier(.2,.7,.2,1)',
+              })
+            }
+          }
+        }
+        benchRects.current = next
+        benchSig.current = sig
+      })
+
       const everyTurnTimer = React.useRef(0)
       React.useEffect(() => setEveryTurnDraft(null), [sessionId])
       // 工作区说明（AGENTS.md / CLAUDE.md）：改写正文的草稿（700ms 落盘）。
@@ -3158,6 +3351,8 @@ window.__ModuleLoader__.load({
         setPacks(Array.isArray(data?.packs) ? data.packs : [])
         if (Array.isArray(data?.builtins)) setBuiltins(data.builtins)
         if (Array.isArray(data?.everyTurnPresets)) setEveryTurnList(data.everyTurnPresets)
+        if (Array.isArray(data?.everyTurnBlocks)) setEveryTurnBlockList(data.everyTurnBlocks)
+        if (Array.isArray(data?.everyTurnTowers)) setEveryTurnTowerList(data.everyTurnTowers)
       }
       React.useEffect(() => {
         if (enabled && sessionId !== '') void packsCall({ op: 'list' }).then(adoptPacks).catch(() => setStatus('error'))
@@ -4717,6 +4912,148 @@ window.__ModuleLoader__.load({
       )
 
       // ── 每轮注入（state.everyTurn[会话]；勾"新会话默认"时同时写 '*'）──
+      // ── v0.15 积木 / 积木塔 / 工作台 ────────────────────────────────────────
+      // <bench-helpers>
+      // 与 blocks.js 同一份纯函数（浏览器模块 import 不了插件自己的文件，
+      // 照 everyTurnSwitchOn / fetch-helpers 的先例抄一份；tests/blocks.test.mjs 比对两份一致）。
+      const PRIORITY_PREFIX = '（以下为用户补充，与上文冲突时以此为准）'
+      const CHECK_ORDER = ['zh', 'four', 'noLeak', 'firstPerson']
+      function normalizeChecks(raw) {
+        const list = Array.isArray(raw) ? raw.filter((id) => CHECK_ORDER.includes(id)) : []
+        return CHECK_ORDER.filter((id) => list.includes(id))
+      }
+      function makeBlock(input) {
+        const source = input ?? {}
+        const block = {
+          id: String(source.id ?? ''),
+          name: String(source.name ?? '').trim() || '未命名积木',
+          icon: typeof source.icon === 'string' ? source.icon : '',
+          desc: typeof source.desc === 'string' ? source.desc : '',
+          first: String(source.first ?? ''),
+          text: String(source.text ?? ''),
+          checks: normalizeChecks(source.checks),
+          overlaps: Array.isArray(source.overlaps) ? source.overlaps.filter((id) => typeof id === 'string' && id !== '') : [],
+          builtin: source.builtin === true,
+        }
+        if (typeof source.overrides === 'string' && source.overrides !== '') block.overrides = source.overrides
+        if (typeof source.updatedAt === 'string' && source.updatedAt !== '') block.updatedAt = source.updatedAt
+        return block
+      }
+      function blockFromPreset(preset) {
+        return makeBlock({
+          id: preset.id, name: preset.name, icon: preset.icon, desc: preset.desc,
+          first: preset.firstText, text: preset.text, checks: preset.checks, overlaps: preset.overlaps, builtin: true,
+        })
+      }
+      function benchBlockOf(block, key, tower) {
+        return {
+          key, ref: block.id, tower: tower ?? null, name: block.name, icon: block.icon ?? '',
+          first: block.first, text: block.text, checks: [].concat(block.checks ?? []),
+          edited: false, priority: false, builtin: block.builtin === true,
+        }
+      }
+      function unionChecks(bench) {
+        const list = Array.isArray(bench) ? bench : []
+        const seen = new Set()
+        for (const block of list) for (const id of normalizeChecks(block && block.checks)) seen.add(id)
+        return CHECK_ORDER.filter((id) => seen.has(id))
+      }
+      function compileBench(bench) {
+        const list = Array.isArray(bench) ? bench.filter((block) => block !== null && typeof block === 'object') : []
+        const first = []
+        const rest = []
+        for (const block of list) {
+          const text = String(block.text ?? '')
+          const head = String(block.first ?? '')
+          const wrap = (value) => (String(value).trim() === '' ? '' : block.priority === true ? PRIORITY_PREFIX + value : value)
+          const firstBody = head.trim() !== '' ? wrap(head) : wrap(text)
+          const restBody = wrap(text)
+          if (firstBody.trim() !== '') first.push(firstBody)
+          if (restBody.trim() !== '') rest.push(restBody)
+        }
+        return { firstText: first.join('\n'), text: rest.join('\n'), checks: unionChecks(list) }
+      }
+      function flattenTower(tower, towers, blocks) {
+        const out = []
+        const items = Array.isArray(tower && tower.items) ? tower.items : []
+        for (const item of items) {
+          if (item === null || typeof item !== 'object') continue
+          const ref = String(item.ref ?? '')
+          const block = (blocks ?? []).find((entry) => entry.id === ref)
+          if (block !== undefined) {
+            out.push({
+              ...block,
+              first: typeof item.first === 'string' ? item.first : block.first,
+              text: typeof item.text === 'string' ? item.text : block.text,
+            })
+            continue
+          }
+          const inner = (towers ?? []).find((entry) => entry.id === ref)
+          if (inner !== undefined) out.push(...flattenTower(inner, towers, blocks))
+          else if (item.snap !== null && typeof item.snap === 'object') {
+            out.push(makeBlock({ id: ref, name: String(item.snap.name ?? ref), first: item.snap.first, text: item.snap.text, checks: item.snap.checks }))
+          }
+        }
+        return out
+      }
+      function addTowerToBench(bench, tower, towers, blocks, makeKey) {
+        const list = Array.isArray(bench) ? [...bench] : []
+        const have = new Set(list.map((block) => block.ref))
+        for (const block of flattenTower(tower, towers, blocks)) {
+          if (have.has(block.id)) continue
+          have.add(block.id)
+          list.push(benchBlockOf(block, makeKey(), tower.id))
+        }
+        return list
+      }
+      function benchSummary(bench) {
+        const compiled = compileBench(bench)
+        return {
+          firstTok: String(compiled.firstText ?? '').length,
+          restTok: String(compiled.text ?? '').length,
+          blocks: Array.isArray(bench) ? bench.length : 0,
+          checks: compiled.checks,
+        }
+      }
+      function migrateEveryTurn(entry, options) {
+        const blocks = (options && options.blocks) ?? []
+        const towers = (options && options.towers) ?? []
+        const key = (options && options.makeKey) ?? (() => 'b1')
+        const text = String((entry && entry.text) ?? '')
+        const first = String((entry && entry.firstText) ?? '')
+        const checks = normalizeChecks(entry && entry.checks)
+        if (text.trim() === '' && first.trim() === '') return { bench: [], benchTowers: {} }
+        const block = blocks.find((candidate) => String(candidate.first ?? '') === first && String(candidate.text ?? '') === text)
+        if (block !== undefined) return { bench: [benchBlockOf(block, key())], benchTowers: {} }
+        // 旧模型里 firstText === '' 表示「没有首轮专用段」；工作台里如果每块都没有 first，
+        // 编译出来的 firstText 会等于 text。两种写法等价，都要认（与 blocks.js 同一份逻辑）。
+        const sameFirst = (compiled) => compiled.firstText === first || (first.trim() === '' && compiled.firstText === compiled.text)
+        for (const tower of towers) {
+          const flat = flattenTower(tower, towers, blocks).map((item, index) => benchBlockOf(item, 't' + index))
+          const compiled = compileBench(flat)
+          if (compiled.text === text && sameFirst(compiled)) {
+            return {
+              bench: addTowerToBench([], tower, towers, blocks, key),
+              benchTowers: { [tower.id]: { ref: tower.id, name: tower.name, collapsed: false } },
+            }
+          }
+        }
+        const custom = makeBlock({ id: 'my:' + key(), name: '自定义', first, text, checks })
+        return { bench: [benchBlockOf(custom, key())], benchTowers: {} }
+      }
+      // </bench-helpers>
+      const benchSeq = { n: 0 }
+      const nextBenchKey = () => 'b' + (benchSeq.n += 1).toString(36) + Math.random().toString(36).slice(2, 5)
+      const builtinBlocks = (Array.isArray(everyTurnBlockList) && everyTurnBlockList.length > 0 ? everyTurnBlockList : everyTurnList).map((preset) => blockFromPreset(preset))
+      const builtinTowers = (Array.isArray(everyTurnTowerList) ? everyTurnTowerList : []).map((tower) => ({ ...tower, builtin: true }))
+      const myBlocks = Object.values(state?.blocks ?? {}).map((block) => makeBlock(block))
+      const myTowers = Object.values(state?.towers ?? {}).map((tower) => ({ ...tower, builtin: false }))
+      const allBlocks = [...builtinBlocks, ...myBlocks]
+      const allTowers = [...builtinTowers, ...myTowers]
+      const hiddenBuiltins = Array.isArray(state?.hiddenBuiltins) ? state.hiddenBuiltins : []
+      const visibleBlocks = allBlocks.filter((block) => !hiddenBuiltins.includes(block.id))
+      const visibleTowers = allTowers.filter((tower) => !hiddenBuiltins.includes(tower.id))
+
       const storedEveryTurn = state?.everyTurn?.[sessionId] ?? state?.everyTurn?.['*'] ?? null
       const storedMode =
         storedEveryTurn?.mode === 'auto' || storedEveryTurn?.mode === 'until' || storedEveryTurn?.mode === 'always'
@@ -4724,6 +5061,10 @@ window.__ModuleLoader__.load({
           : Number(storedEveryTurn?.untilTurn) > 0
             ? 'until'
             : 'always'
+      // v0.15：条目里有 bench 就用它；旧条目（只有 text/firstText/checks）读取时迁移成工作台。
+      const benchMigrated = Array.isArray(storedEveryTurn?.bench)
+        ? { bench: storedEveryTurn.bench, benchTowers: storedEveryTurn.benchTowers ?? {} }
+        : migrateEveryTurn(storedEveryTurn, { blocks: allBlocks, towers: allTowers, makeKey: nextBenchKey })
       const everyTurn = everyTurnDraft ?? {
         // 开/关归左栏那一个开关（state.enabled）；条目里的 enabled 只是旧值，由 everyTurnSwitchOn 兜住。
         enabled: true,
@@ -4737,6 +5078,8 @@ window.__ModuleLoader__.load({
           streak: Number(storedEveryTurn?.auto?.streak) > 0 ? Number(storedEveryTurn.auto.streak) : 3,
           probation: Number(storedEveryTurn?.auto?.probation) > 0 ? Number(storedEveryTurn.auto.probation) : 2,
         },
+        bench: benchMigrated.bench,
+        benchTowers: benchMigrated.benchTowers,
         asDefault: state?.everyTurn?.['*']?.enabled === true,
       }
       const writeEveryTurn = async (nextValue, override) => {
@@ -4750,15 +5093,19 @@ window.__ModuleLoader__.load({
           // 立即恢复 / 暂停：只给动作，轮号由服务端按「下一轮」盖章；没给就沿用服务端已有的。
           ...(override ? { override: { action: override } } : {}),
         }
+        // v0.15：有工作台时，text / firstText / checks 一律由工作台编译得到（gate 只读这三个）。
+        const hasBench = Array.isArray(nextValue.bench) && nextValue.bench.length > 0
+        const compiled = hasBench ? compileBench(nextValue.bench) : null
         const entry = {
           // 永远 true：关由左栏开关负责（写 false 会变成「开关开着也不注入」的旧状态）。
           enabled: true,
-          text: String(nextValue.text ?? ''),
-          firstText: String(nextValue.firstText ?? ''),
+          text: compiled !== null ? compiled.text : String(nextValue.text ?? ''),
+          firstText: compiled !== null ? compiled.firstText : String(nextValue.firstText ?? ''),
           untilTurn: Math.max(0, Math.floor(Number(nextValue.untilTurn) || 0)),
           mode: nextValue.mode === 'auto' || nextValue.mode === 'until' ? nextValue.mode : 'always',
-          checks: Array.isArray(nextValue.checks) ? nextValue.checks : [],
+          checks: compiled !== null ? compiled.checks : Array.isArray(nextValue.checks) ? nextValue.checks : [],
           auto,
+          ...(hasBench ? { bench: nextValue.bench, benchTowers: nextValue.benchTowers ?? {} } : {}),
         }
         map[sessionId] = entry
         if (nextValue.asDefault === true) {
@@ -4780,6 +5127,552 @@ window.__ModuleLoader__.load({
             .catch(() => setStatus('error'))
         if (immediate) run()
         else everyTurnTimer.current = setTimeout(run, 700)
+      }
+      // ── v0.15：工作台（积木 / 积木塔）────────────────────────────────────────
+      const benchNarrow = bounds?.narrow === true
+      const bench = Array.isArray(everyTurn.bench) ? everyTurn.bench : []
+      const benchTowers = everyTurn.benchTowers ?? {}
+      const benchSummaryNow = benchSummary(bench)
+      const setBench = (nextBench, nextTowers) => {
+        const keep = { ...(nextTowers ?? benchTowers) }
+        for (const key of Object.keys(keep)) if (!nextBench.some((block) => block.tower === key)) delete keep[key]
+        editEveryTurn({ bench: nextBench, benchTowers: keep }, true)
+      }
+      const addBlockToBench = (block) => setBench([...bench, benchBlockOf(block, nextBenchKey())])
+      const removeBlockFromBench = (key) => setBench(bench.filter((block) => block.key !== key))
+      const patchBenchBlock = (key, patch, immediate) =>
+        setBench(bench.map((block) => (block.key === key ? { ...block, ...patch, edited: true } : block)), benchTowers)
+      const moveBenchBlock = (key, delta) => {
+        const at = bench.findIndex((block) => block.key === key)
+        const to = at + delta
+        if (at < 0 || to < 0 || to >= bench.length) return
+        const next = [...bench]
+        const moved = next.splice(at, 1)[0]
+        next.splice(to, 0, moved)
+        setBench(next)
+      }
+      /** 拖到第 index 个位置（0..bench.length），顺带决定它属不属于某个塔框。 */
+      const moveBlockTo = (key, index, tower) => {
+        const at = bench.findIndex((block) => block.key === key)
+        if (at < 0) return
+        const next = [...bench]
+        const moved = { ...next.splice(at, 1)[0], tower: tower ?? null }
+        const target = at < index ? index - 1 : index
+        next.splice(Math.max(0, Math.min(next.length, target)), 0, moved)
+        setBench(next)
+      }
+      const addTowerToBenchNow = (tower) => {
+        const nextBench = addTowerToBench(bench, tower, allTowers, allBlocks, nextBenchKey)
+        setBench(nextBench, { ...benchTowers, [tower.id]: { ref: tower.id, name: tower.name, collapsed: false } })
+      }
+      const removeTowerFromBench = (towerKey) => {
+        const next = { ...benchTowers }
+        delete next[towerKey]
+        setBench(bench.filter((block) => block.tower !== towerKey), next)
+      }
+      const toggleTowerCollapsed = (towerKey) => {
+        const tower = benchTowers[towerKey]
+        if (tower === undefined) return
+        setBench(bench, { ...benchTowers, [towerKey]: { ...tower, collapsed: tower.collapsed !== true } })
+      }
+      /** 台上某块和哪些块重叠（双向，按内置积木的 overlaps 定义）。 */
+      const benchOverlapsOf = (block) => {
+        const refs = new Set(bench.map((item) => item.ref))
+        const self = allBlocks.find((item) => item.id === block.ref)
+        return ((self && self.overlaps) || []).filter((id) => id !== block.ref && refs.has(id))
+      }
+      /** 重叠对（去重，按台上顺序）。 */
+      const benchOverlapPairs = () => {
+        const pairs = []
+        const seen = new Set()
+        for (const block of bench) {
+          for (const other of benchOverlapsOf(block)) {
+            const id = [block.ref, other].sort().join('|')
+            if (seen.has(id)) continue
+            seen.add(id)
+            pairs.push({ a: block.ref, b: other })
+          }
+        }
+        return pairs
+      }
+      // 我的积木 / 塔 / 隐藏项：走 packs 路由的 4 个 op（服务端校验、同一把锁）
+      const benchCall = (payload) => postJson(PACKS_ROUTE, { sessionId, ...payload })
+      const afterBenchCall = (data) => { adoptPacks(data); setEnvelope(data); notifyStateChanged(); return data }
+      const saveAsMyBlock = (block, name) => {
+        const entry = makeBlock({
+          id: block.builtin === true ? 'my:' + block.ref : block.ref,
+          name: String(name ?? block.name + t('benchMySuffix')).trim() || block.name,
+          icon: block.icon,
+          first: block.first,
+          text: block.text,
+          checks: block.checks,
+          ...(block.builtin === true ? { overrides: block.ref } : {}),
+        })
+        void benchCall({ op: 'block-save', block: { ...entry, updatedAt: new Date().toISOString() } })
+          .then((data) => { afterBenchCall(data); flash(t('blockSaved')) })
+          .catch(() => setStatus('error'))
+      }
+      const deleteMyBlock = (id) => {
+        void benchCall({ op: 'block-delete', id })
+          .then((data) => { afterBenchCall(data); flash(t('blockDeleted')) })
+          .catch(() => setStatus('error'))
+      }
+      const saveTower = (tower) => {
+        void benchCall({ op: 'tower-save', tower })
+          .then((data) => { afterBenchCall(data); flash(t('towerSaved')) })
+          .catch(() => setStatus('error'))
+      }
+      const deleteTower = (id) => {
+        void benchCall({ op: 'tower-delete', id }).then((data) => afterBenchCall(data)).catch(() => setStatus('error'))
+      }
+      const setHiddenBuiltins = (ids) => {
+        void benchCall({ op: 'hidden-set', ids }).then((data) => afterBenchCall(data)).catch(() => setStatus('error'))
+      }
+      const hideBuiltin = (id) => setHiddenBuiltins([...new Set([...hiddenBuiltins, id])])
+      const unhideBuiltin = (id) => setHiddenBuiltins(hiddenBuiltins.filter((value) => value !== id))
+      /** 角色卡塔（0.15）：套着卡时，卡的每轮提醒编译成一块「来自角色卡」的积木。 */
+      const cardBenchBlock = (() => {
+        const compiled = appliedCompiled
+        if (appliedRef === null || compiled === null || compiled === undefined) return null
+        const name = t('cardTowerName').replace('{name}', String(appliedRef.name ?? appliedRef.id ?? ''))
+        return makeBlock({
+          id: 'card:' + String(appliedRef.id ?? 'card'),
+          name,
+          icon: 'user',
+          first: String(compiled.everyTurn?.firstText ?? ''),
+          text: String(compiled.everyTurn?.text ?? ''),
+          checks: Array.isArray(compiled.everyTurn?.checks) ? compiled.everyTurn.checks : [],
+          builtin: false,
+        })
+      })()
+      const cardTower = cardBenchBlock === null ? null : {
+        id: 'card',
+        name: cardBenchBlock.name,
+        icon: 'user',
+        builtin: false,
+        card: true,
+        items: [{ ref: cardBenchBlock.id, snap: { name: cardBenchBlock.name, first: cardBenchBlock.first, text: cardBenchBlock.text, checks: cardBenchBlock.checks } }],
+      }
+      const cardTowerOnBench = cardBenchBlock !== null && bench.some((block) => block.ref === cardBenchBlock.id)
+      /** 放进 / 换成最新的角色卡提醒。 */
+      const applyCardTower = () => {
+        if (cardBenchBlock === null) return
+        const others = bench.filter((block) => block.ref !== cardBenchBlock.id)
+        setBench([...others, benchBlockOf(cardBenchBlock, nextBenchKey(), 'card')], {
+          ...benchTowers,
+          card: { ref: 'card', name: cardTower.name, collapsed: false },
+        })
+      }
+      const removeCardTower = () => {
+        if (cardBenchBlock === null) return
+        const next = { ...benchTowers }
+        delete next.card
+        setBench(bench.filter((block) => block.ref !== cardBenchBlock.id), next)
+      }
+      /** 预览分段（状态 B）：每块一段，带来源色；纯首轮块在第 2 轮那栏划掉。 */
+      const previewSegments = (round) => {
+        const out = []
+        for (const block of bench) {
+          const text = String(block.text ?? '')
+          const first = String(block.first ?? '')
+          const gone = round !== 1 && text.trim() === '' && first.trim() !== ''
+          const body = round === 1 && first.trim() !== '' ? first : gone ? first : text
+          if (body.trim() === '') continue
+          const kind = block.ref.startsWith('card:') ? 'card' : block.builtin === true ? 'builtin' : 'mine'
+          out.push({ key: block.key, text: block.priority === true ? PRIORITY_PREFIX + body : body, kind, gone })
+        }
+        return out
+      }
+      /** 拖动：Pointer Events 自己实现（影子挂 body，落点算插入位置）。 */
+      const startDrag = (event, block) => {
+        if (event.button !== undefined && event.button !== 0) return
+        const list = benchListRef.current
+        if (list === null) return
+        const rows = [...list.querySelectorAll('[data-prefill-bench-block]')]
+        const rects = rows.map((node) => {
+          const rect = node.getBoundingClientRect()
+          return { key: node.getAttribute('data-prefill-bench-block') ?? '', top: rect.top, height: rect.height }
+        })
+        const frames = [...list.querySelectorAll('[data-prefill-bench-tower]')].map((node) => {
+          const rect = node.getBoundingClientRect()
+          return { key: node.getAttribute('data-prefill-bench-tower') ?? '', top: rect.top, bottom: rect.bottom }
+        })
+        const startY = event.clientY
+        let moved = false
+        const ghost = document.createElement('div')
+        ghost.textContent = block.name
+        ghost.style.cssText =
+          'position:fixed;z-index:99999;pointer-events:none;padding:5px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-secondary);box-shadow:0 8px 24px rgba(0,0,0,.22);font-size:12px;transform:translate(-50%,-50%);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+        ghost.style.left = event.clientX + 'px'
+        ghost.style.top = event.clientY + 'px'
+        dragInfo.current = { key: block.key }
+        const move = (ev) => {
+          if (!moved && Math.abs(ev.clientY - startY) < 4) return
+          if (!moved) {
+            moved = true
+            document.body.appendChild(ghost)
+            setDragKey(block.key)
+          }
+          ghost.style.left = ev.clientX + 'px'
+          ghost.style.top = ev.clientY + 'px'
+          let index = rects.length
+          for (let i = 0; i < rects.length; i += 1) {
+            const mid = rects[i].top + rects[i].height / 2
+            if (ev.clientY < mid) { index = i; break }
+          }
+          const frame = frames.find((item) => ev.clientY >= item.top && ev.clientY <= item.bottom)
+          dragInfo.current = { key: block.key, index, tower: frame ? frame.key : null }
+          setDropIndex((current) => (current === index ? current : index))
+        }
+        const up = () => {
+          document.removeEventListener('pointermove', move)
+          document.removeEventListener('pointerup', up)
+          ghost.remove()
+          const info = dragInfo.current
+          dragInfo.current = null
+          setDragKey('')
+          setDropIndex(-1)
+          if (moved && info !== null && typeof info.index === 'number') moveBlockTo(block.key, info.index, info.tower ?? null)
+        }
+        document.addEventListener('pointermove', move)
+        document.addEventListener('pointerup', up)
+      }
+      const benchCard = (block) => {
+        const index = bench.findIndex((item) => item.key === block.key)
+        const overlaps = benchOverlapsOf(block)
+        const other = overlaps.length > 0 ? allBlocks.find((item) => item.id === overlaps[0]) : null
+        const kind = block.ref.startsWith('card:') ? 'card' : block.builtin === true ? 'builtin' : 'mine'
+        const color = benchColor(kind)
+        return h(
+          'div',
+          {
+            key: block.key,
+            'data-prefill-bench-block': block.key,
+            'data-ref': block.ref,
+            'data-edited': block.edited ? '1' : '0',
+            style: {
+              position: 'relative',
+              border: '1px solid var(--dsw-alias-border-secondary)',
+              borderLeft: '4px solid ' + color,
+              borderTop: '1px solid var(--dsw-alias-border-secondary)',
+              ...(dropIndex === index && dragKey !== '' ? { boxShadow: 'inset 0 3px 0 var(--pf-turn)' } : {}),
+              borderRadius: 10,
+              background: 'var(--dsw-alias-bg-layer-1)',
+              ...(dragKey === block.key ? { opacity: 0.45 } : {}),
+              ...(benchFocus === block.key ? { boxShadow: '0 0 0 3px color-mix(in srgb, var(--pf-turn) 18%, transparent)' } : {}),
+            },
+          },
+          h(
+            'div',
+            { style: { ...V.row, gap: 6, alignItems: 'center', padding: '5px 8px 0 6px', fontSize: 12 } },
+            h('span', { style: { cursor: 'grab', color: 'var(--dsw-alias-label-tertiary)', letterSpacing: '-2px', padding: '0 2px', touchAction: 'none' }, 'data-prefill-bench-grip': block.key, onPointerDown: (event) => startDrag(event, block) }, '⋮⋮'),
+            h('span', { style: { fontWeight: 700 } }, block.name),
+            benchNarrow
+              ? null
+              : h('span', { style: { ...V.sectionMeta, padding: '0 6px', borderRadius: 999, background: 'color-mix(in srgb, ' + color + ' 14%, transparent)' } }, kind === 'card' ? t('benchFromCard') : block.builtin === true ? t('benchFromBuiltin') : t('benchFromMine')),
+            block.edited
+              ? h('span', { style: { ...V.sectionMeta, color: 'var(--pf-turn)', display: 'inline-flex', alignItems: 'center', gap: 4 } }, h('span', { style: { width: 7, height: 7, borderRadius: 4, background: 'var(--pf-turn)' } }), t('benchEdited'))
+              : null,
+            benchNarrow || block.first.trim() === ''
+              ? null
+              : h('span', { style: { ...V.sectionMeta, border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: 999, padding: '0 7px' } }, t('benchFirstTag')),
+            overlaps.length > 0
+              ? h('span', { 'data-prefill-overlap-narrow': block.key + ':' + overlaps[0], style: { ...V.sectionMeta, color: 'var(--pf-turn)', border: '1px solid color-mix(in srgb, var(--pf-turn) 50%, var(--dsw-alias-border-secondary))', borderRadius: 999, padding: '0 6px' } }, t('benchOverlapNarrow').replace('{name}', other ? other.name : overlaps[0]))
+              : null,
+            h(
+              'span',
+              { style: { marginLeft: 'auto', display: 'flex', gap: 2, alignItems: 'center' } },
+              h('button', { type: 'button', style: V.btnGhost, disabled: index <= 0, title: t('benchMoveUp'), 'data-prefill-bench-up': block.key, onClick: () => moveBenchBlock(block.key, -1) }, '↑'),
+              h('button', { type: 'button', style: V.btnGhost, disabled: index >= bench.length - 1, title: t('benchMoveDown'), 'data-prefill-bench-down': block.key, onClick: () => moveBenchBlock(block.key, 1) }, '↓'),
+              h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuTitle'), 'data-prefill-bench-menu': block.key, onClick: (event) => openBlockMenu(event, block) }, '⋯'),
+              h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuDrop'), 'data-prefill-bench-drop': block.key, onClick: () => removeBlockFromBench(block.key) }, '×'),
+            ),
+          ),
+          block.first.trim() !== '' || block.builtin !== true
+            ? h('textarea', {
+                style: { ...V.textarea, margin: '4px 8px 2px', minHeight: 38, background: 'color-mix(in srgb, var(--pf-turn) 7%, transparent)' },
+                value: block.first,
+                spellCheck: false,
+                placeholder: t('everyTurnFirstPlaceholder'),
+                'data-prefill-bench-first': block.key,
+                onFocus: () => setBenchFocus(block.key),
+                onBlur: () => setBenchFocus(''),
+                onChange: (event) => patchBenchBlock(block.key, { first: event.target.value }, false),
+              })
+            : null,
+          h('textarea', {
+            style: { ...V.textarea, margin: '4px 8px 8px', minHeight: 46 },
+            value: block.text,
+            spellCheck: false,
+            placeholder: t('everyTurnPlaceholder'),
+            'data-prefill-bench-text': block.key,
+            onFocus: () => setBenchFocus(block.key),
+            onBlur: () => setBenchFocus(''),
+            onChange: (event) => patchBenchBlock(block.key, { text: event.target.value }, false),
+          }),
+          block.builtin !== true
+            ? h('label', { style: { ...V.row, gap: 6, fontSize: 11.5, padding: '0 10px 8px' } }, h('input', { type: 'checkbox', checked: block.priority === true, 'data-prefill-bench-priority': block.key, onChange: (event) => patchBenchBlock(block.key, { priority: event.target.checked }, true) }), h('span', null, t('benchPriority')))
+            : null,
+        )
+      }
+      const benchRows = () => {
+        const rows = []
+        const groups = new Map()
+        for (const block of bench) {
+          const key = block.tower ?? ''
+          if (!groups.has(key)) groups.set(key, [])
+          groups.get(key).push(block)
+        }
+        for (const [towerKey, list] of groups) {
+          const tower = towerKey === '' ? null : benchTowers[towerKey]
+          if (tower === null || tower === undefined) {
+            rows.push(...list.map((block) => benchCard(block)))
+            continue
+          }
+          const color = benchColor(towerKey === 'card' ? 'card' : 'mine')
+          const collapsed = tower.collapsed === true
+          rows.push(
+            h(
+              'div',
+              {
+                key: 'tf-' + towerKey,
+                'data-prefill-bench-tower': towerKey,
+                style: { border: '1.5px dashed color-mix(in srgb, ' + color + ' 55%, var(--dsw-alias-border-secondary))', borderRadius: 12, padding: '6px 8px 8px', background: 'color-mix(in srgb, ' + color + ' 4%, transparent)', display: 'flex', flexDirection: 'column', gap: 8 },
+              },
+              h(
+                'div',
+                { style: { ...V.row, gap: 6, alignItems: 'center', fontSize: 12, fontWeight: 700 } },
+                h('span', { style: { cursor: 'pointer' }, 'data-prefill-tower-collapse': towerKey, onClick: () => toggleTowerCollapsed(towerKey) }, (collapsed ? '▸ ' : '▾ ') + String(tower.name ?? towerKey)),
+                h('span', { style: { marginLeft: 'auto', fontWeight: 400 } }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-tower-remove': towerKey, onClick: () => removeTowerFromBench(towerKey) }, t('benchTowerRemove'))),
+              ),
+              ...(collapsed ? [] : list.map((block) => benchCard(block))),
+            ),
+          )
+        }
+        return rows
+      }
+      // ── v0.15：工作台的渲染件（按钮行 / 块卡片 / 塔框 / 重叠层 / 右键菜单）──────
+      const benchColor = (kind) => (kind === 'card' ? 'var(--pf-card)' : kind === 'mine' ? 'var(--pf-user)' : 'var(--pf-builtin)')
+      const towerKind = (tower) => (tower.card === true ? 'card' : tower.builtin === true ? 'builtin' : 'mine')
+      const towerState = (tower) => {
+        const mine = bench.filter((block) => block.tower === tower.id)
+        const total = flattenTower(tower, allTowers, allBlocks).length
+        return mine.length === 0 ? 'off' : mine.length >= total && total > 0 ? 'on' : 'half'
+      }
+      const towerEdited = (tower) => bench.some((block) => block.tower === tower.id && block.edited)
+      const towerOverlaps = (tower) => {
+        const refs = new Set(bench.map((block) => block.ref))
+        return flattenTower(tower, allTowers, allBlocks).some((block) =>
+          ((allBlocks.find((item) => item.id === block.id) || {}).overlaps || []).some((id) => refs.has(id)),
+        )
+      }
+      const stackIcon = (color) =>
+        h(
+          'span',
+          { style: { display: 'inline-flex', flexDirection: 'column', gap: 1, marginRight: 2 } },
+          h('i', { style: { display: 'block', width: 10, height: 3, borderRadius: 1, background: color } }),
+          h('i', { style: { display: 'block', width: 10, height: 3, borderRadius: 1, background: color } }),
+        )
+      const towerButton = (tower) => {
+        const state = towerState(tower)
+        const kind = towerKind(tower)
+        const color = benchColor(kind)
+        const on = state === 'on'
+        return h(
+          'button',
+          {
+            key: 'tw-' + tower.id,
+            type: 'button',
+            title: tower.desc ?? tower.name,
+            style: {
+              ...(on ? V.btn : V.btnGhost),
+              position: 'relative',
+              borderColor: state === 'off' ? undefined : color,
+              background: on ? 'color-mix(in srgb, ' + color + ' 14%, transparent)' : undefined,
+              ...(state === 'half' ? { borderStyle: 'dashed' } : {}),
+              ...(benchFocus === tower.id ? { outline: '2px solid var(--pf-turn)', outlineOffset: 1 } : {}),
+            },
+            'data-prefill-tower-btn': tower.id,
+            'data-state': state,
+            'aria-pressed': on ? 'true' : 'false',
+            onFocus: () => setBenchFocus(tower.id),
+            onBlur: () => setBenchFocus(''),
+            onMouseEnter: () => setBenchFocus((current) => (current === tower.id ? current : tower.id)),
+            onMouseLeave: () => setBenchFocus((current) => (current === '' ? current : '')),
+            onClick: () => (state === 'off' ? (tower.card === true ? applyCardTower() : addTowerToBenchNow(tower)) : tower.card === true ? removeCardTower() : removeTowerFromBench(tower.id)),
+            onContextMenu: (event) => openTowerMenu(event, tower),
+          },
+          stackIcon(color),
+          tower.name,
+          towerEdited(tower) ? h('span', { style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
+          towerOverlaps(tower) ? h('span', { title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
+        )
+      }
+      const blockButton = (block) => {
+        const on = bench.some((item) => item.ref === block.id)
+        const edited = on && bench.some((item) => item.ref === block.id && item.edited)
+        const kind = block.builtin === true ? 'builtin' : 'mine'
+        const color = benchColor(kind)
+        const overlapOn = benchOverlapsOf({ ref: block.id }).length > 0
+        return h(
+          'button',
+          {
+            key: 'bk-' + block.id,
+            type: 'button',
+            title: block.desc ?? block.name,
+            style: {
+              ...(on ? V.btn : V.btnGhost),
+              position: 'relative',
+              borderColor: on ? color : undefined,
+              background: on ? 'color-mix(in srgb, ' + color + ' 12%, transparent)' : undefined,
+              ...(benchFocus === 'btn:' + block.id ? { outline: '2px solid var(--pf-turn)', outlineOffset: 1 } : {}),
+            },
+            'data-prefill-block-btn': block.id,
+            'aria-pressed': on ? 'true' : 'false',
+            onFocus: () => setBenchFocus('btn:' + block.id),
+            onBlur: () => setBenchFocus(''),
+            onMouseEnter: () => setBenchFocus((current) => (current === 'btn:' + block.id ? current : 'btn:' + block.id)),
+            onMouseLeave: () => setBenchFocus((current) => (current === '' ? current : '')),
+            onClick: () => (on ? setBench(bench.filter((item) => item.ref !== block.id)) : addBlockToBench(block)),
+            onContextMenu: (event) => openBlockMenu(event, block),
+          },
+          block.name,
+          edited ? h('span', { style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
+          overlapOn && !on ? h('span', { title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
+        )
+      }
+      const openBlockMenu = (event, target) => {
+        event.preventDefault()
+        const rect = event.currentTarget.getBoundingClientRect()
+        setBenchMenu({
+          kind: 'block',
+          key: target.key ?? '',
+          ref: target.ref ?? target.id ?? '',
+          name: target.name ?? '',
+          builtin: target.builtin === true,
+          x: Math.round(rect.left),
+          y: Math.round(rect.bottom + 4),
+        })
+      }
+      const openTowerMenu = (event, tower) => {
+        event.preventDefault()
+        const rect = event.currentTarget.getBoundingClientRect()
+        setBenchMenu({ kind: 'tower', ref: tower.id, name: tower.name, builtin: tower.builtin === true, x: Math.round(rect.left), y: Math.round(rect.bottom + 4) })
+      }
+      const closeBenchMenu = () => setBenchMenu(null)
+      const saveWholeBenchAsTower = () => {
+        const name = (window.prompt(t('benchTowerNameAsk'), t('benchTowerDefaultName')) || '').trim()
+        if (name === '') return
+        saveTower({ id: 'my:' + nextBenchKey(), name, items: bench.map(towerItemOf) })
+      }
+      const saveFrameAsTower = (towerKey) => {
+        const name = (window.prompt(t('benchTowerNameAsk'), String(benchTowers[towerKey]?.name ?? '') + t('benchMySuffix')) || '').trim()
+        if (name === '') return
+        saveTower({ id: 'my:' + nextBenchKey(), name, items: bench.filter((block) => block.tower === towerKey).map(towerItemOf) })
+      }
+      const towerItemOf = (block) => ({
+        ref: block.ref,
+        text: block.text,
+        first: block.first,
+        snap: { name: block.name, first: block.first, text: block.text, checks: block.checks },
+      })
+      const renameMyBlock = (def) => {
+        const name = (window.prompt(t('benchRenameAsk'), def.name) || '').trim()
+        if (name === '' || name === def.name) return
+        saveAsMyBlock(def, name)
+      }
+      const blockMenu = () => {
+        const menu = benchMenu
+        if (menu === null) return null
+        const benchBlock = menu.kind === 'block' && menu.key !== '' ? bench.find((item) => item.key === menu.key) ?? null : null
+        const def = allBlocks.find((item) => item.id === menu.ref) ?? null
+        const source = benchBlock ?? def
+        if (source === null) return null
+        const isMine = menu.builtin !== true && def !== null && def.builtin !== true
+        const row = (key, label, onClick, sub) =>
+          h(
+            'div',
+            {
+              key,
+              style: { padding: '6px 10px', borderRadius: 6, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2 },
+              onMouseEnter: (event) => { event.currentTarget.style.background = 'var(--dsw-alias-bg-layer-2)' },
+              onMouseLeave: (event) => { event.currentTarget.style.background = 'transparent' },
+              onClick: () => { closeBenchMenu(); onClick() },
+            },
+            h('span', null, label),
+            sub !== undefined ? h('small', { style: V.sectionMeta }, sub) : null,
+          )
+        const rows = []
+        if (menu.kind === 'block') {
+          rows.push(row('save', t('benchMenuSaveTo').replace('{name}', menu.name), () => saveAsMyBlock(source), menu.builtin === true ? t('benchMenuSaveToBuiltin') : t('benchMenuSaveToMine')))
+          if (benchBlock !== null && benchBlock.tower !== null && benchBlock.tower !== undefined) {
+            rows.push(row('toweronly', t('benchMenuTowerOnly'), () => saveTower({ id: benchBlock.tower, name: String(benchTowers[benchBlock.tower]?.name ?? benchBlock.tower), items: bench.filter((item) => item.tower === benchBlock.tower).map(towerItemOf) }), t('benchMenuTowerOnlySub')))
+          }
+          rows.push(row('newblock', t('benchMenuSaveNewBlock'), () => {
+            const name = (window.prompt(t('benchNewBlockAsk'), menu.name + t('benchMySuffix')) || '').trim()
+            if (name !== '') saveAsMyBlock({ ...source, ref: 'my:' + nextBenchKey(), builtin: false, id: '' }, name)
+          }))
+          if (benchBlock !== null && benchBlock.tower !== null && benchBlock.tower !== undefined) rows.push(row('saveframe', t('benchMenuSaveFrame'), () => saveFrameAsTower(benchBlock.tower)))
+          if (bench.length > 0) rows.push(row('savebench', t('benchMenuSaveBench'), () => saveWholeBenchAsTower()))
+          rows.push(h('div', { key: 'sep', style: { height: 1, background: 'var(--dsw-alias-border-secondary)', margin: '4px 2px' } }))
+          if (benchBlock !== null && benchBlock.edited) rows.push(row('revert', t('benchMenuRevert'), () => patchBenchBlock(benchBlock.key, revertPatch(benchBlock))))
+          if (benchBlock !== null) rows.push(row('drop', t('benchMenuDrop'), () => removeBlockFromBench(benchBlock.key)))
+          if (isMine && def !== null) rows.push(row('rename', t('benchMenuRename'), () => renameMyBlock(def)))
+          if (isMine && def !== null) rows.push(row('delblock', t('benchMenuDeleteBlock'), () => deleteMyBlock(def.id)))
+          if (menu.builtin === true) rows.push(row('hide', t('benchMenuHide'), () => hideBuiltin(menu.ref)))
+        } else {
+          if (isMine && def !== null) rows.push(row('renametower', t('benchMenuRename'), () => { const name = (window.prompt(t('benchRenameAsk'), menu.name) || '').trim(); if (name !== '') saveTower({ ...def, name }) }))
+          if (isMine) rows.push(row('deltower', t('benchMenuDeleteTower'), () => deleteTower(menu.ref)))
+          if (menu.builtin === true) rows.push(row('hidetower', t('benchMenuHide'), () => hideBuiltin(menu.ref)))
+          if (menu.ref !== 'card') rows.push(row('removetower', t('benchMenuRemoveTower'), () => removeTowerFromBench(menu.ref)))
+        }
+        return h(
+          'div',
+          {
+            key: 'menu',
+            'data-prefill-block-menu': '',
+            style: {
+              position: 'fixed',
+              left: benchNarrow ? 10 : menu.x,
+              top: menu.y,
+              right: benchNarrow ? 10 : undefined,
+              zIndex: 30,
+              width: benchNarrow ? undefined : 280,
+              background: 'var(--dsw-alias-bg-layer-1)',
+              border: '1px solid var(--dsw-alias-border-secondary)',
+              borderRadius: 10,
+              boxShadow: '0 12px 32px rgba(0,0,0,.18)',
+              padding: 5,
+              fontSize: 12.5,
+            },
+          },
+          ...rows,
+          h('div', { key: 'close', style: { ...V.sectionMeta, padding: '4px 10px', cursor: 'pointer' }, onClick: closeBenchMenu }, t('benchMenuClose')),
+        )
+      }
+      /** 放弃修改：把这块恢复成它定义时的内容。 */
+      const revertPatch = (benchBlock) => {
+        const def = allBlocks.find((block) => block.id === benchBlock.ref)
+        return def === undefined ? { edited: false } : { first: def.first, text: def.text, checks: [...def.checks], edited: false }
+      }
+      /** 重叠层：左侧留白里画虚线连线 + 「重叠」标；窄屏不画（用块头标签）。 */
+      const overlapLayer = () => {
+        const pairs = benchOverlapPairs()
+        if (benchNarrow || pairs.length === 0) return null
+        const rows = bench.map((block, index) => ({ key: block.key, index }))
+        const at = (ref) => rows.find((row) => row.index === bench.findIndex((block) => block.ref === ref))
+        return h(
+          'svg',
+          { key: 'ov', 'data-prefill-overlap': pairs.map((pair) => pair.a + ':' + pair.b).join(','), style: { position: 'absolute', left: 0, top: 0, width: 34, height: '100%', overflow: 'visible', pointerEvents: 'none' } },
+          ...pairs.map((pair) => {
+            const a = bench.findIndex((block) => block.ref === pair.a)
+            const b = bench.findIndex((block) => block.ref === pair.b)
+            const y1 = a * 72 + 36
+            const y2 = b * 72 + 36
+            return h('path', { key: pair.a + pair.b, d: 'M30 ' + y1 + ' C 8 ' + y1 + ', 8 ' + y2 + ', 30 ' + y2, fill: 'none', stroke: 'var(--pf-turn)', strokeWidth: 2, strokeDasharray: '4 3' })
+          }),
+          pairs.length > 0 ? h('text', { x: 0, y: 12, fill: 'var(--pf-turn)', fontSize: 10 }, t('benchOverlapTag')) : null,
+        )
       }
       // 「开着没」看左栏开关（旧版 entry.enabled 也算关）；有没有内容是另一回事。
       const everyTurnActive = isOn('everyTurn') && (everyTurn.text.trim() !== '' || everyTurn.firstText.trim() !== '')
@@ -4859,74 +5752,132 @@ window.__ModuleLoader__.load({
           offBody: !isOn('everyTurn') ? t('everyTurnOffBody') : t('offByCardBody'),
         },
         h('div', { style: V.hint }, t('everyTurnHint')),
-        // 套着角色卡时：卡的「角色提醒」+ 中文思考 / 第一人称思考（原来在角色卡面板里）。点一下 = 换成卡按这些选项编译出的提醒。
-        appliedRef
+        // v0.15：按钮行（塔在前、积木在后）+ 成本/预览 + 工作台 + 重叠层 + 右键菜单
+        h(
+          'div',
+          {
+            style: {
+              ...V.row,
+              flexWrap: benchNarrow ? 'nowrap' : 'wrap',
+              gap: 6,
+              alignItems: 'center',
+              overflowX: benchNarrow ? 'auto' : 'visible',
+              paddingBottom: benchNarrow ? 4 : 0,
+            },
+            'data-prefill-bench-bar': '',
+          },
+          visibleTowers.length > 0 || cardTower !== null ? h('span', { style: V.sectionMeta }, t('benchTowerGroup')) : null,
+          ...(cardTower !== null ? [towerButton(cardTower)] : []),
+          ...visibleTowers.map((tower) => towerButton(tower)),
+          (visibleTowers.length > 0 || cardTower !== null) && visibleBlocks.length > 0
+            ? h('span', { key: 'sep', style: { width: 1, height: 20, background: 'var(--dsw-alias-border-secondary)', margin: '0 4px' } })
+            : null,
+          visibleBlocks.length > 0 ? h('span', { style: V.sectionMeta }, t('benchBlockGroup')) : null,
+          ...visibleBlocks.map((block) => blockButton(block)),
+          h(
+            'button',
+            {
+              type: 'button',
+              style: { ...V.btnGhost, borderStyle: 'dashed' },
+              'data-prefill-bench-add': '',
+              onClick: () => addBlockToBench(makeBlock({ id: 'my:' + nextBenchKey(), name: t('benchCustom'), icon: 'pencil', text: '', first: '', checks: [] })),
+            },
+            '＋ ' + t('benchCustom'),
+          ),
+          hiddenBuiltins.length > 0
+            ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-bench-hidden-toggle': '', onClick: () => setHiddenOpen((value) => !value) }, t('benchHiddenToggle').replace('{n}', String(hiddenBuiltins.length)))
+            : null,
+        ),
+        cardTowerOnBench && appliedRef !== null
           ? h(
               'div',
-              { style: { ...V.row, flexWrap: 'wrap', gap: 6 }, 'data-prefill-everyturn-card': '' },
+              { style: { ...V.row, gap: 6, flexWrap: 'wrap', marginTop: 6 }, 'data-prefill-everyturn-card': '' },
               h('span', { style: V.sectionMeta }, t('everyTurnCardChips')),
-              h(
-                'button',
-                { type: 'button', style: appliedCompiled && everyTurn.text === appliedCompiled.everyTurn?.text ? V.btn : V.btnGhost, title: t('cardReinforceTip'), 'data-prefill-card-reinforce': '', onClick: () => void setCardThinking({ thinkZh: false, firstPerson: false }).catch(() => setStatus('error')) },
-                withIcon('user', t('cardReinforce'), 12),
+              h('button', { type: 'button', style: appliedCompiled && everyTurn.text === appliedCompiled.everyTurn?.text ? V.btn : V.btnGhost, title: t('cardReinforceTip'), 'data-prefill-card-reinforce': '', onClick: () => void setCardThinking({ thinkZh: false, firstPerson: false }).catch(() => setStatus('error')) }, withIcon('user', t('cardReinforce'), 12)),
+              h('button', { type: 'button', style: everyTurn.checks.includes('zh') ? V.btn : V.btnGhost, 'aria-pressed': everyTurn.checks.includes('zh') ? 'true' : 'false', 'data-prefill-card-zh': '', onClick: () => void setCardThinking({ thinkZh: !everyTurn.checks.includes('zh') }).catch(() => setStatus('error')) }, t('cardThinkZh')),
+              h('button', { type: 'button', style: everyTurn.checks.includes('firstPerson') ? V.btn : V.btnGhost, 'aria-pressed': everyTurn.checks.includes('firstPerson') ? 'true' : 'false', 'data-prefill-card-firstperson': '', onClick: () => void setCardThinking({ firstPerson: !everyTurn.checks.includes('firstPerson') }).catch(() => setStatus('error')) }, t('cardFirstPerson')),
+            )
+          : null,
+        hiddenOpen && hiddenBuiltins.length > 0
+          ? h(
+              'div',
+              { style: { ...V.row, gap: 6, flexWrap: 'wrap', fontSize: 12 }, 'data-prefill-bench-hidden': '' },
+              h('span', { style: V.sectionMeta }, t('benchHiddenList')),
+              ...hiddenBuiltins.map((id) =>
+                h('button', { key: id, type: 'button', style: V.btnGhost, onClick: () => unhideBuiltin(id) }, (allBlocks.find((block) => block.id === id) ?? allTowers.find((tower) => tower.id === id) ?? { name: id }).name + ' ×'),
               ),
-              ...[
-                ['thinkZh', 'zh', t('cardThinkZh'), 'data-prefill-card-zh'],
-                ['firstPerson', 'firstPerson', t('cardFirstPerson'), 'data-prefill-card-firstperson'],
-              ].map(([opt, check, label, attr]) => {
-                const on = everyTurn.checks.includes(check)
-                return h('button', { key: opt, type: 'button', style: on ? V.btn : V.btnGhost, 'aria-pressed': on ? 'true' : 'false', [attr]: '', onClick: () => void setCardThinking({ [opt]: !on }).catch(() => setStatus('error')) }, label)
-              }),
             )
           : null,
         h(
           'div',
-          { style: { ...V.row, flexWrap: 'wrap', gap: 6 } },
-          h('span', { style: V.sectionMeta }, t('everyTurnPresets')),
-          ...everyTurnList.map((preset) =>
-            h(
-              'button',
-              {
-                key: preset.id,
-                type: 'button',
-                style: everyTurn.text === preset.text && everyTurn.firstText === (preset.firstText ?? '') ? V.btn : V.btnGhost,
-                title: preset.desc,
-                'data-prefill-everyturn-preset': preset.id,
-                onClick: () =>
-                  editEveryTurn(
-                    {
-                      enabled: true,
-                      text: preset.text,
-                      firstText: preset.firstText ?? '',
-                      checks: Array.isArray(preset.checks) ? preset.checks : [],
-                      // 不支持自动的预设（简短思考）选中时，从自动退回一直注入。
-                      ...(everyTurn.mode === 'auto' && !Array.isArray(preset.checks) ? { mode: 'always', untilTurn: 0 } : {}),
-                    },
-                    true,
-                  ),
-              },
-              h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, glyph(preset, 13), preset.name),
-            ),
+          { style: { ...V.row, gap: 8, alignItems: 'center', marginTop: 10, padding: '6px 10px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2)', fontSize: 12 }, 'data-prefill-bench-cost-row': '' },
+          h('span', { 'data-prefill-bench-cost': '' }, t('benchCost').replace('{first}', String(benchSummaryNow.firstTok)).replace('{rest}', String(benchSummaryNow.restTok))),
+          benchSummaryNow.checks.length > 0
+            ? h('span', { style: V.sectionMeta }, t('benchChecks').replace('{list}', benchSummaryNow.checks.map((id) => t('check_' + id) || id).join('、')))
+            : null,
+          h(
+            'button',
+            {
+              type: 'button',
+              style: { ...V.btnGhost, marginLeft: 'auto' },
+              'data-prefill-bench-preview-btn': '',
+              onClick: () => setBenchPreview((value) => !value),
+            },
+            (benchPreview ? '▴ ' : '▾ ') + (benchPreview ? t('benchPreviewHide') : t('benchPreview')),
           ),
         ),
-        h('div', { style: V.sectionMeta }, t('everyTurnFirstLabel')),
-        h('textarea', {
-          style: { ...V.textarea, minHeight: 48 },
-          value: everyTurn.firstText,
-          spellCheck: false,
-          placeholder: t('everyTurnFirstPlaceholder'),
-          'data-prefill-everyturn-first': '1',
-          onChange: (event) => editEveryTurn({ firstText: event.target.value }, false),
-        }),
-        h('div', { style: V.sectionMeta }, t('everyTurnLaterLabel')),
-        h('textarea', {
-          style: { ...V.textarea, minHeight: 60 },
-          value: everyTurn.text,
-          spellCheck: false,
-          placeholder: t('everyTurnPlaceholder'),
-          'data-prefill-everyturn-text': '1',
-          onChange: (event) => editEveryTurn({ text: event.target.value }, false),
-        }),
+        benchPreview
+          ? h(
+              'div',
+              { style: { display: 'grid', gridTemplateColumns: benchNarrow ? '1fr' : '1fr 1fr', gap: 10, marginTop: 10 }, 'data-prefill-everyturn-preview': '' },
+              ...[1, 2].map((round) =>
+                h(
+                  'div',
+                  { key: round, style: { border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: 10, overflow: 'hidden' } },
+                  h(
+                    'div',
+                    { style: { ...V.row, gap: 8, padding: '6px 10px', background: 'var(--dsw-alias-bg-layer-2)', fontSize: 12 } },
+                    h('span', { style: { fontWeight: 600 } }, round === 1 ? t('benchPreviewFirst') : t('benchPreviewRest')),
+                    h('span', { style: { ...V.sectionMeta, marginLeft: 'auto' } }, '≈' + String(round === 1 ? benchSummaryNow.firstTok : benchSummaryNow.restTok) + ' tok'),
+                  ),
+                  h('div', { style: { margin: '8px 10px', paddingLeft: 8, borderLeft: '3px solid var(--dsw-alias-border-secondary)', color: 'var(--dsw-alias-label-tertiary)', fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 11.5, whiteSpace: 'pre-wrap' } }, '<background> ' + t('benchPreviewShell')),
+                  ...previewSegments(round).map((seg) =>
+                    h(
+                      'div',
+                      {
+                        key: seg.key,
+                        'data-prefill-preview-seg': seg.key,
+                        style: {
+                          margin: '8px 10px',
+                          padding: '2px 8px',
+                          borderLeft: '3px solid ' + benchColor(seg.kind),
+                          fontFamily: 'ui-monospace,Menlo,monospace',
+                          fontSize: 11.5,
+                          whiteSpace: 'pre-wrap',
+                          ...(seg.gone ? { opacity: 0.35, textDecoration: 'line-through' } : {}),
+                        },
+                      },
+                      seg.text,
+                    ),
+                  ),
+                  h('div', { style: { margin: '8px 10px', paddingLeft: 8, borderLeft: '3px solid var(--dsw-alias-border-secondary)', color: 'var(--dsw-alias-label-tertiary)', fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 11.5 } }, '</background>'),
+                ),
+              ),
+            )
+          : null,
+        h(
+          'div',
+          { ref: benchListRef, style: { position: 'relative', marginTop: 10, paddingLeft: benchNarrow ? 0 : 34, display: 'flex', flexDirection: 'column', gap: 8 }, 'data-prefill-bench': '' },
+          overlapLayer(),
+          ...benchRows(),
+          bench.length === 0 ? h('div', { style: V.sectionMeta }, t('benchEmpty')) : null,
+          h(
+            'div',
+            { style: { border: '1px dashed var(--dsw-alias-border-secondary)', borderRadius: 10, padding: '7px 10px', color: 'var(--dsw-alias-label-tertiary)', fontSize: 12.5, textAlign: 'center', cursor: 'pointer' }, 'data-prefill-bench-add-row': '', onClick: () => addBlockToBench(makeBlock({ id: 'my:' + nextBenchKey(), name: t('benchCustom'), icon: 'pencil', text: '', first: '', checks: [] })) },
+            '＋ ' + t('benchCustom'),
+          ),
+          benchMenu !== null ? blockMenu() : null,
+        ),
         h(
           'div',
           { style: { ...V.row, gap: 10, fontSize: 12, flexWrap: 'wrap' } },
@@ -5860,6 +6811,20 @@ window.__ModuleLoader__.load({
         writeTools(next)
       }
 
+      // ── 疑似未登记注入（宿主审计）+ 本会话阻断 / 全局记住 ───────────────────
+      const auditRows = Array.isArray(envelope?.audit?.[sessionId]) ? envelope.audit[sessionId] : []
+      const blocksAll = envelope?.state?.injectionBlocks !== null && typeof envelope?.state?.injectionBlocks === 'object' ? envelope.state.injectionBlocks : {}
+      const blockListOf = (key, group) => (Array.isArray(blocksAll?.[key]?.[group]) ? blocksAll[key][group] : [])
+      const isPureSession = envelope?.state?.gate?.[sessionId] === 'pure'
+      const toggleBlock = (key, group, name) => {
+        const list = blockListOf(key, group)
+        const nextList = list.includes(name) ? list.filter((entry) => entry !== name) : [...list, name]
+        const nextEntry = { ...(blocksAll[key] ?? {}), [group]: nextList }
+        void call({ injectionBlocks: { ...blocksAll, [key]: nextEntry } })
+          .then((data) => setEnvelope(data))
+          .catch(() => setStatus('error'))
+      }
+
       /** 清除本会话的注入配置（改写 / 每轮注入内容 / 独立白名单 / 工具放行）——删除功能之一。 */
       const clearSessionConfig = () => {
         // 同样两步确认（不用 window.confirm：可能被屏蔽 ⇒ 静默失败）。
@@ -5875,11 +6840,13 @@ window.__ModuleLoader__.load({
             const injects = { ...(env?.state?.injects ?? {}) }
             const sessionAllowKinds = { ...(env?.state?.sessionAllowKinds ?? {}) }
             const sessionTools = { ...(env?.state?.sessionTools ?? {}) }
+            const injectionBlocks = { ...(env?.state?.injectionBlocks ?? {}) }
             delete overrides[sessionId]
             delete injects[sessionId]
             delete sessionAllowKinds[sessionId]
             delete sessionTools[sessionId]
-            return call({ overrides, injects, sessionAllowKinds, sessionTools })
+            delete injectionBlocks[sessionId]
+            return call({ overrides, injects, sessionAllowKinds, sessionTools, injectionBlocks })
           })
           .then((data) => {
             setEnvelope(data)
@@ -5972,6 +6939,46 @@ window.__ModuleLoader__.load({
           'div',
           { style: S.injectBody },
           count === 0 ? h('div', { style: S.injectGroupHead }, t('injectNone')) : null,
+          // 疑似未登记注入：默认放行只记录；可本会话阻断，或全局记住（之后所有会话提前拦）。
+          auditRows.length === 0
+            ? null
+            : h(
+                'div',
+                { style: S.injectGroupHead, title: t('auditHint') },
+                h('span', null, t('auditLabel')),
+                h('span', { style: S.chipStatic }, `${auditRows.length}`),
+                h('span', { style: S.injectRule }),
+              ),
+          ...auditRows.map((row) => {
+            const inSession = blockListOf(sessionId, row.group).includes(row.name)
+            const inGlobal = blockListOf('*', row.group).includes(row.name)
+            const groupLabel = row.group === 'sections' ? t('injectSections') : row.group === 'contexts' ? t('injectContexts') : t('injectMessages')
+            return h(
+              'div',
+              { key: `audit-${row.group}-${row.name}`, style: S.chipRow, title: row.preview || row.name },
+              h('span', { style: S.chip(inSession || inGlobal) }, row.name),
+              h('span', { style: S.chipStatic }, `${groupLabel} · ${t('auditCount').replace('{n}', String(row.count ?? 1))}`),
+              isPureSession ? h('span', { style: S.injectStale }, t('auditPureLeak')) : null,
+              row.blockable === false
+                ? h('span', { style: S.chipStatic }, t('auditDirect'))
+                : [
+                    inGlobal ? h('span', { key: 'g', style: S.chipStatic }, t('auditBlockedGlobal')) : null,
+                    !inGlobal && inSession ? h('span', { key: 's', style: S.chipStatic }, `${t('auditBlockedSession')} · ${t('auditNextTurn')}`) : null,
+                    inGlobal
+                      ? null
+                      : h(
+                          'button',
+                          { key: 'bs', type: 'button', style: S.gateBtn, onClick: () => toggleBlock(sessionId, row.group, row.name) },
+                          inSession ? t('auditUnblockSession') : t('auditBlockSession'),
+                        ),
+                    h(
+                      'button',
+                      { key: 'bg', type: 'button', style: S.gateBtn, onClick: () => toggleBlock('*', row.group, row.name) },
+                      inGlobal ? t('auditForget') : t('auditRemember'),
+                    ),
+                  ],
+            )
+          }),
           // 本会话白名单：点标签即生效（会话级，不动全局那张表）。
           h(
             'div',

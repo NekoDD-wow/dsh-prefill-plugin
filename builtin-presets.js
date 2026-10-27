@@ -253,6 +253,8 @@ export const EVERY_TURN_PRESETS = [
     icon: 'layout-list',
     name: '四段式思考',
     desc: '思维链按【理解】【拆解】【验证】【结论】四段写，正文不受影响。',
+    // v0.15：四段式已经要求中文思考 ⇒ 和「中文思考」重叠（只提示，不互斥）。
+    overlaps: ['zh-thinking'],
     text: '【思考格式】本轮你的思维链（reasoning）请全程用中文，并按四段写：【理解】【拆解】【验证】【结论】，每段一到三句。回答正文正常写，不要把这四段放进回答里。',
     checks: ['zh', 'four', 'noLeak'],
   },
@@ -261,6 +263,8 @@ export const EVERY_TURN_PRESETS = [
     icon: 'drama',
     name: '第一人称思考（角色扮演）',
     desc: '思维链用角色的第一人称写，不说"用户"，改称"主人"；配合角色扮演人格用。',
+    // v0.15：和「角色扮演强化」说的是同一件事 ⇒ 重叠。
+    overlaps: ['rp-reinforce'],
     text: '【思考人称】本轮你的思维链（reasoning）请用你所扮演角色的第一人称、中文来写（"我觉得……""我该……"），把对方称为"主人"，不要出现"用户""the user"这类说法。回答正文保持角色口吻。',
     checks: ['zh', 'firstPerson'],
   },
@@ -285,7 +289,45 @@ export const EVERY_TURN_PRESETS = [
   },
 ]
 
+/**
+ * v0.15：内置积木塔。塔 = 一组有序的积木引用（塔不嵌套，放进去即拆平）。
+ * 现有 rp-reinforce 拆成「首轮段」积木 + 这座塔：装塔 = 首轮完整要求 + 之后每轮第一人称。
+ */
+export const EVERY_TURN_TOWERS = [
+  {
+    id: 'rp-pack',
+    icon: 'package',
+    name: '角色扮演套餐',
+    desc: '第 1 轮完整角色扮演要求 + 之后每轮第一人称中文思考（= 原来的「角色扮演强化」）。',
+    items: [{ ref: 'rp-first' }, { ref: 'first-person' }],
+  },
+]
+
+/** rp-reinforce 的首轮段单独做成一块积木（塔里第一块）。 */
+export const EVERY_TURN_EXTRA_BLOCKS = [
+  {
+    id: 'rp-first',
+    icon: 'paw-print',
+    name: '角色扮演·首轮要求',
+    desc: '只在第 1 轮发：完整的角色扮演要求（正文口吻 + 思维链第一人称中文）。',
+    firstText:
+      '【角色扮演要求】接下来整场对话你都要守住系统提示里的人设：回答正文用角色口吻；思维链（reasoning）也用这个角色的第一人称、中文来写（"我觉得……""我该……"），把对方称为"主人"，不要出现"用户""the user"这类说法。',
+    text: '',
+    checks: ['zh', 'firstPerson'],
+  },
+]
+
 /** 给面板的每轮注入预设清单。 */
 export function everyTurnPresets() {
   return EVERY_TURN_PRESETS.map((preset) => ({ ...preset }))
+}
+
+/** 给面板的内置塔清单（v0.15）。 */
+export function everyTurnTowers() {
+  return EVERY_TURN_TOWERS.map((tower) => ({ ...tower, items: tower.items.map((item) => ({ ...item })) }))
+}
+
+/** 给面板的内置积木清单（预设 + 拆出来的首轮块），塔里引用的是这些 id。 */
+export function everyTurnBlocks() {
+  return [...EVERY_TURN_PRESETS, ...EVERY_TURN_EXTRA_BLOCKS].map((preset) => ({ ...preset }))
 }

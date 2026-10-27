@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-prefill",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "description": "DSH Web 会话预填装 + 注入闸门（Prefill Pack + Gate）",
@@ -15,6 +15,7 @@
     "./locale/*.json": "./locale/*.json"
   },
   "files": [
+    "blocks.js",
     "impl.js",
     "builtin-presets.js",
     "character-cards.js",
@@ -23,6 +24,7 @@
     "enabled.js",
     "workspace-instructions.js",
     "gate.js",
+    "injection-audit.js",
     "index.js",
     "client.js",
     "cordis.patch.yml",

@@ -26,7 +26,8 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { zstdDecompressSync } from 'node:zlib'
-import { builtinPreset, builtinSummaries, everyTurnPresets } from './builtin-presets.js'
+import { builtinPreset, builtinSummaries, everyTurnBlocks, everyTurnPresets, everyTurnTowers } from './builtin-presets.js'
+import { compileBench, makeBlock, normalizeChecks } from './blocks.js'
 import { historyToItems, turnRange } from './session-history.js'
 import { CHECK_IDS, autoParams, modeOf, splitTurns } from './inject-auto.js'
 import { applyEnabled, sanitizeEnabled } from './enabled.js'
@@ -227,15 +228,70 @@ function sanitizeTools(raw) {
  */
 export function sanitizeEveryTurn(raw) {
   if (raw === null || typeof raw !== 'object') return undefined
-  const text = typeof raw.text === 'string' ? raw.text : ''
-  const firstText = typeof raw.firstText === 'string' ? raw.firstText : ''
+  // v0.15：工作台（bench）随条目一起存；有工作台时 text / firstText / checks 由它编译得到，
+  // gate.js 仍然只读那三个字段，所以闸门零改动。
+  const bench = sanitizeBench(raw.bench)
+  const benchTowers = sanitizeBenchTowers(raw.benchTowers)
+  const compiled = bench.length > 0 ? compileBench(bench) : null
+  const text = compiled !== null ? compiled.text : typeof raw.text === 'string' ? raw.text : ''
+  const firstText = compiled !== null ? compiled.firstText : typeof raw.firstText === 'string' ? raw.firstText : ''
   if (raw.enabled !== true || (text.trim() === '' && firstText.trim() === '')) return undefined
   const untilTurn = Math.max(0, Math.floor(Number(raw.untilTurn) || 0))
-  const checks = Array.isArray(raw.checks) ? CHECK_IDS.filter((id) => raw.checks.includes(id)) : []
+  const checks =
+    compiled !== null ? compiled.checks : Array.isArray(raw.checks) ? CHECK_IDS.filter((id) => raw.checks.includes(id)) : []
   let mode = modeOf({ ...raw, untilTurn })
   if (mode === 'auto' && checks.length === 0) mode = untilTurn > 0 ? 'until' : 'always'
   const { warmup, streak, probation } = autoParams(raw.auto)
-  return { enabled: true, text, firstText, mode, untilTurn, checks, auto: { warmup, streak, probation } }
+  return {
+    enabled: true,
+    text,
+    firstText,
+    mode,
+    untilTurn,
+    checks,
+    auto: { warmup, streak, probation },
+    ...(bench.length > 0 ? { bench, benchTowers } : {}),
+  }
+}
+
+/** v0.15：工作台（面板层数据）—— 每块只留已知字段，文字截断防呆。 */
+function sanitizeBench(raw) {
+  if (!Array.isArray(raw)) return []
+  const out = []
+  for (const item of raw) {
+    if (item === null || typeof item !== 'object') continue
+    const ref = typeof item.ref === 'string' ? item.ref.slice(0, 120) : ''
+    if (ref === '') continue
+    out.push({
+      key: typeof item.key === 'string' && item.key !== '' ? item.key.slice(0, 40) : 'b' + (out.length + 1),
+      ref,
+      ...(typeof item.tower === 'string' && item.tower !== '' ? { tower: item.tower.slice(0, 120) } : {}),
+      name: typeof item.name === 'string' ? item.name.slice(0, 80) : '',
+      icon: typeof item.icon === 'string' ? item.icon.slice(0, 40) : '',
+      first: typeof item.first === 'string' ? item.first.slice(0, 20000) : '',
+      text: typeof item.text === 'string' ? item.text.slice(0, 20000) : '',
+      checks: normalizeChecks(item.checks),
+      edited: item.edited === true,
+      priority: item.priority === true,
+      builtin: item.builtin === true,
+    })
+  }
+  return out.slice(0, 60)
+}
+
+/** v0.15：台上的塔框（折叠状态）。 */
+function sanitizeBenchTowers(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === '' || value === null || typeof value !== 'object') continue
+    out[key.slice(0, 120)] = {
+      ref: typeof value.ref === 'string' ? value.ref.slice(0, 120) : key.slice(0, 120),
+      name: typeof value.name === 'string' ? value.name.slice(0, 80) : '',
+      collapsed: value.collapsed === true,
+    }
+  }
+  return out
 }
 
 /** 预设里的故事记忆摘要：{ text, throughTurn }；空 ⇒ undefined。 */
@@ -267,6 +323,52 @@ export function sanitizeCardRef(raw) {
 /** 基于角色卡的预设（0.14）：`layered: true` + 有效的角色卡引用。这种预设可以不带 items、可以存 everyTurn: null。 */
 export function isLayered(body) {
   return body !== null && typeof body === 'object' && body.layered === true && sanitizeCardRef(body.card) !== undefined
+}
+
+/** v0.15：我的积木的校验（面板那份走同一个 blocks.js，两边形状必须一致）。 */
+function sanitizeBlock(raw) {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const id = typeof raw.id === 'string' ? raw.id.trim() : ''
+  if (id === '' || id.length > 120) return undefined
+  const block = makeBlock({ ...raw, id })
+  if (block.text.trim() === '' && block.first.trim() === '') return undefined
+  return block
+}
+
+/** v0.15：积木塔的校验（塔里引用的积木可以带局部覆盖文字；引用不到的保留快照兜底）。 */
+function sanitizeTower(raw) {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const id = typeof raw.id === 'string' ? raw.id.trim() : ''
+  if (id === '' || id.length > 120) return undefined
+  const items = []
+  for (const item of Array.isArray(raw.items) ? raw.items.slice(0, 40) : []) {
+    if (item === null || typeof item !== 'object') continue
+    const ref = typeof item.ref === 'string' ? item.ref.trim() : ''
+    if (ref === '') continue
+    items.push({
+      ref: ref.slice(0, 120),
+      ...(typeof item.text === 'string' ? { text: item.text.slice(0, 20000) } : {}),
+      ...(typeof item.first === 'string' ? { first: item.first.slice(0, 20000) } : {}),
+      ...(item.snap !== null && typeof item.snap === 'object'
+        ? {
+            snap: {
+              name: String(item.snap.name ?? '').slice(0, 80),
+              first: String(item.snap.first ?? '').slice(0, 20000),
+              text: String(item.snap.text ?? '').slice(0, 20000),
+              checks: normalizeChecks(item.snap.checks),
+            },
+          }
+        : {}),
+    })
+  }
+  return {
+    id,
+    name: typeof raw.name === 'string' && raw.name.trim() !== '' ? raw.name.trim().slice(0, 80) : id,
+    icon: typeof raw.icon === 'string' ? raw.icon.slice(0, 40) : '',
+    ...(typeof raw.desc === 'string' && raw.desc !== '' ? { desc: raw.desc.slice(0, 300) } : {}),
+    items,
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 /** 会话里最后一轮的轮号（没有 = 0）。 */
@@ -639,8 +741,10 @@ async function handle(payload, decision, seat) {
     return decision
   }
   try {
-    const next = await gate.step({ readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore }, { ...payload, __seat: seat }, decision)
-    return next ?? decision
+    const api = { readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore }
+    const next = (await gate.step(api, { ...payload, __seat: seat }, decision)) ?? decision
+    // 用户点过「阻断」的消息来源（会话级 + 全局记住）：不论会话是否武装都生效。
+    return typeof gate.applyMessageBlocks === 'function' ? gate.applyMessageBlocks(api, payload, decision, next) : next
   } catch (error) {
     note({ seat, error: String(error?.message ?? error) })
     return decision
@@ -680,6 +784,17 @@ export function apply(ctx) {
     },
     { prepend: true },
   )
+
+  // 注入审计：盯着落进会话、会进模型的消息（含绕过 pre-step 直接写入的），未登记的记下来给面板。
+  ctx.on('session/event', (session, event) => {
+    const gate = gateCache.module
+    if (typeof gate?.auditEvent !== 'function') return
+    try {
+      gate.auditEvent(api(), session, event)
+    } catch (error) {
+      note({ audit: 'error', error: String(error?.message ?? error) })
+    }
+  })
 
   // 轮即将结束：此刻 flush 延后的重挂 —— 本轮装配已成过去、下一轮装配尚未发生。
   ctx.on('agent/turn-stopping', async (payload) => {
@@ -841,6 +956,8 @@ export function apply(ctx) {
         // Q17：可改的注入清单 = **预置 catalog**（全局 prompt 层的真实注册名）+ 每会话已发现的条目。
         // 有 catalog，用户就能在某条注入还没出现过时先写好改写（"直接劫持"）。
         injections: typeof gateCache.module?.injections === 'function' ? gateCache.module.injections(rootCtxRef) : {},
+        // 疑似未登记注入（每会话）：面板据此给出「本会话阻断 / 全局记住」。
+        audit: typeof gateCache.module?.auditSnapshot === 'function' ? gateCache.module.auditSnapshot() : {},
         // 工具放行：catalog = 扫到的工具名（装配看到的）+ 官方可限制名单；sessions = 每会话装配到的工具。
         // 注意：**不改工具说明**（工具类注入一律忽略），这里只管"能不能用"。
         tools: typeof gateCache.module?.tools === 'function' ? gateCache.module.tools(rootCtxRef) : { catalog: [], sessions: {} },
@@ -1010,6 +1127,63 @@ export function apply(ctx) {
 
             if (op === 'list') {
               // 无操作，直接回列表。
+            } else if (op === 'block-save') {
+              // v0.15：新建 / 覆盖「我的积木」（含遮内置的「我的版本」）。
+              const block = sanitizeBlock(body?.block)
+              if (block === undefined) reason = 'invalid block'
+              else {
+                patchState({ blocks: { ...(readState()?.blocks ?? {}), [block.id]: block } })
+                extra = { id: block.id }
+              }
+            } else if (op === 'block-delete') {
+              const id = typeof body?.id === 'string' ? body.id : ''
+              const state = readState()
+              const blocks = state?.blocks ?? {}
+              const towers = state?.towers ?? {}
+              const affected = Object.values(towers)
+                .filter((tower) => (Array.isArray(tower?.items) ? tower.items : []).some((item) => item?.ref === id))
+                .map((tower) => tower.id)
+              if (id === '') reason = 'missing id'
+              else if (body?.dryRun === true) {
+                // 只报影响面（面板先拿列表做确认）。
+              } else if (blocks[id] === undefined) reason = 'not found'
+              else {
+                const gone = blocks[id]
+                const nextBlocks = { ...blocks }
+                delete nextBlocks[id]
+                // 塔里保留文字快照：原积木删了，塔照常能发。
+                const snapshot = { name: gone.name, first: gone.first, text: gone.text, checks: [...gone.checks] }
+                const nextTowers = {}
+                for (const [key, tower] of Object.entries(towers)) {
+                  nextTowers[key] = {
+                    ...tower,
+                    items: (Array.isArray(tower?.items) ? tower.items : []).map((item) =>
+                      item?.ref === id ? { ...item, snap: item.snap ?? snapshot } : item,
+                    ),
+                  }
+                }
+                patchState({ blocks: nextBlocks, towers: nextTowers })
+              }
+              extra = { affected }
+            } else if (op === 'tower-save') {
+              const tower = sanitizeTower(body?.tower)
+              if (tower === undefined) reason = 'invalid tower'
+              else {
+                patchState({ towers: { ...(readState()?.towers ?? {}), [tower.id]: tower } })
+                extra = { id: tower.id }
+              }
+            } else if (op === 'tower-delete') {
+              const id = typeof body?.id === 'string' ? body.id : ''
+              const towers = { ...(readState()?.towers ?? {}) }
+              if (id === '' || towers[id] === undefined) reason = 'not found'
+              else {
+                delete towers[id]
+                patchState({ towers })
+              }
+            } else if (op === 'hidden-set') {
+              // 隐藏的内置积木 / 塔（设置里可找回）。
+              const ids = Array.isArray(body?.ids) ? body.ids.filter((value) => typeof value === 'string' && value !== '').slice(0, 200) : []
+              patchState({ hiddenBuiltins: ids })
             } else if (op === 'builtin') {
               const id = typeof body?.id === 'string' ? body.id : ''
               const preset = builtinPreset(id)
@@ -1092,7 +1266,21 @@ export function apply(ctx) {
 
             note({ seat: 'packs-route', op, sessionId, workspace: workspace ?? '(global)', count: packs.length, reason })
             return Response.json(
-              { ok: true, op, packs: packSummaries(packs), builtins: builtinSummaries(), everyTurnPresets: everyTurnPresets(), file, reason, ...envelope() },
+              {
+                ok: true,
+                op,
+                packs: packSummaries(packs),
+                builtins: builtinSummaries(),
+                everyTurnPresets: everyTurnPresets(),
+                everyTurnTowers: everyTurnTowers(),
+                everyTurnBlocks: everyTurnBlocks(),
+                blocks: Object.values(readState()?.blocks ?? {}),
+                towers: Object.values(readState()?.towers ?? {}),
+                hiddenBuiltins: Array.isArray(readState()?.hiddenBuiltins) ? readState().hiddenBuiltins : [],
+                file,
+                reason,
+                ...envelope(),
+              },
               noStore,
             )
           },
