@@ -5023,15 +5023,24 @@ window.__ModuleLoader__.load({
         const first = String((entry && entry.firstText) ?? '')
         const checks = normalizeChecks(entry && entry.checks)
         if (text.trim() === '' && first.trim() === '') return { bench: [], benchTowers: {} }
+        // 旧 checks 是独立勾选的：认出积木时保留旧 checks；塔的 checks 对不上就不认成塔（与 blocks.js 同一份逻辑）。
+        const sameChecks = (list) => list.length === checks.length && list.every((id, index) => id === checks[index])
         const block = blocks.find((candidate) => String(candidate.first ?? '') === first && String(candidate.text ?? '') === text)
-        if (block !== undefined) return { bench: [benchBlockOf(block, key())], benchTowers: {} }
+        if (block !== undefined) {
+          const placed = benchBlockOf(block, key())
+          if (!sameChecks(placed.checks)) {
+            placed.checks = [...checks]
+            placed.edited = true
+          }
+          return { bench: [placed], benchTowers: {} }
+        }
         // 旧模型里 firstText === '' 表示「没有首轮专用段」；工作台里如果每块都没有 first，
         // 编译出来的 firstText 会等于 text。两种写法等价，都要认（与 blocks.js 同一份逻辑）。
         const sameFirst = (compiled) => compiled.firstText === first || (first.trim() === '' && compiled.firstText === compiled.text)
         for (const tower of towers) {
           const flat = flattenTower(tower, towers, blocks).map((item, index) => benchBlockOf(item, 't' + index))
           const compiled = compileBench(flat)
-          if (compiled.text === text && sameFirst(compiled)) {
+          if (compiled.text === text && sameFirst(compiled) && sameChecks(compiled.checks)) {
             return {
               bench: addTowerToBench([], tower, towers, blocks, key),
               benchTowers: { [tower.id]: { ref: tower.id, name: tower.name, collapsed: false } },
