@@ -3,6 +3,18 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **会话沙盒第 1 步：合并规则表 + 迁移旧字段**（issue #15，数据层；旧数据行为不变）。原来散在 state.json 顶层的 `overrides` / `sessionAllowKinds` / `sessionTools` / `injectionBlocks`（注入审计的按名阻断）/ `gate[会话] = 'pure'` 合成一张表 `state.sandbox[会话 | '*'] = { level, own, rules: [{ match, action: allow | deny | rewrite, … }] }`，规划见 `docs/会话沙盒-规划.md`。
+  - match 只认一个维度：`kind`（消息 source.kind）/ `section` / `context` / `tool`，值里的 `*` 是通配（`team:*` 前缀）；旧字段迁来的名字都带 `exact: true`，旧名单里字面的 `*` 不会变成「全部」。
+  - 优先级：会话规则 > 全局规则 > 档位默认；`own` 了某一族的作用域不回落 `'*'`（旧字段迁来的都带 own，所以和以前「会话格整格遮住通配格」一致）。`prefill:*`、用户原话、DSH 协议（工具结果 / checkpoint / 墓碑）恒放行，deny 不到。
+  - **新语义：会话作用域的 allow 能盖过全局（`'*'`）的 deny；同一作用域内 deny 优先于 allow。** 内容上：会话 deny > 会话 allow > 全局 deny > 全局 allow / 改写 > 档位默认（闸门阻断名单 = 会话 deny ∪（全局 deny − 会话 allow），通配也认）。工具上每个作用域依次「显式 deny > allow > 兜底 `tool:*` deny」，会话在全局之前；兜底 deny 是白名单的「其余一律拦」，不算同作用域的 deny。
+  - 旧数据不受影响：旧 `sessionAllowKinds` 迁来的 allow 带 `soft: true`（软放行，只抬纯净模式的默认、盖不过任何 deny）—— 0.15.2 里「会话白名单 ∩ 全局阻断」是拦的，迁移后照拦；旧字段里本来没有能盖过全局阻断的会话 allow。新语义只对之后直接写进规则表的硬放行生效（面板第 3 步之前仍写旧 `sessionAllowKinds`，吸收成软放行）。
+  - 迁移：读取时做（`normalizeState` → `migrateSandbox`，幂等），内存里只剩 `sandbox`。`gate` 里只迁 `'pure'` 的格（→ `level: 'strict'`），`replace` / `pass` 留在 `gate`。档位目前只有严格（= 纯净模式）和观察（默认，= 现状）；受控档和来源包是第 2 步。
+  - **防降级（镜像）**：写盘时除了 `sandbox`，同时写回由规则表推出的旧字段（`overrides` / `sessionAllowKinds` / `sessionTools` / `injectionBlocks` / `gate` 的 `'pure'` 格）和每个镜像字段的指纹 `sandboxMirror`。退回 0.15.2 读同一份 `state.json` 配置照样生效，不用先备份。回到新版读盘时以新表为准：指纹对得上的旧字段只是镜像、直接丢掉；对不上的说明被旧版本改过，只把那一族按旧字段重新迁移（`gate` 对不上则按它重推严格档，删掉 / 改成非 pure 的格撤掉严格档）。规则表里旧字段表达不了的（通配 deny、硬放行、受控档等）镜像只写能表达的部分，旧版本按旧语义读，只要旧版本没改那一族，回来时原样还在。
+  - 闸门（`gate.js`）改为经 `resolveSandbox(state, 会话)` 读：放行清单、改写、工具白名单、阻断名单、纯净模式判定。`injection-audit.js` 的 `blocksFor` 变成它的薄包装。
+  - 面板（`client.js`）一行没改：状态路由给它 `withLegacyView(state)`（由规则表推出的旧字段 + `sandbox`），它照旧整张写回旧字段，`normalizeState` 里整族吸收进规则表。`applyEnabled`（左栏停用开关）同样先补回旧字段再遮。
+  - 新文件 `sandbox.js`（已加进 `package.json` 的 `files`），单测 `tests/sandbox.test.mjs`（32 项：每种旧字段的迁移结果、幂等、兼容视图往返、和旧读法逐会话等价、匹配语义、优先级（全局 deny + 会话 allow 放行 / 同作用域 deny 先于 allow / 全局 deny 无会话规则照拦 / 工具白名单 / 旧阻断名单迁来照拦）、写盘镜像（0.15.2 读法读镜像 = 读原旧字段、读回幂等、旧版本改过某族 / gate / 白名单时只重迁那一族）、`prefill:*` 不可阻断、9 个场景下迁移前后及写盘再读回后 `step()` 的返回 / 挂载动作 / 快照完全一致）。
+
 ## 0.15.2 — 2026-10-27
 - **角色卡塔拆成 3 块**（0.15 的已知限制之一）。以前整张卡的每轮提醒是一块「角色卡：<名字>」；现在按卡的编译结果拆成「角色提醒」「中文思考」「第一人称思考」三块（卡关掉哪个选项就少哪块），可以单独拿掉某一块、单独改它，也说清楚每块占多少字。
   - 卡里那三个开关（角色提醒 / 中文思考 / 第一人称）现在直接操作工作台上的块：点「中文思考」= 往工作台加一块 / 拿掉一块；块卡片上的 × 同理。之所以不调卡的 setCardThinking：那会重编译整张卡并整体写回 everyTurn，把工作台（包括自己写的块）一起冲掉。
