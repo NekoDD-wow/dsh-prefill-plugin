@@ -335,6 +335,41 @@ function sanitizeBlock(raw) {
   return block
 }
 
+/**
+ * 预设里存的世界书（0.15+，本会话改过的世界书「保存为预设」时整份存）：只留匹配要用的字段，文字截断防呆。
+ * 形状同 character-cards.js 的 compileLore（外加渲染用的 char）；custom / source / enabled 是会话标记，不存。
+ */
+export function sanitizeLore(raw) {
+  if (raw === null || typeof raw !== 'object' || !Array.isArray(raw.entries)) return undefined
+  const strs = (list, max) => (Array.isArray(list) ? list.filter((key) => typeof key === 'string' && key.trim() !== '').map((key) => key.trim().slice(0, 200)).slice(0, max) : [])
+  const entries = []
+  for (const entry of raw.entries.slice(0, 500)) {
+    if (entry === null || typeof entry !== 'object') continue
+    const id = typeof entry.id === 'string' || Number.isFinite(entry.id) ? entry.id : entries.length
+    const probability = Number(entry.probability)
+    entries.push({
+      id,
+      title: typeof entry.title === 'string' ? entry.title.slice(0, 200) : '',
+      keys: strs(entry.keys, 50),
+      secondary: strs(entry.secondary, 50),
+      logic: [0, 1, 2, 3].includes(Number(entry.logic)) ? Number(entry.logic) : 0,
+      caseSensitive: entry.caseSensitive === true,
+      wholeWords: typeof entry.wholeWords === 'boolean' ? entry.wholeWords : null,
+      probability: Number.isFinite(probability) ? Math.max(0, Math.min(100, probability)) : 100,
+      order: Number(entry.order) || 0,
+      content: typeof entry.content === 'string' ? entry.content.slice(0, 20000) : '',
+    })
+  }
+  const depth = Number(raw.scanDepth)
+  const budget = Number(raw.budget)
+  return {
+    ...(Number.isFinite(depth) && depth > 0 ? { scanDepth: Math.floor(depth) } : {}),
+    ...(Number.isFinite(budget) && budget > 0 ? { budget: Math.floor(budget) } : {}),
+    ...(typeof raw.char === 'string' ? { char: raw.char.slice(0, 200) } : {}),
+    entries,
+  }
+}
+
 /** v0.15：积木塔的校验（塔里引用的积木可以带局部覆盖文字；引用不到的保留快照兜底）。 */
 function sanitizeTower(raw) {
   if (raw === null || typeof raw !== 'object') return undefined
@@ -1114,6 +1149,8 @@ export function apply(ctx) {
                 ...(extra.everyTurn === undefined ? {} : { everyTurn: extra.everyTurn }),
                 ...(extra.memorySeed === undefined ? {} : { memorySeed: extra.memorySeed }),
                 ...(extra.card === undefined ? {} : { card: extra.card }),
+                // 改过的世界书（0.15+）：只在带着角色卡时存（世界书跟卡走）；角色卡文件本身不动。
+                ...(extra.lore === undefined || extra.card === undefined ? {} : { lore: extra.lore }),
                 // 左栏启用开关（v0.10）：只存关掉的项；全开 = 不存。
                 ...(extra.enabled === undefined ? {} : { enabled: extra.enabled }),
                 // 工作区说明（AGENTS.md / CLAUDE.md）：只存模式 + 改写正文，从不存文件原文；原样 = 不存。
@@ -1233,7 +1270,7 @@ export function apply(ctx) {
               if (name === '') reason = 'missing name'
               else if (items === undefined && !layered) reason = 'invalid items[]'
               else if (memorySeed !== undefined && cut > 0 && memorySeed.throughTurn > cut) reason = 'memory summary covers turns after the cut'
-              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed, card: sanitizeCardRef(body?.card), enabled: sanitizeEnabled(body?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(body?.workspaceInstructions) })
+              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed, card: sanitizeCardRef(body?.card), lore: sanitizeLore(body?.lore), enabled: sanitizeEnabled(body?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(body?.workspaceInstructions) })
             } else if (op === 'delete') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const next = packs.filter((entry) => entry.name !== name)
@@ -1258,7 +1295,7 @@ export function apply(ctx) {
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
                 if ((items === undefined && !layered) || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: layered && parsed?.everyTurn === null ? null : sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
+                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: layered && parsed?.everyTurn === null ? null : sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), lore: sanitizeLore(parsed?.lore), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
               }
             } else {
               reason = `unknown op "${op}"`

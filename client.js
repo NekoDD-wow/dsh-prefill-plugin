@@ -680,6 +680,11 @@ window.__ModuleLoader__.load({
       benchFromBuiltin: '内置',
       benchFromMine: '我的',
       benchEdited: '改过',
+      benchExpand: '展开',
+      benchCollapse: '收起',
+      benchExpandAll: '全部展开',
+      benchCollapseAll: '长块全部收起',
+      benchFoldedMeta: '{n} 字 · 点开编辑',
       benchFirstTag: '首轮 ▾',
       benchSaveMine: '存为我的积木',
       benchMySuffix: '（我的）',
@@ -720,6 +725,9 @@ window.__ModuleLoader__.load({
       benchTowerDefaultName: '我的塔',
       benchRenameAsk: '改名',
       cardTowerName: '角色卡：{name}',
+      cardBlockReinforce: '角色提醒',
+      cardBlockZh: '中文思考',
+      cardBlockFirstPerson: '第一人称思考',
       blockDeleted: '已删除我的积木',
       towerSaved: '已存为我的塔',
       check_zh: '中文',
@@ -1000,6 +1008,11 @@ window.__ModuleLoader__.load({
       benchFromBuiltin: 'built-in',
       benchFromMine: 'mine',
       benchEdited: 'edited',
+      benchExpand: 'Expand',
+      benchCollapse: 'Collapse',
+      benchExpandAll: 'Expand all',
+      benchCollapseAll: 'Collapse long blocks',
+      benchFoldedMeta: '{n} chars · click to edit',
       benchFirstTag: 'first turn ▾',
       benchSaveMine: 'Save as my block',
       benchMySuffix: ' (mine)',
@@ -1040,6 +1053,9 @@ window.__ModuleLoader__.load({
       benchTowerDefaultName: 'My tower',
       benchRenameAsk: 'Rename',
       cardTowerName: 'Card: {name}',
+      cardBlockReinforce: 'Role reminder',
+      cardBlockZh: 'Chinese thinking',
+      cardBlockFirstPerson: 'First-person thinking',
       blockDeleted: 'My block deleted',
       towerSaved: 'Saved as my tower',
       check_zh: 'Chinese',
@@ -1222,6 +1238,20 @@ window.__ModuleLoader__.load({
       loreHint: '角色卡里带关键词的设定条目：每轮扫描最近 {depth} 条消息，命中关键词的条目才注入，没命中不花 token。',
       loreEmpty: '还没有世界书。套用一张带世界书（character_book）的角色卡后，这里会列出它的关键词条目。',
       loreKeys: '关键词',
+      loreEditHint: '可以直接改：改动只对本会话生效；「保存为预设」时会一起存进预设，以后套用这个预设就是改过的版本。不会改动角色卡本身。',
+      loreCustomBar: '本会话的世界书和角色卡里的不一样了。',
+      loreRevert: '还原成角色卡里的',
+      loreEdit: '编辑',
+      loreDone: '完成',
+      loreDelete: '删除',
+      loreAdd: '新条目',
+      loreNewTitle: '新条目',
+      loreTitleLabel: '标题',
+      loreKeysLabel: '关键词（用 / 或逗号分隔）',
+      loreContentLabel: '内容',
+      loreMore: '再显示 {n} 条',
+      loreSaved: '世界书已保存（本会话）',
+      loreNoKeys: '没有关键词的条目不会被匹配',
       loreOffBody: '条目都还在，只是不再匹配、不再注入。打开开关即恢复。',
       loreByCardBody: '角色卡关着，它带来的这一项也一起停用；打开角色卡即恢复。',
       memoryEveryMeta: '每 {n} 轮总结一次',
@@ -1304,6 +1334,20 @@ window.__ModuleLoader__.load({
       loreHint: 'Keyword entries from the character card: each turn the last {depth} messages are scanned and only matching entries are injected.',
       loreEmpty: 'No lorebook yet. Apply a character card that has a character_book to see its keyword entries here.',
       loreKeys: 'Keys',
+      loreEditHint: 'Editable: changes apply to this session only; Save as preset stores them in the preset, so applying it later gives the edited version. The character card itself is never changed.',
+      loreCustomBar: 'This session\'s lorebook differs from the card.',
+      loreRevert: 'Restore from card',
+      loreEdit: 'Edit',
+      loreDone: 'Done',
+      loreDelete: 'Delete',
+      loreAdd: 'New entry',
+      loreNewTitle: 'New entry',
+      loreTitleLabel: 'Title',
+      loreKeysLabel: 'Keys (separate with / or commas)',
+      loreContentLabel: 'Content',
+      loreMore: 'Show {n} more',
+      loreSaved: 'Lorebook saved (this session)',
+      loreNoKeys: 'An entry without keys never matches',
       loreOffBody: 'Entries are kept; they are just not matched or injected. Turn it back on to restore.',
       loreByCardBody: 'The character card is off, so this is paused with it; turn the card on to restore.',
       memoryEveryMeta: 'summarizes every {n} turns',
@@ -2604,7 +2648,21 @@ window.__ModuleLoader__.load({
           from[key] = 'card'
         } else out[key] = null
       }
+      // 世界书（0.15+）：预设里存了改过的世界书就用它，不再从卡现编译；世界书跟卡走，没套上卡就不带。
+      // 开关沿用卡引用上的「世界书」选项。
+      const packLore = pack?.lore
+      if (packLore !== null && typeof packLore === 'object' && Array.isArray(packLore.entries) && out.card !== null) {
+        out.lore = { ...packLore, enabled: out.card?.opts?.lore !== false, custom: true, source: 'preset' }
+        from.lore = 'preset'
+      }
       return { resolved: out, from }
+    }
+
+    /** 存进预设的世界书：只留匹配要用的字段（custom / source / enabled 是本会话的标记，不存）。 */
+    function lorePackOf(lore) {
+      if (lore === null || typeof lore !== 'object' || lore.custom !== true || !Array.isArray(lore.entries)) return undefined
+      const { custom: _c, source: _s, enabled: _e, ...rest } = lore
+      return rest
     }
 
     /** 每轮注入只比较配置（不比较运行时盖的 since / override）。 */
@@ -2697,6 +2755,9 @@ window.__ModuleLoader__.load({
       // 默认值不用存。
       if (out.workspaceInstructions === null) delete out.workspaceInstructions
       for (const key of ['enabled', 'memorySeed']) if (session?.[key] !== undefined && session[key] !== null) out[key] = session[key]
+      // 世界书：本会话改过（或来自存过世界书的预设）就整份存；没改 = 不存，套用时照旧从卡现编译。
+      const lore = lorePackOf(session?.lore)
+      if (lore !== undefined) out.lore = lore
       return out
     }
 
@@ -3018,6 +3079,15 @@ window.__ModuleLoader__.load({
       const [everyTurnBlockList, setEveryTurnBlockList] = React.useState([])
       const [everyTurnTowerList, setEveryTurnTowerList] = React.useState([])
       const [everyTurnDraft, setEveryTurnDraft] = React.useState(null)
+      // 世界书本会话修改（草稿先显示、去抖后写 state.lore[会话]）；展开 / 编辑中的条目、显示条数只在面板本地。
+      const [loreDraft, setLoreDraft] = React.useState(null)
+      const [loreOpen, setLoreOpen] = React.useState(() => new Set())
+      const [loreEditing, setLoreEditing] = React.useState('')
+      const [loreShown, setLoreShown] = React.useState(40)
+      const loreTimer = React.useRef(null)
+      // 工作台长块折叠：记「展开着的块 key」（只在面板本地，不写 state）。
+      const [benchOpen, setBenchOpen] = React.useState(() => new Set())
+      const benchFocusNext = React.useRef('')
       // v0.15 工作台：这些 hook 必须放在组件早退之前，否则 hook 数量会变（React #310）。
       const [benchPreview, setBenchPreview] = React.useState(false)
       const [benchMenu, setBenchMenu] = React.useState(null)
@@ -3064,6 +3134,13 @@ window.__ModuleLoader__.load({
 
       const everyTurnTimer = React.useRef(0)
       React.useEffect(() => setEveryTurnDraft(null), [sessionId])
+      React.useEffect(() => {
+        clearTimeout(loreTimer.current)
+        setLoreDraft(null)
+        setLoreEditing('')
+        setLoreOpen(new Set())
+        setLoreShown(40)
+      }, [sessionId])
       // 工作区说明（AGENTS.md / CLAUDE.md）：改写正文的草稿（700ms 落盘）。
       const [wsDraft, setWsDraft] = React.useState(null)
       const wsTimer = React.useRef(0)
@@ -3606,6 +3683,8 @@ window.__ModuleLoader__.load({
         systemDirty.current = false
         setSystemDraft(typeof text === 'string' ? text : '')
         setEveryTurnDraft(null)
+        clearTimeout(loreTimer.current)
+        setLoreDraft(null)
         setWsDraft(null)
         // 开场对话整体替换（只改草稿：会话已经开跑时，写进历史的那几条不动）。
         // 先挡住写状态后的广播刷新（别让 host 的旧草稿盖掉），草稿在写状态之后落盘：草稿路由按新系统提示预热合成轮。
@@ -3682,6 +3761,8 @@ window.__ModuleLoader__.load({
         systemDirty.current = false
         setSystemDraft(typeof text === 'string' ? text : '')
         setEveryTurnDraft(null)
+        clearTimeout(loreTimer.current)
+        setLoreDraft(null)
         setWsDraft(null)
         injectionDrafts.set(sessionId, snap.maps.overrides ?? { messages: {}, sections: {}, contexts: {} })
         setEnvelope(await postJson(STATE_ROUTE, patch))
@@ -3775,7 +3856,8 @@ window.__ModuleLoader__.load({
         const put = (map, value) => (value === null || value === undefined ? without(map, sessionId) : { ...(map ?? {}), [sessionId]: value })
         const patch = {
           cardRef: put(st.cardRef, { ...ref, applied: appliedPrints(got.compiled) }),
-          lore: put(st.lore, got.layer.lore),
+          // 本会话改过的世界书（或来自预设的）不被重新编译盖掉。
+          lore: st.lore?.[sessionId]?.custom === true ? st.lore : put(st.lore, got.layer.lore),
           memory: put(st.memory, got.layer.memory),
           slotSource: put(st.slotSource, nextSource),
         }
@@ -3946,13 +4028,15 @@ window.__ModuleLoader__.load({
             if (card !== null && saveOnCard) {
               const got = await compileCardLayer(card, null)
               if (got !== null) {
-                const session = { overrides, gate: gateMode, tools, everyTurn: everyTurnStored, items, enabled: ownEnabled, workspaceInstructions: wsPreset }
+                const session = { overrides, gate: gateMode, tools, everyTurn: everyTurnStored, items, enabled: ownEnabled, workspaceInstructions: wsPreset, lore: loreDraft ?? state?.lore?.[sessionId] ?? null }
                 const diff = cardDiff(session, got.layer)
                 layerFrom = resolveLayers(got.layer, diff)
                 return packsCall({ op: 'save', name, layered: true, card, ...diff, ...seed })
               }
             }
-            return packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(wsPreset ? { workspaceInstructions: wsPreset } : {}), ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}), ...seed })
+            // 世界书改过就整份存进预设（只在带着角色卡时有意义）；角色卡本身不动。
+            const lorePack = card ? lorePackOf(loreDraft ?? state?.lore?.[sessionId] ?? null) : undefined
+            return packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(wsPreset ? { workspaceInstructions: wsPreset } : {}), ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}), ...(lorePack !== undefined ? { lore: lorePack } : {}), ...seed })
           })
           .then((data) => {
             adoptPacks(data)
@@ -3963,7 +4047,12 @@ window.__ModuleLoader__.load({
                 activePreset: { ...(fresh?.state?.activePreset ?? {}), [sessionId]: `pack:${name}` },
                 // 来源标签跟着变：存下的格 = 来自预设，没存的（基于角色卡时）= 来自角色卡。
                 slotSource: { ...(fresh?.state?.slotSource ?? {}), [sessionId]: layerFrom ? slotSourceOf(layerFrom.resolved, layerFrom.from) : slotSourceOf({ overrides: fresh?.state?.overrides?.[sessionId], gate: gateMode, tools: fresh?.state?.sessionTools?.[sessionId] ?? null, everyTurn: fresh?.state?.everyTurn?.[sessionId], items, workspaceInstructions: wsPreset }, { overrides: 'preset', gate: 'preset', tools: 'preset', everyTurn: 'preset', items: 'preset', workspaceInstructions: 'preset' }) },
+                // 改过的世界书存进了预设：来源标签改成「来自预设」。
+                ...(fresh?.state?.lore?.[sessionId]?.custom === true
+                  ? { lore: { ...fresh.state.lore, [sessionId]: { ...fresh.state.lore[sessionId], source: 'preset' } } }
+                  : {}),
               }).then((next) => {
+                setLoreDraft(null)
                 setEnvelope(next)
                 setPackName(name)
                 setMenu('')
@@ -4073,6 +4162,8 @@ window.__ModuleLoader__.load({
           gate: gateMode,
           ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}),
           ...(card === null || card === undefined ? {} : { card }),
+          // 改过的世界书跟着导出（只在带角色卡引用时；导入方需要有同一张卡）。
+          ...(card === null || card === undefined || lorePackOf(loreDraft ?? state?.lore?.[sessionId] ?? null) === undefined ? {} : { lore: lorePackOf(loreDraft ?? state?.lore?.[sessionId] ?? null) }),
           ...(memorySeed === undefined ? {} : { memorySeed }),
           // 启用开关同样属于「面板下面的东西」：导出不带它，导入后关掉的项会悄悄全开。
           ...(ownEnabled && Object.keys(ownEnabled).length > 0 ? { enabled: ownEnabled } : {}),
@@ -5071,16 +5162,59 @@ window.__ModuleLoader__.load({
       const visibleTowers = allTowers.filter((tower) => !hiddenBuiltins.includes(tower.id))
 
       const storedEveryTurn = state?.everyTurn?.[sessionId] ?? state?.everyTurn?.['*'] ?? null
+      // ── 角色卡塔（0.15.1）：把卡的每轮提醒拆成 1–3 块 ─────────────────
+      // 卡编译出的每轮提醒 = 角色提醒 + 中文思考行 + 第一人称行。拆成「角色提醒」「中文思考」
+      // 「第一人称思考」三块：块的去留 = 那几行在不在工作台上。
+      const CARD_ZH_TEXT = '思维链（reasoning）全程用中文。'
+      const CARD_FP_PATTERN = /思维链也用[^。]*第一人称来想，不要把对方称为"用户"(?:，就叫[^。]*)?。/
+      const cardChar = String(appliedCardName ?? '')
+      const cardUserName = String(appliedRef?.opts?.userName ?? '').trim()
+      const CARD_FP_TEXT =
+        '思维链也用' + cardChar + '的第一人称来想，不要把对方称为"用户"' + (cardUserName === '' ? '' : '，就叫' + cardUserName) + '。'
+      const cardBenchBlocks = (() => {
+        const compiled = appliedCompiled
+        if (appliedRef === null || appliedRef === undefined || compiled === null || compiled === undefined) return []
+        let raw = String(compiled.everyTurn?.text ?? '')
+        if (raw.trim() === '') return []
+        let zh = ''
+        let fp = ''
+        const fpMatch = raw.match(CARD_FP_PATTERN)
+        if (fpMatch !== null) { fp = fpMatch[0]; raw = raw.replace(fp, '') }
+        if (raw.includes(CARD_ZH_TEXT)) { zh = CARD_ZH_TEXT; raw = raw.replace(CARD_ZH_TEXT, '') }
+        const base = raw.replace(/[ \t]+\n/g, '\n').trim()
+        const firstText = String(compiled.everyTurn?.firstText ?? '')
+        const towerName = t('cardTowerName').replace('{name}', cardChar)
+        const name = t('cardBlockReinforce')
+        const out = []
+        if (base !== '') out.push({ ...makeBlock({ id: 'card:reinforce', name, icon: 'user', first: firstText, text: base, checks: [], builtin: false }), towerName })
+        if (zh !== '') out.push(makeBlock({ id: 'card:zh', name: t('cardBlockZh'), icon: 'user', first: '', text: zh, checks: ['zh'], builtin: false }))
+        if (fp !== '') out.push(makeBlock({ id: 'card:firstPerson', name: t('cardBlockFirstPerson'), icon: 'user', first: '', text: fp, checks: ['firstPerson'], builtin: false }))
+        return out
+      })()
+      const cardTower = cardBenchBlocks.length === 0 ? null : {
+        id: 'card',
+        name: String(cardBenchBlocks[0].towerName ?? cardChar),
+        icon: 'user',
+        builtin: false,
+        card: true,
+        items: cardBenchBlocks.map((block) => ({ ref: block.id, snap: { name: block.name, first: block.first, text: block.text, checks: block.checks } })),
+      }
       const storedMode =
         storedEveryTurn?.mode === 'auto' || storedEveryTurn?.mode === 'until' || storedEveryTurn?.mode === 'always'
           ? storedEveryTurn.mode
           : Number(storedEveryTurn?.untilTurn) > 0
             ? 'until'
             : 'always'
+      // 卡塔迁移也要用确定的 key：#17 之后迁移 key 必须稳定，否则 textarea 每次渲染被重挂。
+      const cardMigrateKeys = migrateKeys()
       // v0.15：条目里有 bench 就用它；旧条目（只有 text/firstText/checks）读取时迁移成工作台。
       const benchMigrated = Array.isArray(storedEveryTurn?.bench)
         ? { bench: storedEveryTurn.bench, benchTowers: storedEveryTurn.benchTowers ?? {} }
-        : migrateEveryTurn(storedEveryTurn, { blocks: allBlocks, towers: allTowers, makeKey: migrateKeys() })
+        : cardBenchBlocks.length > 0 &&
+            String(storedEveryTurn?.text ?? '') === String(appliedCompiled?.everyTurn?.text ?? '') &&
+            String(storedEveryTurn?.text ?? '').trim() !== ''
+          ? { bench: cardBenchBlocks.map((block) => benchBlockOf(block, cardMigrateKeys(), 'card')), benchTowers: { card: { ref: 'card', name: String(cardBenchBlocks[0].towerName ?? cardChar), collapsed: false } } }
+          : migrateEveryTurn(storedEveryTurn, { blocks: allBlocks, towers: allTowers, makeKey: migrateKeys() })
       const everyTurn = everyTurnDraft ?? {
         // 开/关归左栏那一个开关（state.enabled）；条目里的 enabled 只是旧值，由 everyTurnSwitchOn 兜住。
         enabled: true,
@@ -5146,6 +5280,12 @@ window.__ModuleLoader__.load({
       }
       // ── v0.15：工作台（积木 / 积木塔）────────────────────────────────────────
       const benchNarrow = bounds?.narrow === true
+      /** 输入框按内容自动增高（展开着的长块、世界书编辑）。 */
+      const autoGrow = (node) => {
+        if (node === null || node === undefined) return
+        node.style.height = 'auto'
+        node.style.height = node.scrollHeight + 2 + 'px'
+      }
       const bench = Array.isArray(everyTurn.bench) ? everyTurn.bench : []
       const benchTowers = everyTurn.benchTowers ?? {}
       const benchSummaryNow = benchSummary(bench)
@@ -5247,44 +5387,50 @@ window.__ModuleLoader__.load({
       }
       const hideBuiltin = (id) => setHiddenBuiltins([...new Set([...hiddenBuiltins, id])])
       const unhideBuiltin = (id) => setHiddenBuiltins(hiddenBuiltins.filter((value) => value !== id))
-      /** 角色卡塔（0.15）：套着卡时，卡的每轮提醒编译成一块「来自角色卡」的积木。 */
-      const cardBenchBlock = (() => {
-        const compiled = appliedCompiled
-        if (appliedRef === null || compiled === null || compiled === undefined) return null
-        const name = t('cardTowerName').replace('{name}', String(appliedRef.name ?? appliedRef.id ?? ''))
-        return makeBlock({
-          id: 'card:' + String(appliedRef.id ?? 'card'),
-          name,
-          icon: 'user',
-          first: String(compiled.everyTurn?.firstText ?? ''),
-          text: String(compiled.everyTurn?.text ?? ''),
-          checks: Array.isArray(compiled.everyTurn?.checks) ? compiled.everyTurn.checks : [],
-          builtin: false,
-        })
-      })()
-      const cardTower = cardBenchBlock === null ? null : {
-        id: 'card',
-        name: cardBenchBlock.name,
-        icon: 'user',
-        builtin: false,
-        card: true,
-        items: [{ ref: cardBenchBlock.id, snap: { name: cardBenchBlock.name, first: cardBenchBlock.first, text: cardBenchBlock.text, checks: cardBenchBlock.checks } }],
-      }
-      const cardTowerOnBench = cardBenchBlock !== null && bench.some((block) => block.ref === cardBenchBlock.id)
-      /** 放进 / 换成最新的角色卡提醒。 */
+      const cardTowerOnBench = cardTower !== null && bench.some((block) => block.tower === 'card' || block.ref.startsWith('card:'))
+      /** 放进 / 换成最新的角色卡塔（卡编译出几块就放几块）。 */
       const applyCardTower = () => {
-        if (cardBenchBlock === null) return
-        const others = bench.filter((block) => block.ref !== cardBenchBlock.id)
-        setBench([...others, benchBlockOf(cardBenchBlock, nextBenchKey(), 'card')], {
+        if (cardTower === null) return
+        const others = bench.filter((block) => !block.ref.startsWith('card:'))
+        setBench([...others, ...cardBenchBlocks.map((block) => benchBlockOf(block, nextBenchKey(), 'card'))], {
           ...benchTowers,
           card: { ref: 'card', name: cardTower.name, collapsed: false },
         })
       }
       const removeCardTower = () => {
-        if (cardBenchBlock === null) return
         const next = { ...benchTowers }
         delete next.card
-        setBench(bench.filter((block) => block.ref !== cardBenchBlock.id), next)
+        setBench(bench.filter((block) => !block.ref.startsWith('card:')), next)
+      }
+      /** 卡塔里的「中文思考 / 第一人称思考」：只在工作台上加 / 减一块 —— 不动卡本身，
+       *  免得卡重编译把整张工作台冲掉。 */
+      const toggleCardBlock = (kind) => {
+        if (appliedRef === null || appliedRef === undefined) return
+        const ref = kind === 'zh' ? 'card:zh' : 'card:firstPerson'
+        if (bench.some((block) => block.ref === ref)) {
+          setBench(bench.filter((block) => block.ref !== ref))
+          return
+        }
+        const block = makeBlock({
+          id: ref,
+          name: kind === 'zh' ? t('cardBlockZh') : t('cardBlockFirstPerson'),
+          icon: 'user',
+          first: '',
+          text: kind === 'zh' ? CARD_ZH_TEXT : CARD_FP_TEXT,
+          checks: [kind === 'zh' ? 'zh' : 'firstPerson'],
+          builtin: false,
+        })
+        setBench([...bench, benchBlockOf(block, nextBenchKey(), 'card')], {
+          ...benchTowers,
+          card: benchTowers.card ?? { ref: 'card', name: cardTower?.name ?? String(appliedRef.name ?? ''), collapsed: false },
+        })
+      }
+      /** 台上删掉一块：卡塔的思考块 = 关掉对应开关，角色提醒块 = 整座塔拿走。 */
+      const dropBlockFromBench = (block) => {
+        if (block.ref === 'card:zh') return toggleCardBlock('zh')
+        if (block.ref === 'card:firstPerson') return toggleCardBlock('firstPerson')
+        if (block.ref === 'card:reinforce') return removeCardTower()
+        removeBlockFromBench(block.key)
       }
       /** 预览分段（状态 B）：每块一段，带来源色；纯首轮块在第 2 轮那栏划掉。 */
       const previewSegments = (round) => {
@@ -5367,8 +5513,34 @@ window.__ModuleLoader__.load({
         }
         document.addEventListener('pointercancel', cancel)
       }
+      // 长块默认收起（只渲染几行预览，降低渲染压力）；展开后输入框按内容增高。
+      const benchLong = (block) => {
+        const all = String(block.first ?? '') + '\n' + String(block.text ?? '')
+        return all.length > 240 || all.split('\n').length > 8
+      }
+      const setBenchBlockOpen = (key, open) =>
+        setBenchOpen((current) => {
+          if (current.has(key) === open) return current
+          const next = new Set(current)
+          if (open) next.add(key)
+          else next.delete(key)
+          return next
+        })
+      const benchLongKeys = bench.filter(benchLong).map((block) => block.key)
+      const benchAllOpen = benchLongKeys.length > 0 && benchLongKeys.every((key) => benchOpen.has(key))
+      /** 展开着的长块：输入框按内容增高；刚从预览点开的那块顺手聚焦。 */
+      const benchGrowRef = (key) => (node) => {
+        autoGrow(node)
+        if (node !== null && benchFocusNext.current === key) {
+          benchFocusNext.current = ''
+          node.focus()
+        }
+      }
       const benchCard = (block) => {
         const index = bench.findIndex((item) => item.key === block.key)
+        const long = benchLong(block)
+        const folded = long && !benchOpen.has(block.key)
+        const grow = long ? { maxHeight: 'none', overflow: 'hidden' } : {}
         const overlaps = benchOverlapsOf(block)
         const other = overlaps.length > 0 ? allBlocks.find((item) => item.id === overlaps[0]) : null
         const kind = block.ref.startsWith('card:') ? 'card' : block.builtin === true ? 'builtin' : 'mine'
@@ -5395,7 +5567,9 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: { ...V.row, gap: 6, alignItems: 'center', padding: '5px 8px 0 6px', fontSize: 12 } },
-            h('span', { style: { cursor: 'grab', color: 'var(--dsw-alias-label-tertiary)', letterSpacing: '-2px', padding: '0 2px', touchAction: 'none' }, 'data-prefill-bench-grip': block.key, onPointerDown: (event) => startDrag(event, block) }, '⋮⋮'),
+            benchNarrow
+              ? null
+              : h('span', { style: { cursor: 'grab', color: 'var(--dsw-alias-label-tertiary)', letterSpacing: '-2px', padding: '0 2px', touchAction: 'none' }, 'data-prefill-bench-grip': block.key, onPointerDown: (event) => startDrag(event, block) }, '⋮⋮'),
             h('span', { style: { fontWeight: 700 } }, block.name),
             benchNarrow
               ? null
@@ -5412,31 +5586,61 @@ window.__ModuleLoader__.load({
             h(
               'span',
               { style: { marginLeft: 'auto', display: 'flex', gap: 2, alignItems: 'center' } },
+              long
+                ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-bench-fold': block.key, 'aria-expanded': folded ? 'false' : 'true', onClick: () => setBenchBlockOpen(block.key, folded), title: folded ? t('benchExpand') : t('benchCollapse') }, folded ? '▸' : '▾')
+                : null,
               h('button', { type: 'button', style: V.btnGhost, disabled: index <= 0, title: t('benchMoveUp'), 'data-prefill-bench-up': block.key, onClick: () => moveBenchBlock(block.key, -1) }, '↑'),
               h('button', { type: 'button', style: V.btnGhost, disabled: index >= bench.length - 1, title: t('benchMoveDown'), 'data-prefill-bench-down': block.key, onClick: () => moveBenchBlock(block.key, 1) }, '↓'),
               h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuTitle'), 'data-prefill-bench-menu': block.key, onClick: (event) => openBlockMenu(event, block) }, '⋯'),
-              h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuDrop'), 'data-prefill-bench-drop': block.key, onClick: () => removeBlockFromBench(block.key) }, '×'),
+              h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuDrop'), 'data-prefill-bench-drop': block.key, onClick: () => dropBlockFromBench(block) }, '×'),
             ),
           ),
-          block.first.trim() !== '' || block.builtin !== true
+          folded
+            ? h(
+                'div',
+                {
+                  'data-prefill-bench-folded': block.key,
+                  title: t('benchExpand'),
+                  onClick: () => {
+                    benchFocusNext.current = block.key
+                    setBenchBlockOpen(block.key, true)
+                  },
+                  style: { margin: '4px 8px 8px', padding: '6px 10px', borderRadius: 8, border: '1px dashed var(--dsw-alias-border-secondary)', cursor: 'pointer', fontSize: 12, color: 'var(--dsw-alias-label-secondary)' },
+                },
+                h('div', { style: { whiteSpace: 'pre-wrap', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' } }, String(block.first ?? '').trim() !== '' ? block.first : block.text),
+                h('div', { style: { ...V.sectionMeta, marginTop: 2 } }, t('benchFoldedMeta').replace('{n}', String(String(block.first ?? '').length + String(block.text ?? '').length))),
+              )
+            : null,
+          !folded && (block.first.trim() !== '' || block.builtin !== true)
             ? h('textarea', {
-                style: { ...V.textarea, margin: '4px 8px 2px', minHeight: 38, background: 'color-mix(in srgb, var(--pf-turn) 7%, transparent)' },
+                style: { ...V.textarea, margin: '4px 8px 2px', minHeight: 38, background: 'color-mix(in srgb, var(--pf-turn) 7%, transparent)', ...grow },
+                ...(long ? { ref: benchGrowRef(block.key + ':first'), onInput: (event) => autoGrow(event.target) } : {}),
                 value: block.first,
                 spellCheck: false,
                 placeholder: t('everyTurnFirstPlaceholder'),
                 'data-prefill-bench-first': block.key,
-                onFocus: () => setBenchFocus(block.key),
+                onFocus: () => {
+                  setBenchFocus(block.key)
+                  // 正在编辑的块不自动收起（打字打到超过阈值也不会突然折叠）。
+                  setBenchBlockOpen(block.key, true)
+                },
                 onBlur: () => setBenchFocus(''),
                 onChange: (event) => patchBenchBlock(block.key, { first: event.target.value }, false),
               })
             : null,
-          h('textarea', {
-            style: { ...V.textarea, margin: '4px 8px 8px', minHeight: 46 },
-            value: block.text,
+          folded
+            ? null
+            : h('textarea', {
+                style: { ...V.textarea, margin: '4px 8px 8px', minHeight: 46, ...grow },
+                ...(long ? { ref: benchGrowRef(block.key), onInput: (event) => autoGrow(event.target) } : {}),
+                value: block.text,
             spellCheck: false,
             placeholder: t('everyTurnPlaceholder'),
-            'data-prefill-bench-text': block.key,
-            onFocus: () => setBenchFocus(block.key),
+                'data-prefill-bench-text': block.key,
+                onFocus: () => {
+                  setBenchFocus(block.key)
+                  setBenchBlockOpen(block.key, true)
+                },
             onBlur: () => setBenchFocus(''),
             onChange: (event) => patchBenchBlock(block.key, { text: event.target.value }, false),
           }),
@@ -5485,12 +5689,19 @@ window.__ModuleLoader__.load({
       const benchColor = (kind) => (kind === 'card' ? 'var(--pf-card)' : kind === 'mine' ? 'var(--pf-user)' : 'var(--pf-builtin)')
       const towerKind = (tower) => (tower.card === true ? 'card' : tower.builtin === true ? 'builtin' : 'mine')
       const towerState = (tower) => {
+        // 角色卡塔的块不来自 allBlocks（ref 形如 card:*），单独按卡编译结果算。
+        if (tower.card === true) {
+          const on = bench.filter((block) => block.ref.startsWith('card:'))
+          if (on.length === 0) return 'off'
+          return cardBenchBlocks.every((want) => on.some((block) => block.ref === want.id)) ? 'on' : 'half'
+        }
         const mine = bench.filter((block) => block.tower === tower.id)
         const total = flattenTower(tower, allTowers, allBlocks).length
         return mine.length === 0 ? 'off' : mine.length >= total && total > 0 ? 'on' : 'half'
       }
       const towerEdited = (tower) => bench.some((block) => block.tower === tower.id && block.edited)
       const towerOverlaps = (tower) => {
+        if (tower.card === true) return bench.some((block) => block.ref.startsWith('card:') && benchOverlapsOf(block).length > 0)
         const refs = new Set(bench.map((block) => block.ref))
         return flattenTower(tower, allTowers, allBlocks).some((block) =>
           ((allBlocks.find((item) => item.id === block.id) || {}).overlaps || []).some((id) => refs.has(id)),
@@ -5823,9 +6034,9 @@ window.__ModuleLoader__.load({
               'div',
               { style: { ...V.row, gap: 6, flexWrap: 'wrap', marginTop: 6 }, 'data-prefill-everyturn-card': '' },
               h('span', { style: V.sectionMeta }, t('everyTurnCardChips')),
-              h('button', { type: 'button', style: appliedCompiled && everyTurn.text === appliedCompiled.everyTurn?.text ? V.btn : V.btnGhost, title: t('cardReinforceTip'), 'data-prefill-card-reinforce': '', onClick: () => void setCardThinking({ thinkZh: false, firstPerson: false }).catch(() => setStatus('error')) }, withIcon('user', t('cardReinforce'), 12)),
-              h('button', { type: 'button', style: everyTurn.checks.includes('zh') ? V.btn : V.btnGhost, 'aria-pressed': everyTurn.checks.includes('zh') ? 'true' : 'false', 'data-prefill-card-zh': '', onClick: () => void setCardThinking({ thinkZh: !everyTurn.checks.includes('zh') }).catch(() => setStatus('error')) }, t('cardThinkZh')),
-              h('button', { type: 'button', style: everyTurn.checks.includes('firstPerson') ? V.btn : V.btnGhost, 'aria-pressed': everyTurn.checks.includes('firstPerson') ? 'true' : 'false', 'data-prefill-card-firstperson': '', onClick: () => void setCardThinking({ firstPerson: !everyTurn.checks.includes('firstPerson') }).catch(() => setStatus('error')) }, t('cardFirstPerson')),
+              h('button', { type: 'button', style: appliedCompiled && everyTurn.text === appliedCompiled.everyTurn?.text ? V.btn : V.btnGhost, title: t('cardReinforceTip'), 'data-prefill-card-reinforce': '', onClick: () => applyCardTower() }, withIcon('user', t('cardReinforce'), 12)),
+              h('button', { type: 'button', style: everyTurn.checks.includes('zh') ? V.btn : V.btnGhost, 'aria-pressed': everyTurn.checks.includes('zh') ? 'true' : 'false', 'data-prefill-card-zh': '', onClick: () => toggleCardBlock('zh') }, t('cardThinkZh')),
+              h('button', { type: 'button', style: everyTurn.checks.includes('firstPerson') ? V.btn : V.btnGhost, 'aria-pressed': everyTurn.checks.includes('firstPerson') ? 'true' : 'false', 'data-prefill-card-firstperson': '', onClick: () => toggleCardBlock('firstPerson') }, t('cardFirstPerson')),
             )
           : null,
         hiddenOpen && hiddenBuiltins.length > 0
@@ -5899,6 +6110,18 @@ window.__ModuleLoader__.load({
           'div',
           { ref: benchListRef, style: { position: 'relative', marginTop: 10, paddingLeft: benchNarrow ? 0 : 34, display: 'flex', flexDirection: 'column', gap: 8 }, 'data-prefill-bench': '' },
           overlapLayer(),
+          benchLongKeys.length > 0
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  style: { ...V.btnGhost, alignSelf: 'flex-end' },
+                  'data-prefill-bench-fold-all': benchAllOpen ? 'collapse' : 'expand',
+                  onClick: () => setBenchOpen(benchAllOpen ? new Set() : new Set([...benchOpen, ...benchLongKeys])),
+                },
+                benchAllOpen ? t('benchCollapseAll') : t('benchExpandAll'),
+              )
+            : null,
           ...benchRows(),
           bench.length === 0 ? h('div', { style: V.sectionMeta }, t('benchEmpty')) : null,
           h(
@@ -6050,34 +6273,140 @@ window.__ModuleLoader__.load({
         : null
 
       // ── 世界书 / 故事记忆（从角色卡拆出来的两项）──
-      const loreEntry = state?.lore?.[sessionId] ?? null
+      // 世界书可以本会话修改（0.15+）：改动写 state.lore[会话]，带 custom 标记；「保存为预设」时整份存进预设，角色卡本身不动。
+      const loreEntry = loreDraft ?? state?.lore?.[sessionId] ?? null
       const loreEntries = Array.isArray(loreEntry?.entries) ? loreEntry.entries : []
+      const loreCustom = loreEntry?.custom === true
+      const loreKeyOf = (entry, index) => String(entry?.id ?? 'i' + index)
+      const splitLoreKeys = (text) => String(text ?? '').split(/[\/,，、\n]+/).map((key) => key.trim()).filter((key) => key !== '')
+      const editLore = (nextEntries) => {
+        if (loreEntry === null) return
+        const value = { ...loreEntry, entries: nextEntries, custom: true, source: 'session' }
+        setLoreDraft(value)
+        clearTimeout(loreTimer.current)
+        loreTimer.current = setTimeout(() => {
+          void postJson(STATE_ROUTE, undefined)
+            .then((fresh) => postJson(STATE_ROUTE, { lore: { ...(fresh?.state?.lore ?? {}), [sessionId]: value } }))
+            .then((data) => {
+              setEnvelope(data)
+              notifyStateChanged()
+              flash(t('loreSaved'))
+            })
+            .catch(() => setStatus('error'))
+        }, 600)
+      }
+      const patchLoreEntry = (key, patch) => editLore(loreEntries.map((entry, index) => (loreKeyOf(entry, index) === key ? { ...entry, ...patch } : entry)))
+      const deleteLoreEntry = (key) => {
+        editLore(loreEntries.filter((entry, index) => loreKeyOf(entry, index) !== key))
+        if (loreEditing === key) setLoreEditing('')
+      }
+      const addLoreEntry = () => {
+        const id = 'u' + Date.now().toString(36)
+        editLore([...loreEntries, { id, title: t('loreNewTitle'), keys: [], secondary: [], logic: 0, caseSensitive: false, wholeWords: null, probability: 100, order: 0, content: '' }])
+        setLoreEditing(id)
+        setLoreOpen((current) => new Set([...current, id]))
+        setLoreShown((current) => Math.max(current, loreEntries.length + 1))
+      }
+      /** 还原成角色卡里的：按当前卡引用重新编译，覆盖本会话的世界书。 */
+      const revertLore = async () => {
+        const parsed = cardRefOf(appliedRef)
+        if (parsed === null) return
+        const got = await compileCardLayer(parsed.ref, parsed.legacy)
+        if (got === null) return
+        clearTimeout(loreTimer.current)
+        const fresh = await postJson(STATE_ROUTE, undefined)
+        const map = { ...(fresh?.state?.lore ?? {}) }
+        if (got.layer.lore) map[sessionId] = got.layer.lore
+        else delete map[sessionId]
+        setLoreDraft(null)
+        setLoreEditing('')
+        setEnvelope(await postJson(STATE_ROUTE, { lore: map }))
+        notifyStateChanged()
+      }
+      const toggleLoreOpen = (key) =>
+        setLoreOpen((current) => {
+          const next = new Set(current)
+          if (next.has(key)) next.delete(key)
+          else next.add(key)
+          return next
+        })
+      const loreCard = (entry, index) => {
+        const key = loreKeyOf(entry, index)
+        const open = loreOpen.has(key)
+        const editing = loreEditing === key
+        const keys = Array.isArray(entry.keys) ? entry.keys : []
+        return h(
+          'div',
+          { key, 'data-prefill-lore-entry': key, style: { maxWidth: '90ch', borderRadius: 10, padding: '6px 10px', borderLeft: '3px solid var(--pf-lore)', background: tint('var(--pf-lore)', 9), display: 'flex', flexDirection: 'column', gap: 4 } },
+          h(
+            'div',
+            { style: { display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } },
+            h('b', { style: { fontSize: 12.5 } }, entry.title || `#${index + 1}`),
+            // 关键词全部显示（以前只显示前 6 个）。
+            h('span', { style: V.sectionMeta, 'data-prefill-lore-keys': key }, keys.length > 0 ? `${t('loreKeys')}：${keys.join(' / ')}` : t('loreNoKeys')),
+            h(
+              'span',
+              { style: { marginLeft: 'auto', display: 'flex', gap: 2 } },
+              editing
+                ? null
+                : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-toggle': key, onClick: () => toggleLoreOpen(key) }, open ? t('benchCollapse') : t('benchExpand')),
+              h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-edit': key, onClick: () => { setLoreEditing(editing ? '' : key); if (!editing) setLoreOpen((current) => new Set([...current, key])) } }, editing ? t('loreDone') : t('loreEdit')),
+              h('button', { type: 'button', style: V.btnGhost, title: t('loreDelete'), 'data-prefill-lore-delete': key, onClick: () => deleteLoreEntry(key) }, '×'),
+            ),
+          ),
+          editing
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                h('label', { style: V.sectionMeta }, t('loreTitleLabel')),
+                h('input', { style: { ...V.textarea, minHeight: 0, maxHeight: 'none' }, value: String(entry.title ?? ''), 'data-prefill-lore-title': key, onChange: (event) => patchLoreEntry(key, { title: event.target.value }) }),
+                h('label', { style: V.sectionMeta }, t('loreKeysLabel')),
+                h('input', { style: { ...V.textarea, minHeight: 0, maxHeight: 'none' }, defaultValue: keys.join(' / '), 'data-prefill-lore-keys-input': key, onChange: (event) => patchLoreEntry(key, { keys: splitLoreKeys(event.target.value) }) }),
+                h('label', { style: V.sectionMeta }, t('loreContentLabel')),
+                h('textarea', { style: { ...V.textarea, maxHeight: 'none', overflow: 'hidden' }, value: String(entry.content ?? ''), spellCheck: false, ref: autoGrow, 'data-prefill-lore-content': key, onInput: (event) => autoGrow(event.target), onChange: (event) => patchLoreEntry(key, { content: event.target.value }) }),
+              )
+            : h(
+                'div',
+                {
+                  'data-prefill-lore-body': key,
+                  onClick: open ? undefined : () => toggleLoreOpen(key),
+                  style: open
+                    ? { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'pre-wrap' }
+                    : { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', cursor: 'pointer' },
+                },
+                entry.content,
+              ),
+        )
+      }
       const loreSection = h(
         Section,
         {
           id: 'lore',
-          tags: appliedRef && loreEntries.length > 0 ? sourceTag('card') : null,
+          tags: appliedRef && loreEntries.length > 0 ? sourceTag(loreCustom ? (loreEntry?.source === 'preset' ? 'preset' : 'session') : 'card') : null,
           title: t('loreTitle'),
           meta: loreEntries.length > 0 ? t('loreMeta').replace('{n}', String(loreEntries.length)) : '',
           off: !isOn('lore') || (!isOn('card') && loreEntries.length > 0),
           offTitle: !isOn('lore') ? t('offTitle') : t('offByCardTitle'),
           offBody: !isOn('lore') ? t('loreOffBody') : t('loreByCardBody'),
         },
-        h('div', { style: V.hint }, loreEntries.length === 0 ? t('loreEmpty') : t('loreHint').replace('{depth}', String(loreEntry?.scanDepth ?? '—'))),
-        ...loreEntries.slice(0, 40).map((entry, index) =>
-          h(
-            'div',
-            { key: `${entry.id ?? index}`, 'data-prefill-lore-entry': '', style: { maxWidth: '90ch', borderRadius: 10, padding: '6px 10px', borderLeft: '3px solid var(--pf-lore)', background: tint('var(--pf-lore)', 9), display: 'flex', flexDirection: 'column', gap: 2 } },
-            h(
+        h('div', { style: V.hint }, loreEntries.length === 0 && !loreCustom ? t('loreEmpty') : t('loreHint').replace('{depth}', String(loreEntry?.scanDepth ?? '—'))),
+        loreEntry !== null ? h('div', { style: V.hint, 'data-prefill-lore-edit-hint': '' }, t('loreEditHint')) : null,
+        loreCustom && appliedRef
+          ? h(
               'div',
-              { style: { display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } },
-              h('b', { style: { fontSize: 12.5 } }, entry.title || `#${index + 1}`),
-              h('span', { style: V.sectionMeta }, `${t('loreKeys')}：${(entry.keys ?? []).slice(0, 6).join(' / ')}`),
-            ),
-            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' } }, entry.content),
-          ),
-        ),
-        loreEntries.length > 40 ? h('div', { style: V.hint }, `… +${loreEntries.length - 40}`) : null,
+              { style: { ...V.row, gap: 8, alignItems: 'center', fontSize: 12 }, 'data-prefill-lore-custom': '' },
+              h('span', null, t('loreCustomBar')),
+              h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-revert': '', onClick: () => void revertLore().catch(() => setStatus('error')) }, t('loreRevert')),
+            )
+          : null,
+        // 全部条目都能看到：一次先显示 40 条，其余点「再显示」（收起的条目只渲染两行，压力不大）。
+        ...loreEntries.slice(0, loreShown).map((entry, index) => loreCard(entry, index)),
+        loreEntries.length > loreShown
+          ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-more': '', onClick: () => setLoreShown((current) => current + 40) }, t('loreMore').replace('{n}', String(Math.min(40, loreEntries.length - loreShown))))
+          : null,
+        loreEntry !== null
+          ? h('button', { type: 'button', style: { ...V.btnGhost, alignSelf: 'flex-start' }, 'data-prefill-lore-add': '', onClick: addLoreEntry }, '＋ ' + t('loreAdd'))
+          : null,
       )
       const memorySection = h(
         Section,
@@ -6394,7 +6723,7 @@ window.__ModuleLoader__.load({
         ),
         h('button', { type: 'button', style: V.btn, 'data-prefill-save': '', title: activePreset.startsWith('pack:') ? t('saveOverTip') : t('saveAsTip'), onClick: () => (activePreset.startsWith('pack:') ? savePack(activePreset.slice(5)) : setMenu('saveas')) }, t('saveShort')),
         h('button', { type: 'button', style: V.btnGhost, 'data-prefill-save-as': '', 'aria-expanded': menu === 'saveas' ? 'true' : 'false', onClick: () => setMenu(menu === 'saveas' ? '' : 'saveas') }, t('saveAs')),
-        activePreset === '' ? null : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-preset-clear': '', onClick: () => void clearPreset().catch(() => setStatus('error')) }, t('presetClear')),
+        activePreset === '' || narrow ? null : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-preset-clear': '', onClick: () => void clearPreset().catch(() => setStatus('error')) }, t('presetClear')),
         h('span', { style: { flex: '1 1 auto' } }),
         // 右侧一组（读数 + ? + 钉住 + 收起 + 关闭）不拆开：窄屏换行时整组挪到第二行靠右，关闭按钮不会单独掉下去。
         h(
@@ -6428,7 +6757,7 @@ window.__ModuleLoader__.load({
       )
 
       // 世界书 / 故事记忆是角色卡的子项（0.14）：只在套用的卡带了它们时出现在左栏，缩进挂在「角色卡」下面。
-      const navList = navEntries(FEATURE_NAV, { lore: appliedRef !== null && loreEntries.length > 0, memory: appliedRef !== null && memoryConfig !== null && typeof memoryConfig === 'object' })
+      const navList = navEntries(FEATURE_NAV, { lore: appliedRef !== null && (loreEntries.length > 0 || loreCustom), memory: appliedRef !== null && memoryConfig !== null && typeof memoryConfig === 'object' })
       const shownPane = (pane === 'lore' || pane === 'memory') && !navList.some(([, paneId]) => paneId === pane) ? 'cards' : pane
       const nav = narrow
         ? h(
