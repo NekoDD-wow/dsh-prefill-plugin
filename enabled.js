@@ -20,6 +20,8 @@
  *                你在套卡之后自己改过的那几项算你的，不受角色卡开关影响。
  */
 
+import { withLegacyView } from './sandbox.js'
+
 export const FEATURES = ['card', 'lore', 'memory', 'system', 'everyTurn', 'items', 'inject', 'workspace']
 export const PERSONA_SECTION = 'prefill:persona'
 
@@ -84,11 +86,18 @@ function withoutKey(map, key) {
  */
 export function applyEnabled(state) {
   if (state === null || typeof state !== 'object') return state
-  const map = state.enabled
-  if (map === null || typeof map !== 'object') return state
   const cached = VIEWS.get(state)
   if (cached !== undefined) return cached
-  let view = state
+  // 会话沙盒第 1 步（issue #15）：overrides / sessionTools / gate 'pure' 已经存进 state.sandbox。
+  // 下面的停用逻辑仍按旧字段写，所以先补回由规则表推出来的旧字段（没有 sandbox 的旧形状 state 原样不动）；
+  // 改过的旧字段在 resolveSandbox 里会被整族迁回规则表。第 3 步再把停用直接做进规则表。
+  const legacy = withLegacyView(state)
+  const map = legacy.enabled
+  if (map === null || typeof map !== 'object') {
+    if (legacy !== state) VIEWS.set(state, legacy)
+    return legacy
+  }
+  let view = legacy
   for (const [sid, raw] of Object.entries(map)) {
     const flags = sanitizeEnabled(raw)
     if (sid === '*' || flags === undefined) continue
