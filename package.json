@@ -20,6 +20,7 @@
     "builtin-presets.js",
     "character-cards.js",
     "session-history.js",
+    "constraint-carry.js",
     "inject-auto.js",
     "enabled.js",
     "workspace-instructions.js",
