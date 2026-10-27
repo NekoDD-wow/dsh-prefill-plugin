@@ -639,8 +639,10 @@ async function handle(payload, decision, seat) {
     return decision
   }
   try {
-    const next = await gate.step({ readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore }, { ...payload, __seat: seat }, decision)
-    return next ?? decision
+    const api = { readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore }
+    const next = (await gate.step(api, { ...payload, __seat: seat }, decision)) ?? decision
+    // 用户点过「阻断」的消息来源（会话级 + 全局记住）：不论会话是否武装都生效。
+    return typeof gate.applyMessageBlocks === 'function' ? gate.applyMessageBlocks(api, payload, decision, next) : next
   } catch (error) {
     note({ seat, error: String(error?.message ?? error) })
     return decision
@@ -680,6 +682,17 @@ export function apply(ctx) {
     },
     { prepend: true },
   )
+
+  // 注入审计：盯着落进会话、会进模型的消息（含绕过 pre-step 直接写入的），未登记的记下来给面板。
+  ctx.on('session/event', (session, event) => {
+    const gate = gateCache.module
+    if (typeof gate?.auditEvent !== 'function') return
+    try {
+      gate.auditEvent(api(), session, event)
+    } catch (error) {
+      note({ audit: 'error', error: String(error?.message ?? error) })
+    }
+  })
 
   // 轮即将结束：此刻 flush 延后的重挂 —— 本轮装配已成过去、下一轮装配尚未发生。
   ctx.on('agent/turn-stopping', async (payload) => {
@@ -841,6 +854,8 @@ export function apply(ctx) {
         // Q17：可改的注入清单 = **预置 catalog**（全局 prompt 层的真实注册名）+ 每会话已发现的条目。
         // 有 catalog，用户就能在某条注入还没出现过时先写好改写（"直接劫持"）。
         injections: typeof gateCache.module?.injections === 'function' ? gateCache.module.injections(rootCtxRef) : {},
+        // 疑似未登记注入（每会话）：面板据此给出「本会话阻断 / 全局记住」。
+        audit: typeof gateCache.module?.auditSnapshot === 'function' ? gateCache.module.auditSnapshot() : {},
         // 工具放行：catalog = 扫到的工具名（装配看到的）+ 官方可限制名单；sessions = 每会话装配到的工具。
         // 注意：**不改工具说明**（工具类注入一律忽略），这里只管"能不能用"。
         tools: typeof gateCache.module?.tools === 'function' ? gateCache.module.tools(rootCtxRef) : { catalog: [], sessions: {} },
