@@ -3,6 +3,13 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.15.1 — 2026-10-27
+- 修：**工作台积木有时打不了字**。旧条目（没有 `bench`）在面板里每次渲染都会重新迁移一次，而迁移用的 `nextBenchKey` 带自增计数和随机后缀 —— 块 key 每次都变，React 就把整张卡片连同 textarea 卸载重建；textarea 一聚焦触发重渲染、key 又变，焦点立刻丢，于是打不了字（拖动一下或者加一块空积木、把工作台写回状态之后就又正常）。现在迁移用确定的 key（`m1`、`m2`…，和 `nextBenchKey` 的 `b` 前缀不冲突）。单测 `tests/bench-input.test.mjs`。
+- 修：**打字时每按一个键都整份写两趟状态**。`patchBenchBlock` 收了 `immediate` 却没往下传、`setBench` 又写死成立即写 —— 每按一个键就 GET 一次再 POST 一次整个 `everyTurn`，并发写可能乱序、丢最后几个字。现在 `setBench` 收 `immediate`，打字走 700ms 去抖。
+- 修：**拖动把手会框选文字**。`startDrag` 没拦默认行为，按住 ⋮⋮ 往下拖就是一次文字框选（沿途块名 / 文字被选中）。现在 `preventDefault()` + 拖动期间 `body.style.userSelect = 'none'`（结束还原）+ `pointercancel` 收尾（被系统打断时收尾但不落位）。
+- 修：**旧条目迁移时，独立勾选的自动检查被换成积木自带的**。0.14 里 checks 是单独勾的（比如套了「中文思考」又手动取消「中文」检查，存的是 `checks: []`）；0.15 迁移会认成那块积木并用积木自带的 `checks`，一编辑保存就悄悄把检查又打开。现在认出单块积木时保留旧 `checks`（和积木自带的不一样就标「改过」）；塔的 `checks` 是各块并集、拆不回单块，对不上就退回成一块自定义块（文字和 `checks` 都原样保留）。单测 `tests/blocks.test.mjs`。
+- 文档：0.15 的 CHANGELOG 里 #9 / #11 两条重复了（手写一条 + 移植时又追加一条），删掉重复的两条。
+- 单测 131/131（本版 +4）。
 ## 0.15 — 2026-10-27
 - **每轮注入改成「积木 / 积木塔 / 工作台」模型**（设计稿 `docs/mock/每轮注入积木.html`，规划 `docs/每轮注入-积木-规划.md`）。以前每轮注入是「首轮一段 + 之后每轮一段」两块大 textarea，拼什么全靠手写；现在拆成积木：
   - **积木**是内容块（一段话 + 可选的「只在首轮」段 + 要的自动检查 + 冲突优先级）；**塔**是积木的组合（内置：角色扮演套餐 / 角色扮演·首轮要求 / 中文思考 / 四段式 / 第一人称 / 角色扮演强化）；**工作台**是本会话实际拼出来的那一摞。**发送顺序 = 工作台从上到下的顺序**，和以前「首轮段在前、之后段在后」的语义一致。
@@ -18,8 +25,6 @@
 - 修：**工作台的动效乱跳**。三个原因：① FLIP 原来每次渲染都跑，切格 / 面板重排 / textarea 被拉高都会触发整屏滑动 —— 现在只在「工作台顺序真的变了」时跑、只比相对列表的位置、位移超过一块高度当布局抖动跳过；② 拖动落点指示器原来改 border 宽度，每移动一下整个列表抖 1px —— 改成 inset 阴影；③ 拖动 / 悬停每像素都 setState —— 加「值没变就不更新」。实测（monkey-patch `Element.animate` 计数）：打开格 0 次、新增积木 0 次、悬停 0 次、切格 0 次、↑↓ 换顺序 2 次（只动交换的两块）。
 - 修：**纯净模式挡不住 `required: true` 的运行时上下文**（Agent Teams 的 `team:identity`、工作目录 `working-directory:current`），见 #9。做法：纯净模式挂载时把该作用域链上 `required` 的上下文正文临时置空（`renderContextSections` 会丢掉空正文），dispose 时还原；`step()` 里的 `refreshContext` 重算同样有效。单测 `tests/pure-required-contexts.test.mjs`。（移植自公开仓库 #10）
 - 新：**注入审计 + 按名阻断**。宿主监听 `session/event` 和系统提示装配，把不在默认注入清单里、却真正进了模型的内容记成「疑似未登记注入」（消息按 `source.kind`，段 / 上下文按名字；纯净模式里被顶掉 / 抑制的不算）。「改写注入内容」面板新增一组，每条可「本会话阻断」或「全局记住」，写进 `state.injectionBlocks[会话 | '*']`。消息在 pre-step 丢（不论会话是否武装），段 / 上下文在注册表层面清掉（对 required 上下文和 step() 里的重算同样有效）；DSH 直接写进会话的（`developer:tool-registry` 等）标「只能记录」。状态路由新增 `audit`。新文件 `injection-audit.js`，单测 `tests/injection-audit.test.mjs`。（移植自公开仓库 #11）
-- 修：纯净模式挡不住 `required: true` 的运行时上下文（Agent Teams 的 `team:identity`、工作目录 `working-directory:current`），见 #9。单测 `tests/pure-required-contexts.test.mjs`。
-- 新：**注入审计 + 按名阻断**。宿主监听 `session/event` 和系统提示装配，把不在默认注入清单里、却真正进了模型的内容记成「疑似未登记注入」（消息按 `source.kind`，段 / 上下文按名字；纯净模式里被顶掉 / 抑制的不算）。「改写注入内容」面板新增一组，每条可「本会话阻断」或「全局记住」，写进 `state.injectionBlocks[会话 | '*']`。消息在 pre-step 丢（不论会话是否武装），段 / 上下文在注册表层面清掉（对 required 上下文和 step() 里的重算同样有效）；DSH 直接写进会话的（`developer:tool-registry` 等）标「只能记录」。状态路由新增 `audit`。新文件 `injection-audit.js`，单测 `tests/injection-audit.test.mjs`。
 
 ## 0.14 — 2026-10-25
 - 修：**取消预设也清开场对话**。之前「取消预设」故意保留开场对话，套过角色卡 / 预设之后开场白会一直留在草稿里；现在开场对话草稿也一起清空（会话已经开跑时只清草稿，已经写进历史的不动）。清空后头部下方出现「撤销」，8 秒内点它把取消前的全部放回：系统提示、闸门、工具、角色卡、世界书、故事记忆、每轮注入、左栏开关、工作区说明和开场对话。新增选择器 `data-prefill-preset-undo-bar` / `data-prefill-preset-undo`。单测 `tests/clear-preset.test.mjs`。

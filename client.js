@@ -5023,15 +5023,24 @@ window.__ModuleLoader__.load({
         const first = String((entry && entry.firstText) ?? '')
         const checks = normalizeChecks(entry && entry.checks)
         if (text.trim() === '' && first.trim() === '') return { bench: [], benchTowers: {} }
+        // 旧 checks 是独立勾选的：认出积木时保留旧 checks；塔的 checks 对不上就不认成塔（与 blocks.js 同一份逻辑）。
+        const sameChecks = (list) => list.length === checks.length && list.every((id, index) => id === checks[index])
         const block = blocks.find((candidate) => String(candidate.first ?? '') === first && String(candidate.text ?? '') === text)
-        if (block !== undefined) return { bench: [benchBlockOf(block, key())], benchTowers: {} }
+        if (block !== undefined) {
+          const placed = benchBlockOf(block, key())
+          if (!sameChecks(placed.checks)) {
+            placed.checks = [...checks]
+            placed.edited = true
+          }
+          return { bench: [placed], benchTowers: {} }
+        }
         // 旧模型里 firstText === '' 表示「没有首轮专用段」；工作台里如果每块都没有 first，
         // 编译出来的 firstText 会等于 text。两种写法等价，都要认（与 blocks.js 同一份逻辑）。
         const sameFirst = (compiled) => compiled.firstText === first || (first.trim() === '' && compiled.firstText === compiled.text)
         for (const tower of towers) {
           const flat = flattenTower(tower, towers, blocks).map((item, index) => benchBlockOf(item, 't' + index))
           const compiled = compileBench(flat)
-          if (compiled.text === text && sameFirst(compiled)) {
+          if (compiled.text === text && sameFirst(compiled) && sameChecks(compiled.checks)) {
             return {
               bench: addTowerToBench([], tower, towers, blocks, key),
               benchTowers: { [tower.id]: { ref: tower.id, name: tower.name, collapsed: false } },
@@ -5044,6 +5053,13 @@ window.__ModuleLoader__.load({
       // </bench-helpers>
       const benchSeq = { n: 0 }
       const nextBenchKey = () => 'b' + (benchSeq.n += 1).toString(36) + Math.random().toString(36).slice(2, 5)
+      // 读取时迁移每次渲染都会重跑：key 必须确定（同一份旧条目每次得到同样的 key），
+      // 否则每次渲染块 key 都变，React 重挂 textarea —— 一聚焦（setBenchFocus 触发重渲染）就丢焦点、打不了字。
+      // 'm' 前缀和 nextBenchKey 的 'b' 不会撞。
+      const migrateKeys = () => {
+        let n = 0
+        return () => 'm' + (n += 1).toString(36)
+      }
       const builtinBlocks = (Array.isArray(everyTurnBlockList) && everyTurnBlockList.length > 0 ? everyTurnBlockList : everyTurnList).map((preset) => blockFromPreset(preset))
       const builtinTowers = (Array.isArray(everyTurnTowerList) ? everyTurnTowerList : []).map((tower) => ({ ...tower, builtin: true }))
       const myBlocks = Object.values(state?.blocks ?? {}).map((block) => makeBlock(block))
@@ -5064,7 +5080,7 @@ window.__ModuleLoader__.load({
       // v0.15：条目里有 bench 就用它；旧条目（只有 text/firstText/checks）读取时迁移成工作台。
       const benchMigrated = Array.isArray(storedEveryTurn?.bench)
         ? { bench: storedEveryTurn.bench, benchTowers: storedEveryTurn.benchTowers ?? {} }
-        : migrateEveryTurn(storedEveryTurn, { blocks: allBlocks, towers: allTowers, makeKey: nextBenchKey })
+        : migrateEveryTurn(storedEveryTurn, { blocks: allBlocks, towers: allTowers, makeKey: migrateKeys() })
       const everyTurn = everyTurnDraft ?? {
         // 开/关归左栏那一个开关（state.enabled）；条目里的 enabled 只是旧值，由 everyTurnSwitchOn 兜住。
         enabled: true,
@@ -5133,15 +5149,16 @@ window.__ModuleLoader__.load({
       const bench = Array.isArray(everyTurn.bench) ? everyTurn.bench : []
       const benchTowers = everyTurn.benchTowers ?? {}
       const benchSummaryNow = benchSummary(bench)
-      const setBench = (nextBench, nextTowers) => {
+      const setBench = (nextBench, nextTowers, immediate = true) => {
         const keep = { ...(nextTowers ?? benchTowers) }
         for (const key of Object.keys(keep)) if (!nextBench.some((block) => block.tower === key)) delete keep[key]
-        editEveryTurn({ bench: nextBench, benchTowers: keep }, true)
+        editEveryTurn({ bench: nextBench, benchTowers: keep }, immediate)
       }
       const addBlockToBench = (block) => setBench([...bench, benchBlockOf(block, nextBenchKey())])
       const removeBlockFromBench = (key) => setBench(bench.filter((block) => block.key !== key))
       const patchBenchBlock = (key, patch, immediate) =>
-        setBench(bench.map((block) => (block.key === key ? { ...block, ...patch, edited: true } : block)), benchTowers)
+        // 打字（immediate = false）走 700ms 去抖，别每个键都整份写两趟状态（并发写可能乱序、丢最后几个字）。
+        setBench(bench.map((block) => (block.key === key ? { ...block, ...patch, edited: true } : block)), benchTowers, immediate !== false)
       const moveBenchBlock = (key, delta) => {
         const at = bench.findIndex((block) => block.key === key)
         const to = at + delta
@@ -5288,6 +5305,11 @@ window.__ModuleLoader__.load({
         if (event.button !== undefined && event.button !== 0) return
         const list = benchListRef.current
         if (list === null) return
+        // 不拦默认行为的话，按住把手往下拖就是一次文字框选：沿途的块名 / 文字被选中（蓝条）。
+        event.preventDefault()
+        const prevSelect = document.body.style.userSelect
+        document.body.style.userSelect = 'none'
+        window.getSelection?.()?.removeAllRanges?.()
         const rows = [...list.querySelectorAll('[data-prefill-bench-block]')]
         const rects = rows.map((node) => {
           const rect = node.getBoundingClientRect()
@@ -5327,6 +5349,8 @@ window.__ModuleLoader__.load({
         const up = () => {
           document.removeEventListener('pointermove', move)
           document.removeEventListener('pointerup', up)
+          document.removeEventListener('pointercancel', cancel)
+          document.body.style.userSelect = prevSelect
           ghost.remove()
           const info = dragInfo.current
           dragInfo.current = null
@@ -5336,6 +5360,12 @@ window.__ModuleLoader__.load({
         }
         document.addEventListener('pointermove', move)
         document.addEventListener('pointerup', up)
+        // 被系统打断（切窗口、触屏手势）：收尾但不落位。
+        const cancel = () => {
+          moved = false
+          up()
+        }
+        document.addEventListener('pointercancel', cancel)
       }
       const benchCard = (block) => {
         const index = bench.findIndex((item) => item.key === block.key)

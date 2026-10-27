@@ -128,3 +128,29 @@ test('面板那份副本与服务端一致（同样输入同样输出）', () =>
   assert.deepEqual(clientSide.flattenTower(tower, [tower], blocks), flattenTower(tower, [tower], blocks))
   assert.equal(clientSide.PRIORITY_PREFIX, PRIORITY_PREFIX)
 })
+
+test('迁移：旧条目的 checks 是独立勾选的，认出内置积木 / 塔后不能被换成积木自带的 checks', async () => {
+  const { everyTurnPresets, everyTurnTowers } = await import('../builtin-presets.js')
+  const blocks = everyTurnPresets().map(blockFromPreset)
+  const towers = everyTurnTowers()
+  const zh = everyTurnPresets().find((preset) => preset.id === 'zh-thinking')
+  assert.deepEqual(zh.checks, ['zh'])
+  const tower = towers.find((entry) => entry.id === 'rp-pack')
+  const towerFlat = compileBench(flattenTower(tower, towers, blocks).map((item, index) => benchBlockOf(item, 't' + index)))
+  for (const impl of [{ migrateEveryTurn, compileBench }, clientSide]) {
+    // 0.14 里套了「中文思考」、又手动取消了自动检查：checks = []。
+    const single = impl.migrateEveryTurn({ text: zh.text, firstText: zh.firstText ?? '', checks: [] }, { blocks, towers })
+    assert.equal(single.bench[0].ref, 'zh-thinking', '仍认成内置积木')
+    assert.deepEqual(impl.compileBench(single.bench).checks, [], '迁移后 checks 保持旧值')
+    assert.equal(single.bench[0].edited, true)
+    // checks 一致时照旧原样认出，不标「改过」。
+    const same = impl.migrateEveryTurn({ text: zh.text, firstText: zh.firstText ?? '', checks: ['zh'] }, { blocks, towers })
+    assert.equal(same.bench[0].edited, false)
+    // 塔：checks 拆不回单块 ⇒ 不一致时退成自定义块，文字和 checks 都不变。
+    const fromTower = impl.migrateEveryTurn({ text: towerFlat.text, firstText: towerFlat.firstText, checks: ['zh'] }, { blocks, towers })
+    assert.deepEqual(Object.keys(fromTower.benchTowers), [])
+    const compiled = impl.compileBench(fromTower.bench)
+    assert.deepEqual(compiled.checks, ['zh'])
+    assert.equal(compiled.text, towerFlat.text)
+  }
+})
