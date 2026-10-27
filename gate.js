@@ -36,6 +36,7 @@ import {
   prestepKindsOf,
   recordFindings,
 } from './injection-audit.js'
+import { resolveSandbox } from './sandbox.js'
 import { cleanMemory, matchLore, memoryDue, memoryInput, memorySystemPrompt, renderLore, renderMemory } from './character-cards.js'
 
 /** 内核代次：壳会在诊断里回报它，用来确认热换是否生效。 */
@@ -50,16 +51,12 @@ export const PROBE_CONTEXT_TEXT =
 /**
  * 该会话**实际生效**的放行来源清单。
  *
- * 优先 `state.sessionAllowKinds[sessionId]`（会话级，UI 里按标签勾选写进去），
- * 支持 `'*'` 通配（探针用）；没配就回落到全局 `state.allowKinds`。
+ * 优先会话级（旧 `state.sessionAllowKinds[sessionId]`，UI 里按标签勾选写进去），
+ * 再 `'*'`（探针用）；没配就回落到全局 `state.allowKinds`。
+ * 会话沙盒第 1 步（issue #15）起统一经 resolveSandbox 读规则表（旧字段读取时迁移），结果不变。
  */
 function allowKindsFor(state, sessionId) {
-  const perSession = state?.sessionAllowKinds
-  if (perSession !== null && typeof perSession === 'object') {
-    const list = (typeof sessionId === 'string' ? perSession[sessionId] : undefined) ?? perSession['*']
-    if (Array.isArray(list)) return list.filter((kind) => typeof kind === 'string')
-  }
-  return Array.isArray(state?.allowKinds) ? state.allowKinds : ['user']
+  return resolveSandbox(state, sessionId).allowKinds
 }
 
 /**
@@ -212,7 +209,7 @@ function keeper(state, message, sessionId) {
   if (kind === 'user') return true
   if (typeof kind !== 'string') return false
   if (kind.startsWith('prefill:')) return true
-  return allowKindsFor(state, sessionId).includes(kind)
+  return resolveSandbox(state, sessionId).messageAllow.has(kind)
 }
 
 /**
@@ -397,12 +394,12 @@ function messageText(message) {
   return content.map((part) => (part?.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('')
 }
 
+/**
+ * 本会话的注入改写（旧 `state.overrides[会话] ?? state.overrides['*']` 整格回落）。
+ * 会话沙盒第 1 步起是规则表里 rewrite 族推回的同形状对象（见 sandbox.js resolveSandbox）。
+ */
 function overridesFor(state, agentId) {
-  const all = state?.overrides
-  if (all === null || typeof all !== 'object') return undefined
-  const exact = typeof agentId === 'string' ? all[agentId] : undefined
-  const entry = exact !== undefined && exact !== null && typeof exact === 'object' ? exact : all['*']
-  return entry !== undefined && entry !== null && typeof entry === 'object' ? entry : undefined
+  return resolveSandbox(state, agentId).rewrite
 }
 
 /**
@@ -662,7 +659,8 @@ function effectiveStateFor(state, agentId) {
       },
     }
   }
-  if (gate[agentId] !== 'pure') {
+  // 纯净模式 = 沙盒严格档（旧 gate[会话] === 'pure'，读取时迁成 sandbox[会话].level = 'strict'）。
+  if (resolveSandbox(state, agentId).level !== 'strict') {
     // 没被显式武装（armed / '*'）的会话 —— 典型是"只套了人格预设"的会话 —— 不吃全局开关：
     // 全局 levers 是开发面板 / 旧版「纯净模式」写的，若照搬，套个人格就会顺带
     // 清空系统提示、拦掉工具（实测踩到：人格会话 tools=0、runtime-context 被丢）。
@@ -1052,7 +1050,9 @@ function mountLevers(agent, state, api, sink) {
   // 清单先与官方 `restrictableNames` 求交集：`restrict()` 遇到未知名字会**抛错**，
   // 一个过期名字就能把该会话的挂载链搞挂（`dsh-tools:2908`）。
   // 会话级映射统一支持 `'*'` 通配（无头探针用），别只按键精确查——这个坑踩过一次。
-  const wantedTools = state?.sessionTools?.[agent?.id] ?? state?.sessionTools?.['*'] ?? state?.tools
+  // 会话沙盒第 1 步：旧 sessionTools[会话] ?? sessionTools['*'] 现在是规则表的 tools 族（undefined = 没配，回落全局 state.tools）。
+  const sandboxTools = resolveSandbox(state, agent?.id).toolAllow
+  const wantedTools = sandboxTools !== undefined ? sandboxTools : state?.tools
   if (Array.isArray(wantedTools) && typeof toolService?.restrict === 'function') {
     const known = new Set(restrictableToolNames(toolService, agent))
     const allow = known.size === 0
