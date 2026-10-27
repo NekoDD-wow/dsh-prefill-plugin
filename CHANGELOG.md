@@ -3,6 +3,10 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- 修：纯净模式挡不住 `required: true` 的运行时上下文（Agent Teams 的 `team:identity`、工作目录 `working-directory:current`），见 #9。单测 `tests/pure-required-contexts.test.mjs`。
+- 新：**注入审计 + 按名阻断**。宿主监听 `session/event` 和系统提示装配，把不在默认注入清单里、却真正进了模型的内容记成「疑似未登记注入」（消息按 `source.kind`，段 / 上下文按名字；纯净模式里被顶掉 / 抑制的不算）。「改写注入内容」面板新增一组，每条可「本会话阻断」或「全局记住」，写进 `state.injectionBlocks[会话 | '*']`。消息在 pre-step 丢（不论会话是否武装），段 / 上下文在注册表层面清掉（对 required 上下文和 step() 里的重算同样有效）；DSH 直接写进会话的（`developer:tool-registry` 等）标「只能记录」。状态路由新增 `audit`。新文件 `injection-audit.js`，单测 `tests/injection-audit.test.mjs`。
+
 ## 0.14 — 2026-10-25
 - 修：**取消预设也清开场对话**。之前「取消预设」故意保留开场对话，套过角色卡 / 预设之后开场白会一直留在草稿里；现在开场对话草稿也一起清空（会话已经开跑时只清草稿，已经写进历史的不动）。清空后头部下方出现「撤销」，8 秒内点它把取消前的全部放回：系统提示、闸门、工具、角色卡、世界书、故事记忆、每轮注入、左栏开关、工作区说明和开场对话。新增选择器 `data-prefill-preset-undo-bar` / `data-prefill-preset-undo`。单测 `tests/clear-preset.test.mjs`。
 - **角色卡 = 预设的子集**。之前套卡（`applyCard`）和套预设（`applyPack`）是两条写入路径，各写各的系统提示 / 每轮注入 / 开场对话 / 世界书 / 故事记忆，规则还不一样（卡只在开场对话为空时填、取消预设保留开场对话），互相留残留。现在：
