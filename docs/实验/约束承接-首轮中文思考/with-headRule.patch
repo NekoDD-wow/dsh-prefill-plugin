@@ -1,0 +1,388 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e4f2d9f..158429c 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,8 +8,15 @@
+   - 现象：会话开着「中文思考」每轮注入，存为预设、用它开新会话后，思维链退回英文。
+   - 原因（DeepSeek deepseek-flash 实测，抓请求体）：① 开场历史只取用户原话和回答正文，所有 `source.kind === 'prefill'` 的注入都跳过，新会话的历史里一句提醒也没有（原会话里模型每轮都看得到上一轮的提醒和上一轮的中文思维链）；② 「带上每轮注入」只带 `state.everyTurn[本会话]`，约束来自 `'*'`（新会话默认）时整份丢掉 —— 实测这种预设开的新会话每轮都没有注入，思维链中文占比 0%（3/3 轮）；③ 就算带上了，接缝那一轮（导入的几轮历史里没有提醒，突然出现一句）也常常不听，第 2 轮起才回到中文。自动模式没有误判：导入的开场轮本来就标成合成轮、不计入判定。
+   - 改法：新文件 `constraint-carry.js`。「从当前会话取」时扫会话日志里实际发过的每轮注入，认出当时生效的积木（本会话 / 预设 / 角色卡 / 新会话默认 / 内置积木；配置后来改掉的按原文列出，只有最新一版默认勾），`from-session` 多返回 `constraints`，面板「开场对话」下列出来、默认勾上；保存 / 导出时带 `carried`，服务端编成预设的每轮注入（工作台形状，注入方式沿用本会话那格），并给预设加 `fromSession: true` 标记（导入导出保留）。每轮注入配置里的 `seam: true` 只认本会话那格：新会话开场里有导入历史、还没发过每轮注入时，那一轮发首轮段并附「以上历史均遵守这些要求，继续保持。」（约束是英文时用英文句）；自动模式里这一轮和首轮专用段一样不参与判定，从预热开始。每轮注入消息的 source 多了 `from`（session / default）和 `seam`，给下次存预设认来源用。
+-  - 实测（同一份从 `'*'` 会话存下的预设开新会话）：旧逻辑 3 轮都没注入、全英文；新逻辑第 2、3 轮中文占比 100%。接缝那一轮仍有一半左右用英文起头（附了接缝句 1/4，不附 2/5；全新会话的第一次注入同样常见），这是模型第一次看到提醒时的通病，接缝句对它帮助有限。
++  - 实测（同一份从 `'*'` 会话存下的预设开新会话）：旧逻辑 3 轮都没注入、全英文；新逻辑之后的轮次能回到中文。接缝那一轮仍常用英文起头，原因和处理见下一条。
+   - 单测 `tests/constraint-carry.test.mjs`（12 项）。
++- 修：**接缝轮末尾多出一整份英文系统提示，压过了接缝提醒**（上一条的后续）。
++  - 原因（抓请求体）：物化开场历史时写进去的 system/message 是 `agent/created` 那一刻渲染的，那时 Agent Teams 等段还没挂上（实测 2421 字，真正一步渲染出来是 4274 字）。第一条真实消息那一步，dsh-agent-loop 的系统提示投影发现「最新 system 节点 ≠ 本步渲染」就**追加**一条 system/message，线上排在本轮用户消息和运行时上下文之后 —— 模型生成前看到的最后一段是一整份英文系统提示，紧挨用户消息的接缝提醒被压下去。之后的轮次不再追加，所以只有接缝轮受影响。
++  - 改法：`impl.js` 挂 `agent/request` 座位（`step/start` 已落盘、系统提示投影还没比较），`gate.alignOnRequest`：开场里有合成轮、还没有真实轮、system 节点只有开头那一条时，把开头那条按本步的渲染结果原地替换（带当前轮 / 步，满足会话日志的校验）；投影比较一致，不再追加。条件不满足或出错都什么都不做（回到原行为）。对所有物化了开场历史的会话生效，不只是来自会话的预设。
++  - 新选项「开场里留一份规则」（`everyTurn.headRule`，**默认关**，存预设时在约束列表下勾选）：物化开场时在系统提示后、开场第一条之前写一条 `source: { kind: 'prefill', prefill: 'rule' }` 的规则说明（抬头 + 首轮段，中英按正文选）。模型看得到，面板不当用户气泡，「存为预设」取历史时跳过，也不算每轮注入。默认关是因为对照实验里看不出稳定收益（见下）。
++  - 建议（插件不改用户的系统提示）：要新会话**第一条消息**就稳定中文思考，最有效的是系统提示本身用中文写、并在里面写明思考语言要求（用「替换正文·保留工具」，工具照旧），再配合带过来的每轮注入。注意内置「中文版官方系统提示」本身没有思考语言要求，要自己加一句。
++  - 对照实验（deepseek-flash，同一份从 `'*'` 会话存的预设、同一组 4 轮英文开场、8 组英文提问，每格 8 次独立串行运行，记首轮 / 第 2 轮思维链中文占比，≥0.8 算过）：现状 3/16（两批合计）；中文系统提示 15/16；中文系统提示 + 开场规则 + 接缝 8/8，再加中文思维链开场 8/8；只放开场规则（不发接缝）0/8；接缝加强措辞 3/8；开场规则 + 加强接缝 5/8；接缝挪到消息列表最末 3/8；系统提示对齐 5/8；对齐 + 开场规则 9/16；对齐 + 开场规则 + 通用加强措辞 6/16。同配置两批之间能差 3–4 次（6/8 对 3/8），8 次一格只够看出大差别：中文系统提示是决定性的，对齐 / 开场规则 / 改措辞都只是把 ~20% 提到 ~50% 上下，后两者看不出彼此的差别。第 2 轮基本跟着首轮走（首轮英文，第 2 轮常也英文）。
++  - 单测 `tests/opening-seam.test.mjs`（9 项）。
+ 
+ ## 0.15.2 — 2026-10-27
+ - **角色卡塔拆成 3 块**（0.15 的已知限制之一）。以前整张卡的每轮提醒是一块「角色卡：<名字>」；现在按卡的编译结果拆成「角色提醒」「中文思考」「第一人称思考」三块（卡关掉哪个选项就少哪块），可以单独拿掉某一块、单独改它，也说清楚每块占多少字。
+diff --git a/README.md b/README.md
+index e36ae8f..e4b216f 100644
+--- a/README.md
++++ b/README.md
+@@ -60,6 +60,8 @@ dsh plugin --profile web add /clone 下来的绝对路径/dsh-prefill-plugin
+ - 系统提示和工具权限按「保存为预设」一样一并保存。
+ - 可选「带上每轮注入设置」（本会话开着每轮注入时出现，默认勾上）：存的是**设置**（正文、注入方式、检查项），不是当时注入的原文；新会话套用后从头判断。
+ - 「从当前会话取」之后会列出「会话里生效过的每轮约束」：从会话日志里实际发过的每轮注入认出来的积木（不论来自本会话、新会话默认还是角色卡），默认勾上，保存时编进预设的每轮注入（注入方式沿用本会话的设置）。这类预设带「来自会话」标记：新会话第一条消息那轮会把这些约束按首轮段发一次，并附一句「以上历史均遵守这些要求，继续保持」；自动模式从预热开始，导入的开场历史不计入判定。
++- 开场历史里那条系统提示会在新会话第一条消息那一步对齐成当时真正渲染出来的版本（以前会在那一轮末尾再追加一整份系统提示，把接缝提醒压下去）。约束列表下还有「开场里留一份规则」（默认关）：在导入历史最前面写一条「以下要求对本会话全程有效」的规则说明。
++- 想让新会话**第一条消息**就守住中文思考：实测最管用的是系统提示本身用中文写、并写明思考语言要求（「替换正文·保留工具」），再配合带过来的每轮注入；插件不会替你改系统提示。
+ - 可选「带上故事记忆摘要」（有摘要时出现）：新会话开着故事记忆就作为初始记忆，否则作为一条前情提要放在开场对话最前面。截了轮次、而摘要覆盖到截取点之后时不能勾（摘要里会有分支点之后的剧情）。
+ - 不带：注入原文（每轮注入、世界书、故事记忆、会话内注入）和工具调用 / 结果（开场对话只能是纯文本，同一轮多步的正文合成一条）。世界书跟角色卡走，在新会话里重新套卡；本会话改过的世界书（见下）会随预设一起存。
+ - 世界书可以在「世界书」那一格直接改（展开看全文、编辑标题 / 关键词 / 内容、增删条目），改动只对本会话生效；保存为预设时整份存进预设，以后套这个预设就是改过的版本。**不会改动角色卡本身**，随时可以「还原成角色卡里的」。
+diff --git a/client.js b/client.js
+index f89efb0..422b34b 100644
+--- a/client.js
++++ b/client.js
+@@ -648,6 +648,8 @@ window.__ModuleLoader__.load({
+       carryTurns: '注入过 {n} 轮',
+       carryNotYet: '还没注入过',
+       carryUnnamed: '每轮注入',
++      carryHeadRule: '开场里留一份规则',
++      carryHeadRuleHint: '在导入的历史最前面写一条「以下要求对本会话全程有效」的规则说明（写进历史、位置固定，不影响缓存）。默认关：对照实验里看不出它对新会话第一条消息有稳定帮助，想试可以勾上。',
+       collapseCard: '收起卡片',
+       pinOn: '钉住',
+       pinOff: '取消钉住',
+@@ -987,6 +989,8 @@ window.__ModuleLoader__.load({
+       carryTurns: 'injected in {n} turns',
+       carryNotYet: 'not injected yet',
+       carryUnnamed: 'Per-turn injection',
++      carryHeadRule: 'Keep a copy of the rules in the opening',
++      carryHeadRuleHint: 'Writes a "the following requirements apply to this whole session" note at the very start of the imported history (stays in history at a fixed position, so caching is unaffected). Off by default: in controlled runs it did not reliably help the first message of a new session; check it to try.',
+       collapseCard: 'Collapse card',
+       pinOn: 'Pin',
+       pinOff: 'Unpin',
+@@ -3191,6 +3195,8 @@ window.__ModuleLoader__.load({
+       const [seedNote, setSeedNote] = React.useState('')
+       // 约束承接：「从当前会话取」时检出的每轮约束（带 on = 勾没勾）；null = 没取过。
+       const [carryList, setCarryList] = React.useState(null)
++      // 「开场里留一份规则」：存预设时写进 everyTurn.headRule（默认关，只存打开的 true）。
++      const [carryHeadRule, setCarryHeadRule] = React.useState(false)
+       // 长卡片展开的行（按下标）；分批渲染已画出的条数。
+       const [expandedRows, setExpandedRows] = React.useState(() => new Set())
+       const [shownRows, setShownRows] = React.useState(ROW_BATCH)
+@@ -4293,13 +4299,13 @@ window.__ModuleLoader__.load({
+       const ownEveryTurn = state?.everyTurn?.[sessionId]
+       const everyTurnStored =
+         (String(ownEveryTurn?.text ?? '').trim() !== '' || String(ownEveryTurn?.firstText ?? '').trim() !== '')
+-          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(ownEveryTurn.seam === true ? { seam: true } : {}) }
++          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(ownEveryTurn.seam === true ? { seam: true } : {}), ...(ownEveryTurn.seam === true && ownEveryTurn.headRule === true ? { headRule: true } : {}) }
+           : null
+       // 约束承接：取过会话 ⇒ 预设标记 fromSession，带上勾选的约束（服务端编成每轮注入，模式沿用 everyTurn）；
+       // 没取过但本会话本身就是从这种预设开的 ⇒ 标记照样带上。
+       const carryPayload = () =>
+         carryList !== null
+-          ? { fromSession: true, carried: carryList.filter((entry) => entry.on === true).map(({ on: _on, checked: _checked, turns: _turns, lastTurn: _last, id: _id, ...rest }) => rest) }
++          ? { fromSession: true, carried: carryList.filter((entry) => entry.on === true).map(({ on: _on, checked: _checked, turns: _turns, lastTurn: _last, id: _id, ...rest }) => rest), ...(carryHeadRule ? { headRule: true } : {}) }
+           : ownEveryTurn?.seam === true
+             ? { fromSession: true }
+             : {}
+@@ -4902,6 +4908,12 @@ window.__ModuleLoader__.load({
+                   ),
+                 ),
+               ),
++              h(
++                'label',
++                { 'data-prefill-carry-head-rule': '', title: t('carryHeadRuleHint'), style: { display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12, borderTop: '1px solid var(--dsw-alias-separator-primary, rgba(0,0,0,.08))', paddingTop: 6 } },
++                h('input', { type: 'checkbox', checked: carryHeadRule, onChange: (event) => setCarryHeadRule(event.target.checked) }),
++                h('span', { style: { minWidth: 0, flex: '1 1 auto' } }, h('b', null, t('carryHeadRule')), h('div', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, t('carryHeadRuleHint'))),
++              ),
+             )
+       const fetchConfirm =
+         fetchPending === null
+@@ -5300,6 +5312,7 @@ window.__ModuleLoader__.load({
+         asDefault: state?.everyTurn?.['*']?.enabled === true,
+         // 约束承接的接缝标记：只认本会话那格，改面板时别丢。
+         seam: state?.everyTurn?.[sessionId]?.seam === true,
++        headRule: state?.everyTurn?.[sessionId]?.headRule === true,
+       }
+       const writeEveryTurn = async (nextValue, override) => {
+         setEveryTurnDraft(nextValue)
+@@ -5326,11 +5339,12 @@ window.__ModuleLoader__.load({
+           auto,
+           ...(hasBench ? { bench: nextValue.bench, benchTowers: nextValue.benchTowers ?? {} } : {}),
+           ...(nextValue.seam === true ? { seam: true } : {}),
++          ...(nextValue.seam === true && nextValue.headRule === true ? { headRule: true } : {}),
+         }
+         map[sessionId] = entry
+         if (nextValue.asDefault === true) {
+           const { override: _ignored, ...autoForDefault } = auto
+-          const { seam: _seam, ...forDefault } = entry
++          const { seam: _seam, headRule: _headRule, ...forDefault } = entry
+           map['*'] = { ...forDefault, auto: autoForDefault }
+         } else delete map['*']
+         const data = await postJson(STATE_ROUTE, { everyTurn: map })
+diff --git a/constraint-carry.js b/constraint-carry.js
+index 84f172a..216a934 100644
+--- a/constraint-carry.js
++++ b/constraint-carry.js
+@@ -15,7 +15,8 @@
+  *   认出当时生效的积木（不论来自本会话、'*' 还是角色卡），给存预设面板列出来；
+  * - `mergeCarried(carried, base)`：把勾上的积木编成预设里的 everyTurn（工作台形状，带 `seam: true`）；
+  * - `seamLine` / `withSeam` / `unwrapInjected`：接缝提醒的文案与注入正文的拆包；
+- * - `seamApplies(entry, turns, isFirst)`：gate.js 判断这一轮要不要发接缝提醒。
++ * - `seamApplies(entry, turns, isFirst)`：gate.js 判断这一轮要不要发接缝提醒；
++ * - `headRuleApplies` / `headRuleText`：「开场里留一份规则」—— 物化开场历史时在最前面写一条规则说明。
+  */
+ 
+ /** 每轮注入消息的外壳（gate.js renderInjectBlock 的第一行和「用户：」前缀）。 */
+@@ -255,10 +256,11 @@ function benchItem(raw, index) {
+  * 勾上的约束 → 预设里的 everyTurn 原始配置（交给 impl.js sanitizeEveryTurn 编译 / 校验）。
+  * - 工作台形状：一条约束一块，顺序照列表；
+  * - 模式 / 只注入前 N 轮 / 自动参数沿用本会话那格（base）；没有就「一直注入」；
+- * - `seam: true`：新会话第一条真实消息那一轮发接缝提醒。
++ * - `seam: true`：新会话第一条真实消息那一轮发接缝提醒；
++ * - `headRule: true`（opts.headRule === true 时）：物化开场历史时在最前面留一份规则。
+  * 一条都没勾 ⇒ undefined（预设不带每轮注入）。
+  */
+-export function mergeCarried(carried, base) {
++export function mergeCarried(carried, base, opts = {}) {
+   const bench = (Array.isArray(carried) ? carried : []).map(benchItem).filter((item) => item !== null)
+   if (bench.length === 0) return undefined
+   const settings = base !== null && typeof base === 'object' ? base : {}
+@@ -270,6 +272,8 @@ export function mergeCarried(carried, base) {
+     untilTurn: Math.max(0, Math.floor(Number(settings.untilTurn) || 0)),
+     auto: settings.auto ?? {},
+     seam: true,
++    // 「开场里留一份规则」默认关；只在打开时存 true。
++    ...(opts.headRule === true ? { headRule: true } : {}),
+   }
+ }
+ 
+@@ -282,3 +286,27 @@ export function hasImportedHistory(turns) {
+ export function seamApplies(entry, turns, isFirst) {
+   return entry?.seam === true && isFirst === true && hasImportedHistory(turns)
+ }
++
++/** 开场规则的抬头。中英两版：按约束正文里有没有汉字选。 */
++export const HEAD_RULE_HEADS = Object.freeze({
++  zh: '【预填装 · 规则】以下要求对本会话全程有效：',
++  en: '[Prefill · Rules] The following requirements apply to this whole session:',
++})
++
++/**
++ * 「开场里留一份规则」：只对来自会话的预设（seam）有意义，`headRule: true` 才开（默认关）。
++ * 它写进历史、之后每轮都在同一位置，前缀不变，不影响缓存。
++ * 默认关的原因（deepseek-flash 对照实验，见 CHANGELOG 未发布条目）：单独用它首轮 0/8；配合接缝提醒 5/8、
++ * 配合系统提示对齐 9/16，和不加时（3/8、5/8）比看不出稳定的提升。
++ */
++export function headRuleApplies(entry) {
++  return entry?.seam === true && entry?.headRule === true
++}
++
++/** 开场规则正文：抬头 + 首轮段（没有就用每轮段）。没有约束正文 ⇒ ''。 */
++export function headRuleText(entry) {
++  const firstText = String(entry?.firstText ?? '').trim()
++  const body = firstText !== '' ? firstText : String(entry?.text ?? '').trim()
++  if (body === '') return ''
++  return `${/[\u4e00-\u9fff]/.test(body) ? HEAD_RULE_HEADS.zh : HEAD_RULE_HEADS.en}\n${body}`
++}
+diff --git a/gate.js b/gate.js
+index 9cfddff..8fd1e0f 100644
+--- a/gate.js
++++ b/gate.js
+@@ -22,7 +22,7 @@
+ 
+ import { randomUUID } from 'node:crypto'
+ import { checksOf, modeOf, replay, splitTurns } from './inject-auto.js'
+-import { seamApplies, withSeam } from './constraint-carry.js'
++import { hasImportedHistory, headRuleApplies, headRuleText, seamApplies, withSeam } from './constraint-carry.js'
+ import { applyEnabled, isEnabled } from './enabled.js'
+ import { WORKSPACE_KIND, WORKSPACE_MARK, applyWorkspaceInstructions, lastWorkspaceInHistory, workspaceInstructionsFor } from './workspace-instructions.js'
+ import {
+@@ -265,6 +265,8 @@ export function everyTurnFor(state, agentId) {
+     since: own ? Number(entry.since) || 0 : 0,
+     // 约束承接（constraint-carry.js）：来自会话的预设带过来的标记，只认本会话那格。
+     seam: own && entry.seam === true,
++    // 「开场里留一份规则」（constraint-carry.js headRuleApplies）：同样只认本会话那格。
++    headRule: own && headRuleApplies(entry),
+     from: own ? 'session' : 'default',
+   }
+ }
+@@ -1723,6 +1725,74 @@ export const PREFILL_PROBE_ANSWER = probeText(
+ /** 预填装包标识：**放 `source.prefill`，不放 `source.kind`**（见 F16）。 */
+ export const PREFILL_PACK_ID = probeText('PREFILL_PACK_ID', 'probe')
+ 
++/**
++ * 开场历史的系统提示对齐（约束承接 · 接缝）。
++ *
++ * 物化开场历史时写进去的 system/message 是 `agent/created` 那一刻渲染的（见 computeRendered），
++ * 那时别的插件（如 Agent Teams）还没挂完段 ⇒ 和第一条真实消息那一步真正渲染出来的不一样。
++ * dsh-agent-loop 的 SystemPromptProjection 发现「最新一条 system 节点 ≠ 本步渲染」就**追加**一条
++ * system/message，线上它排在本轮用户消息和运行时上下文之后 —— 也就是模型生成前看到的最后一段，
++ * 一整份英文系统提示，把紧挨着用户消息的每轮注入 / 接缝提醒压了下去（实测接缝轮常常英文思考）。
++ *
++ * 做法：第一条真实消息那一轮（开场里有合成轮、还没有真实轮、system 节点只有开头那一条），
++ * 在 pre-step 里把开头那条按本步的渲染结果原地替换掉 ⇒ 投影比较时一致，不再追加。
++ * 只改合成轮自己写的那条，失败就什么都不做（回到原行为）。
++ */
++export async function alignSyntheticSystemPrompt(agent, decision, turns, position = {}) {
++  const session = agent?.session
++  const surface = session?.surface
++  if (typeof session?.append !== 'function' || typeof session?.eventAt !== 'function' || !Array.isArray(surface?.nodes ?? null) && typeof surface?.nodes?.[Symbol.iterator] !== 'function') {
++    return { ok: false, reason: 'no-surface' }
++  }
++  if (!hasImportedHistory(turns) || turns.some((turn) => !turn.synthetic && turn.completed)) return { ok: false, reason: 'not-seam' }
++  const nodes = []
++  for (const seq of surface.nodes) {
++    const event = session.eventAt(seq)
++    if (event?.type === 'system/message') nodes.push({ seq, event })
++  }
++  if (nodes.length !== 1) return { ok: false, reason: `system-nodes:${nodes.length}` }
++  let rendered
++  try {
++    const assembly = decision?.assembly ?? (await systemPromptOf(agent)?.assemble?.({ agent, scope: agent }))
++    if (assembly === undefined) return { ok: false, reason: 'no-assembly' }
++    rendered = renderPrompt(assembly)
++  } catch (error) {
++    return { ok: false, reason: `render:${String(error?.message ?? error)}` }
++  }
++  const [{ seq, event }] = nodes
++  const current = (event.data?.message?.content ?? []).map((part) => (part?.type === 'text' ? part.text : '')).join('')
++  if (current === rendered || rendered === '') return { ok: true, changed: false }
++  session.append(
++    'system/message',
++    { turn: position.turn, step: position.step ?? 1, message: { role: 'system', content: [{ type: 'text', text: rendered }], source: { kind: 'system-prompt' }, id: randomUUID() } },
++    { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] },
++  )
++  return { ok: true, changed: true, from: current.length, to: rendered.length }
++}
++
++/**
++ * `agent/request` 座位：此刻 step/start 已落盘、系统提示投影还没比较 ⇒ 正好对齐开场那条 system。
++ * 只在每轮第 1 步、开场有合成轮且还没有真实轮时动手。
++ */
++export async function alignOnRequest(api, payload) {
++  const agent = payload?.agent
++  if (typeof agent?.id !== 'string' || !Number.isFinite(payload?.turn) || (payload?.step ?? 1) !== 1) return
++  let events = []
++  try {
++    events = agent.session?.snapshotEvents?.() ?? []
++  } catch {
++    return
++  }
++  const turns = splitTurns(events)
++  if (!hasImportedHistory(turns)) return
++  try {
++    const aligned = await alignSyntheticSystemPrompt(agent, undefined, turns, { turn: payload.turn, step: payload.step ?? 1 })
++    if (aligned.reason !== 'not-seam') api.note({ alignSystem: aligned, id: agent.id, turn: payload.turn })
++  } catch (error) {
++    api.note({ alignSystem: { ok: false, reason: String(error?.message ?? error) }, id: agent.id, turn: payload.turn })
++  }
++}
++
+ /**
+  * 多轮预填装的内容模型。
+  *
+@@ -1996,7 +2066,7 @@ export function onInboxInserted(api, agent, message) {
+     api.note({ prefill: 'no-cached-prompt', id: agent.id })
+     return
+   }
+-  const turns = writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id))
++  const turns = writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id), { rule: openingRule(state, agent.id) })
+   // 物化成功 ⇒ 顺手把会话标题钉到**这次的真实提问**上（F18 收尾）。
+   if (typeof turns === 'number' && turns > 0) pinTitle(api, agent, session, message)
+ }
+@@ -2073,7 +2143,13 @@ export async function materializePrefill(api, agent) {
+       return
+     }
+   }
+-  writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id))
++  writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id), { rule: openingRule(state, agent.id) })
++}
++
++/** 「开场里留一份规则」（everyTurn.headRule，默认关）：来自会话的预设可以在开场最前面写一条规则说明。没开 ⇒ ''。 */
++export function openingRule(state, agentId) {
++  const everyTurn = everyTurnFor(state, agentId)
++  return everyTurn?.headRule === true ? headRuleText(everyTurn) : ''
+ }
+ 
+ /**
+@@ -2093,7 +2169,8 @@ export function materialized() {
+   return Object.fromEntries(MATERIALIZED)
+ }
+ 
+-export function writeSyntheticTurns(api, agent, session, rendered, items) {
++export function writeSyntheticTurns(api, agent, session, rendered, items, opts = {}) {
++  const rule = typeof opts?.rule === 'string' ? opts.rule.trim() : ''
+   items = filledItems(items)
+   // 空草稿 = "开关开了但还没写内容" ⇒ 什么都不物化，也把草稿消费掉。
+   if (!Array.isArray(items) || items.length === 0) {
+@@ -2125,6 +2202,17 @@ export function writeSyntheticTurns(api, agent, session, rendered, items) {
+         { surfaceOp: 'append' },
+       )
+       written.push('system/message')
++      // 开场规则：紧跟系统提示、排在开场第一条之前。source.kind 用 'prefill'（rule）：
++      // 模型照常看得到；面板不当成用户气泡显示；「存为预设」取历史时跳过（session-history.js），
++      // 也不算每轮注入（inject-auto.js 只认 prefill:'every-turn'）。
++      if (rule !== '') {
++        session.append(
++          'user/message',
++          { role: 'user', content: [{ type: 'text', text: rule }], source: { kind: 'prefill', prefill: 'rule' }, id: randomUUID() },
++          { surfaceOp: 'append' },
++        )
++        written.push('user/message:rule')
++      }
+     }
+     for (const user of users) {
+       session.append(
+@@ -2221,6 +2309,7 @@ export function writeSyntheticTurns(api, agent, session, rendered, items) {
+     items: items.length,
+     writes: written.length,
+     turnAdjusted,
++    ...(rule !== '' ? { rule: rule.length } : {}),
+   })
+ 
+   // 草稿是"一次性"的：物化完成即消费掉（Q15：发出即固定）。探针路径下是 no-op。
+diff --git a/impl.js b/impl.js
+index d6aa33e..8d5af71 100644
+--- a/impl.js
++++ b/impl.js
+@@ -254,6 +254,8 @@ export function sanitizeEveryTurn(raw) {
+     ...(bench.length > 0 ? { bench, benchTowers } : {}),
+     // 约束承接：来自会话的预设，新会话第一条真实消息那轮发「首轮段 + 接缝提醒」（constraint-carry.js）。
+     ...(raw.seam === true ? { seam: true } : {}),
++    // 「开场里留一份规则」（默认关）：seam 时才有意义，只存打开的 true。
++    ...(raw.seam === true && raw.headRule === true ? { headRule: true } : {}),
+   }
+ }
+ 
+@@ -263,12 +265,13 @@ export function sanitizeEveryTurn(raw) {
+  *   模式沿用 body.everyTurn（本会话那格）；一条都没勾 = 不带（基于角色卡的预设存 null，免得回落到卡的提醒）；
+  * - 没给 ⇒ 照旧只看 body.everyTurn；
+  * - `fromSession: true` 原样保留（标记「这份预设来自会话」）。
++ * - `headRule: true`（面板「开场里留一份规则」，默认关）：编进 everyTurn.headRule，新会话物化开场时在最前面写一条规则。
+  */
+ export function carriedPresetFields(body, { layered = false } = {}) {
+   const base = layered && body?.everyTurn === null ? null : sanitizeEveryTurn(body?.everyTurn)
+   const fromSession = body?.fromSession === true ? true : undefined
+   if (!Array.isArray(body?.carried)) return { everyTurn: base, fromSession }
+-  const merged = sanitizeEveryTurn(mergeCarried(body.carried, base))
++  const merged = sanitizeEveryTurn(mergeCarried(body.carried, base, { headRule: body?.headRule === true ? true : undefined }))
+   return { everyTurn: merged ?? (layered ? null : undefined), fromSession }
+ }
+ 
+@@ -838,6 +841,21 @@ export function apply(ctx) {
+     { prepend: true },
+   )
+ 
++  // 开场历史的系统提示对齐（gate.alignOnRequest）：第一条真实消息那一步，把物化时写的那条 system
++  // 换成本步的渲染结果，免得 DSH 在本轮末尾追加一整份系统提示、压过接缝提醒。
++  ctx.on('agent/request', async (payload, next) => {
++    const config = await next()
++    const gate = gateCache.module
++    if (typeof gate?.alignOnRequest === 'function') {
++      try {
++        await gate.alignOnRequest(api(), payload)
++      } catch (error) {
++        note({ alignSystem: 'threw', error: String(error?.message ?? error) })
++      }
++    }
++    return config
++  })
++
+   // 注入审计：盯着落进会话、会进模型的消息（含绕过 pre-step 直接写入的），未登记的记下来给面板。
+   ctx.on('session/event', (session, event) => {
+     const gate = gateCache.module
