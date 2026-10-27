@@ -23,6 +23,7 @@
     "enabled.js",
     "workspace-instructions.js",
     "gate.js",
+    "injection-audit.js",
     "index.js",
     "client.js",
     "cordis.patch.yml",
