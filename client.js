@@ -637,6 +637,17 @@ window.__ModuleLoader__.load({
       seedLate: '摘要覆盖到第 {n} 轮，晚于开场对话截取的第 {m} 轮，不能带上',
       seedDropped: '开场对话改成只到第 {m} 轮，摘要（到第 {n} 轮）已不再带上',
       seedDrop: '不带',
+      carryTitle: '带上会话里生效过的每轮约束',
+      carryHint: '这些要求在原会话里靠每轮注入维持（存进开场的历史里不含注入）。勾上的会编进预设的每轮注入；新会话第一条消息那轮再提醒一次「以上历史均遵守这些要求，继续保持」。',
+      carrySrcSession: '本会话设置',
+      carrySrcPreset: '来自预设',
+      carrySrcCard: '来自角色卡',
+      carrySrcDefault: '新会话默认',
+      carrySrcBuiltin: '内置积木',
+      carrySrcHistory: '历史里发过',
+      carryTurns: '注入过 {n} 轮',
+      carryNotYet: '还没注入过',
+      carryUnnamed: '每轮注入',
       collapseCard: '收起卡片',
       pinOn: '钉住',
       pinOff: '取消钉住',
@@ -965,6 +976,17 @@ window.__ModuleLoader__.load({
       seedLate: 'The summary covers through turn {n}, after turn {m} where the opening dialogue ends — it cannot be included',
       seedDropped: 'The opening dialogue now ends at turn {m}; the summary (through turn {n}) is no longer included',
       seedDrop: 'Drop',
+      carryTitle: 'Carry the per-turn constraints that were active in this session',
+      carryHint: 'These requirements were kept up by per-turn injections in the original session (the history saved into the opening does not include injections). Checked ones go into the preset\'s per-turn injection; on the first message of a new session they are sent once more with "All of the conversation history above followed these requirements; keep following them."',
+      carrySrcSession: 'This session',
+      carrySrcPreset: 'From preset',
+      carrySrcCard: 'From character card',
+      carrySrcDefault: 'New-session default',
+      carrySrcBuiltin: 'Built-in block',
+      carrySrcHistory: 'Sent in history',
+      carryTurns: 'injected in {n} turns',
+      carryNotYet: 'not injected yet',
+      carryUnnamed: 'Per-turn injection',
       collapseCard: 'Collapse card',
       pinOn: 'Pin',
       pinOff: 'Unpin',
@@ -3167,6 +3189,8 @@ window.__ModuleLoader__.load({
       // 故事记忆里「从当前会话取摘要」：保存预设时带上的摘要。
       const [seedDraft, setSeedDraft] = React.useState(null)
       const [seedNote, setSeedNote] = React.useState('')
+      // 约束承接：「从当前会话取」时检出的每轮约束（带 on = 勾没勾）；null = 没取过。
+      const [carryList, setCarryList] = React.useState(null)
       // 长卡片展开的行（按下标）；分批渲染已画出的条数。
       const [expandedRows, setExpandedRows] = React.useState(() => new Set())
       const [shownRows, setShownRows] = React.useState(ROW_BATCH)
@@ -4031,12 +4055,12 @@ window.__ModuleLoader__.load({
                 const session = { overrides, gate: gateMode, tools, everyTurn: everyTurnStored, items, enabled: ownEnabled, workspaceInstructions: wsPreset, lore: loreDraft ?? state?.lore?.[sessionId] ?? null }
                 const diff = cardDiff(session, got.layer)
                 layerFrom = resolveLayers(got.layer, diff)
-                return packsCall({ op: 'save', name, layered: true, card, ...diff, ...seed })
+                return packsCall({ op: 'save', name, layered: true, card, ...diff, ...seed, ...carryPayload() })
               }
             }
             // 世界书改过就整份存进预设（只在带着角色卡时有意义）；角色卡本身不动。
             const lorePack = card ? lorePackOf(loreDraft ?? state?.lore?.[sessionId] ?? null) : undefined
-            return packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(wsPreset ? { workspaceInstructions: wsPreset } : {}), ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}), ...(lorePack !== undefined ? { lore: lorePack } : {}), ...seed })
+            return packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(wsPreset ? { workspaceInstructions: wsPreset } : {}), ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}), ...(lorePack !== undefined ? { lore: lorePack } : {}), ...seed, ...carryPayload() })
           })
           .then((data) => {
             adoptPacks(data)
@@ -4070,6 +4094,7 @@ window.__ModuleLoader__.load({
         setShownRows(ROW_BATCH)
         setFetchPending(null)
         setFetchCut({ fromTurn: pending.range.fromTurn, toTurn: pending.range.toTurn, lastTurn: pending.lastTurn })
+        setCarryList((pending.constraints ?? []).map((entry) => ({ ...entry, on: entry.checked !== false })))
         if (seedDraft !== null && !seedAllowed(seedDraft, pending.range.toTurn)) {
           setSeedDraft(null)
           setSeedNote(t('seedDropped').replace('{n}', String(seedDraft.throughTurn)).replace('{m}', String(pending.range.toTurn)))
@@ -4094,6 +4119,7 @@ window.__ModuleLoader__.load({
               turnCount: Number(data?.turnCount) || 0,
               lastTurn: Number(data?.lastTurn) || 0,
               toolCalls: Number(data?.toolCalls) || 0,
+              constraints: Array.isArray(data?.constraints) ? data.constraints : [],
               tok: itemsTokens(got),
             }
             if (items.length === 0 && pending.tok <= FETCH_WARN_TOK) commitFetch(pending, 'replace')
@@ -4169,6 +4195,8 @@ window.__ModuleLoader__.load({
           ...(ownEnabled && Object.keys(ownEnabled).length > 0 ? { enabled: ownEnabled } : {}),
           // 工作区说明：只带模式 + 改写正文，从不带 AGENTS.md 原文。
           ...(wsPreset ? { workspaceInstructions: wsPreset } : {}),
+          // 约束承接：来自会话的标记 + 勾上的约束（导入时服务端同样编进每轮注入）。
+          ...carryPayload(),
         }
         const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
@@ -4265,8 +4293,16 @@ window.__ModuleLoader__.load({
       const ownEveryTurn = state?.everyTurn?.[sessionId]
       const everyTurnStored =
         (String(ownEveryTurn?.text ?? '').trim() !== '' || String(ownEveryTurn?.firstText ?? '').trim() !== '')
-          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {} }
+          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(ownEveryTurn.seam === true ? { seam: true } : {}) }
           : null
+      // 约束承接：取过会话 ⇒ 预设标记 fromSession，带上勾选的约束（服务端编成每轮注入，模式沿用 everyTurn）；
+      // 没取过但本会话本身就是从这种预设开的 ⇒ 标记照样带上。
+      const carryPayload = () =>
+        carryList !== null
+          ? { fromSession: true, carried: carryList.filter((entry) => entry.on === true).map(({ on: _on, checked: _checked, turns: _turns, lastTurn: _last, id: _id, ...rest }) => rest) }
+          : ownEveryTurn?.seam === true
+            ? { fromSession: true }
+            : {}
       // 预设下拉（头部「当前预设 ▾」点开）：内置 + 我的，点一下即整体套用。
       const presetsMenu = h(
         'div',
@@ -4837,6 +4873,36 @@ window.__ModuleLoader__.load({
         ),
       )
       const pendingTok = fetchPending?.tok ?? 0
+      // 约束承接：取来的会话里生效过的每轮约束，默认勾上，保存预设时编进每轮注入。
+      const carrySrcKey = { session: 'carrySrcSession', preset: 'carrySrcPreset', card: 'carrySrcCard', default: 'carrySrcDefault', builtin: 'carrySrcBuiltin', history: 'carrySrcHistory' }
+      const carryBox =
+        carryList === null || carryList.length === 0
+          ? null
+          : h(
+              'div',
+              { style: { ...V.callout('brand'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' }, 'data-prefill-carry-list': '' },
+              h('div', null, h('b', null, t('carryTitle'))),
+              h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, t('carryHint')),
+              ...carryList.map((entry, index) =>
+                h(
+                  'label',
+                  { key: entry.id ?? index, 'data-prefill-carry-item': entry.id ?? String(index), style: { display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12 } },
+                  h('input', { type: 'checkbox', checked: entry.on === true, onChange: (event) => setCarryList((list) => (list ?? []).map((item, at) => (at === index ? { ...item, on: event.target.checked } : item))) }),
+                  h(
+                    'span',
+                    { style: { minWidth: 0, flex: '1 1 auto' } },
+                    h('b', null, entry.name || t('carryUnnamed')),
+                    ' ',
+                    h('span', { style: V.sectionMeta }, `${t(carrySrcKey[entry.source] ?? 'carrySrcHistory')} · ${Number(entry.turns) > 0 ? t('carryTurns').replace('{n}', String(entry.turns)) : t('carryNotYet')}`),
+                    h(
+                      'div',
+                      { style: { color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }, title: [entry.first, entry.text].filter((part) => String(part ?? '').trim() !== '').join('\n') },
+                      String(entry.text || entry.first || '').replace(/\s+/g, ' ').slice(0, 160),
+                    ),
+                  ),
+                ),
+              ),
+            )
       const fetchConfirm =
         fetchPending === null
           ? null
@@ -4939,6 +5005,7 @@ window.__ModuleLoader__.load({
         greetingBar,
         fetchBar,
         fetchPending !== null ? fetchConfirm : null,
+        carryBox,
         undoSnap !== null
           ? h(
               'div',
@@ -5231,6 +5298,8 @@ window.__ModuleLoader__.load({
         bench: benchMigrated.bench,
         benchTowers: benchMigrated.benchTowers,
         asDefault: state?.everyTurn?.['*']?.enabled === true,
+        // 约束承接的接缝标记：只认本会话那格，改面板时别丢。
+        seam: state?.everyTurn?.[sessionId]?.seam === true,
       }
       const writeEveryTurn = async (nextValue, override) => {
         setEveryTurnDraft(nextValue)
@@ -5256,11 +5325,13 @@ window.__ModuleLoader__.load({
           checks: compiled !== null ? compiled.checks : Array.isArray(nextValue.checks) ? nextValue.checks : [],
           auto,
           ...(hasBench ? { bench: nextValue.bench, benchTowers: nextValue.benchTowers ?? {} } : {}),
+          ...(nextValue.seam === true ? { seam: true } : {}),
         }
         map[sessionId] = entry
         if (nextValue.asDefault === true) {
           const { override: _ignored, ...autoForDefault } = auto
-          map['*'] = { ...entry, auto: autoForDefault }
+          const { seam: _seam, ...forDefault } = entry
+          map['*'] = { ...forDefault, auto: autoForDefault }
         } else delete map['*']
         const data = await postJson(STATE_ROUTE, { everyTurn: map })
         setEnvelope(data)
