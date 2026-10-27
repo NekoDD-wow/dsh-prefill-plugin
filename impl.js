@@ -31,6 +31,7 @@ import { compileBench, makeBlock, normalizeChecks } from './blocks.js'
 import { historyToItems, turnRange } from './session-history.js'
 import { CHECK_IDS, autoParams, modeOf, splitTurns } from './inject-auto.js'
 import { applyEnabled, sanitizeEnabled } from './enabled.js'
+import { migrateSandbox, withLegacyMirror, withLegacyView } from './sandbox.js'
 import { sanitizeWorkspaceInstructions } from './workspace-instructions.js'
 import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
 
@@ -114,7 +115,10 @@ function note(entry) {
 function normalizeState(raw) {
   const source = raw !== null && typeof raw === 'object' ? raw : {}
   const levers = source.levers !== null && typeof source.levers === 'object' ? source.levers : {}
-  return {
+  // 会话沙盒第 1 步（issue #15）：overrides / sessionAllowKinds / sessionTools / injectionBlocks / gate 'pure'
+  // 读取时迁进 state.sandbox（幂等），旧字段从内存结果里删掉；writeState 写盘时再补回镜像（防降级）。
+  // 面板写回的旧字段（patchState 把它们摊在当前状态上）也在这里被整族吸收。
+  return migrateSandbox({
     // 先摊开原始对象：**保留未知字段**。M2 的按会话闸门映射 `gate`、
     // Q9 的 `noticeSeen` 都靠这一行才不至于被规范化抹掉（否则 UI 写进去就没了）。
     ...source,
@@ -124,7 +128,7 @@ function normalizeState(raw) {
     allowKinds: Array.isArray(source.allowKinds)
       ? source.allowKinds.filter((kind) => typeof kind === 'string')
       : [...DEFAULT_ALLOW_KINDS],
-  }
+  })
 }
 
 let cache = { state: null, mtimeMs: -1 }
@@ -151,7 +155,9 @@ function readState() {
 
 function writeState(next) {
   mkdirSync(DATA_DIR, { recursive: true })
-  writeFileSync(STATE_FILE, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  // 防降级（会话沙盒第 1 步）：同时写回由规则表推出的旧字段镜像 + 指纹，退回 0.15.2 读同一份文件不丢配置；
+  // 读回来时指纹对得上的旧字段直接丢掉（新表为准），对不上的（旧版本改过）整族重新迁移。见 sandbox.js。
+  writeFileSync(STATE_FILE, `${JSON.stringify(withLegacyMirror(next), null, 2)}\n`, 'utf8')
   cache = { state: null, mtimeMs: -1 }
   return readState()
 }
@@ -980,7 +986,8 @@ export function apply(ctx) {
         stage: STAGE,
         gateStage: gateCache.module?.STAGE ?? null,
         stateFile: STATE_FILE,
-        state,
+        // 面板（第 3 步之前）仍读写旧字段：给它由规则表推出的兼容视图（旧字段 + sandbox）。
+        state: withLegacyView(state),
         drafts: typeof gateCache.module?.draftIds === 'function' ? gateCache.module.draftIds() : [],
         // Q9 角标：每会话最近一轮的生效快照（三态 + 被丢弃的 kind）。
         snapshots,
