@@ -22,6 +22,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { checksOf, modeOf, replay, splitTurns } from './inject-auto.js'
+import { hasImportedHistory, seamApplies, withSeam } from './constraint-carry.js'
 import { applyEnabled, isEnabled } from './enabled.js'
 import { WORKSPACE_KIND, WORKSPACE_MARK, applyWorkspaceInstructions, lastWorkspaceInHistory, workspaceInstructionsFor } from './workspace-instructions.js'
 import {
@@ -262,6 +263,9 @@ export function everyTurnFor(state, agentId) {
     checks: checksOf(entry),
     auto: { ...(entry.auto ?? {}), override: own ? entry.auto?.override : undefined },
     since: own ? Number(entry.since) || 0 : 0,
+    // 约束承接（constraint-carry.js）：来自会话的预设带过来的标记，只认本会话那格。
+    seam: own && entry.seam === true,
+    from: own ? 'session' : 'default',
   }
 }
 
@@ -1419,6 +1423,7 @@ export async function step(api, payload, decision) {
   // 已注入几次、自动模式下这一轮发不发：都从会话事件重放（只看本轮之前的轮），
   // 同一轮经过多次（双座位、标题生成等旁路请求）结果一样，不会被旁路请求先吃掉首轮专用段。
   let plan
+  let seam = false
   if (everyTurn !== undefined && Number.isFinite(payload?.turn) && (payload?.step ?? 1) === 1 && decision?.kind === 'enter') {
     let events = []
     try {
@@ -1426,15 +1431,20 @@ export async function step(api, payload, decision) {
     } catch {
       events = []
     }
-    plan = replay(splitTurns(events), everyTurn, payload.turn)
+    const turns = splitTurns(events)
+    plan = replay(turns, everyTurn, payload.turn)
+    // 接缝提醒：从会话存下的预设开的新会话，开场历史里一句提醒都没有（存预设时注入被跳过），
+    // 第一条真实消息那轮实测常常不听 ⇒ 这一轮发首轮段并附「以上历史均遵守这些要求，继续保持」。
+    seam = seamApplies(everyTurn, turns, plan.isFirst)
     if (everyTurn.mode === 'auto') {
       const last = plan.history.at(-1)
       note({ everyTurn: 'auto', id: agent.id, turn: payload.turn, state: plan.state, inject: plan.inject, streak: plan.streak, need: plan.need, resumes: plan.resumes, reason: plan.reason, lastTurn: last?.turn, lastVerdict: last?.verdict, lastScores: last?.scores })
     }
   }
   const isFirst = plan?.isFirst === true
-  const everyTurnText =
+  const baseEveryTurnText =
     everyTurn === undefined ? '' : isFirst && everyTurn.firstText !== '' ? everyTurn.firstText : everyTurn.text
+  const everyTurnText = seam ? withSeam(baseEveryTurnText) : baseEveryTurnText
   if (
     everyTurn !== undefined &&
     everyTurnText !== '' &&
@@ -1452,7 +1462,8 @@ export async function step(api, payload, decision) {
     const injected = {
       id: `prefill-everyturn-${payload.turn}`,
       role: 'user',
-      source: { kind: 'prefill', prefill: 'every-turn' },
+      // from / seam：给「存为预设」认约束来源用（constraint-carry.js），模型看不到 source。
+      source: { kind: 'prefill', prefill: 'every-turn', from: everyTurn.from, ...(seam ? { seam: true } : {}) },
       // 必须套"背景"外壳：裸发正文时 step-5 把它当成用户本轮的要求，四段直接写进了回答正文、
       // 思维链反而不守格式（实测 D1：注入的 5 轮四段只命中 1 轮）；套上外壳后与 B2b 一致（13/14）。
       content: [{ type: 'text', text: renderInjectBlock([{ role: 'user', text: everyTurnText }]) }],
@@ -1467,7 +1478,7 @@ export async function step(api, payload, decision) {
     if (at >= 0) messages.splice(at, 0, injected)
     else messages.push(injected)
     next = { ...next, messages }
-    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: plan.nth, first: isFirst && everyTurn.firstText !== '', chars: everyTurnText.length, mode: everyTurn.mode, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
+    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: plan.nth, first: isFirst && everyTurn.firstText !== '', seam, chars: everyTurnText.length, mode: everyTurn.mode, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
   }
 
   // ── 世界书关键词注入（v0.6 二期，只对套了角色卡的会话）────────────────────
@@ -1711,6 +1722,76 @@ export const PREFILL_PROBE_ANSWER = probeText(
 
 /** 预填装包标识：**放 `source.prefill`，不放 `source.kind`**（见 F16）。 */
 export const PREFILL_PACK_ID = probeText('PREFILL_PACK_ID', 'probe')
+
+/**
+ * 开场历史的系统提示对齐（约束承接 · 接缝）。
+ *
+ * 物化开场历史时写进去的 system/message 是 `agent/created` 那一刻渲染的（见 computeRendered），
+ * 那时别的插件（如 Agent Teams）还没挂完段 ⇒ 和第一条真实消息那一步真正渲染出来的不一样。
+ * dsh-agent-loop 的 SystemPromptProjection 发现「最新一条 system 节点 ≠ 本步渲染」就**追加**一条
+ * system/message，线上它排在本轮用户消息和运行时上下文之后 —— 也就是模型生成前看到的最后一段，
+ * 一整份系统提示，排在紧挨用户消息的每轮注入 / 接缝提醒之后；而且之后每轮的历史里都带着两份系统提示。
+ *
+ * 做法：第一条真实消息那一步（开场里有合成轮、还没有真实轮、system 节点只有开头那一条），
+ * 在 `agent/request` 座位（step/start 已落盘、投影还没比较）把开头那条按本步的渲染结果原地替换掉
+ * （带当前轮 / 步，否则会话日志校验不过）⇒ 投影比较时一致，不再追加。
+ * 只改合成轮自己写的那条，条件不满足或失败就什么都不做（回到原行为）。
+ * @param position { turn, step }：当前轮 / 步。
+ */
+export async function alignSyntheticSystemPrompt(agent, turns, position = {}) {
+  const session = agent?.session
+  const surface = session?.surface
+  if (typeof session?.append !== 'function' || typeof session?.eventAt !== 'function' || typeof surface?.nodes?.[Symbol.iterator] !== 'function') {
+    return { ok: false, reason: 'no-surface' }
+  }
+  if (!hasImportedHistory(turns) || turns.some((turn) => !turn.synthetic && turn.completed)) return { ok: false, reason: 'not-seam' }
+  const nodes = []
+  for (const seq of surface.nodes) {
+    const event = session.eventAt(seq)
+    if (event?.type === 'system/message') nodes.push({ seq, event })
+  }
+  if (nodes.length !== 1) return { ok: false, reason: `system-nodes:${nodes.length}` }
+  let rendered
+  try {
+    const assembly = await systemPromptOf(agent)?.assemble?.({ agent, scope: agent })
+    if (assembly === undefined) return { ok: false, reason: 'no-assembly' }
+    rendered = renderPrompt(assembly)
+  } catch (error) {
+    return { ok: false, reason: `render:${String(error?.message ?? error)}` }
+  }
+  const [{ seq, event }] = nodes
+  const current = (event.data?.message?.content ?? []).map((part) => (part?.type === 'text' ? part.text : '')).join('')
+  if (current === rendered || rendered === '') return { ok: true, changed: false }
+  session.append(
+    'system/message',
+    { turn: position.turn, step: position.step ?? 1, message: { role: 'system', content: [{ type: 'text', text: rendered }], source: { kind: 'system-prompt' }, id: randomUUID() } },
+    { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] },
+  )
+  return { ok: true, changed: true, from: current.length, to: rendered.length }
+}
+
+/**
+ * `agent/request` 座位：此刻 step/start 已落盘、系统提示投影还没比较 ⇒ 正好对齐开场那条 system。
+ * 只在每轮第 1 步、开场有合成轮且还没有真实轮时动手。
+ */
+export async function alignOnRequest(api, payload) {
+  const agent = payload?.agent
+  if (typeof agent?.id !== 'string' || !Number.isFinite(payload?.turn) || (payload?.step ?? 1) !== 1) return
+  let events = []
+  try {
+    events = agent.session?.snapshotEvents?.() ?? []
+  } catch {
+    return
+  }
+  const turns = splitTurns(events)
+  if (!hasImportedHistory(turns)) return
+  try {
+    const aligned = await alignSyntheticSystemPrompt(agent, turns, { turn: payload.turn, step: payload.step ?? 1 })
+    if (aligned.reason !== 'not-seam') api.note({ alignSystem: aligned, id: agent.id, turn: payload.turn })
+  } catch (error) {
+    api.note({ alignSystem: { ok: false, reason: String(error?.message ?? error) }, id: agent.id, turn: payload.turn })
+  }
+}
 
 /**
  * 多轮预填装的内容模型。
