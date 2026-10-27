@@ -25,6 +25,7 @@
     "workspace-instructions.js",
     "gate.js",
     "injection-audit.js",
+    "sandbox.js",
     "index.js",
     "client.js",
     "cordis.patch.yml",
