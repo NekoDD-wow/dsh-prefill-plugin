@@ -698,6 +698,62 @@ function effectiveStateFor(state, agentId) {
 const BLOCKERS = (globalThis[Symbol.for('dsh-prefill.tools-blockers')] ??= new Map())
 
 /**
+ * 纯净模式下清掉 `required: true` 的运行时上下文（issue #9）。
+ *
+ * 官方 `suppressRuntimeContext()` 只抑制可选上下文；required 的会在 `assemble()` 里保留、
+ * 在 `refreshContext()` 里"缺了就补回"，在 `system-prompt/assemble` 瀑布里删也删不掉。
+ * 对策（只作用于这一个 agent）：
+ *   · 注册在**该 agent 自己作用域**里的（如 Agent Teams 的 `team:identity`）：
+ *     同作用域不能再注册同名项，只能把那条注册的正文临时换成 ''（空正文的上下文渲染时会被丢掉），
+ *     unlatch 时还原；
+ *   · 继承来的（全局 / 上层作用域，如 `working-directory:current`）：在 agent 作用域注册一条
+ *     同名、**非 required**、空正文的遮蔽项 ⇒ 合并后生效的是我们这条，suppress 自然把它去掉。
+ * 恢复动作挂进 latch.disposers，随下一轮 unlatch 一起撤。返回本次新处理的名字。
+ */
+export function neutralizeRequiredContexts(api, scope, latch) {
+  const done = (latch.neutralizedContexts ??= new Set())
+  const fresh = []
+  let layers
+  let sp
+  try {
+    const services = resolveServices(scope, api.rootCtx)
+    sp = services.systemPrompt.service
+    layers = sp?.layers ?? (typeof api.rootCtx?.get === 'function' ? api.rootCtx.get('systemPrompt')?.layers : undefined)
+  } catch {
+    return fresh
+  }
+  if (typeof layers?.merge !== 'function') return fresh
+  let merged
+  try {
+    merged = layers.merge(scope, (layer) => layer.contexts)
+  } catch {
+    return fresh
+  }
+  const own = typeof layers.peek === 'function' ? layers.peek(scope)?.contexts : undefined
+  for (const [name, entry] of merged) {
+    if (entry?.required !== true || done.has(name) || String(name).startsWith('prefill:')) continue
+    try {
+      if (own !== undefined && own.get(name) === entry) {
+        const original = entry.text
+        entry.text = ''
+        latch.disposers.push(() => {
+          if (entry.text === '') entry.text = original
+        })
+      } else if (typeof sp?.context === 'function') {
+        latch.disposers.push(sp.context({ name, order: Number.isFinite(entry.order) ? entry.order : 1000, text: '' }))
+      } else {
+        continue
+      }
+      done.add(name)
+      fresh.push(name)
+    } catch {
+      // 冻结对象 / 注册冲突：跳过这一条，别拖垮装配。
+    }
+  }
+  return fresh
+}
+
+/**
  * 挂在**插件根 ctx**（无标签监听器 ⇒ 必然收到每一次 `system-prompt/assemble` 派发），
  * 再按**本次派发的 scope**判断：该 agent 在册且 `blockTools` 开 ⇒ 清空 tools。
  *
@@ -751,11 +807,23 @@ function ensureToolsBlocker(api) {
       }
       // 用**本轮冻结的** lever，而不是实时状态：否则轮内翻开关会让线上装配
       // 与"挂载的 lever"不一致（半轮移除、半轮恢复）。
-      const frozen = typeof id === 'string' ? api.latches.get(id)?.frozenLevers : undefined
+      const latch = typeof id === 'string' ? api.latches.get(id) : undefined
+      const frozen = latch?.frozenLevers
+      // 拦上下文：suppressRuntimeContext 只去掉"可选"上下文，`required: true` 的（Agent Teams 的
+      // `team:identity`、工作目录 `working-directory:current` …）照样进运行时快照，而且 0.2.x 的
+      // agent-loop 在 step() 里会 refreshContext() 重算快照、绕过 pre-step 直接写进会话 ⇒
+      // 只能在注册表层面把它们清掉（见 neutralizeRequiredContexts）。
+      let neutralized = []
+      if (latch?.contextsSuppressed === true && context?.scope !== undefined) {
+        neutralized = neutralizeRequiredContexts(api, context.scope, latch)
+      }
+      const filtered = neutralized.length > 0 || latch?.neutralizedContexts?.size > 0
+        ? { ...result, contexts: (result?.contexts ?? []).filter((entry) => !latch.neutralizedContexts.has(entry?.name)) }
+        : result
       const hit = frozen?.blockTools === true
-      api.note({ blocker: 'system-prompt/assemble', id: typeof id === 'string' ? id : '(none)', frozen: frozen !== undefined, hit })
-      if (!hit) return result
-      return { ...result, tools: [] }
+      api.note({ blocker: 'system-prompt/assemble', id: typeof id === 'string' ? id : '(none)', frozen: frozen !== undefined, hit, ...(neutralized.length > 0 ? { neutralized } : {}) })
+      if (!hit) return filtered
+      return { ...filtered, tools: [] }
     },
     { prepend: true },
   )
@@ -817,6 +885,8 @@ function mountLevers(agent, state, api, sink) {
   // "开着拦注入时，改写静默失效"。现在改成**逐名清空 harness 自己的段**，
   // 留下我们要改写的那几条。
   let completeDisposer
+  // 是否挂了 suppressRuntimeContext：装配观察者据此再清掉 `required: true` 的上下文（见 neutralizeRequiredContexts）。
+  let contextsSuppressed = false
   // 接管系统提示时，我方改写的段**并进那一条 complete 段**，不再单独注册。
   let sectionsFoldedIntoComplete = false
   if (state.levers.blockSections && typeof sp?.section === 'function') {
@@ -860,6 +930,7 @@ function mountLevers(agent, state, api, sink) {
     typeof sp?.suppressRuntimeContext === 'function'
   ) {
     push(sp.suppressRuntimeContext())
+    contextsSuppressed = true
   }
   // ── 工具放行：**不改工具说明，只管"能不能用"**（用户要求）──────────────────
   //   · 配了放行清单（会话级优先于全局）⇒ `restrict({ allow: 清单 })`
@@ -908,6 +979,7 @@ function mountLevers(agent, state, api, sink) {
     disposers,
     // 交给 step()：一旦自检探针发现 `complete` 段撞车，就靠它撤掉再换逐名清空。
     completeDisposer,
+    contextsSuppressed,
     ui: {
       systemPromptVia: systemPrompt.via,
       toolsVia: tools.via,
@@ -951,8 +1023,11 @@ export async function prime(api, agent) {
   const disposers = []
   let error = ''
   let primedComplete
+  let primedSuppressed = false
   try {
-    primedComplete = mountLevers(agent, state, api, disposers).completeDisposer
+    const mounted = mountLevers(agent, state, api, disposers)
+    primedComplete = mounted.completeDisposer
+    primedSuppressed = mounted.contextsSuppressed === true
   } catch (thrown) {
     error = String(thrown?.message ?? thrown)
   }
@@ -962,6 +1037,7 @@ export async function prime(api, agent) {
     ui: {},
     frozenLevers: state.levers,
     completeDisposer: primedComplete,
+    contextsSuppressed: primedSuppressed,
   })
   api.note({ prime: 'agent/created', id: agent.id, mounted: disposers.length, error })
 
@@ -1064,13 +1140,16 @@ export async function step(api, payload, decision) {
   let ui = entry?.ui
   let mountError = ''
   let completeDisposer = entry?.completeDisposer
+  let contextsSuppressed = entry?.contextsSuppressed === true
   if (remounted) {
     unlatch(agent.id)
     const disposers = []
+    contextsSuppressed = false
     try {
       const result = mountLevers(agent, state0, api, disposers)
       ui = result.ui
       completeDisposer = result.completeDisposer
+      contextsSuppressed = result.contextsSuppressed === true
     } catch (error) {
       mountError = String(error?.message ?? error)
       ui = { mountError }
@@ -1083,6 +1162,7 @@ export async function step(api, payload, decision) {
       ui,
       frozenLevers: state0.levers,
       completeDisposer,
+      contextsSuppressed,
     })
   }
   // 本轮所有判定都用冻结值，不再读实时状态。
