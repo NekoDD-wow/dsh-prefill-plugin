@@ -388,6 +388,18 @@ window.__ModuleLoader__.load({
       injectOriginalHint: '框里显示的是**当前原文**；改动即覆盖，改回原文 / 留空 = 不修改',
       // ── 注入内容改写（Q17，只在本会话生效）──
       injectTitle: '改写注入内容',
+      auditLabel: '检测到的疑似未登记注入',
+      auditHint: '不在默认注入清单里、却进了模型上下文的内容（例如其他插件在会话作用域里注册的上下文、直接写进会话的消息）。默认放行，只做记录。',
+      auditPureLeak: '纯净模式下仍出现，请反馈',
+      auditBlockSession: '本会话阻断',
+      auditUnblockSession: '取消本会话阻断',
+      auditRemember: '全局记住',
+      auditForget: '取消全局阻断',
+      auditBlockedGlobal: '已全局阻断',
+      auditBlockedSession: '本会话已阻断',
+      auditDirect: 'DSH 直接写入，只能记录',
+      auditCount: '{n} 次',
+      auditNextTurn: '下一轮生效',
       injectHint: '把 harness 送进去的内容改掉，只在本会话生效；留空＝不修改。下面列的是默认注入清单，还没出现过的也能先改（命中即生效）。',
       injectNone: '（没拿到可改清单）',
       injectMessages: '消息类注入',
@@ -533,6 +545,18 @@ window.__ModuleLoader__.load({
       injectOriginalHint: 'The box shows the CURRENT original text; edit it to override, or match the original / clear it to leave it alone',
       // ── rewrite injections (Q17, this session only) ──
       injectTitle: 'Rewrite injections',
+      auditLabel: 'Suspected unregistered injections',
+      auditHint: 'Content that reached the model context without being in the default injection catalog (e.g. contexts another plugin registered in the session scope, messages written straight into the session). Allowed by default and only recorded.',
+      auditPureLeak: 'still present in pure mode, please report',
+      auditBlockSession: 'Block in this session',
+      auditUnblockSession: 'Unblock in this session',
+      auditRemember: 'Remember globally',
+      auditForget: 'Stop blocking globally',
+      auditBlockedGlobal: 'blocked globally',
+      auditBlockedSession: 'blocked in this session',
+      auditDirect: 'written directly by DSH, record only',
+      auditCount: '{n}×',
+      auditNextTurn: 'applies next turn',
       injectHint:
         'Override what the harness feeds in — this session only. Empty means leave it alone. The rows below are the default injection catalog: you can pre-set an override before it ever appears.',
       injectNone: '(no catalog available)',
@@ -5860,6 +5884,20 @@ window.__ModuleLoader__.load({
         writeTools(next)
       }
 
+      // ── 疑似未登记注入（宿主审计）+ 本会话阻断 / 全局记住 ───────────────────
+      const auditRows = Array.isArray(envelope?.audit?.[sessionId]) ? envelope.audit[sessionId] : []
+      const blocksAll = envelope?.state?.injectionBlocks !== null && typeof envelope?.state?.injectionBlocks === 'object' ? envelope.state.injectionBlocks : {}
+      const blockListOf = (key, group) => (Array.isArray(blocksAll?.[key]?.[group]) ? blocksAll[key][group] : [])
+      const isPureSession = envelope?.state?.gate?.[sessionId] === 'pure'
+      const toggleBlock = (key, group, name) => {
+        const list = blockListOf(key, group)
+        const nextList = list.includes(name) ? list.filter((entry) => entry !== name) : [...list, name]
+        const nextEntry = { ...(blocksAll[key] ?? {}), [group]: nextList }
+        void call({ injectionBlocks: { ...blocksAll, [key]: nextEntry } })
+          .then((data) => setEnvelope(data))
+          .catch(() => setStatus('error'))
+      }
+
       /** 清除本会话的注入配置（改写 / 每轮注入内容 / 独立白名单 / 工具放行）——删除功能之一。 */
       const clearSessionConfig = () => {
         // 同样两步确认（不用 window.confirm：可能被屏蔽 ⇒ 静默失败）。
@@ -5875,11 +5913,13 @@ window.__ModuleLoader__.load({
             const injects = { ...(env?.state?.injects ?? {}) }
             const sessionAllowKinds = { ...(env?.state?.sessionAllowKinds ?? {}) }
             const sessionTools = { ...(env?.state?.sessionTools ?? {}) }
+            const injectionBlocks = { ...(env?.state?.injectionBlocks ?? {}) }
             delete overrides[sessionId]
             delete injects[sessionId]
             delete sessionAllowKinds[sessionId]
             delete sessionTools[sessionId]
-            return call({ overrides, injects, sessionAllowKinds, sessionTools })
+            delete injectionBlocks[sessionId]
+            return call({ overrides, injects, sessionAllowKinds, sessionTools, injectionBlocks })
           })
           .then((data) => {
             setEnvelope(data)
@@ -5972,6 +6012,46 @@ window.__ModuleLoader__.load({
           'div',
           { style: S.injectBody },
           count === 0 ? h('div', { style: S.injectGroupHead }, t('injectNone')) : null,
+          // 疑似未登记注入：默认放行只记录；可本会话阻断，或全局记住（之后所有会话提前拦）。
+          auditRows.length === 0
+            ? null
+            : h(
+                'div',
+                { style: S.injectGroupHead, title: t('auditHint') },
+                h('span', null, t('auditLabel')),
+                h('span', { style: S.chipStatic }, `${auditRows.length}`),
+                h('span', { style: S.injectRule }),
+              ),
+          ...auditRows.map((row) => {
+            const inSession = blockListOf(sessionId, row.group).includes(row.name)
+            const inGlobal = blockListOf('*', row.group).includes(row.name)
+            const groupLabel = row.group === 'sections' ? t('injectSections') : row.group === 'contexts' ? t('injectContexts') : t('injectMessages')
+            return h(
+              'div',
+              { key: `audit-${row.group}-${row.name}`, style: S.chipRow, title: row.preview || row.name },
+              h('span', { style: S.chip(inSession || inGlobal) }, row.name),
+              h('span', { style: S.chipStatic }, `${groupLabel} · ${t('auditCount').replace('{n}', String(row.count ?? 1))}`),
+              isPureSession ? h('span', { style: S.injectStale }, t('auditPureLeak')) : null,
+              row.blockable === false
+                ? h('span', { style: S.chipStatic }, t('auditDirect'))
+                : [
+                    inGlobal ? h('span', { key: 'g', style: S.chipStatic }, t('auditBlockedGlobal')) : null,
+                    !inGlobal && inSession ? h('span', { key: 's', style: S.chipStatic }, `${t('auditBlockedSession')} · ${t('auditNextTurn')}`) : null,
+                    inGlobal
+                      ? null
+                      : h(
+                          'button',
+                          { key: 'bs', type: 'button', style: S.gateBtn, onClick: () => toggleBlock(sessionId, row.group, row.name) },
+                          inSession ? t('auditUnblockSession') : t('auditBlockSession'),
+                        ),
+                    h(
+                      'button',
+                      { key: 'bg', type: 'button', style: S.gateBtn, onClick: () => toggleBlock('*', row.group, row.name) },
+                      inGlobal ? t('auditForget') : t('auditRemember'),
+                    ),
+                  ],
+            )
+          }),
           // 本会话白名单：点标签即生效（会话级，不动全局那张表）。
           h(
             'div',
