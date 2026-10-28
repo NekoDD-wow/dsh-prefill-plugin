@@ -73,6 +73,8 @@ window.__ModuleLoader__.load({
     /** 角色卡路由（v0.6 角色扮演扩展）。 */
     const CARDS_ROUTE = '/api/dsh-prefill/cards'
     const MEMORY_ROUTE = '/api/dsh-prefill/memory'
+    /** 手动注入路由（一次性，issue #19「C」）：op = list | add | edit | remove。 */
+    const INJECT_ROUTE = '/api/dsh-prefill/inject'
 
     /**
      * 同页两个组件之间的状态同步：输入框里的「预填装」开关写完之后广播一次，
@@ -273,13 +275,7 @@ window.__ModuleLoader__.load({
       prefillOff: '预填装',
       prefillOn: '预填装·开',
       // 会话开跑后自动改名：预填装（写进历史）→ **预注入**（每轮注入，且必须手动触发）。
-      injectOff: '预注入',
-      injectOn: '预注入 · 待点注入',
-      injectDone: '预注入 · 已注入',
-      injectTitleOff:
-        '本会话已开跑 ⇒ 内容不会再写进历史。注意：**不会自动注入** —— 要点面板里的「注入」，内容才会在下一轮带上（这里只是启用）。',
-      injectTitleOn:
-        '已启用预注入。但**不会自动生效**：还需点面板里的「注入」，把内容写进本会话配置（下一轮请求生效）。',
+      injectOff: '预填装 · 已开跑',
       prefillTitleOff: '本会话还没用预填装——点一下开启，编辑区会出现在输入框上方',
       prefillTitleOn: '本会话已用预填装——你发第一条消息时，这些内容会变成真实对话历史。点一下关掉',
       title: '预填装 · 注入控制',
@@ -359,12 +355,6 @@ window.__ModuleLoader__.load({
       // ── 模式（首轮前=写入历史；会话已开跑=每轮注入）──
       modeHistory: '写入历史',
       modeHistoryTip: '首轮发出时，这些内容会变成真实对话历史（持久、省 token、模型当成自己的记忆）',
-      modeInject: '每轮注入',
-      modeInjectTip:
-        '会话已开跑，无法再写入历史 ⇒ 内容改为**每轮注入**。注意：**不会自动生效** —— 点「注入」才会在下一轮请求里带上（不进历史、每轮花 token）。',
-      injectNow: '注入',
-      injectNowTip: '把当前内容与注入改写写成"本会话配置"，不产生任何消息；下一轮请求就带上',
-      injectedNext: '已注入 · 下一轮生效',
       injectFailed: '注入失败',
       // ── Q9 角标 ──
       statePure: '只留预填装',
@@ -430,13 +420,7 @@ window.__ModuleLoader__.load({
       prefillOff: 'Prefill',
       prefillOn: 'Prefill·on',
       // Renamed automatically once the session has run: prefill (history) → pre-inject (per turn, manual).
-      injectOff: 'Pre-inject',
-      injectOn: 'Pre-inject · click Inject',
-      injectDone: 'Pre-inject · injected',
-      injectTitleOff:
-        'This session has already run, so nothing is written to history. Nothing is injected automatically — press "Inject" in the panel to carry it into the next turn (this only enables the mode).',
-      injectTitleOn:
-        'Pre-injection is enabled, but it is NOT automatic: press "Inject" in the panel to write the content into this session config (effective next turn).',
+      injectOff: 'Prefill · running',
       prefillTitleOff: 'This session does not use prefill — click to enable; the editor shows up above the composer',
       prefillTitleOn: 'Prefill is on — this content becomes real history on your first send. Click to turn off',
       title: 'Prefill · injection control',
@@ -516,12 +500,6 @@ window.__ModuleLoader__.load({
       // ── mode (before first turn = write history; after = inject every turn) ──
       modeHistory: 'Write to history',
       modeHistoryTip: 'On your first send these become real conversation history (durable, cheap, owned by the model)',
-      modeInject: 'Inject every turn',
-      modeInjectTip:
-        'This session has already run, so history is out of reach — the content is injected on every turn instead. Note: it is NOT automatic — press "Inject" to carry it into the next request (not history, costs tokens each turn).',
-      injectNow: 'Inject',
-      injectNowTip: 'Write the current content and injection rewrites into this session config — no message is produced; the next turn carries it',
-      injectedNext: 'Injected · next turn',
       injectFailed: 'Inject failed',
       // ── Q9 badge ──
       statePure: 'Prefill only',
@@ -584,9 +562,6 @@ window.__ModuleLoader__.load({
       gateTitleOn: '当前：纯净已开。点一下关掉，恢复 harness 默认注入',
       gateNoticeTitle: '开启纯净？',
       gateNoticeBody: '系统提示会被清空：切换的那一轮缓存基本不命中，之后每轮输入反而更少。用量统计不受影响。此说明只弹一次。',
-      injectTitleOff: '本会话已开跑，内容不会再写进历史。要点面板里的「注入」，内容才会在下一轮带上（这里只是启用）。',
-      injectTitleOn: '已启用预注入，但不会自动生效：还需点面板里的「注入」，下一轮请求才会带上。',
-      modeInjectTip: '会话已开跑，无法再写入历史，内容改为每轮注入。不会自动生效：点「注入」后下一轮请求才带上（不进历史、每轮都计费）。',
       injectOriginalHint: '框里显示的是当前原文；改动即覆盖，改回原文或清空 = 不修改',
       presetsTitle: '预设',
       presetsNone: '未套用',
@@ -844,7 +819,7 @@ window.__ModuleLoader__.load({
       nextTurnNotice: '本轮进行中，改动从下一轮生效',
       itemsTitle: '开场对话（预填装）',
       itemsHistoryHint: '想让 AI 一开始就"记得"的对话写在这里。你发第一条消息时，这些会变成真实对话历史：只在首轮按输入计费一次，之后作为历史前缀，通常能命中缓存。用户和 AI 的消息顺序随意，连着几条也行。',
-      itemsInjectHint: '会话已开跑，没法再写进开头的历史：现在改为「每轮注入」，点右下角「注入」后从下一轮起，每轮都会在你的话之前带上一份（每轮计费）。',
+      itemsInjectHint: '会话已开跑，开场对话不会再写进历史，也不会再被注入。要在剧情里补一句（用户说 / AI 回答），用下面的「手动注入」：只发一次，发出后成为会话历史。',
       itemsEmpty: '还没有内容。可以先点「填入示例」看看格式。',
       fillExample: '填入示例',
       exampleUser: '我是刚学编程的新手，接下来的回答请尽量通俗，多举例子。',
@@ -860,10 +835,6 @@ window.__ModuleLoader__.load({
       addUser: '＋ 用户说',
       addAssistant: '＋ AI 回答',
       dockClear: '清空',
-      injectNow: '注入',
-      injectUpdate: '更新注入',
-      stopInject: '停止注入',
-      injectNowTip: '把当前开场对话写成本会话的"每轮注入"，不产生任何消息；下一轮请求开始带上',
       advanced: '高级',
       injectHint: '把 harness 送进去的某条注入换成你的版本，只在本会话生效；框里是原文，改回原文或清空 = 不修改。',
       usageTitle: '用量与缓存',
@@ -887,7 +858,6 @@ window.__ModuleLoader__.load({
       noteTakeover: '接管：系统提示只有你写的那段，没有工具和运行时上下文，每轮输入最少。',
       noteAppend: '追加：每轮多发约 {n} tok 的系统提示；它排在默认提示靠后的位置，前面的大段前缀不变，第 2 轮起通常照常命中缓存。',
       noteHistory: '开场对话约 {n} tok：首轮写进历史，只在首轮算一次未命中，之后作为历史前缀通常能命中。',
-      noteInject: '每轮注入约 {n} tok：每一轮都会在你这句话之前再带上一份（会话日志里每轮一条），所以每轮都计费、轮数越多累计越多。长期有效的设定更适合写进「系统提示」。',
       noteSwitch: '切换预设 / 纯净 / 接管的那一轮，系统提示变了，缓存基本不命中，下一轮恢复。',
       noteMinCache: '很短的请求（例如纯净模式的头几轮）可能达不到服务商的最小缓存长度，命中 0% 属正常。',
       guideShow: '新手指南',
@@ -905,7 +875,7 @@ window.__ModuleLoader__.load({
       toolsUnit: '个工具',
       prefillWritten: '预填装 · 已写入历史',
       itemsWrittenHint: '✓ 首轮已把 {n} 条开场对话写成真实历史（在对话里可以看到）。',
-      prefillWrittenTip: '开场对话已在首轮写成真实历史，之后每轮作为历史前缀发送（通常命中缓存）。想再追加内容可在面板里改为每轮注入。',
+      prefillWrittenTip: '开场对话已在首轮写成真实历史，之后每轮作为历史前缀发送（通常命中缓存）。想在剧情里再补一句，用开场对话下方的「手动注入」。',
       chipTakeover: '接管系统提示',
       pureApplied: '纯净模式已生效',
     })
@@ -1172,7 +1142,7 @@ window.__ModuleLoader__.load({
       nextTurnNotice: 'A turn is running; changes apply next turn',
       itemsTitle: 'Opening dialogue (prefill)',
       itemsHistoryHint: 'Write the conversation the AI should "remember". On your first send it becomes real history: billed once as input, then cached as history prefix. Any order, several in a row is fine.',
-      itemsInjectHint: 'This session has already run, so history is closed: the content is now injected every turn once you press Inject (not history, billed every turn).',
+      itemsInjectHint: 'This session has already run: the opening dialogue is no longer written to history or injected. To add a line to the story (user or AI), use Manual inject below — it is sent once and becomes part of the session history.',
       itemsEmpty: 'Nothing yet. Try "Fill example" to see the format.',
       fillExample: 'Fill example',
       exampleUser: 'I am new to programming. Please keep answers simple with lots of examples.',
@@ -1181,9 +1151,6 @@ window.__ModuleLoader__.load({
       textUserPh: 'What the user says, e.g. I am building a budgeting app with Vue.',
       textAssistantPh: 'The AI answer (the model treats it as its own words), e.g. Understood — I will write Vue 3 code with the Composition API.',
       reasoningPh: '(optional) AI reasoning, shown as a folded chain of thought.',
-      injectNow: 'Inject',
-      injectUpdate: 'Update injection',
-      stopInject: 'Stop injecting',
       advanced: 'advanced',
       usageTitle: 'Usage & cache',
       usageNoTurns: 'not started',
@@ -1206,7 +1173,6 @@ window.__ModuleLoader__.load({
       noteTakeover: 'Take over: only your system text, no tools or runtime context.',
       noteAppend: 'Append: ~{n} tok more system prompt per turn, placed after the default prefix, so turn 2+ usually still hits the cache.',
       noteHistory: 'Opening dialogue ~{n} tok: written to history on turn 1, billed once, then usually cached.',
-      noteInject: 'Per-turn injection ~{n} tok: a fresh copy is added before your message every turn (one row per turn in the session log), so it is billed every turn and adds up. Long-lived instructions belong in the system prompt.',
       noteSwitch: 'The turn where you switch preset / pure / take over changes the system prompt and mostly misses the cache; the next turn recovers.',
       noteMinCache: 'Very short requests may be below the provider minimum cache length; 0% is normal then.',
       guideShow: 'Guide',
@@ -1279,7 +1245,6 @@ window.__ModuleLoader__.load({
       navSystemEmpty: '未填写',
       navModeAlways: '一直',
       navModeUntil: '前 {n} 轮',
-      navNotInjected: '待点注入',
       navChanged: '改了 {n}',
       navChangedUnit: ' 处',
       navDisabled: '已停用',
@@ -1375,7 +1340,6 @@ window.__ModuleLoader__.load({
       navSystemEmpty: 'empty',
       navModeAlways: 'Always',
       navModeUntil: 'First {n}',
-      navNotInjected: 'not injected',
       navChanged: '{n}',
       navChangedUnit: ' changed',
       navDisabled: 'disabled',
@@ -1421,6 +1385,50 @@ window.__ModuleLoader__.load({
       navWsPass: 'As is',
       navWsOff: 'Off',
       navWsRewrite: 'Rewrite',
+    })
+
+    // ── 手动注入（一次性，issue #19「C」）──
+    Object.assign(zh, {
+      itemsAfterRun: '已开跑 · 不再写入',
+      manualTitle: '手动注入',
+      manualHint: '在剧情里补一句：只发一次，发出后写进会话、成为历史，之后不再重复发。「AI 回答」会以带标注的背景消息发出（模型那边只收用户消息）。',
+      manualRoleUser: '用户说',
+      manualRoleAssistant: 'AI 回答',
+      manualPlaceholder: '要补进剧情的话，例如：（门外传来脚步声）',
+      manualSend: '注入',
+      manualPending: '待发 {n} 条',
+      manualDelivered: '已写入会话 · 第 {n} 轮',
+      manualRunning: 'AI 正在运行：下一步插入',
+      manualIdle: '空闲：随下一轮发送',
+      manualOffline: '会话未加载：会话打开后随下一轮发送',
+      manualWithdraw: '撤回',
+      manualEdit: '编辑',
+      manualSave: '保存',
+      manualCancel: '取消',
+      manualFailed: '注入失败',
+      manualAlreadySent: '已经发出，改不了了',
+      manualQueueFull: '待发太多了，先等前面的发出去',
+    })
+    Object.assign(en, {
+      itemsAfterRun: 'running · not written',
+      manualTitle: 'Manual inject',
+      manualHint: 'Add a line to the story: it is sent once, written into the session as history, and never repeated. "AI said" is sent as a labelled background message (the model only accepts user messages here).',
+      manualRoleUser: 'User says',
+      manualRoleAssistant: 'AI said',
+      manualPlaceholder: 'A line to add to the story, e.g. (footsteps outside the door)',
+      manualSend: 'Inject',
+      manualPending: '{n} pending',
+      manualDelivered: 'Written to the session · turn {n}',
+      manualRunning: 'AI is running: inserted at the next step',
+      manualIdle: 'Idle: sent with the next turn',
+      manualOffline: 'Session not loaded: sent with the next turn once it opens',
+      manualWithdraw: 'Withdraw',
+      manualEdit: 'Edit',
+      manualSave: 'Save',
+      manualCancel: 'Cancel',
+      manualFailed: 'Inject failed',
+      manualAlreadySent: 'Already sent — it can no longer be changed',
+      manualQueueFull: 'Too many pending — wait for the earlier ones to go out',
     })
 
     const S = {
@@ -2132,7 +2140,7 @@ window.__ModuleLoader__.load({
     function PrefillToggle(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      // 存**整封信**而不是 `data.state`：模式判定要 `turns`、注入状态要 `injects`，
+      // 存**整封信**而不是 `data.state`：模式判定要 `turns`、写入状态要 `materialized`，
       // 这两个都在 envelope 上（不在插件状态里）。
       const [envelope, setEnvelope] = React.useState(null)
 
@@ -2183,12 +2191,11 @@ window.__ModuleLoader__.load({
       const state = envelope?.state ?? null
       const map = state?.prefill !== null && typeof state?.prefill === 'object' ? state.prefill : {}
       const on = typeof map[sessionId] === 'string' && map[sessionId] !== ''
-      const injected = (envelope?.injects?.[sessionId] ?? 0) > 0
       const injectMode = (envelope?.turns?.[sessionId] ?? 0) > 0
       const written = (envelope?.materialized?.[sessionId] ?? 0) > 0
       const cardOpen = cardOpenMap.get(sessionId) === true
       const summary = on ? chipSummary.get(sessionId) : undefined
-      const fallback = injectMode ? (written && !injected ? t('prefillWritten') : injected ? t('injectDone') : t('injectOff')) : on ? t('prefillOn') : t('prefillOff')
+      const fallback = injectMode ? (written ? t('prefillWritten') : t('injectOff')) : on ? t('prefillOn') : t('prefillOff')
       const title = on ? `${t('chipCardTip')}${summary?.tip ? `\n${summary.tip}` : ''}` : t('prefillTitleOff')
 
       return h(
@@ -2233,7 +2240,7 @@ window.__ModuleLoader__.load({
           : [
               h('b', { key: 'name', style: { fontWeight: 700 } }, t('nav')),
               h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
-              h('span', { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, summary.name || fallbackName(t, injectMode, written, injected)),
+              h('span', { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, summary.name || fallbackName(t, injectMode, written)),
               h(
                 'span',
                 { key: 'dots', style: { display: 'inline-flex', gap: 3, marginLeft: 2, flex: '0 0 auto' }, 'data-prefill-chip-dots': '1' },
@@ -2258,8 +2265,8 @@ window.__ModuleLoader__.load({
             ],
       )
     }
-    function fallbackName(t, injectMode, written, injected) {
-      return injectMode ? (written && !injected ? t('chipWritten') : t('chipNoPreset')) : t('chipNoPreset')
+    function fallbackName(t, injectMode, written) {
+      return injectMode ? (written ? t('chipWritten') : t('chipNoPreset')) : t('chipNoPreset')
     }
 
     /**
@@ -3058,6 +3065,197 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 手动注入（一次性，issue #19「C」）：开场对话区下方的独立入口，首轮前后都在。
+     *
+     * 服务端（INJECT_ROUTE）在会话在册时把条目送进 agent.inbox 的 next-step 队列：AI 跑着就在下一步插入，
+     * 空闲就随下一轮发；会话没加载时先放状态队列。被循环领取后写进会话日志成为历史，之后不再发 ——
+     * 所以面板只管显示「待发」并允许编辑 / 撤回，发出去的从列表里消失，提示「已写入会话 · 第 N 轮」。
+     */
+    function ManualInject(props) {
+      const t = props.t ?? ((key) => key)
+      const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+      const [data, setData] = React.useState(null)
+      const [text, setText] = React.useState('')
+      const [role, setRole] = React.useState('user')
+      const [busy, setBusy] = React.useState(false)
+      const [notice, setNotice] = React.useState(null)
+      const [editing, setEditing] = React.useState(null)
+      const seenPending = React.useRef(new Set())
+
+      const absorb = React.useCallback(
+        (result) => {
+          if (result === null || typeof result !== 'object' || !Array.isArray(result.pending)) return result
+          // 上次还在「待发」、这次出现在「最近送达」里 ⇒ 刚刚写进会话。
+          const recent = Array.isArray(result.recent) ? result.recent : []
+          for (const entry of recent) {
+            if (seenPending.current.has(entry.id)) setNotice({ kind: 'saved', text: t('manualDelivered').replace('{n}', String(entry.turn)) })
+          }
+          seenPending.current = new Set(result.pending.map((entry) => entry.id))
+          setData(result)
+          return result
+        },
+        [t],
+      )
+      const call = React.useCallback((payload) => postJson(INJECT_ROUTE, { sessionId, ...payload }).then(absorb), [sessionId, absorb])
+
+      React.useEffect(() => {
+        seenPending.current = new Set()
+        setData(null)
+        setEditing(null)
+        setNotice(null)
+        if (sessionId === '') return undefined
+        void call({ op: 'list' }).catch(() => {})
+        return undefined
+      }, [sessionId, call])
+
+      const pending = Array.isArray(data?.pending) ? data.pending : []
+      // 最近写进会话的几条（面板重开、发送时面板被收起也看得到「已写入会话 · 第 N 轮」）。
+      const recent = Array.isArray(data?.recent) ? data.recent.slice(-3).reverse() : []
+      // 有待发的就轮询，等它被领取（领取后从列表消失，提示写进了第几轮）。
+      React.useEffect(() => {
+        if (sessionId === '' || pending.length === 0) return undefined
+        const timer = setInterval(() => void call({ op: 'list' }).catch(() => {}), 2500)
+        return () => clearInterval(timer)
+      }, [sessionId, pending.length, call])
+
+      if (sessionId === '') return null
+      const failText = (result) =>
+        result?.reason === 'sent' ? t('manualAlreadySent') : result?.reason === 'queue-full' ? t('manualQueueFull') : t('manualFailed')
+      const send = () => {
+        if (text.trim() === '' || busy) return
+        setBusy(true)
+        setNotice(null)
+        call({ op: 'add', role, text })
+          .then((result) => {
+            if (result?.ok === true) setText('')
+            else setNotice({ kind: 'error', text: failText(result) })
+          })
+          .catch(() => setNotice({ kind: 'error', text: t('manualFailed') }))
+          .finally(() => setBusy(false))
+      }
+      const withdraw = (id) => {
+        call({ op: 'remove', id })
+          .then((result) => {
+            if (result?.ok !== true) setNotice({ kind: 'error', text: failText(result) })
+          })
+          .catch(() => setNotice({ kind: 'error', text: t('manualFailed') }))
+      }
+      const saveEdit = () => {
+        if (editing === null) return
+        const draft = editing
+        call({ op: 'edit', id: draft.id, role: draft.role, text: draft.text })
+          .then((result) => {
+            if (result?.ok === true) setEditing(null)
+            else {
+              setEditing(null)
+              setNotice({ kind: 'error', text: failText(result) })
+            }
+          })
+          .catch(() => setNotice({ kind: 'error', text: t('manualFailed') }))
+      }
+      const roleSeg = (value, onPick) =>
+        h(
+          'span',
+          { style: V.seg, role: 'radiogroup' },
+          ['user', 'assistant'].map((key) =>
+            h(
+              'button',
+              { key, type: 'button', role: 'radio', 'aria-checked': value === key ? 'true' : 'false', style: V.segBtn(value === key), 'data-prefill-manual-role': key, onClick: () => onPick(key) },
+              key === 'user' ? t('manualRoleUser') : t('manualRoleAssistant'),
+            ),
+          ),
+        )
+      const status = data === null ? '' : data.live !== true ? t('manualOffline') : data.running === true ? t('manualRunning') : t('manualIdle')
+
+      return h(
+        'div',
+        {
+          style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6, paddingTop: 10, borderTop: '1px dashed var(--dsw-alias-border-l2)' },
+          'data-prefill-manual': '',
+          'data-running': data?.running === true ? '1' : '0',
+        },
+        h(
+          'div',
+          { style: V.row },
+          h('b', { style: { fontSize: 13.5 } }, t('manualTitle')),
+          status === '' ? null : h('span', { style: V.sectionMeta, 'data-prefill-manual-status': '' }, status),
+        ),
+        h('div', { style: V.hint }, t('manualHint')),
+        h(
+          'div',
+          { style: { ...V.row, alignItems: 'flex-start' } },
+          roleSeg(role, setRole),
+          h('textarea', {
+            value: text,
+            placeholder: t('manualPlaceholder'),
+            rows: 2,
+            style: { ...V.textarea, flex: '1 1 240px', minHeight: 44, maxWidth: '72ch' },
+            'data-prefill-manual-text': '',
+            onChange: (event) => setText(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault()
+                send()
+              }
+            },
+          }),
+          h(
+            'button',
+            { type: 'button', style: V.btnPrimary, disabled: busy || text.trim() === '', 'data-prefill-manual-inject': '1', onClick: send },
+            t('manualSend'),
+          ),
+        ),
+        pending.length === 0
+          ? null
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-manual-pending': String(pending.length) },
+              h('span', { style: V.sectionMeta }, t('manualPending').replace('{n}', String(pending.length))),
+              ...pending.map((entry) =>
+                editing !== null && editing.id === entry.id
+                  ? h(
+                      'div',
+                      { key: entry.id, style: { ...V.row, alignItems: 'flex-start' }, 'data-prefill-manual-row': entry.id },
+                      roleSeg(editing.role, (next) => setEditing({ ...editing, role: next })),
+                      h('textarea', {
+                        value: editing.text,
+                        rows: 2,
+                        style: { ...V.textarea, flex: '1 1 240px', minHeight: 44, maxWidth: '72ch' },
+                        onChange: (event) => setEditing({ ...editing, text: event.target.value }),
+                      }),
+                      h('button', { type: 'button', style: V.btnPrimary, disabled: editing.text.trim() === '', onClick: saveEdit }, t('manualSave')),
+                      h('button', { type: 'button', style: V.btn, onClick: () => setEditing(null) }, t('manualCancel')),
+                    )
+                  : h(
+                      'div',
+                      { key: entry.id, style: { ...V.row, ...V.callout('brand'), maxWidth: '80ch' }, 'data-prefill-manual-row': entry.id },
+                      h('b', { style: { fontSize: 12, whiteSpace: 'nowrap' } }, entry.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
+                      h('span', { style: { flex: '1 1 auto', minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, entry.text),
+                      h('button', { type: 'button', style: V.btnGhost, onClick: () => setEditing({ id: entry.id, role: entry.role, text: entry.text }) }, t('manualEdit')),
+                      h('button', { type: 'button', style: V.btnGhost, 'data-prefill-manual-withdraw': entry.id, onClick: () => withdraw(entry.id) }, t('manualWithdraw')),
+                    ),
+              ),
+            ),
+        recent.length === 0
+          ? null
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 4 }, 'data-prefill-manual-recent': String(recent.length) },
+              ...recent.map((entry) =>
+                h(
+                  'div',
+                  { key: entry.id, style: { ...V.row, flexWrap: 'nowrap', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', maxWidth: '80ch' } },
+                  h('span', { style: { whiteSpace: 'nowrap' } }, `✓ ${t('manualDelivered').replace('{n}', String(entry.turn))}`),
+                  h('span', { style: { whiteSpace: 'nowrap' } }, entry.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
+                  h('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(entry.text ?? '').replace(/\s+/g, ' ')),
+                ),
+              ),
+            ),
+        notice === null ? null : h('span', { style: S.dockStatus(notice.kind === 'error' ? 'error' : 'saved'), 'data-prefill-manual-notice': '' }, notice.text),
+      )
+    }
+
+    /**
      * 输入框上方的预填装面板（v0.2）。
      *
      * 一个会话的配置只有四样东西，面板就按这四样排：
@@ -3212,7 +3410,6 @@ window.__ModuleLoader__.load({
       const [systemDraft, setSystemDraft] = React.useState(null)
       const [usage, setUsage] = React.useState(null)
       const [confirming, setConfirming] = React.useState('')
-      const [injectStatus, setInjectStatus] = React.useState('idle')
       const dirty = React.useRef(false)
       const systemDirty = React.useRef(false)
       const staged = React.useRef(false)
@@ -3539,7 +3736,6 @@ window.__ModuleLoader__.load({
         !isOn('card') && prints !== null && ownTurnRaw !== undefined && ownTurnRaw !== null && fingerprint(`${String(ownTurnRaw.text ?? '')}\u0000${String(ownTurnRaw.firstText ?? '')}`) === prints.everyTurn
       const turns = envelope?.turns?.[sessionId] ?? 0
       const injectMode = turns > 0
-      const injectCount = envelope?.injects?.[sessionId] ?? 0
       const conflict = envelope?.conflicts?.[sessionId]
       const pending = Array.isArray(envelope?.pendingReprime) && envelope.pendingReprime.includes(sessionId)
       // 系统提示模式：不改 / 追加 / 接管（接管 = 闸门 pure + 人格段；纯净 = 闸门 pure + 无人格段）。
@@ -3706,9 +3902,8 @@ window.__ModuleLoader__.load({
         const data = await packsCall({ op: 'builtin', id: summary.id })
         const preset = data?.pack
         if (preset === null || preset === undefined) throw new Error('missing preset')
-        const fresh = await postJson(STATE_ROUTE, undefined)
-        // 纯净：系统提示 0、上下文 0、工具 0、只放行你的话（与预填装）；顺手清掉一键注入的记录。
-        await applyLayered({ pack: builtinLayer(preset), key: `builtin:${summary.id}`, extraPatch: preset.pure === true ? { injects: without(fresh?.state?.injects, sessionId) } : {} })
+        // 纯净：系统提示 0、上下文 0、工具 0、只放行你的话（与预填装）。
+        await applyLayered({ pack: builtinLayer(preset), key: `builtin:${summary.id}`, extraPatch: {} })
         // 套了带系统提示的预设：把左栏切到「系统提示」，让人看见改了什么都不用猜。
         if (preset.takeover === true || preset.replace === true) setPane('system')
         flash(preset.pure === true ? (injectMode ? t('appliedNextTurn') : t('pureApplied')) : injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
@@ -4202,23 +4397,6 @@ window.__ModuleLoader__.load({
         }
         reader.readAsText(file)
         event.target.value = ''
-      }
-
-      const oneClickInject = () => {
-        setInjectStatus('idle')
-        void (async () => {
-          const fresh = await postJson(STATE_ROUTE, undefined)
-          const patch = { injects: { ...(fresh?.state?.injects ?? {}), [sessionId]: items } }
-          setEnvelope(await postJson(STATE_ROUTE, patch))
-          setInjectStatus('done')
-        })().catch(() => setInjectStatus('error'))
-      }
-      const stopInject = () => {
-        void (async () => {
-          const fresh = await postJson(STATE_ROUTE, undefined)
-          setEnvelope(await postJson(STATE_ROUTE, { injects: without(fresh?.state?.injects, sessionId) }))
-          setInjectStatus('idle')
-        })().catch(() => setInjectStatus('error'))
       }
 
       // ── 渲染 ───────────────────────────────────────────────────────────────
@@ -4912,7 +5090,7 @@ window.__ModuleLoader__.load({
           id: 'items',
           tags: sourceTag(tagOf('items')),
           title: t('itemsTitle'),
-          meta: `${countFilled(items)}${t('countSuffix')}${countFilled(items) < items.length ? t('emptyRowsSkipped').replace('%N', String(items.length - countFilled(items))) : ''} · ≈${itemsTok} tok · ${injectMode ? t('modeInject') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
+          meta: `${countFilled(items)}${t('countSuffix')}${countFilled(items) < items.length ? t('emptyRowsSkipped').replace('%N', String(items.length - countFilled(items))) : ''} · ≈${itemsTok} tok · ${injectMode ? t('itemsAfterRun') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
           off: !isOn('items'),
           offTitle: t('offTitle'),
           offBody: t('itemsOffBody'),
@@ -4983,23 +5161,9 @@ window.__ModuleLoader__.load({
           { style: V.row },
           h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'user', text: '' }]) }, t('addUser')),
           h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'assistant', reasoning: '', text: '' }]) }, t('addAssistant')),
-          injectMode ? h('span', { style: { flex: '1 1 auto' } }) : null,
-          injectMode
-            ? injectCount > 0
-              ? h('button', { type: 'button', style: V.btn, onClick: stopInject }, `${t('stopInject')} (${injectCount})`)
-              : null
-            : null,
-          injectMode && items.length > 0
-            ? h(
-                'button',
-                { type: 'button', style: V.btnPrimary, title: t('injectNowTip'), onClick: oneClickInject, 'data-prefill-inject': '1' },
-                injectCount > 0 ? t('injectUpdate') : t('injectNow'),
-              )
-            : null,
-          injectStatus === 'idle'
-            ? null
-            : h('span', { style: S.dockStatus(injectStatus === 'error' ? 'error' : 'saved') }, injectStatus === 'error' ? t('injectFailed') : t('injectedNext')),
         ),
+        // 手动注入（issue #19「C」）：独立入口，首轮前后都在；只发一次，发出后成为会话历史。
+        h(ManualInject, { t, sessionId }),
       )
 
       // ── 每轮注入（state.everyTurn[会话]；勾"新会话默认"时同时写 '*'）──
@@ -6251,7 +6415,7 @@ window.__ModuleLoader__.load({
           title: t('usageTitle'),
           meta: turns > 0 ? `${turns} ${t('turnsUnit')}` : t('usageNoTurns'),
         },
-        h(UsagePanel, { t, usage, systemMode, systemTok, itemsTok, injectMode, injectCount, gateMode, written: (envelope?.materialized?.[sessionId] ?? 0) > 0 }),
+        h(UsagePanel, { t, usage, systemMode, systemTok, itemsTok, injectMode, gateMode, written: (envelope?.materialized?.[sessionId] ?? 0) > 0 }),
       )
 
       const activeName = (() => {
@@ -6578,7 +6742,7 @@ window.__ModuleLoader__.load({
         everyTurn: everyTurnActive
           ? [B(everyTurnModeLabel), autoStatus !== null ? ` · ${autoStateText}` : ` · ≈${num(estimateTokens(everyTurn.text))} tok/${t('turnsUnit')}`]
           : [t('everyTurnOffMeta')],
-        items: [B(String(filledCount)), t('countSuffix'), ' · ≈', B(num(itemsTok)), ' tok · ', injectMode ? (injectCount > 0 ? t('modeInject') : t('navNotInjected')) : t('modeHistory')],
+        items: [B(String(filledCount)), t('countSuffix'), ' · ≈', B(num(itemsTok)), ' tok · ', injectMode ? t('itemsAfterRun') : t('modeHistory')],
         workspace: [B(ws.mode === 'off' ? t('navWsOff') : ws.mode === 'rewrite' ? t('navWsRewrite') : t('navWsPass')), ws.mode === 'rewrite' && ws.text.trim() !== '' ? ` · ≈${num(estimateTokens(ws.text))} tok` : '', ws.mode === 'pass' ? ' · AGENTS.md' : ''],
         inject: [t('advanced'), overrideCount > 0 ? [' · ', t('navChanged').replace('{n}', '')] : '', overrideCount > 0 ? B(String(overrideCount)) : '', overrideCount > 0 ? t('navChangedUnit') : ''],
       }
@@ -6699,7 +6863,7 @@ window.__ModuleLoader__.load({
         (isOn('items') && !injectMode ? itemsTok : 0) +
         (everyTurnActive && isOn('everyTurn') && !everyTurnFromCardOff ? estimateTokens(everyTurn.firstText.trim() !== '' ? everyTurn.firstText : everyTurn.text) : 0)
       const perTurnTok =
-        (everyTurnActive && isOn('everyTurn') && !everyTurnFromCardOff ? estimateTokens(everyTurn.text) : 0) + (isOn('items') && injectCount > 0 ? itemsTok : 0)
+        (everyTurnActive && isOn('everyTurn') && !everyTurnFromCardOff ? estimateTokens(everyTurn.text) : 0)
       const usageTotal = usage?.total ?? null
       const usagePrompt = usageTotal ? usageTotal.input + usageTotal.cacheRead : 0
       const cacheHit = usagePrompt > 0 ? Math.round((usageTotal.cacheRead / usagePrompt) * 100) : null
@@ -6931,8 +7095,7 @@ window.__ModuleLoader__.load({
       if (props.gateMode === 'pure') notes.push(props.systemMode === 'takeover' && props.systemTok > 0 ? t('noteTakeover') : t('notePure'))
       else if (props.systemMode === 'append') notes.push(t('noteAppend').replace('{n}', String(props.systemTok)))
       else if (props.systemMode === 'replace') notes.push(t('noteReplace').replace('{n}', String(props.systemTok)))
-      if (props.injectCount > 0) notes.push(t('noteInject').replace('{n}', String(props.itemsTok)))
-      else if (props.itemsTok > 0 && (!props.injectMode || props.written)) notes.push(t('noteHistory').replace('{n}', String(props.itemsTok)))
+      if (props.itemsTok > 0 && (!props.injectMode || props.written)) notes.push(t('noteHistory').replace('{n}', String(props.itemsTok)))
       notes.push(t('noteSwitch'))
       notes.push(t('noteMinCache'))
       return h(
@@ -7196,16 +7359,14 @@ window.__ModuleLoader__.load({
         void call(undefined)
           .then((env) => {
             const overrides = { ...(env?.state?.overrides ?? {}) }
-            const injects = { ...(env?.state?.injects ?? {}) }
             const sessionAllowKinds = { ...(env?.state?.sessionAllowKinds ?? {}) }
             const sessionTools = { ...(env?.state?.sessionTools ?? {}) }
             const injectionBlocks = { ...(env?.state?.injectionBlocks ?? {}) }
             delete overrides[sessionId]
-            delete injects[sessionId]
             delete sessionAllowKinds[sessionId]
             delete sessionTools[sessionId]
             delete injectionBlocks[sessionId]
-            return call({ overrides, injects, sessionAllowKinds, sessionTools, injectionBlocks })
+            return call({ overrides, sessionAllowKinds, sessionTools, injectionBlocks })
           })
           .then((data) => {
             setEnvelope(data)
@@ -7521,7 +7682,6 @@ window.__ModuleLoader__.load({
       const filterOn = armed === true && levers.blockMessages === true
       const gate = pureOn ? 'pure' : filterOn ? 'filter' : 'pass'
       const turns = envelope?.turns?.[sessionId] ?? 0
-      const injected = (envelope?.injects?.[sessionId] ?? 0) > 0
       const tools = envelope?.state?.sessionTools?.[sessionId]
       const persona = envelope?.state?.overrides?.[sessionId]?.sections?.['prefill:persona']
       const hasPersona = typeof persona === 'string' && persona.trim() !== ''
@@ -7535,7 +7695,7 @@ window.__ModuleLoader__.load({
             : gate === 'filter'
               ? t('stateFilter')
               : t('statePass')
-      const modeText = turns > 0 ? t('modeInject') : t('modeHistory')
+      const modeText = turns > 0 ? t('itemsAfterRun') : t('modeHistory')
       const toolsText = Array.isArray(tools) ? (tools.length === 0 ? t('toolsZero') : `${tools.length} ${t('toolsUnit')}`) : ''
       const summary = [gateText, modeText, toolsText].filter((part) => part !== '').join(' · ')
 
