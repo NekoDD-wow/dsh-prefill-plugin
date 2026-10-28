@@ -22,6 +22,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { checksOf, modeOf, replay, splitTurns } from './inject-auto.js'
+import { filledItems, insertBeforeLastUser, isManual, manualMessage, planQueued, queueOf, renderInjectBlock } from './inject-once.js'
 import { applyEnabled, isEnabled } from './enabled.js'
 import { WORKSPACE_KIND, WORKSPACE_MARK, applyWorkspaceInstructions, lastWorkspaceInHistory, workspaceInstructionsFor } from './workspace-instructions.js'
 import {
@@ -212,6 +213,8 @@ function keeper(state, message, sessionId) {
   if (kind === 'user') return true
   if (typeof kind !== 'string') return false
   if (kind.startsWith('prefill:')) return true
+  // 手动注入（inbox 带进来的那条）是用户自己点的，不算外来注入。
+  if (isManual(message)) return true
   return allowKindsFor(state, sessionId).includes(kind)
 }
 
@@ -1132,8 +1135,7 @@ export async function prime(api, agent) {
   // 与 step() 的武装判定保持一致：**只配了注入改写（例如人格预设）**的会话也要急切挂载，
   // 否则首个请求的装配抢在 pre-step 之前 ⇒ 人格段"首轮不生效、第二轮才生效"。
   const hasOverrides = overridesFor(state, agent.id) !== undefined
-  const hasInjects =
-    (Array.isArray(state?.injects?.[agent.id]) && state.injects[agent.id].length > 0) || everyTurnFor(state, agent.id) !== undefined
+  const hasInjects = queueOf(state, agent.id).length > 0 || everyTurnFor(state, agent.id) !== undefined
   if (!state.armed.includes(agent.id) && !state.armed.includes('*') && !hasOverrides && !hasInjects) return
   const disposers = []
   let error = ''
@@ -1202,11 +1204,9 @@ export async function step(api, payload, decision) {
   // ③ 是必需的：用户要的是"预填装留空、只改系统提示"，那种情况下没有任何 lever，
   // 光靠 armed 永远进不来，改写就静默不生效了。
   const hasOverrides = overridesFor(state0, agent?.id) !== undefined
-  // ④ 会话配了**每轮注入**（开跑后写的开场对话）：没有系统提示改写时也必须进来，
+  // ④ 会话配了**每轮注入**，或状态队列里有待发的手动注入：没有系统提示改写时也必须进来，
   // 否则注入静默不生效（实测：只写每轮注入、不套人格的会话，日志里一条注入消息都没有）。
-  const hasInjects =
-    (Array.isArray(state0?.injects?.[agent?.id]) && state0.injects[agent.id].length > 0) ||
-    everyTurnFor(state0, agent?.id) !== undefined
+  const hasInjects = queueOf(state0, agent?.id).length > 0 || everyTurnFor(state0, agent?.id) !== undefined
   // ⑤ 工作区说明设成关闭 / 改写：同样要进来（否则 AGENTS.md 原样照发）。
   const hasWorkspace = workspaceInstructionsFor(state0, agent?.id) !== undefined
   const armed =
@@ -1365,47 +1365,39 @@ export async function step(api, payload, decision) {
     }
   }
 
-  // ── 会话内注入（模式 B · "首轮之后再预填装"）──────────────────────────────
-  // 首轮之后"写进历史"这条路已经被物理约束关死了（F11：`session.append` 禁止在系统节点与
-  // 首条用户消息之间重入插入；F12：assistant/message 必须在已开的 turn+step 内），
-  // 所以改成**每轮注入**：把预填装内容渲染成一条注入消息，插在真实用户消息**之前**
-  // （位置与 harness 自己的 runtime-context 一致），既不写 session、也不是历史。
+  // ── 手动注入 · 兜底通道（issue #19「C」，见 inject-once.js）─────────────────
+  // 0.15.2 之前这里是「会话内注入」：开跑后把开场对话（state.injects）**每轮**渲染成一条注入消息。
+  // 现在手动注入只发一次：正常走 agent.inbox（壳在点「注入」/ agent/created 时送进去，循环自己领取、
+  // 写进会话日志）；这里只处理 inbox 送不进去时留在 state.injectQueue 里的条目。旧 injects 由壳在
+  // 读状态时迁成每轮注入积木（migrateLegacyInjects），闸门不再读它。
   //
-  // 只在 `turn > 1` 生效：首轮仍然走物化 —— 那才是"变成真实历史"。
-  const injectItems = filledItems(state?.injects?.[agent.id])
-  if (
-    injectItems.length > 0 &&
-    Number.isFinite(payload?.turn) &&
-    payload.turn > 1 &&
-    // 只在每轮第 1 步注入：注入消息会落进会话日志、后续步骤作为历史重放，
-    // 每步都插会在多步（工具调用）回合里叠出 N 份（实测一轮 10 份）。
-    (payload?.step ?? 1) === 1 &&
-    decision?.kind === 'enter' &&
-    Array.isArray(next.messages) &&
-    // 幂等：pre-step 会从根级和 per-agent 两个座位各进一次，不查重就会插两条（实测每轮两份注入）。
-    !next.messages.some((message) => message?.source?.kind === 'prefill' && message?.source?.prefill === 'inject')
-  ) {
-    const messages = [...next.messages]
-    // 借用 harness 自己那条注入消息的形状（省得猜字段），只换 kind 和正文。
-    const text = renderInjectBlock(injectItems)
-    const injected = {
-      id: `prefill-inject-${payload.turn}-${payload.step ?? 0}`,
-      role: 'user',
-      source: { kind: 'prefill', prefill: 'inject' },
-      content: [{ type: 'text', text }],
+  // 只在每轮第 1 步（真实用户消息那一轮的 enter）插，位置同其他注入（最后一条真实用户消息之前；
+  // 首轮有物化时，物化的开场在会话历史里、不在本次 messages 里，所以天然排在它之后）。
+  // 去重 / 不丢的权衡：
+  //   · 已送达 = 会话日志里有同 id 的手动注入 ⇒ 不发，并请壳从状态里删（api.pruneQueue）；
+  //   · 本次插了也**不立刻删**：若这一步在写进日志前被中止，下一轮还会再发（不丢）；
+  //     若已落盘，下一次 pre-step 看到日志就删（不重复）。
+  //   · 双座位重入：本次 messages 里已有同 id ⇒ 不再插；同轮后续 step 不进这段；循环重试不重跑 pre-step。
+  const queued = queueOf(state, agent.id)
+  if (queued.length > 0 && decision?.kind === 'enter' && Array.isArray(next.messages)) {
+    let events = []
+    try {
+      events = agent.session?.snapshotEvents?.() ?? []
+    } catch {
+      events = []
     }
-    // 插在**最后一条真实用户消息之前**（没有就追加）。
-    let at = -1
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      if (messages[index]?.source?.kind === 'user') {
-        at = index
-        break
+    const { send, drop } = planQueued(queued, events, next.messages)
+    if (drop.length > 0) {
+      try {
+        api.pruneQueue?.(agent.id, drop)
+      } catch (error) {
+        note({ manual: 'prune-failed', id: agent.id, error: String(error?.message ?? error) })
       }
     }
-    if (at >= 0) messages.splice(at, 0, injected)
-    else messages.push(injected)
-    next = { ...next, messages }
-    note({ inject: 'done', id: agent.id, turn: payload.turn, chars: text.length, items: injectItems.length })
+    if (send.length > 0 && (payload?.step ?? 1) === 1) {
+      next = { ...next, messages: insertBeforeLastUser(next.messages, send.map(manualMessage)) }
+      note({ manual: 'queued-sent', id: agent.id, turn: payload?.turn, ids: send.map((entry) => entry.id) })
+    }
   }
 
   // ── 每轮注入（可选功能，`state.everyTurn`）─────────────────────────────────
@@ -1892,37 +1884,8 @@ function resolveItems(state, agentId) {
   return []
 }
 
-/**
- * 只留"有正文"的条目（issue #1）。面板里点了「＋ 用户说 / ＋ AI 回答」没填的空行，
- * 原样写进历史会变成 `text: ""` 的消息：有的网关直接 400（user message must have content），
- * 而且物化不可逆，之后每轮都带着它 ⇒ 会话报废。判定看 `text`，只有思维链没有回答的
- * AI 条目同样跳过（回答为空的 assistant 消息一样会被拒）。
- */
-export function filledItems(items) {
-  if (!Array.isArray(items)) return []
-  return items.filter((item) => typeof item?.text === 'string' && item.text.trim() !== '')
-}
-
-/**
- * 把预填装条目渲染成"会话内注入"的正文（模式 B）。
- *
- * 与模式 A（物化成真实消息）的区别：这里是**一整块文本**塞进一条注入消息，
- * 不写 session、不进历史、每轮都要重新注入（所以要花 token）。
- */
-function renderInjectBlock(items) {
-  const lines = ['【预填装 · 会话内注入】以下内容视为本会话开始前就已存在的背景：']
-  for (const item of items) {
-    const text = typeof item?.text === 'string' ? item.text : ''
-    if (item?.role === 'assistant') {
-      const reasoning =
-        typeof item?.reasoning === 'string' && item.reasoning !== '' ? `（思维链：${item.reasoning}）` : ''
-      lines.push(`AI：${text}${reasoning}`)
-    } else {
-      lines.push(`用户：${text}`)
-    }
-  }
-  return lines.join('\n')
-}
+// filledItems / renderInjectBlock 搬到 inject-once.js（旧 injects 迁移要用同一套），这里转出口保持原有导入不变。
+export { filledItems }
 
 /** 会话里是否已经有轮次（幂等守卫）。读不出来就当有，宁可不动。 */
 function hasTurn(session) {  try {
