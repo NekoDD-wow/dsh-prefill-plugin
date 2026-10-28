@@ -25,9 +25,25 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync,
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
 import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnBlocks, everyTurnPresets, everyTurnTowers } from './builtin-presets.js'
-import { compileBench, makeBlock, normalizeChecks } from './blocks.js'
+import { blockFromPreset, compileBench, makeBlock, normalizeChecks } from './blocks.js'
+import {
+  MAX_QUEUE,
+  MAX_TEXT,
+  deliverToInbox,
+  flushQueueToInbox,
+  inboxOf,
+  isRunning,
+  migrateLegacyInjects,
+  pendingInInbox,
+  queueOf,
+  recentDelivered,
+  removeFromInbox,
+  replaceInInbox,
+  sanitizeEntry,
+} from './inject-once.js'
 import { historyToItems, turnRange } from './session-history.js'
 import { CHECK_IDS, autoParams, modeOf, splitTurns } from './inject-auto.js'
 import { applyEnabled, sanitizeEnabled } from './enabled.js'
@@ -57,6 +73,8 @@ const PING_ROUTE = '/api/dsh-prefill/ping'
 const STATE_ROUTE = '/api/dsh-prefill/state'
 /** 客户端草稿入口：编辑好的多轮 items 在这里暂存，等用户"发出"时物化。 */
 const DRAFT_ROUTE = '/api/dsh-prefill/draft'
+/** 手动注入（一次性，issue #19「C」）：op = list | add | edit | remove。 */
+const INJECT_ROUTE = '/api/dsh-prefill/inject'
 /** 预填装包的读写入口（M4）。 */
 const PACKS_ROUTE = '/api/dsh-prefill/packs'
 /** 本会话逐轮用量（输入 / 缓存命中 / 输出 + 系统提示规模），给面板的「用量与缓存」卡片。 */
@@ -145,8 +163,52 @@ function readState() {
       state = DEFAULT_STATE
     }
   }
+  // 旧版「会话内注入」（state.injects，每轮发）读取时迁成每轮注入积木（issue #19「C」）。
+  // 迁移幂等；迁了就顺手落盘一次，之后的读都是新形状。写不进去也不要紧：每次读都会再迁一遍。
+  const migrated = migrateLegacyInjects(state, legacyMigrationOptions())
+  if (migrated !== state) {
+    state = normalizeState(migrated)
+    try {
+      mkdirSync(DATA_DIR, { recursive: true })
+      writeFileSync(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+      mtimeMs = statSync(STATE_FILE).mtimeMs
+    } catch {
+      // 只读环境：保持内存里的迁移结果。
+    }
+  }
   cache = { state, mtimeMs }
   return state
+}
+
+/** 旧每轮注入（只有 text）迁成工作台时要认内置积木 / 塔，与面板同一套。 */
+function legacyMigrationOptions() {
+  try {
+    return { blocks: everyTurnBlocks().map((preset) => blockFromPreset(preset)), towers: everyTurnTowers() }
+  } catch {
+    return {}
+  }
+}
+
+/** 从状态队列里删掉这些条目（已搬进 inbox / 已送达）。 */
+function pruneQueue(sessionId, ids) {
+  if (typeof sessionId !== 'string' || !Array.isArray(ids) || ids.length === 0) return
+  const current = readState()
+  const list = Array.isArray(current?.injectQueue?.[sessionId]) ? current.injectQueue[sessionId] : []
+  const kept = list.filter((entry) => !ids.includes(entry?.id))
+  if (kept.length === list.length) return
+  const injectQueue = { ...(current.injectQueue ?? {}) }
+  if (kept.length > 0) injectQueue[sessionId] = kept
+  else delete injectQueue[sessionId]
+  patchState({ injectQueue })
+}
+
+/** 往状态队列里写（会话不在册时的兜底通道）。 */
+function writeQueue(sessionId, list) {
+  const current = readState()
+  const injectQueue = { ...(current.injectQueue ?? {}) }
+  if (list.length > 0) injectQueue[sessionId] = list
+  else delete injectQueue[sessionId]
+  patchState({ injectQueue })
 }
 
 function writeState(next) {
@@ -776,7 +838,7 @@ async function handle(payload, decision, seat) {
     return decision
   }
   try {
-    const api = { readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore }
+    const api = { readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore, pruneQueue }
     const next = (await gate.step(api, { ...payload, __seat: seat }, decision)) ?? decision
     // 用户点过「阻断」的消息来源（会话级 + 全局记住）：不论会话是否武装都生效。
     return typeof gate.applyMessageBlocks === 'function' ? gate.applyMessageBlocks(api, payload, decision, next) : next
@@ -807,7 +869,7 @@ export function apply(ctx) {
   )
 
   /** 交给内核的能力包（每次现取，保证 rootCtx 指向最新一代）。 */
-  const api = () => ({ readState, note, latches, unlatch, rootCtx: rootCtxRef })
+  const api = () => ({ readState, note, latches, unlatch, rootCtx: rootCtxRef, pruneQueue })
 
   // ── 座位 1（主）：根级 agent/pre-step，agent 直接来自 payload ──
   // 顺带维护"轮是否开着"，供轮次规则判断（见 reprimeAll）。
@@ -894,6 +956,18 @@ export function apply(ctx) {
   // ── 座位 2（次）：per-agent 最外层（改写最外层位置需要 per-agent 注册）──
   ctx.on('agent/created', async ({ agent }) => {
     if (typeof agent?.id === 'string') liveAgents.set(agent.id, agent)
+    // 会话不在册时点的手动注入（state.injectQueue）：会话一加载就整体搬进 inbox（next-step），
+    // 由循环在下一轮领取、写进会话日志；搬完从状态里删。搬不了（没有 inbox）就留着给闸门兜底。
+    try {
+      const queue = queueOf(readState(), agent?.id)
+      if (queue.length > 0) {
+        const { done, moved } = flushQueueToInbox(agent, queue, sessionEvents(agent, agent.id))
+        pruneQueue(agent.id, done)
+        note({ manual: 'flush-on-created', id: agent.id, moved, done: done.length, left: queue.length - done.length })
+      }
+    } catch (error) {
+      note({ manual: 'flush-failed', id: agent?.id, error: String(error?.message ?? error) })
+    }
     if (typeof agent?.ctx?.on === 'function') {
       agent.ctx.on(
         'agent/pre-step',
@@ -973,7 +1047,7 @@ export function apply(ctx) {
     const envelope = () => {
       const snapshots = typeof gateCache.module?.snapshots === 'function' ? gateCache.module.snapshots() : {}
       const state = readState()
-      const injects = state?.injects !== null && typeof state?.injects === 'object' ? state.injects : {}
+      const injectQueue = state?.injectQueue !== null && typeof state?.injectQueue === 'object' ? state.injectQueue : {}
       return {
         ok: true,
         plugin: '@local/dsh-prefill',
@@ -986,8 +1060,8 @@ export function apply(ctx) {
         snapshots,
         // 每会话"已跑到第几轮"：面板据此自动切换「写入历史」/「每轮注入」两种模式。
         turns: Object.fromEntries(Object.entries(snapshots).map(([id, snap]) => [id, snap?.turn ?? 0])),
-        // 每会话"每轮注入"的条目数（模式 B；0 表示没配）。
-        injects: Object.fromEntries(Object.entries(injects).map(([id, items]) => [id, Array.isArray(items) ? items.length : 0])),
+        // 每会话状态队列里待发的手动注入条数（会话不在册时的兜底通道；inbox 里挂着的看 INJECT_ROUTE）。
+        manualQueued: Object.fromEntries(Object.entries(injectQueue).map(([id, items]) => [id, Array.isArray(items) ? items.length : 0])),
         // Q17：可改的注入清单 = **预置 catalog**（全局 prompt 层的真实注册名）+ 每会话已发现的条目。
         // 有 catalog，用户就能在某条注入还没出现过时先写好改写（"直接劫持"）。
         injections: typeof gateCache.module?.injections === 'function' ? gateCache.module.injections(rootCtxRef) : {},
@@ -1112,6 +1186,102 @@ export function apply(ctx) {
           },
         }),
       'dsh-prefill: draft route',
+    )
+
+    // 手动注入（issue #19「C」，见 inject-once.js）：会话在册 ⇒ 走 agent.inbox（next-step，插话）；
+    // 不在册 ⇒ 写进 state.injectQueue，会话加载时搬进 inbox / 闸门兜底。
+    //   list   —— { pending: [{ id, role, text, via }], running, live, recent: [{ id, role, text, turn }] }
+    //   add    —— { role, text } ⇒ 入队；返回 { entry, via: 'inbox'|'queue', running }
+    //   edit   —— { id, role, text } ⇒ 改还没发出去的那条；已发出 ⇒ ok:false, reason:'sent'
+    //   remove —— { id } ⇒ 撤回；已发出 ⇒ ok:false, reason:'sent'
+    scope.effect(
+      () =>
+        register({
+          path: INJECT_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body
+            try {
+              body = await request?.json?.()
+            } catch {
+              body = undefined
+            }
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+            const op = typeof body?.op === 'string' ? body.op : 'list'
+            if (sessionId === '') return Response.json({ ok: false, reason: 'missing sessionId' }, noStore)
+            const agent = liveAgents.get(sessionId)
+            const live = inboxOf(agent) !== undefined
+            // 会话在册但状态队列里还有残留（例如加载时没搬成）：顺手搬进 inbox。
+            if (live) {
+              const queue = queueOf(readState(), sessionId)
+              if (queue.length > 0) pruneQueue(sessionId, flushQueueToInbox(agent, queue, sessionEvents(agent, sessionId)).done)
+            }
+            const listing = () => {
+              const pending = [
+                ...(live ? pendingInInbox(agent).map((entry) => ({ ...entry, via: 'inbox' })) : []),
+                ...queueOf(readState(), sessionId).map((entry) => ({ ...entry, via: 'queue' })),
+              ]
+              return { pending, running: isRunning(agent), live, recent: recentDelivered(sessionEvents(agent, sessionId)) }
+            }
+            let ok = true
+            let reason = ''
+            let result = {}
+            const textOf = (raw) => (typeof raw === 'string' ? raw.slice(0, MAX_TEXT) : '')
+            if (op === 'add') {
+              const entry = sanitizeEntry({ id: randomUUID(), role: body?.role, text: textOf(body?.text), at: new Date().toISOString() })
+              if (entry === undefined) {
+                ok = false
+                reason = 'empty'
+              } else {
+                const delivered = live ? deliverToInbox(agent, entry) : { ok: false }
+                if (delivered.ok) result = { entry, via: 'inbox', running: delivered.running === true }
+                else {
+                  const queue = queueOf(readState(), sessionId)
+                  if (queue.length >= MAX_QUEUE) {
+                    ok = false
+                    reason = 'queue-full'
+                  } else {
+                    writeQueue(sessionId, [...queue, entry])
+                    await reprimeAll('manual-inject')
+                    result = { entry, via: 'queue', running: false }
+                  }
+                }
+              }
+            } else if (op === 'edit' || op === 'remove') {
+              const id = typeof body?.id === 'string' ? body.id : ''
+              const queue = queueOf(readState(), sessionId)
+              const inQueue = queue.findIndex((entry) => entry.id === id)
+              if (inQueue >= 0) {
+                if (op === 'remove') writeQueue(sessionId, queue.filter((entry) => entry.id !== id))
+                else {
+                  const entry = sanitizeEntry({ ...queue[inQueue], role: body?.role ?? queue[inQueue].role, text: textOf(body?.text) })
+                  if (entry === undefined) {
+                    ok = false
+                    reason = 'empty'
+                  } else writeQueue(sessionId, queue.map((item) => (item.id === id ? entry : item)))
+                }
+              } else if (live) {
+                const pending = pendingInInbox(agent).find((entry) => entry.id === id)
+                if (op === 'remove') ok = removeFromInbox(agent, id)
+                else {
+                  const entry = sanitizeEntry({ id, role: body?.role ?? pending?.role, text: textOf(body?.text) })
+                  if (entry === undefined) {
+                    ok = false
+                    reason = 'empty'
+                  } else ok = pending !== undefined && replaceInInbox(agent, entry)
+                }
+                if (!ok && reason === '') reason = 'sent'
+              } else {
+                ok = false
+                reason = 'sent'
+              }
+            }
+            note({ seat: 'inject-route', op, sessionId, ok, reason, via: result.via, live })
+            return Response.json({ ok, op, sessionId, reason, ...result, ...listing() }, noStore)
+          },
+        }),
+      'dsh-prefill: manual inject route',
     )
 
     // 预填装包：按工作区存取（Q7）。op = list | get | save | delete | import
