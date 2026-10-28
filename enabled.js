@@ -11,7 +11,9 @@
  *   system    —— 系统提示段（prefill:persona）不发；替换 / 接管退回「不改」（接管时清零的工具一并恢复）。
  *   inject    —— 改写注入内容（overrides 里 persona 以外的全部改写）不生效。
  *   everyTurn —— 每轮注入不发（本会话显式记为关，不回落到「新会话默认」）。
- *   items     —— 开场对话不写入历史，会话开跑后的注入（injects）也不发。
+ *   items     —— 开场对话不写入历史。旧版「会话内注入」（injects，0.15.2 及以前）在开关关着时不迁移、
+ *                照旧不发（见 inject-once.js migrateLegacyInjects）。手动注入（injectQueue / inbox）是用户
+ *                单独点的一次性动作，不受这个开关影响。
  *   lore      —— 世界书不匹配、不注入。
  *   memory    —— 故事记忆不总结、不注入（已有摘要文件保留）。
  *   workspace —— 工作区说明（AGENTS.md / CLAUDE.md）按原样发，关闭 / 改写设置保留。角色卡开关不影响它。
