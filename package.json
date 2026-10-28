@@ -21,6 +21,7 @@
     "character-cards.js",
     "session-history.js",
     "inject-auto.js",
+    "inject-once.js",
     "enabled.js",
     "workspace-instructions.js",
     "gate.js",
