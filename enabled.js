@@ -11,7 +11,9 @@
  *   system    —— 系统提示段（prefill:persona）不发；替换 / 接管退回「不改」（接管时清零的工具一并恢复）。
  *   inject    —— 改写注入内容（overrides 里 persona 以外的全部改写）不生效。
  *   everyTurn —— 每轮注入不发（本会话显式记为关，不回落到「新会话默认」）。
- *   items     —— 开场对话不写入历史，会话开跑后的注入（injects）也不发。
+ *   items     —— 开场对话不写入历史。旧版「会话内注入」（injects，0.15.2 及以前）在开关关着时不迁移、
+ *                照旧不发（见 inject-once.js migrateLegacyInjects）。手动注入（injectQueue / inbox）是用户
+ *                单独点的一次性动作，不受这个开关影响。
  *   lore      —— 世界书不匹配、不注入。
  *   memory    —— 故事记忆不总结、不注入（已有摘要文件保留）。
  *   workspace —— 工作区说明（AGENTS.md / CLAUDE.md）按原样发，关闭 / 改写设置保留。角色卡开关不影响它。
@@ -19,6 +21,8 @@
  *                系统提示 / 每轮注入 / 工具清单（按 cardRef.applied 里的指纹判断）也停用；
  *                你在套卡之后自己改过的那几项算你的，不受角色卡开关影响。
  */
+
+import { withLegacyView } from './sandbox.js'
 
 export const FEATURES = ['card', 'lore', 'memory', 'system', 'everyTurn', 'items', 'inject', 'workspace']
 export const PERSONA_SECTION = 'prefill:persona'
@@ -84,18 +88,41 @@ function withoutKey(map, key) {
  */
 export function applyEnabled(state) {
   if (state === null || typeof state !== 'object') return state
-  const map = state.enabled
-  if (map === null || typeof map !== 'object') return state
   const cached = VIEWS.get(state)
   if (cached !== undefined) return cached
-  let view = state
+  // 会话沙盒第 1 步（issue #15）：overrides / sessionTools / gate 'pure' 已经存进 state.sandbox。
+  // 下面的停用逻辑仍按旧字段写，所以先补回由规则表推出来的旧字段（没有 sandbox 的旧形状 state 原样不动）；
+  // 改过的旧字段在 resolveSandbox 里会被整族迁回规则表。第 3 步再把停用直接做进规则表。
+  const legacy = withLegacyView(state)
+  const map = legacy.enabled
+  if (map === null || typeof map !== 'object') {
+    if (legacy !== state) VIEWS.set(state, legacy)
+    return legacy
+  }
+  let view = legacy
   for (const [sid, raw] of Object.entries(map)) {
     const flags = sanitizeEnabled(raw)
     if (sid === '*' || flags === undefined) continue
     view = maskSession(view, sid, flags)
+    if (flags.inject === false) view = maskSandbox(view, sid)
   }
   VIEWS.set(state, view)
   return view
+}
+
+/**
+ * 「会话沙盒」开关关掉（issue #15 第 3 步，左栏原「改写注入内容」那一项）：本会话的受控档、来源包开关、
+ * 单条 allow / deny 规则都不生效（回到观察档、只看全局）。严格档归系统提示的「接管」管（system 开关），这里不动；
+ * 改写（rewrite）由上面 maskSession 照旧处理。只改视图，存储的规则表原样。
+ */
+function maskSandbox(state, sid) {
+  const scope = state.sandbox?.[sid]
+  if (scope === null || typeof scope !== 'object') return state
+  // 留下：改写、工具规则（白名单归工具 / 接管管）、旧白名单迁来的软放行（严格档的消息白名单，归系统提示管）。
+  const next = { ...scope, rules: (scope.rules ?? []).filter((rule) => rule?.action === 'rewrite' || rule?.match?.tool !== undefined || rule?.soft === true) }
+  delete next.packs
+  if (next.level === 'controlled') next.level = 'observe'
+  return { ...state, sandbox: { ...state.sandbox, [sid]: next } }
 }
 
 function maskSession(state, sid, flags) {
