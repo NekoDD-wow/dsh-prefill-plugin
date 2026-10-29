@@ -25,12 +25,35 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync,
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
 import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnBlocks, everyTurnPresets, everyTurnTowers } from './builtin-presets.js'
-import { compileBench, makeBlock, normalizeChecks } from './blocks.js'
+import { blockFromPreset, compileBench, makeBlock, normalizeChecks } from './blocks.js'
+import {
+  MAX_QUEUE,
+  MAX_TEXT,
+  deliverToInbox,
+  flushQueueToInbox,
+  inboxOf,
+  isRunning,
+  migrateLegacyInjects,
+  pendingInInbox,
+  queueOf,
+  recentDelivered,
+  removeFromInbox,
+  replaceInInbox,
+  sanitizeEntry,
+} from './inject-once.js'
 import { historyToItems, turnRange } from './session-history.js'
+import { detectConstraints, mergeCarried } from './constraint-carry.js'
 import { CHECK_IDS, autoParams, modeOf, splitTurns } from './inject-auto.js'
 import { applyEnabled, sanitizeEnabled } from './enabled.js'
+import { migrateSandbox, withLegacyMirror, withLegacyView } from './sandbox.js'
+import { clampSince, lockOf, lockRecord, restorePatch, restoreSandbox, stampFirstOnce, withLock } from './turn-lock.js'
+import { sandboxViews } from './sandbox-view.js'
+import { sandboxRoute } from './sandbox-routes.js'
+import { surfaceOnRequest, surfaceRoute } from './sandbox-surface.js'
+import { claims as sandboxClaims, installClaimApi } from './sandbox-trace.js'
 import { sanitizeWorkspaceInstructions } from './workspace-instructions.js'
 import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
 
@@ -57,6 +80,8 @@ const PING_ROUTE = '/api/dsh-prefill/ping'
 const STATE_ROUTE = '/api/dsh-prefill/state'
 /** 客户端草稿入口：编辑好的多轮 items 在这里暂存，等用户"发出"时物化。 */
 const DRAFT_ROUTE = '/api/dsh-prefill/draft'
+/** 手动注入（一次性，issue #19「C」）：op = list | add | edit | remove。 */
+const INJECT_ROUTE = '/api/dsh-prefill/inject'
 /** 预填装包的读写入口（M4）。 */
 const PACKS_ROUTE = '/api/dsh-prefill/packs'
 /** 本会话逐轮用量（输入 / 缓存命中 / 输出 + 系统提示规模），给面板的「用量与缓存」卡片。 */
@@ -65,6 +90,8 @@ const USAGE_ROUTE = '/api/dsh-prefill/usage'
 const CARDS_ROUTE = '/api/dsh-prefill/cards'
 /** 故事记忆（角色卡三期）：op = get | set | clear，按会话。 */
 const MEMORY_ROUTE = '/api/dsh-prefill/memory'
+/** 会话沙盒：溯源 / 挂来源包 / 事后改写（issue #15 第 4 / 5 步，逻辑在 sandbox-routes.js）。 */
+const SANDBOX_ROUTE = '/api/dsh-prefill/sandbox'
 
 /** 热插拔内核的位置。 */
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -114,7 +141,10 @@ function note(entry) {
 function normalizeState(raw) {
   const source = raw !== null && typeof raw === 'object' ? raw : {}
   const levers = source.levers !== null && typeof source.levers === 'object' ? source.levers : {}
-  return {
+  // 会话沙盒第 1 步（issue #15）：overrides / sessionAllowKinds / sessionTools / injectionBlocks / gate 'pure'
+  // 读取时迁进 state.sandbox（幂等），旧字段从内存结果里删掉；writeState 写盘时再补回镜像（防降级）。
+  // 面板写回的旧字段（patchState 把它们摊在当前状态上）也在这里被整族吸收。
+  return migrateSandbox({
     // 先摊开原始对象：**保留未知字段**。M2 的按会话闸门映射 `gate`、
     // Q9 的 `noticeSeen` 都靠这一行才不至于被规范化抹掉（否则 UI 写进去就没了）。
     ...source,
@@ -124,7 +154,7 @@ function normalizeState(raw) {
     allowKinds: Array.isArray(source.allowKinds)
       ? source.allowKinds.filter((kind) => typeof kind === 'string')
       : [...DEFAULT_ALLOW_KINDS],
-  }
+  })
 }
 
 let cache = { state: null, mtimeMs: -1 }
@@ -145,13 +175,59 @@ function readState() {
       state = DEFAULT_STATE
     }
   }
+  // 旧版「会话内注入」（state.injects，每轮发）读取时迁成每轮注入积木（issue #19「C」）。
+  // 迁移幂等；迁了就顺手落盘一次，之后的读都是新形状。写不进去也不要紧：每次读都会再迁一遍。
+  const migrated = migrateLegacyInjects(state, legacyMigrationOptions())
+  if (migrated !== state) {
+    state = normalizeState(migrated)
+    try {
+      mkdirSync(DATA_DIR, { recursive: true })
+      writeFileSync(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+      mtimeMs = statSync(STATE_FILE).mtimeMs
+    } catch {
+      // 只读环境：保持内存里的迁移结果。
+    }
+  }
   cache = { state, mtimeMs }
   return state
 }
 
+/** 旧每轮注入（只有 text）迁成工作台时要认内置积木 / 塔，与面板同一套。 */
+function legacyMigrationOptions() {
+  try {
+    return { blocks: everyTurnBlocks().map((preset) => blockFromPreset(preset)), towers: everyTurnTowers() }
+  } catch {
+    return {}
+  }
+}
+
+/** 从状态队列里删掉这些条目（已搬进 inbox / 已送达）。 */
+function pruneQueue(sessionId, ids) {
+  if (typeof sessionId !== 'string' || !Array.isArray(ids) || ids.length === 0) return
+  const current = readState()
+  const list = Array.isArray(current?.injectQueue?.[sessionId]) ? current.injectQueue[sessionId] : []
+  const kept = list.filter((entry) => !ids.includes(entry?.id))
+  if (kept.length === list.length) return
+  const injectQueue = { ...(current.injectQueue ?? {}) }
+  if (kept.length > 0) injectQueue[sessionId] = kept
+  else delete injectQueue[sessionId]
+  patchState({ injectQueue })
+}
+
+/** 往状态队列里写（会话不在册时的兜底通道）。 */
+function writeQueue(sessionId, list) {
+  const current = readState()
+  const injectQueue = { ...(current.injectQueue ?? {}) }
+  if (list.length > 0) injectQueue[sessionId] = list
+  else delete injectQueue[sessionId]
+  patchState({ injectQueue })
+}
+
 function writeState(next) {
   mkdirSync(DATA_DIR, { recursive: true })
-  writeFileSync(STATE_FILE, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  // 防降级（会话沙盒第 1 步）：同时写回由规则表推出的旧字段镜像 + 指纹，退回 0.15.2 读同一份文件不丢配置；
+  // 读回来时指纹对得上的旧字段直接丢掉（新表为准），对不上的（旧版本改过）整族重新迁移。见 sandbox.js。
+  writeFileSync(STATE_FILE, `${JSON.stringify(withLegacyMirror(next), null, 2)}\n`, 'utf8')
   cache = { state: null, mtimeMs: -1 }
   return readState()
 }
@@ -165,6 +241,22 @@ function patchState(patch) {
       levers: { ...current.levers, ...(patch?.levers ?? {}) },
     }),
   )
+}
+
+/**
+ * 首轮锁定（issue #19 A，turn-lock.js）：记一条 state.locked[会话]（已有就不动）。
+ * 由闸门在物化开场对话成功时 / 每轮第 1 步发现还没锁时调用；快照取自兼容视图（旧字段形状），和面板同一份。
+ */
+function lockSession(sessionId, info) {
+  if (typeof sessionId !== 'string' || sessionId === '') return false
+  const current = readState()
+  if (lockOf(current, sessionId) !== undefined) return false
+  const record = lockRecord(withLegacyView(current), sessionId, info)
+  const locked = withLock(current.locked, sessionId, record)
+  if (locked === undefined) return false
+  patchState({ locked })
+  note({ lock: 'created', id: sessionId, turn: record.turn, items: record.items.length, legacy: record.legacy === true })
+  return true
 }
 
 /** 每 agent 的轮次闩锁容器（放壳里，跨内核热换存活）。 */
@@ -251,7 +343,24 @@ export function sanitizeEveryTurn(raw) {
     checks,
     auto: { warmup, streak, probation },
     ...(bench.length > 0 ? { bench, benchTowers } : {}),
+    // 约束承接：来自会话的预设，新会话第一条真实消息那轮发「首轮段 + 接缝提醒」（constraint-carry.js）。
+    ...(raw.seam === true ? { seam: true } : {}),
   }
+}
+
+/**
+ * 存预设 / 导入时的「约束承接」字段（constraint-carry.js）。
+ * - 给了 `carried`（面板「从当前会话取」后列出的约束，勾上的那些）⇒ 每轮注入由它们编成，
+ *   模式沿用 body.everyTurn（本会话那格）；一条都没勾 = 不带（基于角色卡的预设存 null，免得回落到卡的提醒）；
+ * - 没给 ⇒ 照旧只看 body.everyTurn；
+ * - `fromSession: true` 原样保留（标记「这份预设来自会话」）。
+ */
+export function carriedPresetFields(body, { layered = false } = {}) {
+  const base = layered && body?.everyTurn === null ? null : sanitizeEveryTurn(body?.everyTurn)
+  const fromSession = body?.fromSession === true ? true : undefined
+  if (!Array.isArray(body?.carried)) return { everyTurn: base, fromSession }
+  const merged = sanitizeEveryTurn(mergeCarried(body.carried, base))
+  return { everyTurn: merged ?? (layered ? null : undefined), fromSession }
 }
 
 /** v0.15：工作台（面板层数据）—— 每块只留已知字段，文字截断防呆。 */
@@ -420,6 +529,7 @@ function lastTurnOf(events) {
  * - 配置「重新开始」（打开、换模式、改正文 / 首轮段 / 检查项）⇒ since = 下一轮，清掉手动覆盖；
  * - 否则沿用旧的 since；
  * - 带了 `auto.override = { action }` 但没轮号 ⇒ 盖上 atTurn = 下一轮；没带 ⇒ 沿用旧的。
+ * - 沿用的 since 夹到 ≤ 下一轮（issue #19）；`firstOnce`（「下一轮发一次」首轮段）见 turn-lock.js stampFirstOnce。
  * 通配格 '*' 不盖（它是新会话默认，不属于任何会话）。
  */
 export function stampEveryTurn(previous, next, lastTurnFor) {
@@ -441,19 +551,24 @@ export function stampEveryTurn(previous, next, lastTurnFor) {
       String(entry.firstText ?? '') !== String(old.firstText ?? '') ||
       !sameChecks
     const auto = { ...(entry.auto ?? {}) }
+    const last = lastOf(key)
     let since
     if (restart) {
-      since = lastOf(key) + 1
+      since = last + 1
       delete auto.override
     } else {
-      since = Number(old?.since) || 0
+      // issue #19：since 不能比实际轮数还大（否则之后实际跑的轮一直被当成「重新开始之前」、不计分）。
+      since = clampSince(old?.since, last)
       const wanted = entry.auto?.override
       if (wanted?.action === 'resume' || wanted?.action === 'pause') {
-        auto.override = Number.isFinite(Number(wanted.atTurn)) && wanted.atTurn !== null ? wanted : { action: wanted.action, atTurn: lastOf(key) + 1 }
+        auto.override = Number.isFinite(Number(wanted.atTurn)) && wanted.atTurn !== null ? wanted : { action: wanted.action, atTurn: last + 1 }
       } else if (old?.auto?.override !== undefined) auto.override = old.auto.override
       else delete auto.override
     }
-    out[key] = { ...entry, since, auto }
+    // 「下一轮发一次」首轮段（issue #19 B）：true ⇒ 盖成 { atTurn: 下一轮 }；没带 ⇒ 首轮段没变就沿用。
+    const firstOnce = stampFirstOnce(entry, old, last)
+    const { firstOnce: _wanted, ...rest } = entry
+    out[key] = { ...rest, since, auto, ...(firstOnce !== undefined ? { firstOnce } : {}) }
   }
   return out
 }
@@ -776,7 +891,7 @@ async function handle(payload, decision, seat) {
     return decision
   }
   try {
-    const api = { readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore }
+    const api = { readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore, pruneQueue, lockSession }
     const next = (await gate.step(api, { ...payload, __seat: seat }, decision)) ?? decision
     // 用户点过「阻断」的消息来源（会话级 + 全局记住）：不论会话是否武装都生效。
     return typeof gate.applyMessageBlocks === 'function' ? gate.applyMessageBlocks(api, payload, decision, next) : next
@@ -788,6 +903,8 @@ async function handle(payload, decision, seat) {
 
 export function apply(ctx) {
   rootCtxRef = ctx
+  // 会话沙盒第 4 步：开放给别的插件自报来源包（globalThis[Symbol.for('dsh-prefill.sandbox')].claim，只当线索）。
+  installClaimApi()
   try {
     mkdirSync(DATA_DIR, { recursive: true })
     writeFileSync(
@@ -807,7 +924,7 @@ export function apply(ctx) {
   )
 
   /** 交给内核的能力包（每次现取，保证 rootCtx 指向最新一代）。 */
-  const api = () => ({ readState, note, latches, unlatch, rootCtx: rootCtxRef })
+  const api = () => ({ readState, note, latches, unlatch, rootCtx: rootCtxRef, pruneQueue, lockSession })
 
   // ── 座位 1（主）：根级 agent/pre-step，agent 直接来自 payload ──
   // 顺带维护"轮是否开着"，供轮次规则判断（见 reprimeAll）。
@@ -819,6 +936,27 @@ export function apply(ctx) {
     },
     { prepend: true },
   )
+
+  // 开场历史的系统提示对齐（gate.alignOnRequest）：第一条真实消息那一步，把物化时写的那条 system
+  // 换成本步的渲染结果，免得 DSH 在本轮末尾追加一整份系统提示（之后每轮历史里都带着两份）。
+  ctx.on('agent/request', async (payload, next) => {
+    const config = await next()
+    const gate = gateCache.module
+    if (typeof gate?.alignOnRequest === 'function') {
+      try {
+        await gate.alignOnRequest(api(), payload)
+      } catch (error) {
+        note({ alignSystem: 'threw', error: String(error?.message ?? error) })
+      }
+    }
+    // 会话沙盒第 5 步：登记着的 developer/message 事后改写在这里落盘（步内事件，空闲时落盘重启后会话打不开）。
+    try {
+      surfaceOnRequest(payload, { readState, patchState, note })
+    } catch (error) {
+      note({ seat: 'sandbox-surface', op: 'apply-pending', error: String(error?.message ?? error) })
+    }
+    return config
+  })
 
   // 注入审计：盯着落进会话、会进模型的消息（含绕过 pre-step 直接写入的），未登记的记下来给面板。
   ctx.on('session/event', (session, event) => {
@@ -894,6 +1032,18 @@ export function apply(ctx) {
   // ── 座位 2（次）：per-agent 最外层（改写最外层位置需要 per-agent 注册）──
   ctx.on('agent/created', async ({ agent }) => {
     if (typeof agent?.id === 'string') liveAgents.set(agent.id, agent)
+    // 会话不在册时点的手动注入（state.injectQueue）：会话一加载就整体搬进 inbox（next-step），
+    // 由循环在下一轮领取、写进会话日志；搬完从状态里删。搬不了（没有 inbox）就留着给闸门兜底。
+    try {
+      const queue = queueOf(readState(), agent?.id)
+      if (queue.length > 0) {
+        const { done, moved } = flushQueueToInbox(agent, queue, sessionEvents(agent, agent.id))
+        pruneQueue(agent.id, done)
+        note({ manual: 'flush-on-created', id: agent.id, moved, done: done.length, left: queue.length - done.length })
+      }
+    } catch (error) {
+      note({ manual: 'flush-failed', id: agent?.id, error: String(error?.message ?? error) })
+    }
     if (typeof agent?.ctx?.on === 'function') {
       agent.ctx.on(
         'agent/pre-step',
@@ -970,29 +1120,51 @@ export function apply(ctx) {
     }
 
     const noStore = { headers: { 'cache-control': 'no-store' } }
+    const sandboxViewsFor = (state) => {
+      try {
+        const gate = gateCache.module
+        return sandboxViews(
+          applyEnabled(state),
+          {
+            injections: typeof gate?.injections === 'function' ? gate.injections(rootCtxRef) : {},
+            tools: typeof gate?.tools === 'function' ? gate.tools(rootCtxRef) : {},
+            audit: typeof gate?.auditSnapshot === 'function' ? gate.auditSnapshot() : {},
+          },
+          [...liveAgents.keys()],
+        )
+      } catch (error) {
+        note({ seat: 'sandbox-view', error: String(error?.message ?? error) })
+        return {}
+      }
+    }
     const envelope = () => {
       const snapshots = typeof gateCache.module?.snapshots === 'function' ? gateCache.module.snapshots() : {}
       const state = readState()
-      const injects = state?.injects !== null && typeof state?.injects === 'object' ? state.injects : {}
+      const injectQueue = state?.injectQueue !== null && typeof state?.injectQueue === 'object' ? state.injectQueue : {}
       return {
         ok: true,
         plugin: '@local/dsh-prefill',
         stage: STAGE,
         gateStage: gateCache.module?.STAGE ?? null,
         stateFile: STATE_FILE,
-        state,
+        // 面板（第 3 步之前）仍读写旧字段：给它由规则表推出的兼容视图（旧字段 + sandbox）。
+        state: withLegacyView(state),
         drafts: typeof gateCache.module?.draftIds === 'function' ? gateCache.module.draftIds() : [],
         // Q9 角标：每会话最近一轮的生效快照（三态 + 被丢弃的 kind）。
         snapshots,
         // 每会话"已跑到第几轮"：面板据此自动切换「写入历史」/「每轮注入」两种模式。
         turns: Object.fromEntries(Object.entries(snapshots).map(([id, snap]) => [id, snap?.turn ?? 0])),
-        // 每会话"每轮注入"的条目数（模式 B；0 表示没配）。
-        injects: Object.fromEntries(Object.entries(injects).map(([id, items]) => [id, Array.isArray(items) ? items.length : 0])),
+        // 每会话状态队列里待发的手动注入条数（会话不在册时的兜底通道；inbox 里挂着的看 INJECT_ROUTE）。
+        manualQueued: Object.fromEntries(Object.entries(injectQueue).map(([id, items]) => [id, Array.isArray(items) ? items.length : 0])),
         // Q17：可改的注入清单 = **预置 catalog**（全局 prompt 层的真实注册名）+ 每会话已发现的条目。
         // 有 catalog，用户就能在某条注入还没出现过时先写好改写（"直接劫持"）。
         injections: typeof gateCache.module?.injections === 'function' ? gateCache.module.injections(rootCtxRef) : {},
         // 疑似未登记注入（每会话）：面板据此给出「本会话阻断 / 全局记住」。
         audit: typeof gateCache.module?.auditSnapshot === 'function' ? gateCache.module.auditSnapshot() : {},
+        // 会话沙盒页（issue #15 第 3 步）：每会话的档位 / 来源包 / 未归属 / 审计裁决（面板拿不到 sandbox.js，由宿主算好）。
+        sandboxView: sandboxViewsFor(state),
+        // 插件自报的来源包（第 4 步，只当线索；用户确认后才进 state.sandboxPacks）。
+        sandboxClaims: sandboxClaims(),
         // 工具放行：catalog = 扫到的工具名（装配看到的）+ 官方可限制名单；sessions = 每会话装配到的工具。
         // 注意：**不改工具说明**（工具类注入一律忽略），这里只管"能不能用"。
         tools: typeof gateCache.module?.tools === 'function' ? gateCache.module.tools(rootCtxRef) : { catalog: [], sessions: {} },
@@ -1033,6 +1205,23 @@ export function apply(ctx) {
             } catch {
               patch = undefined
             }
+            // 「恢复开局时的预设」（issue #19 B）：`{ restoreOpening: 会话 }` ⇒ 用 state.locked[会话] 里的快照换回配置，
+            // 下一轮生效，历史不动。补丁由服务端按最新状态现算（别的键一概不收）；每轮注入沿用快照自己的 since。
+            let restored
+            if (typeof patch?.restoreOpening === 'string' && patch.restoreOpening !== '') {
+              const sid = patch.restoreOpening
+              const current = readState()
+              const built = restorePatch(withLegacyView(current), sid, lockOf(current, sid), lastTurnOf(sessionEvents(liveAgents.get(sid), sid)))
+              if (built === undefined) return Response.json({ ...envelope(), ok: false, reason: 'not-locked' }, noStore)
+              patchState(built)
+              // 沙盒那一格（受控档 / 包开关 / 单条规则）旧字段表达不了，按快照原样换回；在旧字段吸收之后写，以快照为准。
+              const sandbox = restoreSandbox(readState().sandbox, sid, lockOf(current, sid))
+              if (sandbox !== undefined) patchState({ sandbox })
+              note({ restoreOpening: sid, everyTurn: built.everyTurn?.[sid] ? { since: built.everyTurn[sid].since, mode: built.everyTurn[sid].mode } : null })
+              restored = sid
+              patch = undefined
+              await reprimeAll('restore-opening')
+            }
             if (patch !== null && typeof patch === 'object' && Object.keys(patch).length > 0) {
               if (patch.everyTurn !== null && typeof patch.everyTurn === 'object') {
                 const previous = readState()?.everyTurn ?? {}
@@ -1054,7 +1243,7 @@ export function apply(ctx) {
                 }
               }
             }
-            return Response.json(envelope(), noStore)
+            return Response.json(restored !== undefined ? { ...envelope(), restored } : envelope(), noStore)
           },
         }),
       'dsh-prefill: state route',
@@ -1114,6 +1303,129 @@ export function apply(ctx) {
       'dsh-prefill: draft route',
     )
 
+    // 手动注入（issue #19「C」，见 inject-once.js）：会话在册 ⇒ 走 agent.inbox（next-step，插话）；
+    // 不在册 ⇒ 写进 state.injectQueue，会话加载时搬进 inbox / 闸门兜底。
+    //   list   —— { pending: [{ id, role, text, via }], running, live, recent: [{ id, role, text, turn }] }
+    //   add    —— { role, text } ⇒ 入队；返回 { entry, via: 'inbox'|'queue', running }
+    //   edit   —— { id, role, text } ⇒ 改还没发出去的那条；已发出 ⇒ ok:false, reason:'sent'
+    //   remove —— { id } ⇒ 撤回；已发出 ⇒ ok:false, reason:'sent'
+    scope.effect(
+      () =>
+        register({
+          path: INJECT_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body
+            try {
+              body = await request?.json?.()
+            } catch {
+              body = undefined
+            }
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+            const op = typeof body?.op === 'string' ? body.op : 'list'
+            if (sessionId === '') return Response.json({ ok: false, reason: 'missing sessionId' }, noStore)
+            const agent = liveAgents.get(sessionId)
+            const live = inboxOf(agent) !== undefined
+            // 会话在册但状态队列里还有残留（例如加载时没搬成）：顺手搬进 inbox。
+            if (live) {
+              const queue = queueOf(readState(), sessionId)
+              if (queue.length > 0) pruneQueue(sessionId, flushQueueToInbox(agent, queue, sessionEvents(agent, sessionId)).done)
+            }
+            const listing = () => {
+              const pending = [
+                ...(live ? pendingInInbox(agent).map((entry) => ({ ...entry, via: 'inbox' })) : []),
+                ...queueOf(readState(), sessionId).map((entry) => ({ ...entry, via: 'queue' })),
+              ]
+              return { pending, running: isRunning(agent), live, recent: recentDelivered(sessionEvents(agent, sessionId)) }
+            }
+            let ok = true
+            let reason = ''
+            let result = {}
+            const textOf = (raw) => (typeof raw === 'string' ? raw.slice(0, MAX_TEXT) : '')
+            if (op === 'add') {
+              const entry = sanitizeEntry({ id: randomUUID(), role: body?.role, text: textOf(body?.text), at: new Date().toISOString() })
+              if (entry === undefined) {
+                ok = false
+                reason = 'empty'
+              } else {
+                const delivered = live ? deliverToInbox(agent, entry) : { ok: false }
+                if (delivered.ok) result = { entry, via: 'inbox', running: delivered.running === true }
+                else {
+                  const queue = queueOf(readState(), sessionId)
+                  if (queue.length >= MAX_QUEUE) {
+                    ok = false
+                    reason = 'queue-full'
+                  } else {
+                    writeQueue(sessionId, [...queue, entry])
+                    await reprimeAll('manual-inject')
+                    result = { entry, via: 'queue', running: false }
+                  }
+                }
+              }
+            } else if (op === 'edit' || op === 'remove') {
+              const id = typeof body?.id === 'string' ? body.id : ''
+              const queue = queueOf(readState(), sessionId)
+              const inQueue = queue.findIndex((entry) => entry.id === id)
+              if (inQueue >= 0) {
+                if (op === 'remove') writeQueue(sessionId, queue.filter((entry) => entry.id !== id))
+                else {
+                  const entry = sanitizeEntry({ ...queue[inQueue], role: body?.role ?? queue[inQueue].role, text: textOf(body?.text) })
+                  if (entry === undefined) {
+                    ok = false
+                    reason = 'empty'
+                  } else writeQueue(sessionId, queue.map((item) => (item.id === id ? entry : item)))
+                }
+              } else if (live) {
+                const pending = pendingInInbox(agent).find((entry) => entry.id === id)
+                if (op === 'remove') ok = removeFromInbox(agent, id)
+                else {
+                  const entry = sanitizeEntry({ id, role: body?.role ?? pending?.role, text: textOf(body?.text) })
+                  if (entry === undefined) {
+                    ok = false
+                    reason = 'empty'
+                  } else ok = pending !== undefined && replaceInInbox(agent, entry)
+                }
+                if (!ok && reason === '') reason = 'sent'
+              } else {
+                ok = false
+                reason = 'sent'
+              }
+            }
+            note({ seat: 'inject-route', op, sessionId, ok, reason, via: result.via, live })
+            return Response.json({ ok, op, sessionId, reason, ...result, ...listing() }, noStore)
+          },
+        }),
+      'dsh-prefill: manual inject route',
+    )
+
+    // 会话沙盒：溯源（静态读插件包源码 / 用户点了才让 AI 读）、确认后挂来源包、直写通道的事后改写。
+    scope.effect(
+      () =>
+        register({
+          path: SANDBOX_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body
+            try {
+              body = await request?.json?.()
+            } catch {
+              body = undefined
+            }
+            let result
+            try {
+              result = await sandboxRoute(body ?? {}, { readState, patchState, liveAgents, rootCtx: rootCtxRef, note, surface: surfaceRoute })
+            } catch (error) {
+              result = { ok: false, op: body?.op ?? null, reason: String(error?.message ?? error) }
+            }
+            if (result.ok && (body?.op === 'attach' || body?.op === 'detach')) await reprimeAll('sandbox-pack')
+            return Response.json(result, noStore)
+          },
+        }),
+      'dsh-prefill: sandbox route',
+    )
+
     // 预填装包：按工作区存取（Q7）。op = list | get | save | delete | import
     scope.effect(
       () =>
@@ -1155,6 +1467,8 @@ export function apply(ctx) {
                 ...(extra.enabled === undefined ? {} : { enabled: extra.enabled }),
                 // 工作区说明（AGENTS.md / CLAUDE.md）：只存模式 + 改写正文，从不存文件原文；原样 = 不存。
                 ...(extra.workspaceInstructions === undefined ? {} : { workspaceInstructions: extra.workspaceInstructions }),
+                // 约束承接：这份预设是从会话存下来的（开场里带着那段历史）。
+                ...(extra.fromSession === true ? { fromSession: true } : {}),
               }
               const at = packs.findIndex((entry) => entry.name === name)
               if (at >= 0) packs[at] = pack
@@ -1235,20 +1549,23 @@ export function apply(ctx) {
               // 把当前会话已发生的对话转成开场条目（只读，不存）；客户端预览后再走 save。
               // 范围「第 N 轮 到 第 M 轮」（v0.10.1）：fromTurn 缺省 1，toTurn 缺省 = 到最后；旧调用只给 toTurn 照旧。
               const range = turnRange(body)
-              const result = historyToItems(sessionEvents(liveAgents.get(sessionId), sessionId), {
+              const events = sessionEvents(liveAgents.get(sessionId), sessionId)
+              const result = historyToItems(events, {
                 reasoning: body?.reasoning === true,
                 fromTurn: range.from,
                 toTurn: range.to,
               })
               // 本会话的每轮注入配置（只认本会话自己那格，不认 '*'）和故事记忆摘要，给「带上……」两个复选框。
               const everyTurn = sanitizeEveryTurn(readState()?.everyTurn?.[sessionId]) ?? null
+              // 约束承接：会话里实际发过的每轮注入 → 当时生效的积木（不论来自本会话、'*' 还是角色卡），面板默认勾上带进预设。
+              const { constraints } = detectConstraints(events, readState(), sessionId, { fromTurn: range.from, toTurn: range.to, catalog: everyTurnBlocks() })
               const stored = memoryStore.read(sessionId)
               const memory = typeof stored?.text === 'string' && stored.text.trim() !== '' ? { text: stored.text.trim(), throughTurn: Number(stored.throughTurn) || 0 } : null
               const toTurn = range.to
               // 截了轮次、而摘要覆盖到截取末轮 M 之后 ⇒ 不许带（摘要里有分支点之后的剧情）。
               const memoryAllowed = memory !== null && (toTurn === 0 || memory.throughTurn <= toTurn)
               note({ seat: 'packs-route', op, sessionId, items: result.items.length, turnCount: result.turnCount, lastTurn: result.lastTurn, toolCalls: result.toolCalls, everyTurn: everyTurn?.mode ?? null, memory: memory?.throughTurn ?? null, memoryAllowed })
-              return Response.json({ ok: true, op, ...result, fromTurn: range.from, toTurn: range.to, everyTurn, memory, memoryAllowed, ...envelope() }, noStore)
+              return Response.json({ ok: true, op, ...result, fromTurn: range.from, toTurn: range.to, everyTurn, constraints, memory, memoryAllowed, ...envelope() }, noStore)
             } else if (op === 'every-turn-status') {
               // 面板状态行：本会话每轮注入的自动判定（只读）。
               const gate = await loadGate()
@@ -1264,13 +1581,14 @@ export function apply(ctx) {
               const items = layered && body?.items === undefined ? undefined : sanitizeItems(body?.items)
               const overrides = sanitizeOverrides(body?.overrides)
               const tools = sanitizeTools(body?.tools)
-              const everyTurn = layered && body?.everyTurn === null ? null : sanitizeEveryTurn(body?.everyTurn)
+              // 约束承接：「从当前会话取」后勾上的约束（carried）编成每轮注入，并记下 fromSession。
+              const { everyTurn, fromSession } = carriedPresetFields(body, { layered })
               const memorySeed = sanitizeMemorySeed(body?.memorySeed)
               const cut = Number(body?.toTurn) > 0 ? Math.floor(Number(body.toTurn)) : 0
               if (name === '') reason = 'missing name'
               else if (items === undefined && !layered) reason = 'invalid items[]'
               else if (memorySeed !== undefined && cut > 0 && memorySeed.throughTurn > cut) reason = 'memory summary covers turns after the cut'
-              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, memorySeed, card: sanitizeCardRef(body?.card), lore: sanitizeLore(body?.lore), enabled: sanitizeEnabled(body?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(body?.workspaceInstructions) })
+              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, fromSession, memorySeed, card: sanitizeCardRef(body?.card), lore: sanitizeLore(body?.lore), enabled: sanitizeEnabled(body?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(body?.workspaceInstructions) })
             } else if (op === 'delete') {
               const name = typeof body?.name === 'string' ? body.name : ''
               const next = packs.filter((entry) => entry.name !== name)
@@ -1295,7 +1613,7 @@ export function apply(ctx) {
                 const raw = parsed?.name ?? body?.name
                 const name = typeof raw === 'string' ? raw.trim() : ''
                 if ((items === undefined && !layered) || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides, tools, parsed?.gate, { everyTurn: layered && parsed?.everyTurn === null ? null : sanitizeEveryTurn(parsed?.everyTurn), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), lore: sanitizeLore(parsed?.lore), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
+                else upsert(name, items, overrides, tools, parsed?.gate, { ...carriedPresetFields(parsed, { layered }), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), lore: sanitizeLore(parsed?.lore), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
               }
             } else {
               reason = `unknown op "${op}"`
