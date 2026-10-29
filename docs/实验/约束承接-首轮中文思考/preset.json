@@ -1,0 +1,73 @@
+{
+ "items": [
+  {
+   "role": "user",
+   "text": "Explain briefly why the sky is blue, in 3 sentences."
+  },
+  {
+   "role": "assistant",
+   "text": "Sunlight includes every color of the visible spectrum, and as it passes through the atmosphere it collides with gas molecules that scatter short wavelengths far more strongly than long ones—a process called Rayleigh scattering. Blue light is therefore scattered in all directions roughly ten times more than red light, so it reaches your eye from every part of the sky. (Violet is scattered even more, but much of it is absorbed up high and our eyes are less sensitive to it, so the sky reads as blue.)",
+   "reasoning": ""
+  },
+  {
+   "role": "user",
+   "text": "What is the difference between TCP and UDP? Keep it short."
+  },
+  {
+   "role": "assistant",
+   "text": "**TCP** is connection-oriented: it establishes a session, guarantees delivery and ordering, retransmits lost packets, and does flow/congestion control—so it's reliable but heavier and slower.\n\n**UDP** is connectionless: it just fires datagrams with no handshake, no acknowledgment, and no ordering guarantee—so it's lightweight and low-latency but unreliable.\n\nUse TCP for things that must arrive intact (web, email, file transfer); use UDP for real-time or loss-tolerant traffic (video calls, games, DNS, streaming).",
+   "reasoning": ""
+  },
+  {
+   "role": "user",
+   "text": "Write a Python one-liner that reverses the words in a sentence."
+  },
+  {
+   "role": "assistant",
+   "text": "```python\nreversed_sentence = lambda s: ' '.join(reversed(s.split()))\n```\n\nExample: `reversed_sentence(\"hello world foo\")` → `'foo world hello'`.\n\nNote this splits on whitespace, so punctuation stays attached to its word, and repeated spaces collapse to one.",
+   "reasoning": ""
+  },
+  {
+   "role": "user",
+   "text": "Why does ice float on water? Two sentences."
+  },
+  {
+   "role": "assistant",
+   "text": "Ice floats because water expands when it freezes, making solid ice about 9% less dense than the liquid it came from. That expansion happens because hydrogen bonds lock the molecules into an open, hexagonal crystal lattice that takes up more volume than the jumbled arrangement in liquid water.",
+   "reasoning": ""
+  }
+ ],
+ "everyTurn": {
+  "enabled": true,
+  "text": "【思考语言】本轮你的思维链（reasoning）请全程用中文，即使问题是英文。回答正文按用户的语言正常写。",
+  "firstText": "【思考语言】本轮你的思维链（reasoning）请全程用中文，即使问题是英文。回答正文按用户的语言正常写。",
+  "mode": "always",
+  "untilTurn": 0,
+  "checks": [
+   "zh"
+  ],
+  "auto": {
+   "warmup": 3,
+   "streak": 3,
+   "probation": 2
+  },
+  "bench": [
+   {
+    "key": "c1",
+    "ref": "zh-thinking",
+    "name": "中文思考",
+    "icon": "",
+    "first": "",
+    "text": "【思考语言】本轮你的思维链（reasoning）请全程用中文，即使问题是英文。回答正文按用户的语言正常写。",
+    "checks": [
+     "zh"
+    ],
+    "edited": false,
+    "priority": false,
+    "builtin": true
+   }
+  ],
+  "benchTowers": {},
+  "seam": true
+ }
+}
