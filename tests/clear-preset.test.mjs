@@ -31,7 +31,7 @@ const state = () => ({
 const items = [{ role: 'user', text: '你好' }, { role: 'assistant', text: '*塞拉菲娜看着你*', reasoning: '' }]
 
 test('取消预设：清开场对话草稿（会话已开跑时只清草稿，不碰历史）', () => {
-  assert.match(clearSrc, /await applyLayered\(\{\}\)/, '取消 = 套空预设（同一条写入路径）')
+  assert.match(clearSrc, /await applyLayered\(\{ clearItems: true \}\)/, '取消 = 套空预设（同一条写入路径；开跑后也照旧清草稿，issue #19 B）')
   assert.match(applySrc, /setItems\(resolved\.items\)/, '开场对话列表整体替换（空预设 = 清空）')
   assert.match(applySrc, /postJson\(DRAFT_ROUTE, \{ sessionId, items: resolved\.items \}\)/, '草稿落盘')
   // 不注入、不改会话历史：只走草稿路由和 state 路由。
