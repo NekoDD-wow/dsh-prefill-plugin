@@ -73,6 +73,8 @@ window.__ModuleLoader__.load({
     /** 角色卡路由（v0.6 角色扮演扩展）。 */
     const CARDS_ROUTE = '/api/dsh-prefill/cards'
     const MEMORY_ROUTE = '/api/dsh-prefill/memory'
+    /** 手动注入路由（一次性，issue #19「C」）：op = list | add | edit | remove。 */
+    const INJECT_ROUTE = '/api/dsh-prefill/inject'
 
     /**
      * 同页两个组件之间的状态同步：输入框里的「预填装」开关写完之后广播一次，
@@ -273,13 +275,7 @@ window.__ModuleLoader__.load({
       prefillOff: '预填装',
       prefillOn: '预填装·开',
       // 会话开跑后自动改名：预填装（写进历史）→ **预注入**（每轮注入，且必须手动触发）。
-      injectOff: '预注入',
-      injectOn: '预注入 · 待点注入',
-      injectDone: '预注入 · 已注入',
-      injectTitleOff:
-        '本会话已开跑 ⇒ 内容不会再写进历史。注意：**不会自动注入** —— 要点面板里的「注入」，内容才会在下一轮带上（这里只是启用）。',
-      injectTitleOn:
-        '已启用预注入。但**不会自动生效**：还需点面板里的「注入」，把内容写进本会话配置（下一轮请求生效）。',
+      injectOff: '预填装 · 已开跑',
       prefillTitleOff: '本会话还没用预填装——点一下开启，编辑区会出现在输入框上方',
       prefillTitleOn: '本会话已用预填装——你发第一条消息时，这些内容会变成真实对话历史。点一下关掉',
       title: '预填装 · 注入控制',
@@ -359,12 +355,6 @@ window.__ModuleLoader__.load({
       // ── 模式（首轮前=写入历史；会话已开跑=每轮注入）──
       modeHistory: '写入历史',
       modeHistoryTip: '首轮发出时，这些内容会变成真实对话历史（持久、省 token、模型当成自己的记忆）',
-      modeInject: '每轮注入',
-      modeInjectTip:
-        '会话已开跑，无法再写入历史 ⇒ 内容改为**每轮注入**。注意：**不会自动生效** —— 点「注入」才会在下一轮请求里带上（不进历史、每轮花 token）。',
-      injectNow: '注入',
-      injectNowTip: '把当前内容与注入改写写成"本会话配置"，不产生任何消息；下一轮请求就带上',
-      injectedNext: '已注入 · 下一轮生效',
       injectFailed: '注入失败',
       // ── Q9 角标 ──
       statePure: '只留预填装',
@@ -430,13 +420,7 @@ window.__ModuleLoader__.load({
       prefillOff: 'Prefill',
       prefillOn: 'Prefill·on',
       // Renamed automatically once the session has run: prefill (history) → pre-inject (per turn, manual).
-      injectOff: 'Pre-inject',
-      injectOn: 'Pre-inject · click Inject',
-      injectDone: 'Pre-inject · injected',
-      injectTitleOff:
-        'This session has already run, so nothing is written to history. Nothing is injected automatically — press "Inject" in the panel to carry it into the next turn (this only enables the mode).',
-      injectTitleOn:
-        'Pre-injection is enabled, but it is NOT automatic: press "Inject" in the panel to write the content into this session config (effective next turn).',
+      injectOff: 'Prefill · running',
       prefillTitleOff: 'This session does not use prefill — click to enable; the editor shows up above the composer',
       prefillTitleOn: 'Prefill is on — this content becomes real history on your first send. Click to turn off',
       title: 'Prefill · injection control',
@@ -516,12 +500,6 @@ window.__ModuleLoader__.load({
       // ── mode (before first turn = write history; after = inject every turn) ──
       modeHistory: 'Write to history',
       modeHistoryTip: 'On your first send these become real conversation history (durable, cheap, owned by the model)',
-      modeInject: 'Inject every turn',
-      modeInjectTip:
-        'This session has already run, so history is out of reach — the content is injected on every turn instead. Note: it is NOT automatic — press "Inject" to carry it into the next request (not history, costs tokens each turn).',
-      injectNow: 'Inject',
-      injectNowTip: 'Write the current content and injection rewrites into this session config — no message is produced; the next turn carries it',
-      injectedNext: 'Injected · next turn',
       injectFailed: 'Inject failed',
       // ── Q9 badge ──
       statePure: 'Prefill only',
@@ -584,9 +562,6 @@ window.__ModuleLoader__.load({
       gateTitleOn: '当前：纯净已开。点一下关掉，恢复 harness 默认注入',
       gateNoticeTitle: '开启纯净？',
       gateNoticeBody: '系统提示会被清空：切换的那一轮缓存基本不命中，之后每轮输入反而更少。用量统计不受影响。此说明只弹一次。',
-      injectTitleOff: '本会话已开跑，内容不会再写进历史。要点面板里的「注入」，内容才会在下一轮带上（这里只是启用）。',
-      injectTitleOn: '已启用预注入，但不会自动生效：还需点面板里的「注入」，下一轮请求才会带上。',
-      modeInjectTip: '会话已开跑，无法再写入历史，内容改为每轮注入。不会自动生效：点「注入」后下一轮请求才带上（不进历史、每轮都计费）。',
       injectOriginalHint: '框里显示的是当前原文；改动即覆盖，改回原文或清空 = 不修改',
       presetsTitle: '预设',
       presetsNone: '未套用',
@@ -637,6 +612,17 @@ window.__ModuleLoader__.load({
       seedLate: '摘要覆盖到第 {n} 轮，晚于开场对话截取的第 {m} 轮，不能带上',
       seedDropped: '开场对话改成只到第 {m} 轮，摘要（到第 {n} 轮）已不再带上',
       seedDrop: '不带',
+      carryTitle: '带上会话里生效过的每轮约束',
+      carryHint: '这些要求在原会话里靠每轮注入维持（存进开场的历史里不含注入）。勾上的会编进预设的每轮注入；新会话第一条消息那轮再提醒一次「以上历史均遵守这些要求，继续保持」。',
+      carrySrcSession: '本会话设置',
+      carrySrcPreset: '来自预设',
+      carrySrcCard: '来自角色卡',
+      carrySrcDefault: '新会话默认',
+      carrySrcBuiltin: '内置积木',
+      carrySrcHistory: '历史里发过',
+      carryTurns: '注入过 {n} 轮',
+      carryNotYet: '还没注入过',
+      carryUnnamed: '每轮注入',
       collapseCard: '收起卡片',
       pinOn: '钉住',
       pinOff: '取消钉住',
@@ -844,7 +830,7 @@ window.__ModuleLoader__.load({
       nextTurnNotice: '本轮进行中，改动从下一轮生效',
       itemsTitle: '开场对话（预填装）',
       itemsHistoryHint: '想让 AI 一开始就"记得"的对话写在这里。你发第一条消息时，这些会变成真实对话历史：只在首轮按输入计费一次，之后作为历史前缀，通常能命中缓存。用户和 AI 的消息顺序随意，连着几条也行。',
-      itemsInjectHint: '会话已开跑，没法再写进开头的历史：现在改为「每轮注入」，点右下角「注入」后从下一轮起，每轮都会在你的话之前带上一份（每轮计费）。',
+      itemsInjectHint: '会话已开跑，开场对话不会再写进历史，也不会再被注入。要在剧情里补一句（用户说 / AI 回答），用下面的「手动注入」：只发一次，发出后成为会话历史。',
       itemsEmpty: '还没有内容。可以先点「填入示例」看看格式。',
       fillExample: '填入示例',
       exampleUser: '我是刚学编程的新手，接下来的回答请尽量通俗，多举例子。',
@@ -860,10 +846,6 @@ window.__ModuleLoader__.load({
       addUser: '＋ 用户说',
       addAssistant: '＋ AI 回答',
       dockClear: '清空',
-      injectNow: '注入',
-      injectUpdate: '更新注入',
-      stopInject: '停止注入',
-      injectNowTip: '把当前开场对话写成本会话的"每轮注入"，不产生任何消息；下一轮请求开始带上',
       advanced: '高级',
       injectHint: '把 harness 送进去的某条注入换成你的版本，只在本会话生效；框里是原文，改回原文或清空 = 不修改。',
       usageTitle: '用量与缓存',
@@ -887,7 +869,6 @@ window.__ModuleLoader__.load({
       noteTakeover: '接管：系统提示只有你写的那段，没有工具和运行时上下文，每轮输入最少。',
       noteAppend: '追加：每轮多发约 {n} tok 的系统提示；它排在默认提示靠后的位置，前面的大段前缀不变，第 2 轮起通常照常命中缓存。',
       noteHistory: '开场对话约 {n} tok：首轮写进历史，只在首轮算一次未命中，之后作为历史前缀通常能命中。',
-      noteInject: '每轮注入约 {n} tok：每一轮都会在你这句话之前再带上一份（会话日志里每轮一条），所以每轮都计费、轮数越多累计越多。长期有效的设定更适合写进「系统提示」。',
       noteSwitch: '切换预设 / 纯净 / 接管的那一轮，系统提示变了，缓存基本不命中，下一轮恢复。',
       noteMinCache: '很短的请求（例如纯净模式的头几轮）可能达不到服务商的最小缓存长度，命中 0% 属正常。',
       guideShow: '新手指南',
@@ -905,7 +886,7 @@ window.__ModuleLoader__.load({
       toolsUnit: '个工具',
       prefillWritten: '预填装 · 已写入历史',
       itemsWrittenHint: '✓ 首轮已把 {n} 条开场对话写成真实历史（在对话里可以看到）。',
-      prefillWrittenTip: '开场对话已在首轮写成真实历史，之后每轮作为历史前缀发送（通常命中缓存）。想再追加内容可在面板里改为每轮注入。',
+      prefillWrittenTip: '开场对话已在首轮写成真实历史，之后每轮作为历史前缀发送（通常命中缓存）。想在剧情里再补一句，用开场对话下方的「手动注入」。',
       chipTakeover: '接管系统提示',
       pureApplied: '纯净模式已生效',
     })
@@ -965,6 +946,17 @@ window.__ModuleLoader__.load({
       seedLate: 'The summary covers through turn {n}, after turn {m} where the opening dialogue ends — it cannot be included',
       seedDropped: 'The opening dialogue now ends at turn {m}; the summary (through turn {n}) is no longer included',
       seedDrop: 'Drop',
+      carryTitle: 'Carry the per-turn constraints that were active in this session',
+      carryHint: 'These requirements were kept up by per-turn injections in the original session (the history saved into the opening does not include injections). Checked ones go into the preset\'s per-turn injection; on the first message of a new session they are sent once more with "All of the conversation history above followed these requirements; keep following them."',
+      carrySrcSession: 'This session',
+      carrySrcPreset: 'From preset',
+      carrySrcCard: 'From character card',
+      carrySrcDefault: 'New-session default',
+      carrySrcBuiltin: 'Built-in block',
+      carrySrcHistory: 'Sent in history',
+      carryTurns: 'injected in {n} turns',
+      carryNotYet: 'not injected yet',
+      carryUnnamed: 'Per-turn injection',
       collapseCard: 'Collapse card',
       pinOn: 'Pin',
       pinOff: 'Unpin',
@@ -1172,7 +1164,7 @@ window.__ModuleLoader__.load({
       nextTurnNotice: 'A turn is running; changes apply next turn',
       itemsTitle: 'Opening dialogue (prefill)',
       itemsHistoryHint: 'Write the conversation the AI should "remember". On your first send it becomes real history: billed once as input, then cached as history prefix. Any order, several in a row is fine.',
-      itemsInjectHint: 'This session has already run, so history is closed: the content is now injected every turn once you press Inject (not history, billed every turn).',
+      itemsInjectHint: 'This session has already run: the opening dialogue is no longer written to history or injected. To add a line to the story (user or AI), use Manual inject below — it is sent once and becomes part of the session history.',
       itemsEmpty: 'Nothing yet. Try "Fill example" to see the format.',
       fillExample: 'Fill example',
       exampleUser: 'I am new to programming. Please keep answers simple with lots of examples.',
@@ -1181,9 +1173,6 @@ window.__ModuleLoader__.load({
       textUserPh: 'What the user says, e.g. I am building a budgeting app with Vue.',
       textAssistantPh: 'The AI answer (the model treats it as its own words), e.g. Understood — I will write Vue 3 code with the Composition API.',
       reasoningPh: '(optional) AI reasoning, shown as a folded chain of thought.',
-      injectNow: 'Inject',
-      injectUpdate: 'Update injection',
-      stopInject: 'Stop injecting',
       advanced: 'advanced',
       usageTitle: 'Usage & cache',
       usageNoTurns: 'not started',
@@ -1206,7 +1195,6 @@ window.__ModuleLoader__.load({
       noteTakeover: 'Take over: only your system text, no tools or runtime context.',
       noteAppend: 'Append: ~{n} tok more system prompt per turn, placed after the default prefix, so turn 2+ usually still hits the cache.',
       noteHistory: 'Opening dialogue ~{n} tok: written to history on turn 1, billed once, then usually cached.',
-      noteInject: 'Per-turn injection ~{n} tok: a fresh copy is added before your message every turn (one row per turn in the session log), so it is billed every turn and adds up. Long-lived instructions belong in the system prompt.',
       noteSwitch: 'The turn where you switch preset / pure / take over changes the system prompt and mostly misses the cache; the next turn recovers.',
       noteMinCache: 'Very short requests may be below the provider minimum cache length; 0% is normal then.',
       guideShow: 'Guide',
@@ -1279,7 +1267,6 @@ window.__ModuleLoader__.load({
       navSystemEmpty: '未填写',
       navModeAlways: '一直',
       navModeUntil: '前 {n} 轮',
-      navNotInjected: '待点注入',
       navChanged: '改了 {n}',
       navChangedUnit: ' 处',
       navDisabled: '已停用',
@@ -1375,7 +1362,6 @@ window.__ModuleLoader__.load({
       navSystemEmpty: 'empty',
       navModeAlways: 'Always',
       navModeUntil: 'First {n}',
-      navNotInjected: 'not injected',
       navChanged: '{n}',
       navChangedUnit: ' changed',
       navDisabled: 'disabled',
@@ -1421,6 +1407,102 @@ window.__ModuleLoader__.load({
       navWsPass: 'As is',
       navWsOff: 'Off',
       navWsRewrite: 'Rewrite',
+    })
+
+    // ── 手动注入（一次性，issue #19「C」）──
+    Object.assign(zh, {
+      itemsAfterRun: '已开跑 · 不再写入',
+      manualTitle: '手动注入',
+      manualHint: '在剧情里补一句：只发一次，发出后写进会话、成为历史，之后不再重复发。「AI 回答」会以带标注的背景消息发出（模型那边只收用户消息）。',
+      manualRoleUser: '用户说',
+      manualRoleAssistant: 'AI 回答',
+      manualPlaceholder: '要补进剧情的话，例如：（门外传来脚步声）',
+      manualSend: '注入',
+      manualPending: '待发 {n} 条',
+      manualDelivered: '已写入会话 · 第 {n} 轮',
+      manualRunning: 'AI 正在运行：下一步插入',
+      manualIdle: '空闲：随下一轮发送',
+      manualOffline: '会话未加载：会话打开后随下一轮发送',
+      manualWithdraw: '撤回',
+      manualEdit: '编辑',
+      manualSave: '保存',
+      manualCancel: '取消',
+      manualFailed: '注入失败',
+      manualAlreadySent: '已经发出，改不了了',
+      manualQueueFull: '待发太多了，先等前面的发出去',
+    })
+    Object.assign(en, {
+      itemsAfterRun: 'running · not written',
+      manualTitle: 'Manual inject',
+      manualHint: 'Add a line to the story: it is sent once, written into the session as history, and never repeated. "AI said" is sent as a labelled background message (the model only accepts user messages here).',
+      manualRoleUser: 'User says',
+      manualRoleAssistant: 'AI said',
+      manualPlaceholder: 'A line to add to the story, e.g. (footsteps outside the door)',
+      manualSend: 'Inject',
+      manualPending: '{n} pending',
+      manualDelivered: 'Written to the session · turn {n}',
+      manualRunning: 'AI is running: inserted at the next step',
+      manualIdle: 'Idle: sent with the next turn',
+      manualOffline: 'Session not loaded: sent with the next turn once it opens',
+      manualWithdraw: 'Withdraw',
+      manualEdit: 'Edit',
+      manualSave: 'Save',
+      manualCancel: 'Cancel',
+      manualFailed: 'Inject failed',
+      manualAlreadySent: 'Already sent — it can no longer be changed',
+      manualQueueFull: 'Too many pending — wait for the earlier ones to go out',
+    })
+
+    // ── 首轮锁定 / 开跑后套预设（issue #19 A / B）──
+    Object.assign(zh, {
+      lockBadge: '已锁定',
+      lockOpenBadge: '首轮未发',
+      lockBadgeTip: '会话已开跑：开场对话已写进历史，只影响首轮的设置（开场对话、每轮注入的「只在首轮」段）锁住了，改了也不会在下一轮重发。系统提示、每轮注入、工具、世界书照常可改，下一轮生效。',
+      lockOpenTip: '还没发第一条消息：开场对话会在你发出第一条消息时写成历史，之后锁定。',
+      lockItemsTitle: '已写入历史 · 第 {range} 轮 · {n} 条开场对话（已锁定）',
+      lockNoItemsTitle: '已开跑 · 第 {turn} 轮起（没有开场对话，已锁定）',
+      lockNoItemsTitleUnknown: '已开跑（已锁定）',
+      lockHint: '开场对话已经是会话历史，DSH 没有回退会话的接口，这里改了不会影响会话。下面的列表只用来存预设；要在剧情里补一句，用「手动注入」；要真正重来，开新会话。',
+      lockLegacyHint: '这个会话在本版之前就开跑了：开场对话已在历史里（这里不再列出），没有开局时的配置快照。',
+      lockShowItems: '查看写入历史的开场对话（只读）',
+      lockRestore: '恢复开局时的预设',
+      lockRestoreConfirm: '确认恢复？',
+      lockRestoreTip: '把系统提示、每轮注入、工具、角色卡、世界书、故事记忆、开关和工作区说明换回会话开跑时的样子，下一轮生效。',
+      lockRestoreHint: '下一轮生效，历史不动（要真正重来请开新会话）。',
+      lockRestored: '已恢复开局时的预设，从下一轮生效',
+      lockRestoreFailed: '没有开局快照，恢复不了',
+      lockPresetsNote: '会话已开跑：套用后系统提示、每轮注入、工具、世界书从下一轮生效；预设里的开场对话不会发送（需要的话用「手动注入」补），「只在首轮」段默认跳过。',
+      lockAppliedItemsSkipped: '已套用，从下一轮生效。预设带的 {n} 条开场对话没有发送（会话已开跑），需要的话用「手动注入」补',
+      lockFirstSkipped: '会话已开跑：工作台里的「只在首轮」段不会再发，之后每轮只发其余部分。',
+      lockFirstOnce: '下一轮发一次',
+      lockFirstOnceSent: '「只在首轮」段已按要求发过一次，之后每轮只发其余部分。',
+      lockFirstOnceOn: '下一轮会把「只在首轮」段发一次',
+      lockFirstOnceOff: '已取消，「只在首轮」段不发',
+    })
+    Object.assign(en, {
+      lockBadge: 'Locked',
+      lockOpenBadge: 'Turn 1 not sent',
+      lockBadgeTip: 'This session has started: the opening dialogue is in history and first-turn-only settings (opening dialogue, the "first turn only" part of every-turn injection) are locked, so editing them will not resend anything next turn. System prompt, every-turn injection, tools and lorebook can still be changed and apply from the next turn.',
+      lockOpenTip: 'No message sent yet: the opening dialogue becomes history when you send the first message, then it locks.',
+      lockItemsTitle: 'Written to history · turn {range} · {n} opening rows (locked)',
+      lockNoItemsTitle: 'Started · from turn {turn} (no opening dialogue, locked)',
+      lockNoItemsTitleUnknown: 'Started (locked)',
+      lockHint: 'The opening dialogue is already session history and DSH cannot rewind a session, so edits here do not affect it. The list below is only for saving presets; use Manual inject to add a line, or start a new session to really start over.',
+      lockLegacyHint: 'This session started before this version: its opening dialogue is in history (not listed here) and there is no snapshot of the opening configuration.',
+      lockShowItems: 'Show the opening dialogue written to history (read-only)',
+      lockRestore: 'Restore the opening preset',
+      lockRestoreConfirm: 'Restore?',
+      lockRestoreTip: 'Put the system prompt, every-turn injection, tools, character card, lorebook, story memory, switches and workspace instructions back to how they were when the session started; applies from the next turn.',
+      lockRestoreHint: 'Applies from the next turn; history is unchanged (start a new session to really start over).',
+      lockRestored: 'Opening preset restored — takes effect next turn',
+      lockRestoreFailed: 'No opening snapshot to restore',
+      lockPresetsNote: 'This session has started: after applying, system prompt, every-turn injection, tools and lorebook apply from the next turn; the preset\'s opening dialogue is not sent (use Manual inject if you need it) and "first turn only" parts are skipped by default.',
+      lockAppliedItemsSkipped: 'Applied — takes effect next turn. The preset\'s {n} opening rows were not sent (the session has started); use Manual inject if you need them',
+      lockFirstSkipped: 'This session has started: the "first turn only" parts on the bench will not be sent again; each turn sends only the rest.',
+      lockFirstOnce: 'Send once next turn',
+      lockFirstOnceSent: 'The "first turn only" parts were sent once as requested; each turn now sends only the rest.',
+      lockFirstOnceOn: 'The "first turn only" parts will be sent once next turn',
+      lockFirstOnceOff: 'Cancelled — "first turn only" parts will not be sent',
     })
 
     const S = {
@@ -2132,7 +2214,7 @@ window.__ModuleLoader__.load({
     function PrefillToggle(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      // 存**整封信**而不是 `data.state`：模式判定要 `turns`、注入状态要 `injects`，
+      // 存**整封信**而不是 `data.state`：模式判定要 `turns`、写入状态要 `materialized`，
       // 这两个都在 envelope 上（不在插件状态里）。
       const [envelope, setEnvelope] = React.useState(null)
 
@@ -2183,12 +2265,13 @@ window.__ModuleLoader__.load({
       const state = envelope?.state ?? null
       const map = state?.prefill !== null && typeof state?.prefill === 'object' ? state.prefill : {}
       const on = typeof map[sessionId] === 'string' && map[sessionId] !== ''
-      const injected = (envelope?.injects?.[sessionId] ?? 0) > 0
-      const injectMode = (envelope?.turns?.[sessionId] ?? 0) > 0
-      const written = (envelope?.materialized?.[sessionId] ?? 0) > 0
+      // 首轮锁定（issue #19 A）：state.locked 落盘了，DSH 重启后不用等下一步就知道已开跑 / 已写入历史。
+      const lockRec = state?.locked?.[sessionId]
+      const injectMode = (envelope?.turns?.[sessionId] ?? 0) > 0 || (lockRec !== null && typeof lockRec === 'object')
+      const written = (envelope?.materialized?.[sessionId] ?? 0) > 0 || (Array.isArray(lockRec?.items) && lockRec.items.length > 0)
       const cardOpen = cardOpenMap.get(sessionId) === true
       const summary = on ? chipSummary.get(sessionId) : undefined
-      const fallback = injectMode ? (written && !injected ? t('prefillWritten') : injected ? t('injectDone') : t('injectOff')) : on ? t('prefillOn') : t('prefillOff')
+      const fallback = injectMode ? (written ? t('prefillWritten') : t('injectOff')) : on ? t('prefillOn') : t('prefillOff')
       const title = on ? `${t('chipCardTip')}${summary?.tip ? `\n${summary.tip}` : ''}` : t('prefillTitleOff')
 
       return h(
@@ -2233,7 +2316,7 @@ window.__ModuleLoader__.load({
           : [
               h('b', { key: 'name', style: { fontWeight: 700 } }, t('nav')),
               h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
-              h('span', { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, summary.name || fallbackName(t, injectMode, written, injected)),
+              h('span', { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, summary.name || fallbackName(t, injectMode, written)),
               h(
                 'span',
                 { key: 'dots', style: { display: 'inline-flex', gap: 3, marginLeft: 2, flex: '0 0 auto' }, 'data-prefill-chip-dots': '1' },
@@ -2258,8 +2341,8 @@ window.__ModuleLoader__.load({
             ],
       )
     }
-    function fallbackName(t, injectMode, written, injected) {
-      return injectMode ? (written && !injected ? t('chipWritten') : t('chipNoPreset')) : t('chipNoPreset')
+    function fallbackName(t, injectMode, written) {
+      return injectMode ? (written ? t('chipWritten') : t('chipNoPreset')) : t('chipNoPreset')
     }
 
     /**
@@ -2562,6 +2645,26 @@ window.__ModuleLoader__.load({
       return patch
     }
     // </preset-undo>
+
+    // <turn-lock> 首轮锁定（issue #19 A / B）。tests/turn-lock.test.mjs 从源码切出来跑。
+    /**
+     * 面板用的锁状态：有锁记录 ⇒ 以它为准（带开场对话、有快照可恢复）；没有记录但会话日志里已经有真实轮
+     * （every-turn-status 的 lock）或闸门快照里轮号 > 0 ⇒ 已开跑、没有快照（本版之前开跑的会话）。
+     */
+    function lockView(record, status, turns) {
+      if (record !== null && record !== undefined && typeof record === 'object') {
+        return { locked: true, turn: Number(record.turn) || 1, items: Array.isArray(record.items) ? record.items : [], legacy: record.legacy === true, hasSnapshot: record.preset !== null && typeof record.preset === 'object' }
+      }
+      if (status?.locked === true) return { locked: true, turn: Number(status.turn) || 0, items: [], legacy: true, hasSnapshot: false }
+      if (Number(turns) > 0) return { locked: true, turn: 0, items: [], legacy: true, hasSnapshot: false }
+      return { locked: false, turn: 0, items: [], legacy: false, hasSnapshot: false }
+    }
+    /** 开跑后套预设（B）：预设里的开场对话不进草稿（不会发出去），只返回条数给提示用。 */
+    function lockedApply(resolvedItems, locked) {
+      const list = Array.isArray(resolvedItems) ? resolvedItems.filter((item) => typeof item?.text === 'string' && item.text.trim() !== '') : []
+      return locked ? { touchItems: false, skipped: list.length } : { touchItems: true, skipped: 0 }
+    }
+    // </turn-lock>
 
     // <preset-compose> 预设分层（0.14）：默认 ← 角色卡编译结果 ← 预设覆盖 ← 本会话手改。
     // 套内置预设 / 我的预设 / 角色卡都走同一条写入路径（presetPatch），整体替换。tests/card-as-preset.test.mjs 从源码切出来跑。
@@ -3058,6 +3161,197 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 手动注入（一次性，issue #19「C」）：开场对话区下方的独立入口，首轮前后都在。
+     *
+     * 服务端（INJECT_ROUTE）在会话在册时把条目送进 agent.inbox 的 next-step 队列：AI 跑着就在下一步插入，
+     * 空闲就随下一轮发；会话没加载时先放状态队列。被循环领取后写进会话日志成为历史，之后不再发 ——
+     * 所以面板只管显示「待发」并允许编辑 / 撤回，发出去的从列表里消失，提示「已写入会话 · 第 N 轮」。
+     */
+    function ManualInject(props) {
+      const t = props.t ?? ((key) => key)
+      const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+      const [data, setData] = React.useState(null)
+      const [text, setText] = React.useState('')
+      const [role, setRole] = React.useState('user')
+      const [busy, setBusy] = React.useState(false)
+      const [notice, setNotice] = React.useState(null)
+      const [editing, setEditing] = React.useState(null)
+      const seenPending = React.useRef(new Set())
+
+      const absorb = React.useCallback(
+        (result) => {
+          if (result === null || typeof result !== 'object' || !Array.isArray(result.pending)) return result
+          // 上次还在「待发」、这次出现在「最近送达」里 ⇒ 刚刚写进会话。
+          const recent = Array.isArray(result.recent) ? result.recent : []
+          for (const entry of recent) {
+            if (seenPending.current.has(entry.id)) setNotice({ kind: 'saved', text: t('manualDelivered').replace('{n}', String(entry.turn)) })
+          }
+          seenPending.current = new Set(result.pending.map((entry) => entry.id))
+          setData(result)
+          return result
+        },
+        [t],
+      )
+      const call = React.useCallback((payload) => postJson(INJECT_ROUTE, { sessionId, ...payload }).then(absorb), [sessionId, absorb])
+
+      React.useEffect(() => {
+        seenPending.current = new Set()
+        setData(null)
+        setEditing(null)
+        setNotice(null)
+        if (sessionId === '') return undefined
+        void call({ op: 'list' }).catch(() => {})
+        return undefined
+      }, [sessionId, call])
+
+      const pending = Array.isArray(data?.pending) ? data.pending : []
+      // 最近写进会话的几条（面板重开、发送时面板被收起也看得到「已写入会话 · 第 N 轮」）。
+      const recent = Array.isArray(data?.recent) ? data.recent.slice(-3).reverse() : []
+      // 有待发的就轮询，等它被领取（领取后从列表消失，提示写进了第几轮）。
+      React.useEffect(() => {
+        if (sessionId === '' || pending.length === 0) return undefined
+        const timer = setInterval(() => void call({ op: 'list' }).catch(() => {}), 2500)
+        return () => clearInterval(timer)
+      }, [sessionId, pending.length, call])
+
+      if (sessionId === '') return null
+      const failText = (result) =>
+        result?.reason === 'sent' ? t('manualAlreadySent') : result?.reason === 'queue-full' ? t('manualQueueFull') : t('manualFailed')
+      const send = () => {
+        if (text.trim() === '' || busy) return
+        setBusy(true)
+        setNotice(null)
+        call({ op: 'add', role, text })
+          .then((result) => {
+            if (result?.ok === true) setText('')
+            else setNotice({ kind: 'error', text: failText(result) })
+          })
+          .catch(() => setNotice({ kind: 'error', text: t('manualFailed') }))
+          .finally(() => setBusy(false))
+      }
+      const withdraw = (id) => {
+        call({ op: 'remove', id })
+          .then((result) => {
+            if (result?.ok !== true) setNotice({ kind: 'error', text: failText(result) })
+          })
+          .catch(() => setNotice({ kind: 'error', text: t('manualFailed') }))
+      }
+      const saveEdit = () => {
+        if (editing === null) return
+        const draft = editing
+        call({ op: 'edit', id: draft.id, role: draft.role, text: draft.text })
+          .then((result) => {
+            if (result?.ok === true) setEditing(null)
+            else {
+              setEditing(null)
+              setNotice({ kind: 'error', text: failText(result) })
+            }
+          })
+          .catch(() => setNotice({ kind: 'error', text: t('manualFailed') }))
+      }
+      const roleSeg = (value, onPick) =>
+        h(
+          'span',
+          { style: V.seg, role: 'radiogroup' },
+          ['user', 'assistant'].map((key) =>
+            h(
+              'button',
+              { key, type: 'button', role: 'radio', 'aria-checked': value === key ? 'true' : 'false', style: V.segBtn(value === key), 'data-prefill-manual-role': key, onClick: () => onPick(key) },
+              key === 'user' ? t('manualRoleUser') : t('manualRoleAssistant'),
+            ),
+          ),
+        )
+      const status = data === null ? '' : data.live !== true ? t('manualOffline') : data.running === true ? t('manualRunning') : t('manualIdle')
+
+      return h(
+        'div',
+        {
+          style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6, paddingTop: 10, borderTop: '1px dashed var(--dsw-alias-border-l2)' },
+          'data-prefill-manual': '',
+          'data-running': data?.running === true ? '1' : '0',
+        },
+        h(
+          'div',
+          { style: V.row },
+          h('b', { style: { fontSize: 13.5 } }, t('manualTitle')),
+          status === '' ? null : h('span', { style: V.sectionMeta, 'data-prefill-manual-status': '' }, status),
+        ),
+        h('div', { style: V.hint }, t('manualHint')),
+        h(
+          'div',
+          { style: { ...V.row, alignItems: 'flex-start' } },
+          roleSeg(role, setRole),
+          h('textarea', {
+            value: text,
+            placeholder: t('manualPlaceholder'),
+            rows: 2,
+            style: { ...V.textarea, flex: '1 1 240px', minHeight: 44, maxWidth: '72ch' },
+            'data-prefill-manual-text': '',
+            onChange: (event) => setText(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault()
+                send()
+              }
+            },
+          }),
+          h(
+            'button',
+            { type: 'button', style: V.btnPrimary, disabled: busy || text.trim() === '', 'data-prefill-manual-inject': '1', onClick: send },
+            t('manualSend'),
+          ),
+        ),
+        pending.length === 0
+          ? null
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-manual-pending': String(pending.length) },
+              h('span', { style: V.sectionMeta }, t('manualPending').replace('{n}', String(pending.length))),
+              ...pending.map((entry) =>
+                editing !== null && editing.id === entry.id
+                  ? h(
+                      'div',
+                      { key: entry.id, style: { ...V.row, alignItems: 'flex-start' }, 'data-prefill-manual-row': entry.id },
+                      roleSeg(editing.role, (next) => setEditing({ ...editing, role: next })),
+                      h('textarea', {
+                        value: editing.text,
+                        rows: 2,
+                        style: { ...V.textarea, flex: '1 1 240px', minHeight: 44, maxWidth: '72ch' },
+                        onChange: (event) => setEditing({ ...editing, text: event.target.value }),
+                      }),
+                      h('button', { type: 'button', style: V.btnPrimary, disabled: editing.text.trim() === '', onClick: saveEdit }, t('manualSave')),
+                      h('button', { type: 'button', style: V.btn, onClick: () => setEditing(null) }, t('manualCancel')),
+                    )
+                  : h(
+                      'div',
+                      { key: entry.id, style: { ...V.row, ...V.callout('brand'), maxWidth: '80ch' }, 'data-prefill-manual-row': entry.id },
+                      h('b', { style: { fontSize: 12, whiteSpace: 'nowrap' } }, entry.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
+                      h('span', { style: { flex: '1 1 auto', minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, entry.text),
+                      h('button', { type: 'button', style: V.btnGhost, onClick: () => setEditing({ id: entry.id, role: entry.role, text: entry.text }) }, t('manualEdit')),
+                      h('button', { type: 'button', style: V.btnGhost, 'data-prefill-manual-withdraw': entry.id, onClick: () => withdraw(entry.id) }, t('manualWithdraw')),
+                    ),
+              ),
+            ),
+        recent.length === 0
+          ? null
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 4 }, 'data-prefill-manual-recent': String(recent.length) },
+              ...recent.map((entry) =>
+                h(
+                  'div',
+                  { key: entry.id, style: { ...V.row, flexWrap: 'nowrap', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', maxWidth: '80ch' } },
+                  h('span', { style: { whiteSpace: 'nowrap' } }, `✓ ${t('manualDelivered').replace('{n}', String(entry.turn))}`),
+                  h('span', { style: { whiteSpace: 'nowrap' } }, entry.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
+                  h('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(entry.text ?? '').replace(/\s+/g, ' ')),
+                ),
+              ),
+            ),
+        notice === null ? null : h('span', { style: S.dockStatus(notice.kind === 'error' ? 'error' : 'saved'), 'data-prefill-manual-notice': '' }, notice.text),
+      )
+    }
+
+    /**
      * 输入框上方的预填装面板（v0.2）。
      *
      * 一个会话的配置只有四样东西，面板就按这四样排：
@@ -3167,6 +3461,8 @@ window.__ModuleLoader__.load({
       // 故事记忆里「从当前会话取摘要」：保存预设时带上的摘要。
       const [seedDraft, setSeedDraft] = React.useState(null)
       const [seedNote, setSeedNote] = React.useState('')
+      // 约束承接：「从当前会话取」时检出的每轮约束（带 on = 勾没勾）；null = 没取过。
+      const [carryList, setCarryList] = React.useState(null)
       // 长卡片展开的行（按下标）；分批渲染已画出的条数。
       const [expandedRows, setExpandedRows] = React.useState(() => new Set())
       const [shownRows, setShownRows] = React.useState(ROW_BATCH)
@@ -3197,6 +3493,8 @@ window.__ModuleLoader__.load({
       }, [presetUndo])
       React.useEffect(() => setPresetUndo(null), [sessionId])
       const [everyTurnStatus, setEveryTurnStatus] = React.useState(null)
+      // 「下一轮发一次」首轮段（issue #19 B）的乐观值：点了之后到状态刷新回来之前先按点的显示。
+      const [firstOnceWant, setFirstOnceWant] = React.useState(null)
       // 角色卡（v0.6）：列表、选中、套用选项、编译预览。
       const [cards, setCards] = React.useState([])
       const [cardPick, setCardPick] = React.useState('')
@@ -3212,7 +3510,6 @@ window.__ModuleLoader__.load({
       const [systemDraft, setSystemDraft] = React.useState(null)
       const [usage, setUsage] = React.useState(null)
       const [confirming, setConfirming] = React.useState('')
-      const [injectStatus, setInjectStatus] = React.useState('idle')
       const dirty = React.useRef(false)
       const systemDirty = React.useRef(false)
       const staged = React.useRef(false)
@@ -3538,8 +3835,11 @@ window.__ModuleLoader__.load({
       const everyTurnFromCardOff =
         !isOn('card') && prints !== null && ownTurnRaw !== undefined && ownTurnRaw !== null && fingerprint(`${String(ownTurnRaw.text ?? '')}\u0000${String(ownTurnRaw.firstText ?? '')}`) === prints.everyTurn
       const turns = envelope?.turns?.[sessionId] ?? 0
-      const injectMode = turns > 0
-      const injectCount = envelope?.injects?.[sessionId] ?? 0
+      // 首轮锁定（issue #19 A）：state.locked[会话] 是会话第一次开跑时记下的（开场对话 + 开局配置快照）；
+      // 本版之前开跑的会话没有记录，看 every-turn-status 从会话日志认出来的，再兜底看闸门快照里的轮号。
+      const lockRecord = state?.locked?.[sessionId] ?? null
+      const lock = lockView(lockRecord, everyTurnStatus?.lock, turns)
+      const injectMode = turns > 0 || lock.locked
       const conflict = envelope?.conflicts?.[sessionId]
       const pending = Array.isArray(envelope?.pendingReprime) && envelope.pendingReprime.includes(sessionId)
       // 系统提示模式：不改 / 追加 / 接管（接管 = 闸门 pure + 人格段；纯净 = 闸门 pure + 无人格段）。
@@ -3667,7 +3967,7 @@ window.__ModuleLoader__.load({
        * 唯一的套用入口：`card` = 角色卡编译成的稀疏预设（cardLayer），`pack` = 预设本身（内置 / 我的）。
        * 分层：默认 ← 角色卡 ← 预设覆盖；之后本会话手改的部分由来源标签标出来。开场对话只改草稿。
        */
-      const applyLayered = async ({ card = null, pack = null, key = '', compiled = null, extraPatch = {} } = {}) => {
+      const applyLayered = async ({ card = null, pack = null, key = '', compiled = null, extraPatch = {}, clearItems = false } = {}) => {
         const { resolved, from } = resolveLayers(card, pack)
         if (compiled) resolved.applied = appliedPrints(compiled)
         // 故事记忆摘要：本会话开着故事记忆（预设带了角色卡）⇒ 写成初始记忆；否则作为一条背景放在开场对话最前面。
@@ -3686,32 +3986,63 @@ window.__ModuleLoader__.load({
         clearTimeout(loreTimer.current)
         setLoreDraft(null)
         setWsDraft(null)
-        // 开场对话整体替换（只改草稿：会话已经开跑时，写进历史的那几条不动）。
+        // 开场对话整体替换（只改草稿）。首轮锁定之后（issue #19 B）：预设的开场对话不进草稿、不发出去，
+        // 列表保持原样（那里是「存为预设」的工作区），返回条数给提示「可以用手动注入补」。
+        // 「取消预设」（clearItems）照旧连草稿一起清（开跑后只清草稿，历史不动）。
+        const applied = lockedApply(resolved.items, lock.locked)
+        const touchItems = clearItems || applied.touchItems
+        const skipped = clearItems ? 0 : applied.skipped
         // 先挡住写状态后的广播刷新（别让 host 的旧草稿盖掉），草稿在写状态之后落盘：草稿路由按新系统提示预热合成轮。
-        dirty.current = true
-        setItems(resolved.items)
-        setExpandedRows(new Set())
-        setShownRows(ROW_BATCH)
-        setUndoSnap(null)
+        if (touchItems) {
+          dirty.current = true
+          setItems(resolved.items)
+          setExpandedRows(new Set())
+          setShownRows(ROW_BATCH)
+          setUndoSnap(null)
+        }
         setEnvelope(await postJson(STATE_ROUTE, patch))
-        await postJson(DRAFT_ROUTE, { sessionId, items: resolved.items })
-        dirty.current = false
+        if (touchItems) {
+          await postJson(DRAFT_ROUTE, { sessionId, items: resolved.items })
+          dirty.current = false
+        }
         setStatus('saved')
         if (seed !== '' && memoryOn) await memoryCall({ op: 'set', text: seed })
         notifyStateChanged()
-        return { resolved, seed }
+        return { resolved, seed, skippedItems: skipped }
+      }
+      /** 开跑后套用的提示：带了开场对话 ⇒ 说明没发、可以手动注入；否则照旧「下一轮生效」。 */
+      const appliedFlash = (fallback, skippedItems) =>
+        skippedItems > 0 ? t('lockAppliedItemsSkipped').replace('{n}', String(skippedItems)) : fallback
+
+      /** 恢复开局时的预设（issue #19 B）：服务端用锁里的快照换回配置，下一轮生效，历史不动。 */
+      const restoreOpening = async () => {
+        const data = await postJson(STATE_ROUTE, { restoreOpening: sessionId })
+        if (data?.ok === false) {
+          flash(t('lockRestoreFailed'))
+          return
+        }
+        const text = data?.state?.overrides?.[sessionId]?.sections?.[PERSONA_SECTION]
+        systemDirty.current = false
+        setSystemDraft(typeof text === 'string' ? text : '')
+        setEveryTurnDraft(null)
+        clearTimeout(loreTimer.current)
+        setLoreDraft(null)
+        setWsDraft(null)
+        injectionDrafts.set(sessionId, data?.state?.overrides?.[sessionId] ?? { messages: {}, sections: {}, contexts: {} })
+        setEnvelope(data)
+        notifyStateChanged()
+        flash(t('lockRestored'))
       }
 
       const applyBuiltin = async (summary) => {
         const data = await packsCall({ op: 'builtin', id: summary.id })
         const preset = data?.pack
         if (preset === null || preset === undefined) throw new Error('missing preset')
-        const fresh = await postJson(STATE_ROUTE, undefined)
-        // 纯净：系统提示 0、上下文 0、工具 0、只放行你的话（与预填装）；顺手清掉一键注入的记录。
-        await applyLayered({ pack: builtinLayer(preset), key: `builtin:${summary.id}`, extraPatch: preset.pure === true ? { injects: without(fresh?.state?.injects, sessionId) } : {} })
+        // 纯净：系统提示 0、上下文 0、工具 0、只放行你的话（与预填装）。
+        const { skippedItems } = await applyLayered({ pack: builtinLayer(preset), key: `builtin:${summary.id}`, extraPatch: {} })
         // 套了带系统提示的预设：把左栏切到「系统提示」，让人看见改了什么都不用猜。
         if (preset.takeover === true || preset.replace === true) setPane('system')
-        flash(preset.pure === true ? (injectMode ? t('appliedNextTurn') : t('pureApplied')) : injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
+        flash(appliedFlash(preset.pure === true ? (injectMode ? t('appliedNextTurn') : t('pureApplied')) : injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'), skippedItems))
       }
 
       /** 左栏开关：关 = 停用但保留内容（state.enabled[会话][项] = false）；开 = 删掉这一键。 */
@@ -3743,7 +4074,7 @@ window.__ModuleLoader__.load({
         // 先拍快照（含开场对话），几秒内可撤销。本地有没落盘的编辑时以本地为准，否则读 host 上的草稿。
         const hostDraft = dirty.current ? items : ((await postJson(DRAFT_ROUTE, { sessionId }).catch(() => null))?.draft ?? null)
         const snap = presetSnapshot(fresh?.state, sessionId, items, hostDraft)
-        await applyLayered({})
+        await applyLayered({ clearItems: true })
         setPresetUndo(snap)
         flash(t('presetCleared'))
       }
@@ -3789,8 +4120,8 @@ window.__ModuleLoader__.load({
         // 映射成编译选项（效果落到对应的格）；卡片不在了就跳过这一层。
         const parsed = cardRefOf(pack.card)
         const got = parsed ? await compileCardLayer(parsed.ref, parsed.legacy) : null
-        const { seed } = await applyLayered({ card: got?.layer ?? null, pack, key: `pack:${name}`, compiled: got?.compiled ?? null })
-        flash(parsed && got === null ? t('packCardMissing') : seed !== '' ? t('memorySeedApplied') : injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
+        const { seed, skippedItems } = await applyLayered({ card: got?.layer ?? null, pack, key: `pack:${name}`, compiled: got?.compiled ?? null })
+        flash(parsed && got === null ? t('packCardMissing') : seed !== '' ? t('memorySeedApplied') : appliedFlash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'), skippedItems))
       }
 
       // ── 角色卡（v0.6）────────────────────────────────────────────────────────
@@ -3822,9 +4153,9 @@ window.__ModuleLoader__.load({
           flash(t('packCardMissing'))
           return
         }
-        await applyLayered({ card: got.layer, key: `card:${summary.id}`, compiled: got.compiled })
+        const { skippedItems } = await applyLayered({ card: got.layer, key: `card:${summary.id}`, compiled: got.compiled })
         setCardPick(summary.id)
-        flash(t('cardApplied').replace('{name}', summary.name))
+        flash(appliedFlash(t('cardApplied').replace('{name}', summary.name), skippedItems))
       }
       /**
        * 改了「我的名字」：重新编译已套用的卡，只更新仍是「来自角色卡」原样的格（本会话改过 / 预设覆盖的不动）。
@@ -4031,12 +4362,12 @@ window.__ModuleLoader__.load({
                 const session = { overrides, gate: gateMode, tools, everyTurn: everyTurnStored, items, enabled: ownEnabled, workspaceInstructions: wsPreset, lore: loreDraft ?? state?.lore?.[sessionId] ?? null }
                 const diff = cardDiff(session, got.layer)
                 layerFrom = resolveLayers(got.layer, diff)
-                return packsCall({ op: 'save', name, layered: true, card, ...diff, ...seed })
+                return packsCall({ op: 'save', name, layered: true, card, ...diff, ...seed, ...carryPayload() })
               }
             }
             // 世界书改过就整份存进预设（只在带着角色卡时有意义）；角色卡本身不动。
             const lorePack = card ? lorePackOf(loreDraft ?? state?.lore?.[sessionId] ?? null) : undefined
-            return packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(wsPreset ? { workspaceInstructions: wsPreset } : {}), ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}), ...(lorePack !== undefined ? { lore: lorePack } : {}), ...seed })
+            return packsCall({ op: 'save', name, items, overrides, tools, gate: gateMode, enabled: ownEnabled, ...(wsPreset ? { workspaceInstructions: wsPreset } : {}), ...(everyTurnStored !== null ? { everyTurn: everyTurnStored } : {}), ...(card ? { card } : {}), ...(lorePack !== undefined ? { lore: lorePack } : {}), ...seed, ...carryPayload() })
           })
           .then((data) => {
             adoptPacks(data)
@@ -4070,6 +4401,7 @@ window.__ModuleLoader__.load({
         setShownRows(ROW_BATCH)
         setFetchPending(null)
         setFetchCut({ fromTurn: pending.range.fromTurn, toTurn: pending.range.toTurn, lastTurn: pending.lastTurn })
+        setCarryList((pending.constraints ?? []).map((entry) => ({ ...entry, on: entry.checked !== false })))
         if (seedDraft !== null && !seedAllowed(seedDraft, pending.range.toTurn)) {
           setSeedDraft(null)
           setSeedNote(t('seedDropped').replace('{n}', String(seedDraft.throughTurn)).replace('{m}', String(pending.range.toTurn)))
@@ -4094,6 +4426,7 @@ window.__ModuleLoader__.load({
               turnCount: Number(data?.turnCount) || 0,
               lastTurn: Number(data?.lastTurn) || 0,
               toolCalls: Number(data?.toolCalls) || 0,
+              constraints: Array.isArray(data?.constraints) ? data.constraints : [],
               tok: itemsTokens(got),
             }
             if (items.length === 0 && pending.tok <= FETCH_WARN_TOK) commitFetch(pending, 'replace')
@@ -4169,6 +4502,8 @@ window.__ModuleLoader__.load({
           ...(ownEnabled && Object.keys(ownEnabled).length > 0 ? { enabled: ownEnabled } : {}),
           // 工作区说明：只带模式 + 改写正文，从不带 AGENTS.md 原文。
           ...(wsPreset ? { workspaceInstructions: wsPreset } : {}),
+          // 约束承接：来自会话的标记 + 勾上的约束（导入时服务端同样编进每轮注入）。
+          ...carryPayload(),
         }
         const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
@@ -4202,23 +4537,6 @@ window.__ModuleLoader__.load({
         }
         reader.readAsText(file)
         event.target.value = ''
-      }
-
-      const oneClickInject = () => {
-        setInjectStatus('idle')
-        void (async () => {
-          const fresh = await postJson(STATE_ROUTE, undefined)
-          const patch = { injects: { ...(fresh?.state?.injects ?? {}), [sessionId]: items } }
-          setEnvelope(await postJson(STATE_ROUTE, patch))
-          setInjectStatus('done')
-        })().catch(() => setInjectStatus('error'))
-      }
-      const stopInject = () => {
-        void (async () => {
-          const fresh = await postJson(STATE_ROUTE, undefined)
-          setEnvelope(await postJson(STATE_ROUTE, { injects: without(fresh?.state?.injects, sessionId) }))
-          setInjectStatus('idle')
-        })().catch(() => setInjectStatus('error'))
       }
 
       // ── 渲染 ───────────────────────────────────────────────────────────────
@@ -4265,8 +4583,16 @@ window.__ModuleLoader__.load({
       const ownEveryTurn = state?.everyTurn?.[sessionId]
       const everyTurnStored =
         (String(ownEveryTurn?.text ?? '').trim() !== '' || String(ownEveryTurn?.firstText ?? '').trim() !== '')
-          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {} }
+          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(ownEveryTurn.seam === true ? { seam: true } : {}) }
           : null
+      // 约束承接：取过会话 ⇒ 预设标记 fromSession，带上勾选的约束（服务端编成每轮注入，模式沿用 everyTurn）；
+      // 没取过但本会话本身就是从这种预设开的 ⇒ 标记照样带上。
+      const carryPayload = () =>
+        carryList !== null
+          ? { fromSession: true, carried: carryList.filter((entry) => entry.on === true).map(({ on: _on, checked: _checked, turns: _turns, lastTurn: _last, id: _id, ...rest }) => rest) }
+          : ownEveryTurn?.seam === true
+            ? { fromSession: true }
+            : {}
       // 预设下拉（头部「当前预设 ▾」点开）：内置 + 我的，点一下即整体套用。
       const presetsMenu = h(
         'div',
@@ -4276,6 +4602,32 @@ window.__ModuleLoader__.load({
           style: { ...V.popover, width: 'min(560px, calc(100% - 24px))' },
           onMouseLeave: () => setHovered(''),
         },
+        // 开跑后套预设（issue #19 B）：说清楚哪些下一轮生效、哪些不发；有开局快照时可以一键换回。
+        lock.locked
+          ? h(
+              'div',
+              { style: { ...V.callout('warn'), display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }, 'data-prefill-lock-presets': '' },
+              h('span', { style: { flex: '1 1 260px', minWidth: 0 } }, t('lockPresetsNote')),
+              lock.hasSnapshot
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: V.btn,
+                      'data-prefill-lock-restore-menu': '',
+                      title: t('lockRestoreTip'),
+                      onClick: () => {
+                        if (!armConfirm('restore-opening')) return
+                        setConfirming('')
+                        setMenu('')
+                        void restoreOpening().catch(() => setStatus('error'))
+                      },
+                    },
+                    confirming === 'restore-opening' ? t('lockRestoreConfirm') : t('lockRestore'),
+                  )
+                : null,
+            )
+          : null,
         h(
           'div',
           { style: V.pills },
@@ -4837,6 +5189,36 @@ window.__ModuleLoader__.load({
         ),
       )
       const pendingTok = fetchPending?.tok ?? 0
+      // 约束承接：取来的会话里生效过的每轮约束，默认勾上，保存预设时编进每轮注入。
+      const carrySrcKey = { session: 'carrySrcSession', preset: 'carrySrcPreset', card: 'carrySrcCard', default: 'carrySrcDefault', builtin: 'carrySrcBuiltin', history: 'carrySrcHistory' }
+      const carryBox =
+        carryList === null || carryList.length === 0
+          ? null
+          : h(
+              'div',
+              { style: { ...V.callout('brand'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' }, 'data-prefill-carry-list': '' },
+              h('div', null, h('b', null, t('carryTitle'))),
+              h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, t('carryHint')),
+              ...carryList.map((entry, index) =>
+                h(
+                  'label',
+                  { key: entry.id ?? index, 'data-prefill-carry-item': entry.id ?? String(index), style: { display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12 } },
+                  h('input', { type: 'checkbox', checked: entry.on === true, onChange: (event) => setCarryList((list) => (list ?? []).map((item, at) => (at === index ? { ...item, on: event.target.checked } : item))) }),
+                  h(
+                    'span',
+                    { style: { minWidth: 0, flex: '1 1 auto' } },
+                    h('b', null, entry.name || t('carryUnnamed')),
+                    ' ',
+                    h('span', { style: V.sectionMeta }, `${t(carrySrcKey[entry.source] ?? 'carrySrcHistory')} · ${Number(entry.turns) > 0 ? t('carryTurns').replace('{n}', String(entry.turns)) : t('carryNotYet')}`),
+                    h(
+                      'div',
+                      { style: { color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }, title: [entry.first, entry.text].filter((part) => String(part ?? '').trim() !== '').join('\n') },
+                      String(entry.text || entry.first || '').replace(/\s+/g, ' ').slice(0, 160),
+                    ),
+                  ),
+                ),
+              ),
+            )
       const fetchConfirm =
         fetchPending === null
           ? null
@@ -4906,13 +5288,72 @@ window.__ModuleLoader__.load({
               ),
             )
           : null
+      // ── 首轮锁定（issue #19 A）：已写进历史的开场对话（只读）+ 恢复开局时的预设（B）──
+      const lockedItems = lock.items
+      const lockBox = lock.locked
+        ? h(
+            'div',
+            { style: { ...V.callout('brand'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' }, 'data-prefill-lock': lock.legacy ? 'legacy' : 'locked' },
+            h(
+              'div',
+              { style: { fontWeight: 700 } },
+              lockedItems.length > 0
+                ? t('lockItemsTitle').replace('{n}', String(lockedItems.length)).replace('{range}', lock.turn > 2 ? `1–${lock.turn - 1}` : '1')
+                : lock.turn > 0
+                  ? t('lockNoItemsTitle').replace('{turn}', String(lock.turn))
+                  : t('lockNoItemsTitleUnknown'),
+            ),
+            h('div', { style: V.hint }, lock.legacy ? t('lockLegacyHint') : t('lockHint')),
+            lockedItems.length > 0
+              ? h(
+                  'details',
+                  { 'data-prefill-lock-items': String(lockedItems.length) },
+                  h('summary', { style: { cursor: 'pointer', fontSize: 12 } }, t('lockShowItems')),
+                  h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 } },
+                    ...lockedItems.map((item, index) =>
+                      h(
+                        'div',
+                        { key: index, 'data-prefill-lock-item': item.role, style: { fontSize: 12, whiteSpace: 'pre-wrap', padding: '4px 8px', borderRadius: 6, background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-secondary)' } },
+                        h('b', { style: { marginRight: 6 } }, item.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
+                        String(item.text ?? ''),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
+            lock.hasSnapshot
+              ? h(
+                  'div',
+                  { style: V.row },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: V.btn,
+                      'data-prefill-lock-restore': '',
+                      title: t('lockRestoreTip'),
+                      onClick: () => {
+                        if (!armConfirm('restore-opening')) return
+                        setConfirming('')
+                        void restoreOpening().catch(() => setStatus('error'))
+                      },
+                    },
+                    confirming === 'restore-opening' ? t('lockRestoreConfirm') : t('lockRestore'),
+                  ),
+                  h('span', { style: V.hint }, t('lockRestoreHint')),
+                )
+              : null,
+          )
+        : null
       const itemsSection = h(
         Section,
         {
           id: 'items',
           tags: sourceTag(tagOf('items')),
           title: t('itemsTitle'),
-          meta: `${countFilled(items)}${t('countSuffix')}${countFilled(items) < items.length ? t('emptyRowsSkipped').replace('%N', String(items.length - countFilled(items))) : ''} · ≈${itemsTok} tok · ${injectMode ? t('modeInject') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
+          meta: `${countFilled(items)}${t('countSuffix')}${countFilled(items) < items.length ? t('emptyRowsSkipped').replace('%N', String(items.length - countFilled(items))) : ''} · ≈${itemsTok} tok · ${injectMode ? t('itemsAfterRun') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
           off: !isOn('items'),
           offTitle: t('offTitle'),
           offBody: t('itemsOffBody'),
@@ -4939,6 +5380,7 @@ window.__ModuleLoader__.load({
         greetingBar,
         fetchBar,
         fetchPending !== null ? fetchConfirm : null,
+        carryBox,
         undoSnap !== null
           ? h(
               'div',
@@ -4947,9 +5389,11 @@ window.__ModuleLoader__.load({
               h('button', { type: 'button', style: V.btn, 'data-prefill-fetch-undo': '', onClick: undoFetch }, t('undo')),
             )
           : null,
-        injectMode && (envelope?.materialized?.[sessionId] ?? 0) > 0
-          ? h('div', { style: V.callout('brand') }, t('itemsWrittenHint').replace('{n}', String(envelope.materialized[sessionId])))
-          : null,
+        lock.locked
+          ? lockBox
+          : injectMode && (envelope?.materialized?.[sessionId] ?? 0) > 0
+            ? h('div', { style: V.callout('brand') }, t('itemsWrittenHint').replace('{n}', String(envelope.materialized[sessionId])))
+            : null,
         h('div', { style: V.callout(injectMode ? 'warn' : 'brand') }, injectMode ? t('itemsInjectHint') : t('itemsHistoryHint')),
         items.length === 0
           ? h(
@@ -4983,23 +5427,9 @@ window.__ModuleLoader__.load({
           { style: V.row },
           h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'user', text: '' }]) }, t('addUser')),
           h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'assistant', reasoning: '', text: '' }]) }, t('addAssistant')),
-          injectMode ? h('span', { style: { flex: '1 1 auto' } }) : null,
-          injectMode
-            ? injectCount > 0
-              ? h('button', { type: 'button', style: V.btn, onClick: stopInject }, `${t('stopInject')} (${injectCount})`)
-              : null
-            : null,
-          injectMode && items.length > 0
-            ? h(
-                'button',
-                { type: 'button', style: V.btnPrimary, title: t('injectNowTip'), onClick: oneClickInject, 'data-prefill-inject': '1' },
-                injectCount > 0 ? t('injectUpdate') : t('injectNow'),
-              )
-            : null,
-          injectStatus === 'idle'
-            ? null
-            : h('span', { style: S.dockStatus(injectStatus === 'error' ? 'error' : 'saved') }, injectStatus === 'error' ? t('injectFailed') : t('injectedNext')),
         ),
+        // 手动注入（issue #19「C」）：独立入口，首轮前后都在；只发一次，发出后成为会话历史。
+        h(ManualInject, { t, sessionId }),
       )
 
       // ── 每轮注入（state.everyTurn[会话]；勾"新会话默认"时同时写 '*'）──
@@ -5231,6 +5661,8 @@ window.__ModuleLoader__.load({
         bench: benchMigrated.bench,
         benchTowers: benchMigrated.benchTowers,
         asDefault: state?.everyTurn?.['*']?.enabled === true,
+        // 约束承接的接缝标记：只认本会话那格，改面板时别丢。
+        seam: state?.everyTurn?.[sessionId]?.seam === true,
       }
       const writeEveryTurn = async (nextValue, override) => {
         setEveryTurnDraft(nextValue)
@@ -5256,11 +5688,15 @@ window.__ModuleLoader__.load({
           checks: compiled !== null ? compiled.checks : Array.isArray(nextValue.checks) ? nextValue.checks : [],
           auto,
           ...(hasBench ? { bench: nextValue.bench, benchTowers: nextValue.benchTowers ?? {} } : {}),
+          ...(nextValue.seam === true ? { seam: true } : {}),
+          // 「下一轮发一次」首轮段（issue #19 B）：只在勾 / 取消时带，服务端盖成 { atTurn }；没带 = 沿用。
+          ...(typeof nextValue.firstOnce === 'boolean' ? { firstOnce: nextValue.firstOnce } : {}),
         }
         map[sessionId] = entry
         if (nextValue.asDefault === true) {
           const { override: _ignored, ...autoForDefault } = auto
-          map['*'] = { ...entry, auto: autoForDefault }
+          const { seam: _seam, firstOnce: _once, ...forDefault } = entry
+          map['*'] = { ...forDefault, auto: autoForDefault }
         } else delete map['*']
         const data = await postJson(STATE_ROUTE, { everyTurn: map })
         setEnvelope(data)
@@ -5993,6 +6429,36 @@ window.__ModuleLoader__.load({
           offBody: !isOn('everyTurn') ? t('everyTurnOffBody') : t('offByCardBody'),
         },
         h('div', { style: V.hint }, t('everyTurnHint')),
+        // 首轮锁定之后的「只在首轮」段（issue #19 B）：默认不发，可以勾「下一轮发一次」。
+        lock.locked && everyTurn.firstText.trim() !== ''
+          ? h(
+              'div',
+              { style: { ...V.callout('warn'), display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }, 'data-prefill-first-locked': everyTurnStatus?.first?.once ?? 'none' },
+              h('span', { style: { flex: '1 1 260px', minWidth: 0 } }, everyTurnStatus?.first?.once === 'sent' ? t('lockFirstOnceSent') : t('lockFirstSkipped')),
+              h(
+                'label',
+                { style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+                h('input', {
+                  type: 'checkbox',
+                  'data-prefill-first-once': '',
+                  checked: firstOnceWant ?? everyTurnStatus?.first?.once === 'pending',
+                  onChange: (event) => {
+                    const want = event.target.checked
+                    setFirstOnceWant(want)
+                    void writeEveryTurn({ ...everyTurn, firstOnce: want })
+                      .then(() => {
+                        setEveryTurnDraft(null)
+                        flash(want ? t('lockFirstOnceOn') : t('lockFirstOnceOff'))
+                        return postJson(PACKS_ROUTE, { sessionId, op: 'every-turn-status' }).then((data) => setEveryTurnStatus(data?.status ?? null))
+                      })
+                      .catch(() => setStatus('error'))
+                      .finally(() => setFirstOnceWant(null))
+                  },
+                }),
+                t('lockFirstOnce'),
+              ),
+            )
+          : null,
         // v0.15：按钮行（塔在前、积木在后）+ 成本/预览 + 工作台 + 重叠层 + 右键菜单
         h(
           'div',
@@ -6239,9 +6705,17 @@ window.__ModuleLoader__.load({
 
       const injectSection = h(
         Section,
-        { id: 'inject', title: t('injectTitle'), meta: t('advanced'), tags: sourceTag(tagOf('tools'), t('toolsTag')), off: !isOn('inject'), offTitle: t('offTitle'), offBody: t('injectOffBody') },
-        h('div', { style: V.hint }, t('injectHint')),
-        h(InjectionSection, { t, sessionId }),
+        {
+          id: 'inject',
+          title: t('injectTitle'),
+          meta: t('sbxWas'),
+          tags: [h('span', { key: 'pure', style: { padding: '1px 8px', borderRadius: 6, fontSize: 11.5, background: tint('var(--dsw-alias-state-error-primary, #e5484d)', 14), color: 'var(--dsw-alias-state-error-primary, #e5484d)', fontWeight: 600 } }, t('sbxReplacesPure')), sourceTag(tagOf('tools'), t('toolsTag'))],
+          off: !isOn('inject'),
+          offTitle: t('offTitle'),
+          offBody: t('injectOffBody'),
+        },
+        // 会话沙盒（issue #15 第 3 步）：档位 + 来源包 + 未归属 + 审计；旧的按名改写 / 工具白名单收进「高级」。
+        h(SandboxSection, { t, sessionId }),
       )
 
       const usageSection = h(
@@ -6251,7 +6725,7 @@ window.__ModuleLoader__.load({
           title: t('usageTitle'),
           meta: turns > 0 ? `${turns} ${t('turnsUnit')}` : t('usageNoTurns'),
         },
-        h(UsagePanel, { t, usage, systemMode, systemTok, itemsTok, injectMode, injectCount, gateMode, written: (envelope?.materialized?.[sessionId] ?? 0) > 0 }),
+        h(UsagePanel, { t, usage, systemMode, systemTok, itemsTok, injectMode, gateMode, written: (envelope?.materialized?.[sessionId] ?? 0) > 0 }),
       )
 
       const activeName = (() => {
@@ -6565,6 +7039,7 @@ window.__ModuleLoader__.load({
       })()
       const everyTurnModeLabel = everyTurn.mode === 'auto' ? t('everyTurnModeAuto') : everyTurn.mode === 'until' ? t('navModeUntil').replace('{n}', String(everyTurn.untilTurn)) : t('navModeAlways')
       const B = (text) => h('b', null, text)
+      const sbxSummary = sandboxSummary(t, envelope?.sandboxView?.[sessionId])
       const navStatus = {
         card: appliedCardName !== '' ? [B(appliedCardName), appliedCardDesc ? ` · ${appliedCardDesc}` : ''] : [t('navNone')],
         lore: loreEntries.length > 0 ? [B(String(loreEntries.length)), t('navLore')] : [t('navWithCard')],
@@ -6578,9 +7053,9 @@ window.__ModuleLoader__.load({
         everyTurn: everyTurnActive
           ? [B(everyTurnModeLabel), autoStatus !== null ? ` · ${autoStateText}` : ` · ≈${num(estimateTokens(everyTurn.text))} tok/${t('turnsUnit')}`]
           : [t('everyTurnOffMeta')],
-        items: [B(String(filledCount)), t('countSuffix'), ' · ≈', B(num(itemsTok)), ' tok · ', injectMode ? (injectCount > 0 ? t('modeInject') : t('navNotInjected')) : t('modeHistory')],
+        items: [B(String(filledCount)), t('countSuffix'), ' · ≈', B(num(itemsTok)), ' tok · ', injectMode ? t('itemsAfterRun') : t('modeHistory')],
         workspace: [B(ws.mode === 'off' ? t('navWsOff') : ws.mode === 'rewrite' ? t('navWsRewrite') : t('navWsPass')), ws.mode === 'rewrite' && ws.text.trim() !== '' ? ` · ≈${num(estimateTokens(ws.text))} tok` : '', ws.mode === 'pass' ? ' · AGENTS.md' : ''],
-        inject: [t('advanced'), overrideCount > 0 ? [' · ', t('navChanged').replace('{n}', '')] : '', overrideCount > 0 ? B(String(overrideCount)) : '', overrideCount > 0 ? t('navChangedUnit') : ''],
+        inject: sbxSummary !== null ? [B(sbxLevelLabel(t, sbxSummary.level)), sbxSummary.blocked > 0 ? ` · ${t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked))}` : '', sbxSummary.pending > 0 ? ` · ${t('sbxPendingN').replace('{n}', String(sbxSummary.pending))}` : '', overrideCount > 0 ? ` · ${t('navChanged').replace('{n}', String(overrideCount))}${t('navChangedUnit')}` : ''] : [t('advanced'), overrideCount > 0 ? [' · ', t('navChanged').replace('{n}', '')] : '', overrideCount > 0 ? B(String(overrideCount)) : '', overrideCount > 0 ? t('navChangedUnit') : ''],
       }
       const offBy = { system: systemFromCardOff, everyTurn: everyTurnFromCardOff, lore: !isOn('card') && loreEntries.length > 0, memory: !isOn('card') && memoryOn }
       const hasContent = {
@@ -6591,7 +7066,7 @@ window.__ModuleLoader__.load({
         everyTurn: everyTurnActive,
         items: filledCount > 0,
         workspace: wsActive,
-        inject: overrideCount > 0,
+        inject: overrideCount > 0 || (sbxSummary !== null && (sbxSummary.level !== 'observe' || sbxSummary.blocked > 0)),
       }
       const featureTitle = { card: t('cardsTitle'), lore: t('loreTitle'), memory: t('memoryTitle'), system: t('systemTitle'), everyTurn: t('everyTurnTitle'), items: t('itemsNavTitle'), workspace: t('wsTitle'), inject: t('injectTitle') }
       const sections = { cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, workspace: workspaceSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection }
@@ -6697,9 +7172,10 @@ window.__ModuleLoader__.load({
       const firstTok =
         (isOn('system') && !systemFromCardOff ? systemTok : 0) +
         (isOn('items') && !injectMode ? itemsTok : 0) +
-        (everyTurnActive && isOn('everyTurn') && !everyTurnFromCardOff ? estimateTokens(everyTurn.firstText.trim() !== '' ? everyTurn.firstText : everyTurn.text) : 0)
+        // 锁住之后首轮段不再发（issue #19 B）：「首轮」读数按每轮段算。
+        (everyTurnActive && isOn('everyTurn') && !everyTurnFromCardOff ? estimateTokens(everyTurn.firstText.trim() !== '' && !lock.locked ? everyTurn.firstText : everyTurn.text) : 0)
       const perTurnTok =
-        (everyTurnActive && isOn('everyTurn') && !everyTurnFromCardOff ? estimateTokens(everyTurn.text) : 0) + (isOn('items') && injectCount > 0 ? itemsTok : 0)
+        (everyTurnActive && isOn('everyTurn') && !everyTurnFromCardOff ? estimateTokens(everyTurn.text) : 0)
       const usageTotal = usage?.total ?? null
       const usagePrompt = usageTotal ? usageTotal.input + usageTotal.cacheRead : 0
       const cacheHit = usagePrompt > 0 ? Math.round((usageTotal.cacheRead / usagePrompt) * 100) : null
@@ -6724,6 +7200,16 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', style: V.btn, 'data-prefill-save': '', title: activePreset.startsWith('pack:') ? t('saveOverTip') : t('saveAsTip'), onClick: () => (activePreset.startsWith('pack:') ? savePack(activePreset.slice(5)) : setMenu('saveas')) }, t('saveShort')),
         h('button', { type: 'button', style: V.btnGhost, 'data-prefill-save-as': '', 'aria-expanded': menu === 'saveas' ? 'true' : 'false', onClick: () => setMenu(menu === 'saveas' ? '' : 'saveas') }, t('saveAs')),
         activePreset === '' || narrow ? null : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-preset-clear': '', onClick: () => void clearPreset().catch(() => setStatus('error')) }, t('presetClear')),
+        // 首轮锁定徽章（issue #19 A）：首轮未发 / 已锁定，悬停说明原因。
+        h(
+          'span',
+          {
+            'data-prefill-lock-badge': lock.locked ? 'locked' : 'open',
+            title: lock.locked ? t('lockBadgeTip') : t('lockOpenTip'),
+            style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', background: lock.locked ? tint('var(--pf-ai)', 16) : tint('var(--pf-system)', 12), color: 'var(--dsw-alias-label-secondary)' },
+          },
+          lock.locked ? t('lockBadge') : t('lockOpenBadge'),
+        ),
         h('span', { style: { flex: '1 1 auto' } }),
         // 右侧一组（读数 + ? + 钉住 + 收起 + 关闭）不拆开：窄屏换行时整组挪到第二行靠右，关闭按钮不会单独掉下去。
         h(
@@ -6732,6 +7218,21 @@ window.__ModuleLoader__.load({
         h(
           'span',
           { style: { display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
+          sbxSummary === null
+            ? null
+            : h(
+                'button',
+                {
+                  key: 'sandbox',
+                  type: 'button',
+                  'data-prefill-badge': 'sandbox',
+                  title: `${t('injectTitle')}：${sbxSummary.text}`,
+                  onClick: () => setPane('inject'),
+                  style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit', border: `1px solid ${tint(sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)', 40)}`, background: tint(sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)', 10), color: sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)', fontWeight: 700 },
+                },
+                `${t('sbxBadge')} · ${sbxLevelLabel(t, sbxSummary.level)}`,
+                sbxSummary.blocked > 0 ? h('span', { style: { color: 'var(--dsw-alias-state-error-primary, #e5484d)' } }, t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked))) : null,
+              ),
           badge('var(--pf-system)', t('badgeFirst'), `+${num(firstTok)}`, 'tok', 'first'),
           narrow ? null : badge('var(--pf-turn)', t('badgeTurn'), `+${num(perTurnTok)}`, 'tok', 'turn'),
           narrow ? null : badge('var(--pf-ai)', t('badgeCache'), cacheHit === null ? '—' : `${cacheHit}%`, '', 'cache'),
@@ -6931,8 +7432,7 @@ window.__ModuleLoader__.load({
       if (props.gateMode === 'pure') notes.push(props.systemMode === 'takeover' && props.systemTok > 0 ? t('noteTakeover') : t('notePure'))
       else if (props.systemMode === 'append') notes.push(t('noteAppend').replace('{n}', String(props.systemTok)))
       else if (props.systemMode === 'replace') notes.push(t('noteReplace').replace('{n}', String(props.systemTok)))
-      if (props.injectCount > 0) notes.push(t('noteInject').replace('{n}', String(props.itemsTok)))
-      else if (props.itemsTok > 0 && (!props.injectMode || props.written)) notes.push(t('noteHistory').replace('{n}', String(props.itemsTok)))
+      if (props.itemsTok > 0 && (!props.injectMode || props.written)) notes.push(t('noteHistory').replace('{n}', String(props.itemsTok)))
       notes.push(t('noteSwitch'))
       notes.push(t('noteMinCache'))
       return h(
@@ -7002,6 +7502,1047 @@ window.__ModuleLoader__.load({
      * 清单来自宿主 `envelope.injections`：`catalog`（全局 prompt 层的真实注册名 + 已知 kind）
      * ∪ 本会话已发现 ∪ 手加 ∪ 已有改写的键 ⇒ **某条注入还没出现过也能先改**（命中即生效）。
      */
+    // ── 会话沙盒（issue #15 第 3 步）：原「改写注入内容」页 ───────────────────────────
+    // 文案单独一份，注册时并进 zh / en（少动原来的大字典，方便和别的分支合并）。
+    const SBX_TEXT = {
+      zh: {
+        injectTitle: '会话沙盒',
+        sbxWas: '原「改写注入内容」',
+        sbxReplacesPure: '替代纯净模式',
+        sbxIntro: '本插件自己的东西（角色卡、系统提示、每轮注入、开场对话……）永远放行；别处送进模型的内容按档位和规则处理。工具结果、压缩、回合协议等「功能通道」不拦。',
+        sbxLevelObserve: '观察',
+        sbxLevelObserveSub: '全放行·只记录',
+        sbxLevelControlled: '受控',
+        sbxLevelControlledSub: '第三方默认拦',
+        sbxLevelStrict: '严格',
+        sbxLevelStrictSub: '= 旧纯净模式',
+        sbxLevelHint: '档位只决定「没写规则的来源」怎么办；下面每个来源包都能单独改。本会话生效，「⭐ 全局记住」后新会话也照此提前拦。',
+        sbxLevelFromGlobal: '跟随全局默认',
+        sbxLevelGlobal: '新会话默认也用这一档',
+        sbxStrictNote: '严格档 = 旧纯净模式：系统提示、运行时上下文、工具整份接管，只放行你的话；放行某个来源包只让它的消息送达。',
+        sbxPacks: '来源包',
+        sbxPacksSub: '按包放行 / 拦截，避免拦一半把功能拦坏',
+        sbxAllow: '放行',
+        sbxDeny: '拦截',
+        sbxAlways: '恒放行',
+        sbxDefaultTip: '档位默认（没单独设）',
+        sbxReset: '恢复档位默认',
+        sbxRemember: '⭐ 全局记住',
+        sbxForget: '⭐ 已全局记住 · 取消',
+        sbxOriginCore: 'DSH 核心',
+        sbxOriginThird: '第三方',
+        sbxViaTrace: '溯源 · 你已确认',
+        sbxViaAi: 'AI 溯源 · 你已确认',
+        sbxViaClaim: '插件自报 · 你已确认',
+        sbxViaManual: '手动挂上',
+        sbxItemsHint: '点单条可另设',
+        sbxNotSeen: '本会话还没出现',
+        sbxShared: '和 DSH 核心同名：只有显式拦截这个包时才跟着拦',
+        sbxFollow: '跟随包',
+        sbxRewrite: '改写',
+        sbxRewriteHint: '留空 = 不改写；改写后发的是你的版本（拦截优先于改写）。',
+        sbxToolsByPack: '工具按包管（单个工具的白名单在下面「高级」里）。',
+        sbxUnassigned: '未归属',
+        sbxUnassignedSub: '作用域内注册、不认识它的插件',
+        sbxBlockedHere: '本会话拦',
+        sbxAllowHere: '本会话放行',
+        sbxAudit: '本会话审计',
+        sbxAuditSub: '进了模型、或被拦下的注入',
+        sbxColCount: '次数',
+        sbxColSource: '来源',
+        sbxColName: '名称',
+        sbxColHandling: '处理',
+        sbxHRegistry: '注册表层已拦',
+        sbxHDropped: 'pre-step 已丢',
+        sbxHTool: '装配时已滤掉',
+        sbxHStrict: '纯净模式已拦',
+        sbxHDirect: '直写会话 · 已进模型',
+        sbxHProtocol: '功能通道 · 不处理',
+        sbxHRewrite: '已改写',
+        sbxHAllowed: '放行',
+        sbxUnknownSource: '未归属',
+        sbxAuditEmpty: '还没有记录（跑一轮之后这里会列出进了模型、或被拦下的注入）。',
+        sbxAdvanced: '高级：按名预先改写 / 本会话工具白名单',
+        sbxClear: '清除本会话沙盒设置',
+        sbxBadge: '沙盒',
+        sbxBlockedN: '拦 {n}',
+        sbxPendingN: '待归属 {n}',
+        sbxGroupSections: '段',
+        sbxGroupContexts: '上下文',
+        sbxGroupMessages: '消息',
+        sbxGroupTools: '工具',
+        sbxSaved: '已保存 · 下一轮生效',
+        sbxFailed: '保存失败',
+        sbxAuditHidden: '另有 {n} 条 DSH 核心的放行未列出',
+        sbxAuditShowAll: '全部列出',
+        sbxTrace: '溯源',
+        sbxTraceTitle: '溯源：{name}',
+        sbxTraceAiTitle: 'AI 溯源：{name}',
+        sbxTraceDesc: '读本机已装、当前启用的插件包源码（和 DSH 发给模型的 dsh_plugin_packages 同一份清单），找谁注册了这个名字。只做静态扫描，不执行代码。',
+        sbxTraceBusy: '正在扫描插件包源码…',
+        sbxTraceNone: '没找到注册点（扫了 {p} 个包 / {f} 个文件）。可能是运行时拼出来的名字，或注册它的插件不在启用列表里。可以「手动挂到…」。',
+        sbxTraceConclusion: '结论（静态扫描）：{pkg} 在 {how} 注册了它。置信度 {c}。',
+        sbxTraceHigh: '高（名字与注册点逐字匹配）',
+        sbxTraceMedium: '中（只找到字面量或模板名）',
+        sbxTraceLow: '低（出现位置不像注册点）',
+        sbxTraceSiblings: '同包还注册了：',
+        sbxTraceOthers: '其它出现位置：',
+        sbxTraceClaims: '插件自报：',
+        sbxTraceNotice: '插件自报的归属（开放注册接口）和这里的推断都只当线索，挂上必须由你确认；冒充本插件 / DSH 核心的名字会被剔掉。',
+        sbxTraceRejected: '已剔掉 {n} 项（冒充本插件 / DSH 核心）',
+        sbxTraceAi: '让 AI 读源码',
+        sbxTraceAiBusy: 'AI 正在读…',
+        sbxTraceAiFailed: 'AI 没读成（{r}），下面是静态扫描的结果。',
+        sbxTraceAiBy: 'AI 结论（{m}）：',
+        sbxIgnore: '忽略',
+        sbxAttachOne: '只挂这一条',
+        sbxAttachAll: '挂到 {pkg}（{n} 项）',
+        sbxAttachClaim: '确认挂到 {pkg}（{n} 项）',
+        sbxAttachTo: '手动挂到…',
+        sbxAttachPick: '挂到哪个来源包',
+        sbxAttachNew: '新建来源包（名字）',
+        sbxAttachGo: '挂上',
+        sbxCancel: '取消',
+        // 第 5 步：直写会话的事后改写
+        sbxSurfaceOpen: '事后改写… ⚠',
+        sbxSurfaceAll: '事后改写会话里已有的直写消息…',
+        sbxSurfaceActive: '本会话已事后改写 {n} 条',
+        sbxSurfaceTitle: '⚠ 事后改写会话：{name}',
+        sbxSurfaceTitleAll: '⚠ 事后改写会话：直写消息',
+        sbxSurfaceDesc: '这条是 DSH / 插件在回合里直接写进会话的，没法提前拦；只能在它落盘后用会话日志的替换操作改掉模型看到的样子。原文一直留在日志里（对话记录照样显示原文），可以随时还原。',
+        sbxSurfaceBusy: '正在读会话…',
+        sbxSurfaceNone: '会话里现在没有能改的直写消息。',
+        sbxSurfaceNotReady: '现在改不了：{r}',
+        sbxSurfaceReason_busy: 'AI 正在运行，等这一轮结束再改',
+        'sbxSurfaceReason_not-live': '会话没加载（先打开这个会话）',
+        'sbxSurfaceReason_no-surface': '宿主不支持（没有会话 surface 接口）',
+        'sbxSurfaceReason_risks-unconfirmed': '四条风险都要勾选',
+        'sbxSurfaceReason_empty-user-message': '这一类是 user 消息，不能改成空，写一句占位',
+        'sbxSurfaceReason_developer-not-projected': 'developer 消息（工具登记）改了也到不了模型：DSH 0.2.1 改写后开新的工具声明序列，之前的 developer 消息不再发送，只会让前缀缓存断一次，所以不开放',
+        'sbxSurfaceReason_not-on-surface': '这条已经不在模型视图里（被压缩或替换掉了）',
+        sbxSurfaceTurn: '第 {n} 轮',
+        sbxSurfaceEdited: '已改写',
+        sbxSurfaceTo: '改写为：',
+        sbxSurfaceEmptyHint: '留空 = 去掉这条（模型下一轮起看不到它）',
+        sbxSurfaceEmptyUser: '这一类是 user 消息，不能留空',
+        sbxSurfaceRisk_log: '会改动会话日志，模型、SDK、fork 出的会话都会看到改后的样子；关掉沙盒也不会自动恢复（会保留原文，可手动还原）',
+        sbxSurfaceRisk_conflict: '可能与压缩、工具增删校验冲突，导致本轮报错或重试',
+        sbxSurfaceRisk_cache: '会打断前缀缓存，之后几轮更慢、更贵',
+        sbxSurfaceRisk_internal: '依赖 DSH 内部接口，升级后可能失效；由此产生的问题插件作者不负责',
+        sbxSurfaceGo: '我已了解，改写这一条',
+        sbxSurfaceRestore: '还原',
+        sbxSurfaceDone: '已改写（seq {seq}），下一轮起生效。',
+        sbxSurfaceRestored: '已还原原文。',
+        sbxSurfacePending: '已登记：这一类（developer 消息）只能在一步之内落盘，下一轮开头生效。',
+        sbxSurfacePendingTag: '待生效',
+        sbxSurfaceFailed: '没改成：{r}',
+      },
+      en: {
+        injectTitle: 'Session sandbox',
+        sbxWas: 'formerly “Rewrite injections”',
+        sbxReplacesPure: 'replaces Pure mode',
+        sbxIntro: "This plugin's own content (card, system prompt, every-turn, opening dialogue…) always passes; everything else that reaches the model follows the level and rules. Functional channels (tool results, compaction, loop protocol) are never blocked.",
+        sbxLevelObserve: 'Observe',
+        sbxLevelObserveSub: 'allow all · audit',
+        sbxLevelControlled: 'Controlled',
+        sbxLevelControlledSub: 'third-party blocked',
+        sbxLevelStrict: 'Strict',
+        sbxLevelStrictSub: '= old Pure mode',
+        sbxLevelHint: 'The level only decides sources without a rule; every source pack below can be set on its own. Applies to this session; “⭐ Remember” applies to new sessions too.',
+        sbxLevelFromGlobal: 'following the global default',
+        sbxLevelGlobal: 'Use this level for new sessions too',
+        sbxStrictNote: 'Strict = old Pure mode: system prompt, runtime context and tools are taken over; only your words pass. Allowing a pack only lets its messages through.',
+        sbxPacks: 'Source packs',
+        sbxPacksSub: 'allow / block a whole pack so half-blocking never breaks a feature',
+        sbxAllow: 'Allow',
+        sbxDeny: 'Block',
+        sbxAlways: 'always allowed',
+        sbxDefaultTip: 'level default (not set)',
+        sbxReset: 'Back to level default',
+        sbxRemember: '⭐ Remember',
+        sbxForget: '⭐ Remembered · undo',
+        sbxOriginCore: 'DSH core',
+        sbxOriginThird: 'third-party',
+        sbxViaTrace: 'traced · confirmed',
+        sbxViaAi: 'AI traced · confirmed',
+        sbxViaClaim: 'self-declared · confirmed',
+        sbxViaManual: 'attached manually',
+        sbxItemsHint: 'click an item to override it',
+        sbxNotSeen: 'not seen in this session yet',
+        sbxShared: 'shares a name with DSH core: only blocked when you block this pack explicitly',
+        sbxFollow: 'Follow pack',
+        sbxRewrite: 'Rewrite',
+        sbxRewriteHint: 'Empty = no rewrite; your version is sent instead (block wins over rewrite).',
+        sbxToolsByPack: 'Tools follow their pack (per-tool allow-list is under Advanced).',
+        sbxUnassigned: 'Unassigned',
+        sbxUnassignedSub: 'registered in scope by a plugin we do not know',
+        sbxBlockedHere: 'Block here',
+        sbxAllowHere: 'Allow here',
+        sbxAudit: 'Session audit',
+        sbxAuditSub: 'injections that reached the model or were blocked',
+        sbxColCount: 'Count',
+        sbxColSource: 'Source',
+        sbxColName: 'Name',
+        sbxColHandling: 'Handling',
+        sbxHRegistry: 'blocked at registry',
+        sbxHDropped: 'dropped at pre-step',
+        sbxHTool: 'filtered at assembly',
+        sbxHStrict: 'blocked by Pure mode',
+        sbxHDirect: 'written directly · reached model',
+        sbxHProtocol: 'functional · untouched',
+        sbxHRewrite: 'rewritten',
+        sbxHAllowed: 'allowed',
+        sbxUnknownSource: 'unassigned',
+        sbxAuditEmpty: 'Nothing yet (after a turn this lists injections that reached the model or were blocked).',
+        sbxAdvanced: 'Advanced: pre-write rewrites by name / session tool allow-list',
+        sbxClear: 'Clear this session’s sandbox settings',
+        sbxBadge: 'Sandbox',
+        sbxBlockedN: '{n} blocked',
+        sbxPendingN: '{n} unassigned',
+        sbxGroupSections: 'section',
+        sbxGroupContexts: 'context',
+        sbxGroupMessages: 'message',
+        sbxGroupTools: 'tool',
+        sbxSaved: 'Saved · next turn',
+        sbxFailed: 'Save failed',
+        sbxAuditHidden: '{n} allowed DSH-core rows hidden',
+        sbxAuditShowAll: 'show all',
+        'sbxPack_prefill': 'This plugin · dsh-prefill',
+        'sbxPack_dsh-core-prompt': 'DSH core · system prompt',
+        'sbxPack_dsh-core-context': 'DSH core · runtime context',
+        'sbxPackSummary_prefill': 'prefill:* sections / contexts / messages',
+        'sbxPackSummary_dsh-core-prompt': 'harness:identity, deployment:*, tool docs tool:* …',
+        'sbxPackSummary_dsh-core-context': 'working directory, approval / sandbox policy, time, skills, goals / schedules … (working directory is required)',
+        'sbxPackNote_agent-teams': 'Blocked: teammate messages will not arrive',
+        sbxTrace: 'Trace',
+        sbxTraceTitle: 'Trace: {name}',
+        sbxTraceAiTitle: 'AI trace: {name}',
+        sbxTraceDesc: 'Reads the source of the plugin packages installed and enabled here (the same list DSH sends as dsh_plugin_packages) to find who registers this name. Static scan only; nothing is executed.',
+        sbxTraceBusy: 'Scanning plugin sources…',
+        sbxTraceNone: 'No registration found ({p} packages / {f} files). The name may be built at runtime, or its plugin is not enabled. Use “Attach to…”.',
+        sbxTraceConclusion: 'Conclusion (static): {pkg} registers it via {how}. Confidence {c}.',
+        sbxTraceHigh: 'high (name matches a registration call)',
+        sbxTraceMedium: 'medium (literal / template only)',
+        sbxTraceLow: 'low (not at a registration call)',
+        sbxTraceSiblings: 'Same package also registers: ',
+        sbxTraceOthers: 'Other places: ',
+        sbxTraceClaims: 'Self-declared by: ',
+        sbxTraceNotice: 'Self-declarations (open registration API) and these guesses are only clues; attaching needs your confirmation, and names impersonating this plugin or DSH core are dropped.',
+        sbxTraceRejected: '{n} dropped (impersonating this plugin / DSH core)',
+        sbxTraceAi: 'Let AI read the source',
+        sbxTraceAiBusy: 'AI is reading…',
+        sbxTraceAiFailed: 'AI could not read it ({r}); static result below.',
+        sbxTraceAiBy: 'AI conclusion ({m}): ',
+        sbxIgnore: 'Ignore',
+        sbxAttachOne: 'Attach just this one',
+        sbxAttachAll: 'Attach to {pkg} ({n} items)',
+        sbxAttachClaim: 'Confirm: attach to {pkg} ({n} items)',
+        sbxAttachTo: 'Attach to…',
+        sbxAttachPick: 'Source pack',
+        sbxAttachNew: 'New pack (name)',
+        sbxAttachGo: 'Attach',
+        sbxCancel: 'Cancel',
+        sbxSurfaceOpen: 'Rewrite after the fact… ⚠',
+        sbxSurfaceAll: 'Rewrite direct-written messages already in the session…',
+        sbxSurfaceActive: '{n} rewritten in this session',
+        sbxSurfaceTitle: '⚠ Rewrite the session: {name}',
+        sbxSurfaceTitleAll: '⚠ Rewrite the session: direct-written messages',
+        sbxSurfaceDesc: 'DSH or a plugin wrote this straight into the session during a turn, so it cannot be blocked up front; it can only be replaced in what the model sees after it lands, using the session log\'s replace operation. The original stays in the log (the transcript still shows it) and can be restored any time.',
+        sbxSurfaceBusy: 'Reading the session…',
+        sbxSurfaceNone: 'Nothing direct-written to rewrite in this session right now.',
+        sbxSurfaceNotReady: 'Cannot rewrite now: {r}',
+        sbxSurfaceReason_busy: 'the AI is running; wait for this turn to finish',
+        'sbxSurfaceReason_not-live': 'the session is not loaded (open it first)',
+        'sbxSurfaceReason_no-surface': 'the host has no session surface API',
+        'sbxSurfaceReason_risks-unconfirmed': 'tick all four risks',
+        'sbxSurfaceReason_empty-user-message': 'this is a user message and cannot be emptied; write a placeholder',
+        'sbxSurfaceReason_developer-not-projected': 'developer (tool-registry) messages never reach the model after a rewrite: DSH 0.2.1 starts a new tool-declaration series and stops sending earlier developer messages, so the only effect would be a broken prefix cache; not offered',
+        'sbxSurfaceReason_not-on-surface': 'it is no longer in the model view (compacted or replaced)',
+        sbxSurfaceTurn: 'turn {n}',
+        sbxSurfaceEdited: 'rewritten',
+        sbxSurfaceTo: 'Rewrite to: ',
+        sbxSurfaceEmptyHint: 'empty = remove it (the model stops seeing it from the next turn)',
+        sbxSurfaceEmptyUser: 'this is a user message; it cannot be empty',
+        sbxSurfaceRisk_log: 'Changes the session log: the model, the SDK and forked sessions all see the rewritten version; turning the sandbox off does not undo it (the original is kept and can be restored by hand)',
+        sbxSurfaceRisk_conflict: 'May conflict with compaction or tool add/remove validation, making this turn fail or retry',
+        sbxSurfaceRisk_cache: 'Breaks the prefix cache: the next few turns are slower and cost more',
+        sbxSurfaceRisk_internal: 'Relies on DSH internals and may break after an upgrade; the plugin author is not responsible for the consequences',
+        sbxSurfaceGo: 'I understand, rewrite this one',
+        sbxSurfaceRestore: 'Restore',
+        sbxSurfaceDone: 'Rewritten (seq {seq}); takes effect from the next turn.',
+        sbxSurfaceRestored: 'Original restored.',
+        sbxSurfacePending: 'Queued: this kind (developer message) can only be written inside a step, so it takes effect at the start of the next turn.',
+        sbxSurfacePendingTag: 'pending',
+        sbxSurfaceFailed: 'Not rewritten: {r}',
+      },
+    }
+
+    const SBX_SURFACE_RISKS = ['log', 'conflict', 'cache', 'internal']
+    const SBX_RED = 'var(--dsw-alias-state-error-primary, #e5484d)'
+    const SBX_GREEN = 'var(--pf-ai)'
+    const SBX_PURPLE = 'var(--pf-system)'
+    const sbxClone = (value) => JSON.parse(JSON.stringify(value ?? {}))
+    const sbxLevelLabel = (t, level) => (level === 'controlled' ? t('sbxLevelControlled') : level === 'strict' ? t('sbxLevelStrict') : t('sbxLevelObserve'))
+    const sbxGroupLabel = (t, group) =>
+      group === 'sections' ? t('sbxGroupSections') : group === 'contexts' ? t('sbxGroupContexts') : group === 'tools' ? t('sbxGroupTools') : t('sbxGroupMessages')
+    const SBX_TARGET = { sections: 'section', contexts: 'context', messages: 'kind', tools: 'tool' }
+    const SANDBOX_ROUTE = '/api/dsh-prefill/sandbox'
+    const sbxMemberText = (t, member) => {
+      const key = ['section', 'context', 'kind', 'tool'].find((entry) => typeof member?.[entry] === 'string')
+      return key === undefined ? '' : `${sbxGroupLabel(t, { section: 'sections', context: 'contexts', kind: 'messages', tool: 'tools' }[key])} ${member[key]}`
+    }
+    /** 宿主给的中文名（包名 / 摘要），当前语言有译文就用译文。 */
+    const sbxLocal = (t, key, fallback) => {
+      const text = t(key)
+      return typeof text === 'string' && text !== '' && text !== key ? text : fallback
+    }
+
+    /** 头部徽章 / 左栏状态用的一行摘要：「受控 · 拦 3 · 待归属 1」。 */
+    function sandboxSummary(t, view) {
+      if (view === null || view === undefined || typeof view !== 'object' || view.error) return null
+      const pending = (view.unassigned ?? []).length
+      return {
+        level: view.level ?? 'observe',
+        blocked: view.blocked ?? 0,
+        pending,
+        text: [sbxLevelLabel(t, view.level), view.blocked > 0 ? t('sbxBlockedN').replace('{n}', String(view.blocked)) : '', pending > 0 ? t('sbxPendingN').replace('{n}', String(pending)) : '']
+          .filter((part) => part !== '')
+          .join(' · '),
+      }
+    }
+
+    function SbxSegment(props) {
+      const { options, value, onPick, size = 'normal' } = props
+      return h(
+        'span',
+        { style: { display: 'inline-flex', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8, overflow: 'hidden', flex: '0 0 auto' }, role: 'radiogroup' },
+        ...options.map((option) => {
+          const active = option.value === value
+          const tone = option.tone ?? SBX_PURPLE
+          return h(
+            'button',
+            {
+              key: option.value,
+              type: 'button',
+              role: 'radio',
+              'aria-checked': active ? 'true' : 'false',
+              title: option.title ?? '',
+              'data-prefill-sbx-option': option.value,
+              onClick: () => onPick(option.value),
+              style: {
+                border: 'none',
+                borderLeft: option === options[0] ? 'none' : '1px solid var(--dsw-alias-border-l2)',
+                padding: size === 'small' ? '3px 10px' : '6px 14px',
+                fontFamily: 'inherit',
+                fontSize: size === 'small' ? 12 : 13,
+                cursor: 'pointer',
+                background: active ? tint(tone, option.soft ? 8 : 16) : 'var(--dsw-alias-bg-base)',
+                color: active ? tone : 'var(--dsw-alias-label-primary)',
+                fontWeight: active ? 700 : 400,
+                opacity: active && option.soft ? 0.8 : 1,
+                outline: active && !option.soft ? `1px solid ${tint(tone, 40)}` : 'none',
+              },
+            },
+            option.label,
+            option.sub ? h('small', { style: { marginLeft: 6, fontWeight: 400, color: 'var(--dsw-alias-label-tertiary)' } }, option.sub) : null,
+          )
+        }),
+      )
+    }
+
+    function sbxChip(text, tone, extra = {}) {
+      return h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 6, fontSize: 11.5, whiteSpace: 'nowrap', background: tint(tone, 14), color: tone, ...extra } }, text)
+    }
+    const sbxCode = (text) => h('code', { style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5, padding: '1px 6px', borderRadius: 5, background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-primary)' } }, text)
+
+    function SandboxSection(props) {
+      const t = props.t ?? ((key) => key)
+      const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+      const [envelope, setEnvelope] = React.useState(null)
+      const [status, setStatus] = React.useState('idle')
+      const [openPacks, setOpenPacks] = React.useState({})
+      const [item, setItem] = React.useState(null)
+      const [rewriteDraft, setRewriteDraft] = React.useState('')
+      const [advanced, setAdvanced] = React.useState(false)
+      const [confirmClear, setConfirmClear] = React.useState(false)
+      const [auditAll, setAuditAll] = React.useState(false)
+      // 第 4 步：溯源弹窗 / 手动挂到…
+      const [trace, setTrace] = React.useState(null)
+      const [attachFor, setAttachFor] = React.useState(null)
+      const [attachPick, setAttachPick] = React.useState('')
+      const [attachName, setAttachName] = React.useState('')
+      // 第 5 步：直写会话的事后改写弹窗 { name, busy, list, pick, text, risks, result }
+      const [surface, setSurface] = React.useState(null)
+      const extras = props.extras ?? null
+
+      const refresh = React.useCallback(() => postJson(STATE_ROUTE, undefined).then((data) => setEnvelope(data)), [])
+      React.useEffect(() => {
+        if (sessionId === '') return undefined
+        void refresh().catch(() => setStatus('error'))
+        const timer = setInterval(() => void refresh().catch(() => {}), 2500)
+        const onChanged = () => void refresh().catch(() => {})
+        window.addEventListener(STATE_EVENT, onChanged)
+        return () => {
+          clearInterval(timer)
+          window.removeEventListener(STATE_EVENT, onChanged)
+        }
+      }, [refresh, sessionId])
+
+      /** 改规则表：先取最新状态，改完整张写回 `sandbox`（必要时连带别的字段）。 */
+      const writeSandbox = React.useCallback(
+        async (mutate) => {
+          setStatus('saving')
+          try {
+            const fresh = await postJson(STATE_ROUTE, undefined)
+            const table = sbxClone(fresh?.state?.sandbox)
+            const extra = mutate(table, fresh?.state ?? {}) ?? {}
+            for (const [key, scope] of Object.entries(table)) {
+              if (scope === null || typeof scope !== 'object') delete table[key]
+              else if (!Array.isArray(scope.rules)) scope.rules = []
+            }
+            const data = await postJson(STATE_ROUTE, { sandbox: table, ...extra })
+            setEnvelope(data)
+            setStatus('saved')
+            window.dispatchEvent(new CustomEvent(STATE_EVENT))
+            return data
+          } catch (error) {
+            setStatus('error')
+            throw error
+          }
+        },
+        [],
+      )
+
+      if (sessionId === '') return null
+      const view = envelope?.sandboxView?.[sessionId] ?? null
+      const state = envelope?.state ?? {}
+      const scopeOf = (table, key) => (table[key] ??= { rules: [] })
+      const level = view?.level ?? 'observe'
+      const sessionScope = state?.sandbox?.[sessionId] ?? {}
+      const globalScope = state?.sandbox?.['*'] ?? {}
+
+      const pickLevel = (next) =>
+        void writeSandbox((table, fresh) => {
+          const scope = scopeOf(table, sessionId)
+          const was = scope.level
+          scope.level = next
+          const extra = {}
+          // 纯净模式 = 严格档：面板写 level，不再写 gate['pure']；gate 里这一格（pure / replace / pass）一并摘掉，
+          // 否则读取时「gate 里出现非 pure 的格」会把刚设的严格档撤掉。
+          if (fresh?.gate && Object.hasOwn(fresh.gate, sessionId)) {
+            const gate = { ...fresh.gate }
+            delete gate[sessionId]
+            extra.gate = gate
+          }
+          // 离开严格档：接管时清零的工具（只剩兜底 deny 的 tools 族）一并撤掉（和旧「关掉纯净模式」一样）。
+          if (was === 'strict' && next !== 'strict') {
+            const tools = scope.rules.filter((rule) => rule?.match?.tool !== undefined)
+            if (tools.length > 0 && tools.every((rule) => rule.action === 'deny' && rule.match.tool === '*')) {
+              scope.rules = scope.rules.filter((rule) => rule?.match?.tool === undefined)
+              if (Array.isArray(scope.own)) scope.own = scope.own.filter((family) => family !== 'tools')
+            }
+            if (Array.isArray(fresh?.armed) && fresh.armed.includes(sessionId)) extra.armed = fresh.armed.filter((id) => id !== sessionId)
+          }
+          return extra
+        }).catch(() => {})
+
+      const setGlobalLevel = (on) =>
+        void writeSandbox((table) => {
+          const scope = scopeOf(table, '*')
+          if (on && level !== 'strict') scope.level = level
+          else delete scope.level
+        }).catch(() => {})
+
+      const setPack = (id, scopeKey, action) =>
+        void writeSandbox((table) => {
+          const scope = scopeOf(table, scopeKey)
+          const packs = { ...(scope.packs ?? {}) }
+          if (action === undefined) delete packs[id]
+          else packs[id] = action
+          scope.packs = packs
+        }).catch(() => {})
+
+      /** 单条另设：本会话一条显式 allow / deny（精确名；工具不在这里设，见 sbxToolsByPack）。 */
+      const setItemRule = (group, name, action) =>
+        void writeSandbox((table) => {
+          const scope = scopeOf(table, sessionId)
+          const key = SBX_TARGET[group]
+          scope.rules = scope.rules.filter((rule) => !((rule.action === 'allow' || rule.action === 'deny') && rule.match?.[key] === name && rule.match?.exact === true))
+          if (action !== undefined) scope.rules.push({ match: { [key]: name, exact: true }, action })
+        }).catch(() => {})
+
+      /** 单条改写：和旧「改写注入内容」同一份数据（overrides 兼容视图 → 规则表 rewrite 族，own rewrite）。 */
+      const writeRewrite = (group, name, text) => {
+        setStatus('saving')
+        void postJson(STATE_ROUTE, undefined)
+          .then((fresh) => {
+            const overrides = { ...(fresh?.state?.overrides ?? {}) }
+            const entry = sbxClone(overrides[sessionId] ?? { messages: {}, sections: {}, contexts: {} })
+            entry[group] = { ...(entry[group] ?? {}) }
+            if (text === '' || text === (envelope?.injections?.sessions?.[sessionId]?.texts?.[group]?.[name] ?? null)) delete entry[group][name]
+            else entry[group][name] = text
+            overrides[sessionId] = entry
+            return postJson(STATE_ROUTE, { overrides })
+          })
+          .then((data) => {
+            setEnvelope(data)
+            setStatus('saved')
+            window.dispatchEvent(new CustomEvent(STATE_EVENT))
+          })
+          .catch(() => setStatus('error'))
+      }
+
+      const clearSession = () => {
+        if (!confirmClear) {
+          setConfirmClear(true)
+          setTimeout(() => setConfirmClear(false), 4000)
+          return
+        }
+        setConfirmClear(false)
+        void writeSandbox((table, fresh) => {
+          const scope = table[sessionId]
+          if (scope === undefined) return {}
+          // 系统提示（prefill:* 的改写）和接管带来的严格档不归这一页管：保留。
+          scope.rules = scope.rules.filter((rule) => rule.action === 'rewrite' && String(rule.match?.section ?? rule.match?.context ?? '').startsWith('prefill:'))
+          if (Array.isArray(scope.own)) scope.own = scope.own.filter((family) => family === 'rewrite' && scope.rules.length > 0)
+          delete scope.packs
+          if (scope.level !== 'strict') delete scope.level
+          return {}
+        }).catch(() => {})
+      }
+
+      // ── 溯源 / 挂来源包（第 4 步）──
+      const openTrace = (group, name, ai = false) => {
+        setTrace({ group, name, busy: true, ai: ai ? 'busy' : null, result: trace?.name === name && trace?.group === group ? trace.result : null })
+        void postJson(SANDBOX_ROUTE, { op: ai ? 'trace-ai' : 'trace', group, name, sessionId })
+          .then((result) => setTrace({ group, name, busy: false, ai: ai ? result?.ai ?? { ok: false, reason: 'no-reply' } : null, result }))
+          .catch((error) => setTrace({ group, name, busy: false, ai: null, result: { ok: false, reason: String(error?.message ?? error), candidates: [] } }))
+      }
+      const attach = (pack) =>
+        void postJson(SANDBOX_ROUTE, { op: 'attach', pack, sessionId })
+          .then((result) => {
+            setStatus(result?.ok ? 'saved' : 'error')
+            setTrace(null)
+            setAttachFor(null)
+            window.dispatchEvent(new CustomEvent(STATE_EVENT))
+            return refresh()
+          })
+          .catch(() => setStatus('error'))
+      const attachManual = () => {
+        if (attachFor === null) return
+        const member = { [SBX_TARGET[attachFor.group]]: attachFor.name, exact: true }
+        const name = attachName.trim()
+        if (attachPick === '' && name === '') return
+        const id = attachPick !== '' ? attachPick : `user:${name.toLowerCase().replace(/[^a-z0-9@/._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'pack'}`
+        attach({ id, label: attachPick !== '' ? undefined : name, members: [member], source: { via: 'manual' } })
+      }
+
+      // ── 直写会话的事后改写（第 5 步）──
+      const surfaceReason = (reason) => {
+        const key = `sbxSurfaceReason_${reason}`
+        const text = t(key)
+        return text === key ? String(reason ?? '') : text
+      }
+      const loadSurface = (name, extra = {}) =>
+        postJson(SANDBOX_ROUTE, { op: 'surface-list', sessionId, name })
+          .then((list) =>
+            setSurface((prev) => {
+              const candidates = list?.candidates ?? []
+              const keep = candidates.some((entry) => entry.seq === prev?.pick) ? prev.pick : candidates.at(-1)?.seq ?? null
+              return { ...(prev ?? {}), name, busy: false, list, pick: keep, ...extra }
+            }),
+          )
+          .catch((error) => setSurface((prev) => ({ ...(prev ?? {}), name, busy: false, list: { ok: false, reason: String(error?.message ?? error), candidates: [] } })))
+      const openSurface = (name) => {
+        setSurface({ name, busy: true, list: null, pick: null, text: '', risks: [], result: null })
+        void loadSurface(name)
+      }
+      const submitSurface = () => {
+        if (surface === null || surface.pick === null) return
+        const { name, pick, text, risks } = surface
+        setSurface((prev) => ({ ...prev, busy: true, result: null }))
+        void postJson(SANDBOX_ROUTE, { op: 'surface-edit', sessionId, seq: pick, text, risks })
+          .then((result) => loadSurface(name, { result, ...(result?.ok ? { risks: [] } : {}) }))
+          .then(() => refresh())
+          .catch((error) => setSurface((prev) => ({ ...prev, busy: false, result: { ok: false, reason: String(error?.message ?? error) } })))
+      }
+      const restoreSurface = (id) => {
+        if (surface === null) return
+        const { name } = surface
+        setSurface((prev) => ({ ...prev, busy: true, result: null }))
+        void postJson(SANDBOX_ROUTE, { op: 'surface-restore', sessionId, id })
+          .then((result) => loadSurface(name, { result: { ...result, restored: result?.ok === true } }))
+          .then(() => refresh())
+          .catch((error) => setSurface((prev) => ({ ...prev, busy: false, result: { ok: false, reason: String(error?.message ?? error) } })))
+      }
+      const activeSurfaceEdits = (Array.isArray(state?.surfaceEdits?.[sessionId]) ? state.surfaceEdits[sessionId] : []).filter((edit) => edit?.status === 'active' || edit?.status === 'pending')
+
+      const textsOf = (group, name) => envelope?.injections?.sessions?.[sessionId]?.texts?.[group]?.[name] ?? ''
+      const rewriteOf = (group, name) => state?.overrides?.[sessionId]?.[group]?.[name]
+      const sessionRule = (group, name) =>
+        (view?.rules?.session ?? []).find((rule) => rule.group === group && rule.name === name && rule.exact === true && rule.soft !== true)?.action
+
+      const statusLine =
+        status === 'idle' || status === 'saving'
+          ? null
+          : h('span', { style: { fontSize: 11.5, color: status === 'error' ? SBX_RED : 'var(--dsw-alias-label-tertiary)' } }, status === 'error' ? t('sbxFailed') : t('sbxSaved'))
+
+      // ── 档位 ──
+      const levelRow = h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+        h(
+          'div',
+          { style: { ...V.row, gap: 10 } },
+          h(SbxSegment, {
+            value: level,
+            onPick: pickLevel,
+            options: [
+              { value: 'observe', label: t('sbxLevelObserve'), sub: t('sbxLevelObserveSub') },
+              { value: 'controlled', label: t('sbxLevelControlled'), sub: t('sbxLevelControlledSub') },
+              { value: 'strict', label: t('sbxLevelStrict'), sub: t('sbxLevelStrictSub'), tone: SBX_RED },
+            ],
+          }),
+          view?.levelFrom === 'global' ? h('span', { style: V.sectionMeta }, t('sbxLevelFromGlobal')) : null,
+          level !== 'strict'
+            ? h(
+                'label',
+                { style: { ...V.row, gap: 5, fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
+                h('input', { type: 'checkbox', checked: globalScope.level === level, 'data-prefill-sbx-global-level': '', onChange: (event) => setGlobalLevel(event.target.checked) }),
+                t('sbxLevelGlobal'),
+              )
+            : null,
+          statusLine,
+        ),
+        h('div', { style: { ...V.hint, fontSize: 12 } }, t('sbxLevelHint')),
+        level === 'strict' ? h('div', { style: V.callout('warn') }, t('sbxStrictNote')) : null,
+      )
+
+      // ── 来源包 ──
+      const viaLabel = (source) =>
+        source?.via === 'ai' ? t('sbxViaAi') : source?.via === 'claim' ? t('sbxViaClaim') : source?.via === 'trace' ? t('sbxViaTrace') : source ? t('sbxViaManual') : ''
+      const itemEditor = (pack) => {
+        if (item === null || item.pack !== pack.id) return null
+        const { group, name } = item
+        const rule = sessionRule(group, name)
+        const canRewrite = group !== 'tools'
+        const original = textsOf(group, name)
+        return h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-1)' }, 'data-prefill-sbx-item-editor': `${group}:${name}` },
+          h('div', { style: V.row }, sbxChip(sbxGroupLabel(t, group), 'var(--dsw-alias-label-secondary)'), sbxCode(name)),
+          group === 'tools'
+            ? h('div', { style: V.sectionMeta }, t('sbxToolsByPack'))
+            : h(SbxSegment, {
+                size: 'small',
+                value: rule ?? 'follow',
+                onPick: (value) => setItemRule(group, name, value === 'follow' ? undefined : value),
+                options: [
+                  { value: 'follow', label: t('sbxFollow') },
+                  { value: 'allow', label: t('sbxAllow'), tone: SBX_GREEN },
+                  { value: 'deny', label: t('sbxDeny'), tone: SBX_RED },
+                ],
+              }),
+          canRewrite
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                h('span', { style: V.sectionMeta }, `${t('sbxRewrite')} · ${t('sbxRewriteHint')}`),
+                h('textarea', {
+                  style: { ...S.injectBox, minHeight: 64 },
+                  value: rewriteDraft,
+                  placeholder: original || name,
+                  spellCheck: false,
+                  'data-prefill-sbx-rewrite': `${group}:${name}`,
+                  onChange: (event) => setRewriteDraft(event.target.value),
+                  onBlur: () => {
+                    if (rewriteDraft !== (rewriteOf(group, name) ?? '')) writeRewrite(group, name, rewriteDraft)
+                  },
+                }),
+              )
+            : null,
+        )
+      }
+      const packRow = (pack) => {
+        const opened = openPacks[pack.id] === true
+        const explicit = pack.setting?.session ?? pack.setting?.global
+        const value = pack.effective === 'mixed' ? explicit ?? '' : pack.effective
+        const seen = new Map((pack.items ?? []).map((entry) => [`${entry.group}:${entry.name}`, entry]))
+        const chips = []
+        for (const member of pack.members ?? []) {
+          const key = `${member.group}:${member.name}`
+          if (member.name.includes('*') && member.exact !== true) continue
+          chips.push({ group: member.group, name: member.name, seen: seen.get(key), shared: member.shared })
+        }
+        for (const entry of pack.items ?? []) if (!chips.some((chip) => chip.group === entry.group && chip.name === entry.name)) chips.push({ group: entry.group, name: entry.name, seen: entry, shared: entry.shared })
+        const globalOn = pack.setting?.global !== undefined
+        return h(
+          'div',
+          { key: pack.id, 'data-prefill-sbx-pack': pack.id, style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-base)' } },
+            pack.locked
+              ? h('span', { style: { width: 14, textAlign: 'center' } }, '🔒')
+              : h('button', { type: 'button', 'aria-expanded': opened ? 'true' : 'false', style: { ...V.btnGhost, padding: '0 4px' }, onClick: () => setOpenPacks({ ...openPacks, [pack.id]: !opened }) }, h('span', { style: V.caret(opened) }, '▸')),
+            h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', minWidth: 0, flex: '1 1 220px' } },
+              h(
+                'div',
+                { style: { ...V.row, gap: 6 } },
+                h('b', { style: { fontSize: 13 } }, sbxLocal(t, `sbxPack_${pack.id}`, pack.label)),
+                pack.source ? sbxChip(viaLabel(pack.source), 'var(--pf-user)') : pack.origin === 'core' ? sbxChip(t('sbxOriginCore'), 'var(--dsw-alias-label-secondary)') : pack.origin === 'third-party' ? sbxChip(t('sbxOriginThird'), 'var(--dsw-alias-label-secondary)') : null,
+                pack.locked ? sbxChip(t('sbxAlways'), 'var(--dsw-alias-label-secondary)') : null,
+              ),
+              h('span', { style: { ...V.sectionMeta, overflow: 'hidden', textOverflow: 'ellipsis' } }, pack.origin === 'third-party' && pack.plugin ? pack.profile ?? pack.plugin : sbxLocal(t, `sbxPackSummary_${pack.id}`, pack.summary ?? pack.plugin ?? '')),
+            ),
+            pack.note && value === 'deny' ? sbxChip(sbxLocal(t, `sbxPackNote_${pack.id}`, pack.note.split('；')[0]), 'var(--dsw-alias-state-warn-primary)') : null,
+            pack.locked
+              ? null
+              : h(SbxSegment, {
+                  size: 'small',
+                  value,
+                  onPick: (action) => setPack(pack.id, sessionId, action),
+                  options: [
+                    { value: 'allow', label: t('sbxAllow'), tone: SBX_GREEN, soft: explicit === undefined, title: explicit === undefined ? t('sbxDefaultTip') : '' },
+                    { value: 'deny', label: t('sbxDeny'), tone: SBX_RED, soft: explicit === undefined, title: explicit === undefined ? t('sbxDefaultTip') : '' },
+                  ],
+                }),
+            pack.locked || pack.setting?.session === undefined
+              ? null
+              : h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, title: t('sbxReset'), onClick: () => setPack(pack.id, sessionId, undefined) }, '↺'),
+            pack.locked
+              ? null
+              : h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: { ...V.btn, fontSize: 12 },
+                    'data-prefill-sbx-remember': pack.id,
+                    onClick: () => setPack(pack.id, '*', globalOn ? undefined : explicit ?? (value === '' ? 'allow' : value)),
+                  },
+                  globalOn ? t('sbxForget') : t('sbxRemember'),
+                ),
+          ),
+          opened && !pack.locked
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 6, marginLeft: 18, paddingLeft: 12, borderLeft: '2px solid var(--dsw-alias-border-l1)' } },
+                h(
+                  'div',
+                  { style: { ...V.row, gap: 6 } },
+                  ...chips.map((chip) => {
+                    const action = chip.seen?.action
+                    const tone = action === 'deny' ? SBX_RED : action === 'allow' || action === 'rewrite' ? SBX_GREEN : 'var(--dsw-alias-label-tertiary)'
+                    const selected = item?.pack === pack.id && item.group === chip.group && item.name === chip.name
+                    return h(
+                      'button',
+                      {
+                        key: `${chip.group}:${chip.name}`,
+                        type: 'button',
+                        'data-prefill-sbx-item': `${chip.group}:${chip.name}`,
+                        title: [chip.seen ? '' : t('sbxNotSeen'), chip.shared ? t('sbxShared') : ''].filter((part) => part !== '').join(' · '),
+                        onClick: () => {
+                          setItem(selected ? null : { pack: pack.id, group: chip.group, name: chip.name })
+                          setRewriteDraft(rewriteOf(chip.group, chip.name) ?? '')
+                        },
+                        style: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 7, border: `1px solid ${selected ? SBX_PURPLE : 'var(--dsw-alias-border-l1)'}`, background: 'var(--dsw-alias-bg-layer-1)', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer', opacity: chip.seen ? 1 : 0.6 },
+                      },
+                      h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, sbxGroupLabel(t, chip.group)),
+                      h('code', { style: { fontFamily: 'ui-monospace, Menlo, monospace', color: tone } }, chip.name),
+                      chip.shared ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, '⇄') : null,
+                    )
+                  }),
+                  h('span', { style: V.sectionMeta }, t('sbxItemsHint')),
+                ),
+                itemEditor(pack),
+              )
+            : null,
+        )
+      }
+
+      // ── 未归属 ──
+      const unassigned = view?.unassigned ?? []
+      const unassignedCard =
+        unassigned.length === 0
+          ? null
+          : h(
+              'div',
+              { 'data-prefill-sbx-unassigned': '', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--dsw-alias-state-warn-primary)', background: tint('var(--dsw-alias-state-warn-primary)', 6) } },
+              h('div', { style: { ...V.row, gap: 6 } }, h('b', null, `? ${t('sbxUnassigned')} · ${unassigned.length}`), h('span', { style: V.sectionMeta }, t('sbxUnassignedSub'))),
+              ...unassigned.map((entry) => {
+                const rule = sessionRule(entry.group, entry.name)
+                return h(
+                  'div',
+                  { key: `${entry.group}:${entry.name}`, style: { ...V.row, gap: 8 }, title: entry.preview || entry.name, 'data-prefill-sbx-unassigned-row': `${entry.group}:${entry.name}` },
+                  h('span', { style: V.sectionMeta }, sbxGroupLabel(t, entry.group)),
+                  sbxCode(entry.name),
+                  sbxChip(`${sbxLevelLabel(t, level)}：${entry.action === 'deny' ? t('sbxDeny') : t('sbxAllow')}`, entry.action === 'deny' ? SBX_RED : SBX_GREEN),
+                  h('span', { style: { flex: '1 1 auto' } }),
+                  ...(entry.claims ?? []).map((claim) =>
+                    h(
+                      'button',
+                      { key: `claim-${claim.id}`, type: 'button', style: { ...V.btn, fontSize: 12 }, title: claim.members.map((member) => sbxMemberText(t, member)).join('、'), 'data-prefill-sbx-claim': claim.id, onClick: () => attach({ id: claim.id, label: claim.label, plugin: claim.plugin, members: claim.members, source: { via: 'claim', plugin: claim.plugin } }) },
+                      t('sbxAttachClaim').replace('{pkg}', claim.label).replace('{n}', String(claim.members.length)),
+                    ),
+                  ),
+                  h('button', { type: 'button', style: { ...V.btn, fontSize: 12, background: SBX_PURPLE, color: '#fff', borderColor: SBX_PURPLE }, 'data-prefill-sbx-trace': `${entry.group}:${entry.name}`, onClick: () => openTrace(entry.group, entry.name) }, t('sbxTrace')),
+                  h('button', { type: 'button', style: { ...V.btn, fontSize: 12 }, 'data-prefill-sbx-attach-to': `${entry.group}:${entry.name}`, onClick: () => { setAttachFor({ group: entry.group, name: entry.name }); setAttachPick(''); setAttachName('') } }, t('sbxAttachTo')),
+                  entry.group === 'tools'
+                    ? null
+                    : h(
+                        'button',
+                        { type: 'button', style: { ...V.btnGhost, fontSize: 12 }, 'data-prefill-sbx-here': `${entry.group}:${entry.name}`, onClick: () => setItemRule(entry.group, entry.name, rule === undefined ? (entry.action === 'deny' ? 'allow' : 'deny') : undefined) },
+                        rule === undefined ? (entry.action === 'deny' ? t('sbxAllowHere') : t('sbxBlockedHere')) : t('sbxReset'),
+                      ),
+                )
+              }),
+            )
+
+      // ── 审计 ──
+      const handlingText = (row) =>
+        ({ registry: t('sbxHRegistry'), dropped: t('sbxHDropped'), 'tool-filtered': t('sbxHTool'), strict: t('sbxHStrict'), direct: t('sbxHDirect'), protocol: t('sbxHProtocol'), rewrite: t('sbxHRewrite'), allowed: t('sbxHAllowed') })[row.handling] ?? row.handling
+      const handlingTone = (row) =>
+        row.handling === 'direct' ? 'var(--dsw-alias-state-warn-primary)' : row.handling === 'protocol' || row.handling === 'allowed' ? 'var(--dsw-alias-label-secondary)' : row.handling === 'rewrite' ? SBX_PURPLE : SBX_RED
+      // DSH 核心包里放行的（各工具说明段等作用域内注册的核心条目）默认不列，免得淹没真正要看的几条。
+      const coreIds = new Set((view?.packs ?? []).filter((pack) => pack.origin === 'core').map((pack) => pack.id))
+      const auditAllRows = view?.audit ?? []
+      const auditRows = auditAll ? auditAllRows : auditAllRows.filter((row) => !(row.handling === 'allowed' && coreIds.has(row.pack)))
+      const auditHidden = auditAllRows.length - auditRows.length
+      const cell = { padding: '6px 8px', borderBottom: '1px solid var(--dsw-alias-border-l1)', textAlign: 'left', verticalAlign: 'middle' }
+      const auditMore =
+        auditHidden > 0 || auditAll
+          ? h(
+              'div',
+              { style: { ...V.row, gap: 6 } },
+              auditHidden > 0 ? h('span', { style: V.sectionMeta }, t('sbxAuditHidden').replace('{n}', String(auditHidden))) : null,
+              h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, onClick: () => setAuditAll(!auditAll) }, auditAll ? '−' : t('sbxAuditShowAll')),
+            )
+          : null
+      const auditTable =
+        auditAllRows.length === 0
+          ? h('div', { style: V.sectionMeta }, t('sbxAuditEmpty'))
+          : h(
+              'table',
+              { style: V.table, 'data-prefill-sbx-audit': '' },
+              h('thead', null, h('tr', null, ...[t('sbxColCount'), t('sbxColSource'), t('sbxColName'), t('sbxColHandling'), ''].map((label, index) => h('th', { key: index, style: { ...cell, color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 } }, label)))),
+              h(
+                'tbody',
+                null,
+                ...auditRows.map((row) =>
+                  h(
+                    'tr',
+                    { key: `${row.group}:${row.name}`, title: row.preview || row.name, 'data-prefill-sbx-audit-row': `${row.group}:${row.name}` },
+                    h('td', { style: cell }, String(row.count ?? 1)),
+                    h('td', { style: cell }, row.pack ? sbxLocal(t, `sbxPack_${row.pack}`, row.packLabel) : t('sbxUnknownSource')),
+                    h('td', { style: cell }, sbxCode(row.name)),
+                    h('td', { style: cell }, sbxChip(handlingText(row), handlingTone(row))),
+                    h(
+                      'td',
+                      { style: cell },
+                      row.pack === undefined && row.handling !== 'protocol' && row.group !== 'tools'
+                        ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12, color: 'var(--pf-user)' }, 'data-prefill-sbx-audit-trace': `${row.group}:${row.name}`, onClick: () => openTrace(row.group, row.name) }, t('sbxTrace'))
+                        : null,
+                      row.handling === 'direct' && row.group === 'messages'
+                        ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12, color: 'var(--dsw-alias-state-warn-primary)' }, 'data-prefill-sbx-surface-open': row.name, onClick: () => openSurface(row.name) }, t('sbxSurfaceOpen'))
+                        : null,
+                      extras?.auditActions ? extras.auditActions(row) : null,
+                    ),
+                  ),
+                ),
+              ),
+            )
+
+      function sbxAttachBox() {
+        const choices = (view?.packs ?? []).filter((pack) => !pack.locked)
+        return h(
+          'div',
+          { 'data-prefill-sbx-attach': `${attachFor.group}:${attachFor.name}`, style: { ...V.row, gap: 8, padding: '10px 12px', borderRadius: 10, border: `1px solid ${SBX_PURPLE}`, background: tint(SBX_PURPLE, 6) } },
+          h('b', null, t('sbxAttachTo')),
+          sbxCode(attachFor.name),
+          h(
+            'select',
+            { style: S.dockSelect, value: attachPick, 'data-prefill-sbx-attach-pick': '', onChange: (event) => setAttachPick(event.target.value) },
+            h('option', { value: '' }, `— ${t('sbxAttachNew')} —`),
+            ...choices.map((pack) => h('option', { key: pack.id, value: pack.id }, sbxLocal(t, `sbxPack_${pack.id}`, pack.label))),
+          ),
+          attachPick === '' ? h('input', { style: S.dockName, value: attachName, placeholder: t('sbxAttachNew'), 'data-prefill-sbx-attach-name': '', onChange: (event) => setAttachName(event.target.value) }) : null,
+          h('button', { type: 'button', style: V.btn, 'data-prefill-sbx-attach-go': '', onClick: attachManual }, t('sbxAttachGo')),
+          h('button', { type: 'button', style: V.btnGhost, onClick: () => setAttachFor(null) }, t('sbxCancel')),
+        )
+      }
+
+      function sbxTraceDialog() {
+        const result = trace.result
+        const top = result?.candidates?.[0]
+        const others = (result?.candidates ?? []).slice(1, 5)
+        const confidence = top ? { high: t('sbxTraceHigh'), medium: t('sbxTraceMedium'), low: t('sbxTraceLow') }[top.confidence] : ''
+        const ai = trace.ai
+        const pack = result?.pack
+        const single = result?.single
+        const rejected = pack?.rejected?.length ?? 0
+        return h(
+          'div',
+          { style: { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.28)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '8vh 16px' }, onClick: () => setTrace(null) },
+          h(
+            'div',
+            { role: 'dialog', 'data-prefill-sbx-trace-dialog': `${trace.group}:${trace.name}`, onClick: (event) => event.stopPropagation(), style: { width: 'min(620px, 100%)', maxHeight: '80vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 14, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 16px 40px rgba(0,0,0,0.22)' } },
+            h('b', { style: { fontSize: 15 } }, (ai && ai !== 'busy' && ai.ok ? t('sbxTraceAiTitle') : t('sbxTraceTitle')).replace('{name}', trace.name)),
+            h('div', { style: V.sectionMeta }, t('sbxTraceDesc')),
+            trace.busy && result === null ? h('div', { style: V.hint }, t('sbxTraceBusy')) : null,
+            result && !top ? h('div', { style: V.callout('warn') }, t('sbxTraceNone').replace('{p}', String(result.scanned?.packages ?? 0)).replace('{f}', String(result.scanned?.files ?? 0))) : null,
+            top
+              ? h(
+                  'pre',
+                  { 'data-prefill-sbx-trace-code': '', style: { margin: 0, padding: '10px 12px', borderRadius: 10, background: '#1f2128', color: '#e8e8ee', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, Menlo, monospace' } },
+                  `${top.package}@${top.version}  ${top.file}:${top.line}\n${top.snippet}`,
+                )
+              : null,
+            top
+              ? h(
+                  'div',
+                  { style: { ...V.callout(), maxWidth: 'none', fontSize: 12.5 } },
+                  t('sbxTraceConclusion').replace('{pkg}', top.package).replace('{how}', top.how).replace('{c}', confidence),
+                  top.siblings?.length > 0 ? h('div', null, t('sbxTraceSiblings'), top.siblings.slice(0, 10).map((entry) => `${sbxGroupLabel(t, entry.group)} ${entry.name}`).join('、')) : null,
+                  others.length > 0 ? h('div', { style: V.sectionMeta }, t('sbxTraceOthers'), others.map((entry) => `${entry.package} ${entry.file}:${entry.line}`).join('；')) : null,
+                )
+              : null,
+            ai === 'busy' ? h('div', { style: V.hint }, t('sbxTraceAiBusy')) : null,
+            ai && ai !== 'busy' && ai.ok ? h('div', { style: { ...V.callout('brand'), maxWidth: 'none', fontSize: 12.5, whiteSpace: 'pre-wrap' }, 'data-prefill-sbx-trace-ai': '' }, h('b', null, t('sbxTraceAiBy').replace('{m}', ai.model ?? '')), ai.text) : null,
+            ai && ai !== 'busy' && !ai.ok ? h('div', { style: V.callout('warn') }, t('sbxTraceAiFailed').replace('{r}', ai.reason ?? '')) : null,
+            (result?.claims ?? []).length > 0 ? h('div', { style: V.sectionMeta }, t('sbxTraceClaims'), result.claims.map((claim) => `${claim.plugin}（${claim.members.length}）`).join('、')) : null,
+            h('div', { style: V.sectionMeta }, t('sbxTraceNotice'), rejected > 0 ? ` ${t('sbxTraceRejected').replace('{n}', String(rejected))}` : ''),
+            h(
+              'div',
+              { style: { ...V.row, justifyContent: 'flex-end', gap: 8 } },
+              top && ai === null ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-sbx-trace-ai-go': '', onClick: () => openTrace(trace.group, trace.name, true) }, t('sbxTraceAi')) : null,
+              h('button', { type: 'button', style: V.btn, onClick: () => setTrace(null) }, t('sbxIgnore')),
+              single ? h('button', { type: 'button', style: V.btn, 'data-prefill-sbx-attach-one': '', onClick: () => attach({ ...single, source: { ...single.source, via: ai && ai !== 'busy' && ai.ok ? 'ai' : 'trace' } }) }, t('sbxAttachOne')) : null,
+              pack && pack.members.length > 0
+                ? h('button', { type: 'button', style: { ...V.btn, background: SBX_PURPLE, color: '#fff', borderColor: SBX_PURPLE }, 'data-prefill-sbx-attach-all': '', onClick: () => attach(pack) }, t('sbxAttachAll').replace('{pkg}', pack.label).replace('{n}', String(pack.members.length)))
+                : null,
+            ),
+          ),
+        )
+      }
+
+      function sbxSurfaceDialog() {
+        const list = surface.list
+        const candidates = list?.candidates ?? []
+        const picked = candidates.find((entry) => entry.seq === surface.pick)
+        const userType = picked?.type === 'user/message'
+        const risks = Array.isArray(surface.risks) ? surface.risks : []
+        const allRisks = SBX_SURFACE_RISKS.every((risk) => risks.includes(risk))
+        const canGo = !surface.busy && list?.ready === true && picked !== undefined && allRisks && !(userType && surface.text === '')
+        const result = surface.result
+        const toggleRisk = (risk) => setSurface((prev) => ({ ...prev, risks: (prev.risks ?? []).includes(risk) ? prev.risks.filter((entry) => entry !== risk) : [...(prev.risks ?? []), risk] }))
+        return h(
+          'div',
+          { style: { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.28)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '8vh 16px' }, onClick: () => setSurface(null) },
+          h(
+            'div',
+            { role: 'dialog', 'data-prefill-sbx-surface-dialog': surface.name || '*', onClick: (event) => event.stopPropagation(), style: { width: 'min(660px, 100%)', maxHeight: '80vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 14, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 16px 40px rgba(0,0,0,0.22)' } },
+            h('b', { style: { fontSize: 15 } }, surface.name ? t('sbxSurfaceTitle').replace('{name}', surface.name) : t('sbxSurfaceTitleAll')),
+            h('div', { style: V.sectionMeta }, t('sbxSurfaceDesc')),
+            surface.busy && list === null ? h('div', { style: V.hint }, t('sbxSurfaceBusy')) : null,
+            list && list.ready === false ? h('div', { style: V.callout('warn'), 'data-prefill-sbx-surface-notready': list.reason ?? '' }, t('sbxSurfaceNotReady').replace('{r}', surfaceReason(list.reason))) : null,
+            list && candidates.length === 0 ? h('div', { style: V.hint }, t('sbxSurfaceNone')) : null,
+            ...candidates.map((entry) =>
+              h(
+                'label',
+                { key: `c-${entry.seq}`, 'data-prefill-sbx-surface-item': String(entry.seq), style: { display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 8px', borderRadius: 8, border: `1px solid ${entry.seq === surface.pick ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-border-l1)'}`, cursor: 'pointer' } },
+                h('input', { type: 'radio', checked: entry.seq === surface.pick, onChange: () => setSurface((prev) => ({ ...prev, pick: entry.seq, text: entry.edit?.text ?? '', result: null })) }),
+                h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: '1 1 auto' } },
+                  h(
+                    'div',
+                    { style: { ...V.row, gap: 6 } },
+                    sbxCode(entry.name),
+                    h('span', { style: V.sectionMeta }, `${entry.turn !== null && entry.turn !== undefined ? t('sbxSurfaceTurn').replace('{n}', String(entry.turn)) : ''} · seq ${entry.seq}`),
+                    entry.edit ? sbxChip(entry.edit.pending ? t('sbxSurfacePendingTag') : t('sbxSurfaceEdited'), SBX_PURPLE) : null,
+                    h('span', { style: { flex: '1 1 auto' } }),
+                    entry.edit ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12 }, 'data-prefill-sbx-surface-restore': entry.edit.id, onClick: (event) => { event.preventDefault?.(); restoreSurface(entry.edit.id) } }, t('sbxSurfaceRestore')) : null,
+                  ),
+                  h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 90, overflow: 'hidden' } }, entry.edit ? `→ ${entry.edit.text === '' ? '∅' : entry.edit.text}\n（${entry.preview}）` : entry.preview),
+                ),
+              ),
+            ),
+            picked
+              ? h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                  h('b', { style: { fontSize: 12.5 } }, t('sbxSurfaceTo')),
+                  h('textarea', { rows: 3, value: surface.text, 'data-prefill-sbx-surface-text': '', placeholder: userType ? t('sbxSurfaceEmptyUser') : t('sbxSurfaceEmptyHint'), onChange: (event) => setSurface((prev) => ({ ...prev, text: event.target.value })), style: { width: '100%', boxSizing: 'border-box', fontSize: 12.5, padding: 8, borderRadius: 8, border: '1px solid var(--dsw-alias-border-l1)', background: 'transparent', color: 'inherit' } }),
+                  h('span', { style: V.sectionMeta }, userType ? t('sbxSurfaceEmptyUser') : t('sbxSurfaceEmptyHint')),
+                )
+              : null,
+            ...SBX_SURFACE_RISKS.map((risk) =>
+              h(
+                'label',
+                { key: `r-${risk}`, style: { ...V.row, gap: 6, alignItems: 'flex-start', fontSize: 12.5 } },
+                h('input', { type: 'checkbox', checked: risks.includes(risk), 'data-prefill-sbx-surface-risk': risk, onChange: () => toggleRisk(risk) }),
+                h('span', null, t(`sbxSurfaceRisk_${risk}`)),
+              ),
+            ),
+            result && result.ok && result.restored ? h('div', { style: V.callout(), 'data-prefill-sbx-surface-result': 'restored' }, t('sbxSurfaceRestored')) : null,
+            result && result.ok && result.pending ? h('div', { style: V.callout(), 'data-prefill-sbx-surface-result': 'pending' }, t('sbxSurfacePending')) : null,
+            result && result.ok && !result.restored && !result.pending ? h('div', { style: V.callout(), 'data-prefill-sbx-surface-result': 'ok' }, t('sbxSurfaceDone').replace('{seq}', String(result.edit?.currentSeq ?? ''))) : null,
+            result && !result.ok ? h('div', { style: V.callout('warn'), 'data-prefill-sbx-surface-result': 'failed' }, t('sbxSurfaceFailed').replace('{r}', surfaceReason(result.reason))) : null,
+            h(
+              'div',
+              { style: { ...V.row, justifyContent: 'flex-end', gap: 8 } },
+              h('button', { type: 'button', style: V.btn, onClick: () => setSurface(null) }, t('sbxCancel')),
+              h('button', { type: 'button', disabled: !canGo, 'data-prefill-sbx-surface-go': '', style: { ...V.btn, background: canGo ? SBX_RED : undefined, color: canGo ? '#fff' : undefined, borderColor: SBX_RED, opacity: canGo ? 1 : 0.55 }, onClick: () => canGo && submitSurface() }, t('sbxSurfaceGo')),
+            ),
+          ),
+        )
+      }
+
+      const surfaceLine = h(
+        'div',
+        { style: { ...V.row, gap: 8 } },
+        activeSurfaceEdits.length > 0 ? sbxChip(t('sbxSurfaceActive').replace('{n}', String(activeSurfaceEdits.length)), SBX_PURPLE) : null,
+        h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5, color: 'var(--dsw-alias-state-warn-primary)' }, 'data-prefill-sbx-surface-all': '', onClick: () => openSurface('') }, t('sbxSurfaceAll')),
+      )
+
+      const sectionHead = (title, sub) =>
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 } },
+          h('b', { style: { fontSize: 13.5 } }, title),
+          h('span', { style: V.sectionMeta }, sub),
+          h('span', { style: { flex: '1 1 auto', height: 1, background: 'var(--dsw-alias-border-l1)' } }),
+        )
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 10 }, 'data-prefill-sandbox': sessionId },
+        h('div', { style: { ...V.hint, maxWidth: '80ch' } }, t('sbxIntro')),
+        levelRow,
+        sectionHead(t('sbxPacks'), t('sbxPacksSub')),
+        ...(view?.packs ?? []).map(packRow),
+        unassignedCard,
+        sectionHead(t('sbxAudit'), t('sbxAuditSub')),
+        auditTable,
+        auditMore,
+        surfaceLine,
+        attachFor !== null ? sbxAttachBox() : null,
+        trace !== null ? sbxTraceDialog() : null,
+        surface !== null ? sbxSurfaceDialog() : null,
+        extras?.dialogs ?? null,
+        h(
+          'div',
+          { style: { ...V.row, marginTop: 4 } },
+          h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12 }, 'aria-expanded': advanced ? 'true' : 'false', onClick: () => setAdvanced(!advanced) }, h('span', { style: V.caret(advanced) }, '▸'), ` ${t('sbxAdvanced')}`),
+          h('span', { style: { flex: '1 1 auto' } }),
+          h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12 }, onClick: clearSession, 'data-prefill-sbx-clear': '' }, confirmClear ? t('confirmYes') : t('sbxClear')),
+        ),
+        advanced ? h(InjectionSection, { t, sessionId, compact: true }) : null,
+      )
+    }
+
     function InjectionSection(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
@@ -7196,16 +8737,14 @@ window.__ModuleLoader__.load({
         void call(undefined)
           .then((env) => {
             const overrides = { ...(env?.state?.overrides ?? {}) }
-            const injects = { ...(env?.state?.injects ?? {}) }
             const sessionAllowKinds = { ...(env?.state?.sessionAllowKinds ?? {}) }
             const sessionTools = { ...(env?.state?.sessionTools ?? {}) }
             const injectionBlocks = { ...(env?.state?.injectionBlocks ?? {}) }
             delete overrides[sessionId]
-            delete injects[sessionId]
             delete sessionAllowKinds[sessionId]
             delete sessionTools[sessionId]
             delete injectionBlocks[sessionId]
-            return call({ overrides, injects, sessionAllowKinds, sessionTools, injectionBlocks })
+            return call({ overrides, sessionAllowKinds, sessionTools, injectionBlocks })
           })
           .then((data) => {
             setEnvelope(data)
@@ -7299,7 +8838,8 @@ window.__ModuleLoader__.load({
           { style: S.injectBody },
           count === 0 ? h('div', { style: S.injectGroupHead }, t('injectNone')) : null,
           // 疑似未登记注入：默认放行只记录；可本会话阻断，或全局记住（之后所有会话提前拦）。
-          auditRows.length === 0
+          // 会话沙盒页（第 3 步）里这一块由「来源包 / 未归属 / 本会话审计」接管：compact 时不显示。
+          props.compact || auditRows.length === 0
             ? null
             : h(
                 'div',
@@ -7308,7 +8848,7 @@ window.__ModuleLoader__.load({
                 h('span', { style: S.chipStatic }, `${auditRows.length}`),
                 h('span', { style: S.injectRule }),
               ),
-          ...auditRows.map((row) => {
+          ...(props.compact ? [] : auditRows).map((row) => {
             const inSession = blockListOf(sessionId, row.group).includes(row.name)
             const inGlobal = blockListOf('*', row.group).includes(row.name)
             const groupLabel = row.group === 'sections' ? t('injectSections') : row.group === 'contexts' ? t('injectContexts') : t('injectMessages')
@@ -7338,15 +8878,15 @@ window.__ModuleLoader__.load({
                   ],
             )
           }),
-          // 本会话白名单：点标签即生效（会话级，不动全局那张表）。
-          h(
+          // 本会话白名单：点标签即生效（会话级，不动全局那张表）。会话沙盒页里由档位 / 来源包接管。
+          props.compact ? null : h(
             'div',
             { style: S.injectGroupHead },
             h('span', null, t('allowSessionLabel')),
             inheritsGlobal ? h('span', { style: S.chipStatic }, `${t('allowSessionInherit')}：${globalAllow.join(', ')}`) : null,
             h('span', { style: S.injectRule }),
           ),
-          h(
+          props.compact ? null : h(
             'div',
             { style: S.chipRow },
             ...(catalog.messages ?? []).map((kind) =>
@@ -7521,7 +9061,6 @@ window.__ModuleLoader__.load({
       const filterOn = armed === true && levers.blockMessages === true
       const gate = pureOn ? 'pure' : filterOn ? 'filter' : 'pass'
       const turns = envelope?.turns?.[sessionId] ?? 0
-      const injected = (envelope?.injects?.[sessionId] ?? 0) > 0
       const tools = envelope?.state?.sessionTools?.[sessionId]
       const persona = envelope?.state?.overrides?.[sessionId]?.sections?.['prefill:persona']
       const hasPersona = typeof persona === 'string' && persona.trim() !== ''
@@ -7535,7 +9074,7 @@ window.__ModuleLoader__.load({
             : gate === 'filter'
               ? t('stateFilter')
               : t('statePass')
-      const modeText = turns > 0 ? t('modeInject') : t('modeHistory')
+      const modeText = turns > 0 ? t('itemsAfterRun') : t('modeHistory')
       const toolsText = Array.isArray(tools) ? (tools.length === 0 ? t('toolsZero') : `${tools.length} ${t('toolsUnit')}`) : ''
       const summary = [gateText, modeText, toolsText].filter((part) => part !== '').join(' · ')
 
@@ -7552,7 +9091,7 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
-        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-prefill: copy dictionaries')
+        ctx.effect(() => ctx.locale.register(NS, { zh: { ...zh, ...SBX_TEXT.zh }, en: { ...en, ...SBX_TEXT.en } }), 'dsh-prefill: copy dictionaries')
 
         const t = ctx.locale.bind(NS)
 
