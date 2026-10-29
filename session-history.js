@@ -6,11 +6,15 @@
  * 取什么：
  * - 用户原话（source.kind === 'user'，含套预设时首轮写进历史的开场条目）；
  * - 模型回答正文（同一轮多个步骤的正文合成一条），可选带思维链。
+ * - 手动注入（source.kind === 'prefill' 且 source.prefill === 'manual'，issue #19）：那是用户在会话中途
+ *   补进剧情的话，按 source.manual.role 还原成对应角色的条目（「AI 回答」去掉发送时加的标注）；
  * 不取什么：
- * - 插件注入（每轮注入 / 世界书 / 故事记忆 / 会话内注入，source.kind === 'prefill'）、
+ * - 插件注入（每轮注入 / 世界书 / 故事记忆，source.kind === 'prefill'）、
  *   runtime-context、系统提示 —— 这些由预设的其他字段或新会话自己重新生成；
  * - 工具调用和工具结果：开场条目只有纯文本，写回去会变成「AI 说自己调了工具」，默认丢掉，只计数。
  */
+
+import { isManual, unrenderManual } from './inject-once.js'
 
 /** 一条消息里的纯文本（只取 text 段）。 */
 function textOf(message) {
@@ -67,6 +71,17 @@ export function historyToItems(events, opts = {}) {
       if (turn > lastTurn) lastTurn = turn
     } else if (type === 'user/message') {
       const kind = data?.source?.kind
+      if (isManual(data)) {
+        if (!inRange()) continue
+        flush()
+        const role = data.source.manual?.role === 'assistant' ? 'assistant' : 'user'
+        const text = unrenderManual(textOf(data), role).trim()
+        if (text !== '') {
+          items.push(role === 'assistant' ? { role, text, reasoning: '' } : { role, text })
+          taken.add(turn)
+        }
+        continue
+      }
       if (kind !== 'user') {
         if (kind === 'prefill' && inRange()) skipped += 1
         continue
