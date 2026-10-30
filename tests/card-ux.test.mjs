@@ -124,6 +124,6 @@ test('芯片是纯开关；钉住用 Lucide pin，收起用 chevron-down', () =>
   assert.match(shrink, /hoverRef\.current \|\| holdRef\.current/)
   assert.match(shrink, /typing && cardRef\.current\?\.contains\(active\)/)
   assert.match(src, /const holdOpen = menu !== '' \|\| fetchPending !== null \|\| confirming !== ''/)
-  assert.match(src, /pointerEvents: shrunk \? 'none' : 'auto'/)
+  assert.match(src, /pointerEvents: shrunk \|\| closing \? 'none' : 'auto'/)
   assert.match(src, /prefers-reduced-motion: reduce/)
 })
