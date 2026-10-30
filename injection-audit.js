@@ -8,7 +8,7 @@
  *   · 用户可以在「改写注入」面板里对某一条点「本会话阻断」，或「全局记住」——
  *     之后所有会话都提前拦掉。
  *
- * 状态形状（state.json 顶层 `injectionBlocks`，UI 整体写回）：
+ * 状态形状（旧：state.json 顶层 `injectionBlocks`，UI 整体写回；现在读取时迁成 `state.sandbox` 的 deny 规则，见 sandbox.js）：
  * ```jsonc
  * "injectionBlocks": {
  *   "session-xxx": { "messages": ["agent-message"], "contexts": ["team:identity"], "sections": [] },
@@ -22,6 +22,8 @@
  *   · contexts / sections：在注册表层面清掉（本作用域的注册改正文为空，继承来的注册空遮蔽项），
  *     对 required 上下文、step() 里的 refreshContext 一样有效。
  */
+
+import { policyBlocks } from './sandbox.js'
 
 /** 挂 Symbol 穿过内核热换。 */
 const AUDIT = (globalThis[Symbol.for('dsh-prefill.injection-audit')] ??= new Map())
@@ -70,6 +72,8 @@ function previewOf(content) {
 export function classifySurfaceEvent(event, known, prestepKinds = new Set()) {
   const findings = []
   const type = event?.type
+  // 替换事件（压缩 checkpoint、系统提示对齐、沙盒第 5 步的事后改写）不是新注入：原文那条已经记过了。
+  if (event?.surfaceOp !== undefined && event.surfaceOp !== 'append') return findings
   if (type === 'user/message') {
     const message = event.data
     const kind = message?.source?.kind
@@ -162,18 +166,15 @@ export function forgetSession(sessionId) {
   PRESTEP_KINDS.delete(sessionId)
 }
 
-function listOf(value) {
-  return Array.isArray(value) ? value.filter((name) => typeof name === 'string' && name !== '') : []
-}
-
-/** 本会话生效的阻断名单 = 会话级 ∪ 全局记住（'*'）。 */
-export function blocksFor(state, sessionId) {
-  const all = state?.injectionBlocks
-  const pick = (key) => (all !== null && typeof all === 'object' && all[key] !== null && typeof all[key] === 'object' ? all[key] : {})
-  const session = typeof sessionId === 'string' ? pick(sessionId) : {}
-  const global = pick('*')
-  const merge = (group) => new Set([...listOf(global[group]), ...listOf(session[group])].filter((name) => !name.startsWith('prefill:')))
-  return { messages: merge('messages'), contexts: merge('contexts'), sections: merge('sections') }
+/**
+ * 本会话生效的阻断名单 = 会话级 ∪ 全局记住（'*'）。
+ * 会话沙盒第 1 步（issue #15）起数据在 state.sandbox 的 deny 规则里；旧形状的 `state.injectionBlocks` 照样认（读取时迁移）。
+ * 第 2 步：受控档 / 有来源包开关的会话逐条裁决（sandbox.js policyBlocks → decide），多一个 `tools`；
+ * 其余会话还是 resolveSandbox 的 BlockSet（行为和第 1 步一样）。都不含 prefill:*（本插件不可阻断）。
+ * @param known `{ messages, sections, contexts }`：已登记的名字（受控档里「已登记放行、未归属拦」用）。
+ */
+export function blocksFor(state, sessionId, known) {
+  return policyBlocks(state, sessionId, known)
 }
 
 export function hasBlocks(blocks) {

@@ -124,8 +124,9 @@ function textOf(message) {
 
 /**
  * 会话事件 → 轮列表。
- * @returns [{ turn, completed, synthetic, injected, reasoning: string[], answer }]
- *   synthetic：预填装写进历史的开场合成轮（不调模型）；injected：这一轮发过每轮注入。
+ * @returns [{ turn, completed, synthetic, injected, firstSent, hasUser, reasoning: string[], answer }]
+ *   synthetic：预填装写进历史的开场合成轮（不调模型）；injected：这一轮发过每轮注入；
+ *   firstSent：这一轮的每轮注入是不是首轮段（source.first；旧日志没有这个标记 = undefined）。
  */
 export function splitTurns(events) {
   const turns = new Map()
@@ -146,7 +147,11 @@ export function splitTurns(events) {
     } else if (current > 0 && type === 'user/message') {
       const source = data?.source ?? {}
       const turn = at(current)
-      if (source.kind === 'prefill' && source.prefill === 'every-turn') turn.injected = true
+      if (source.kind === 'prefill' && source.prefill === 'every-turn') {
+        turn.injected = true
+        // issue #19 B：这一轮发的是不是首轮段（新日志才有；旧日志 = undefined，按「第一次注入」推断）。
+        if (typeof source.first === 'boolean') turn.firstSent = turn.firstSent === true || source.first
+      }
       if (source.kind === 'user') {
         if (typeof source.prefill === 'string') turn.synthetic = true
         else turn.hasUser = true
@@ -225,6 +230,9 @@ export function replay(turns, entry, currentTurn) {
   const override = entry?.auto?.override
   const overrideAt = Number.isFinite(Number(override?.atTurn)) ? Number(override.atTurn) : undefined
   const hasFirstText = typeof entry?.firstText === 'string' && entry.firstText.trim() !== ''
+  // 约束承接：来自会话的预设，第一次注入是「首轮段 + 接缝提醒」，和首轮专用段一样不参与判定；
+  // 导入的开场历史（合成轮）本来就不判（见下面 synthetic）。
+  const seamFirst = entry?.seam === true && list.some((turn) => turn.synthetic)
 
   let state = 'injecting'
   let streak = 0
@@ -266,7 +274,10 @@ export function replay(turns, entry, currentTurn) {
       let verdict = 'skip'
       let scored
       // 首轮专用段那一轮不参与判定（它和后续段不是同一句提醒）。
-      const firstSpecial = turn.injected && hasFirstText && seenInjected === 0
+      // issue #19 B：新日志按消息上的 source.first 判断（开跑后套的预设默认不发首轮段，第一次注入不一定是首轮段）；
+      // 旧日志没有标记，照旧按「第一次注入」推断。
+      const firstSpecial =
+        turn.injected && (turn.firstSent !== undefined ? turn.firstSent === true : (hasFirstText || seamFirst) && seenInjected === 0)
       if (turn.injected) seenInjected += 1
       if (turn.completed && turn.hasUser && !firstSpecial) {
         scored = scoreTurn(turn, checks)

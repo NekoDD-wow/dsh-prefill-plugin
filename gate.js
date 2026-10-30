@@ -22,6 +22,9 @@
 
 import { randomUUID } from 'node:crypto'
 import { checksOf, modeOf, replay, splitTurns } from './inject-auto.js'
+import { filledItems, insertBeforeLastUser, isManual, manualMessage, planQueued, queueOf, renderInjectBlock } from './inject-once.js'
+import { hasImportedHistory, seamApplies, withSeam } from './constraint-carry.js'
+import { firstPlan, firstRealTurn, lockOf, lockStatus } from './turn-lock.js'
 import { applyEnabled, isEnabled } from './enabled.js'
 import { WORKSPACE_KIND, WORKSPACE_MARK, applyWorkspaceInstructions, lastWorkspaceInHistory, workspaceInstructionsFor } from './workspace-instructions.js'
 import {
@@ -36,6 +39,7 @@ import {
   prestepKindsOf,
   recordFindings,
 } from './injection-audit.js'
+import { resolveSandbox } from './sandbox.js'
 import { cleanMemory, matchLore, memoryDue, memoryInput, memorySystemPrompt, renderLore, renderMemory } from './character-cards.js'
 
 /** 内核代次：壳会在诊断里回报它，用来确认热换是否生效。 */
@@ -50,16 +54,12 @@ export const PROBE_CONTEXT_TEXT =
 /**
  * 该会话**实际生效**的放行来源清单。
  *
- * 优先 `state.sessionAllowKinds[sessionId]`（会话级，UI 里按标签勾选写进去），
- * 支持 `'*'` 通配（探针用）；没配就回落到全局 `state.allowKinds`。
+ * 优先会话级（旧 `state.sessionAllowKinds[sessionId]`，UI 里按标签勾选写进去），
+ * 再 `'*'`（探针用）；没配就回落到全局 `state.allowKinds`。
+ * 会话沙盒第 1 步（issue #15）起统一经 resolveSandbox 读规则表（旧字段读取时迁移），结果不变。
  */
 function allowKindsFor(state, sessionId) {
-  const perSession = state?.sessionAllowKinds
-  if (perSession !== null && typeof perSession === 'object') {
-    const list = (typeof sessionId === 'string' ? perSession[sessionId] : undefined) ?? perSession['*']
-    if (Array.isArray(list)) return list.filter((kind) => typeof kind === 'string')
-  }
-  return Array.isArray(state?.allowKinds) ? state.allowKinds : ['user']
+  return resolveSandbox(state, sessionId).allowKinds
 }
 
 /**
@@ -212,7 +212,9 @@ function keeper(state, message, sessionId) {
   if (kind === 'user') return true
   if (typeof kind !== 'string') return false
   if (kind.startsWith('prefill:')) return true
-  return allowKindsFor(state, sessionId).includes(kind)
+  // 手动注入（inbox 带进来的那条）是用户自己点的，不算外来注入。
+  if (isManual(message)) return true
+  return resolveSandbox(state, sessionId).messageAllow.has(kind)
 }
 
 /**
@@ -262,17 +264,36 @@ export function everyTurnFor(state, agentId) {
     checks: checksOf(entry),
     auto: { ...(entry.auto ?? {}), override: own ? entry.auto?.override : undefined },
     since: own ? Number(entry.since) || 0 : 0,
+    // 约束承接（constraint-carry.js）：来自会话的预设带过来的标记，只认本会话那格。
+    seam: own && entry.seam === true,
+    from: own ? 'session' : 'default',
+    // 「下一轮发一次」首轮段（issue #19 B，turn-lock.js）：只认本会话那格、盖过章的。
+    firstOnce: own && Number.isFinite(Number(entry.firstOnce?.atTurn)) ? { atTurn: Number(entry.firstOnce.atTurn) } : undefined,
   }
 }
 
 /** 本会话每轮注入的当前判定（给面板状态行；不改任何东西）。 */
 export function everyTurnStatus(state, agentId, events, currentTurn) {
-  const entry = everyTurnFor(state, agentId)
-  if (entry === undefined) return { enabled: false }
   const turns = splitTurns(events)
+  const lock = lockStatus(lockOf(state, agentId), turns)
+  const entry = everyTurnFor(state, agentId)
+  if (entry === undefined) return { enabled: false, lock }
   const next = Number.isFinite(currentTurn) ? currentTurn : (turns.at(-1)?.turn ?? 0) + 1
   const result = replay(turns, entry, next)
-  return { enabled: true, mode: entry.mode, checks: entry.checks, nextTurn: next, ...result }
+  // 首轮段（issue #19 B）：下一轮发不发、为什么；「下一轮发一次」请求是否还在等。
+  const first = firstPlan(entry, result, { lock: lockOf(state, agentId), turns, currentTurn: next })
+  const oncePending = entry.firstOnce !== undefined && first.reason === 'once'
+  const onceSent = entry.firstOnce !== undefined && !oncePending && turns.some((turn) => turn.turn >= entry.firstOnce.atTurn && turn.firstSent === true)
+  return {
+    enabled: true,
+    mode: entry.mode,
+    checks: entry.checks,
+    nextTurn: next,
+    ...result,
+    ...(first.force ? { inject: true } : {}),
+    lock,
+    first: { has: entry.firstText !== '', willSend: first.useFirst, reason: first.reason, locked: first.locked, once: oncePending ? 'pending' : onceSent ? 'sent' : 'none' },
+  }
 }
 
 /**
@@ -397,12 +418,12 @@ function messageText(message) {
   return content.map((part) => (part?.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('')
 }
 
+/**
+ * 本会话的注入改写（旧 `state.overrides[会话] ?? state.overrides['*']` 整格回落）。
+ * 会话沙盒第 1 步起是规则表里 rewrite 族推回的同形状对象（见 sandbox.js resolveSandbox）。
+ */
 function overridesFor(state, agentId) {
-  const all = state?.overrides
-  if (all === null || typeof all !== 'object') return undefined
-  const exact = typeof agentId === 'string' ? all[agentId] : undefined
-  const entry = exact !== undefined && exact !== null && typeof exact === 'object' ? exact : all['*']
-  return entry !== undefined && entry !== null && typeof entry === 'object' ? entry : undefined
+  return resolveSandbox(state, agentId).rewrite
 }
 
 /**
@@ -662,7 +683,8 @@ function effectiveStateFor(state, agentId) {
       },
     }
   }
-  if (gate[agentId] !== 'pure') {
+  // 纯净模式 = 沙盒严格档（旧 gate[会话] === 'pure'，读取时迁成 sandbox[会话].level = 'strict'）。
+  if (resolveSandbox(state, agentId).level !== 'strict') {
     // 没被显式武装（armed / '*'）的会话 —— 典型是"只套了人格预设"的会话 —— 不吃全局开关：
     // 全局 levers 是开发面板 / 旧版「纯净模式」写的，若照搬，套个人格就会顺带
     // 清空系统提示、拦掉工具（实测踩到：人格会话 tools=0、runtime-context 被丢）。
@@ -815,14 +837,18 @@ function applyAssemblyBlocks(api, id, scope, result, latch) {
   } catch {
     // 审计失败不影响装配。
   }
-  const blocks = blocksFor(api.readState?.(), id)
+  const blocks = blocksFor(api.readState?.(), id, knownInjectionNames(api.rootCtx))
   const signature = JSON.stringify([[...blocks.sections].sort(), [...blocks.contexts].sort()])
+  // 会话沙盒第 2 步：受控档 / 来源包拦下的工具（Agent Teams 的工具注册在 agent 自己作用域，restrict 拦不住，只能在装配结果里滤掉）。
+  const toolBlocks = blocks.tools
+  const withTools = (value) =>
+    toolBlocks === undefined || !Array.isArray(value?.tools) ? value : { ...value, tools: value.tools.filter((tool) => !toolBlocks.has(tool?.name)) }
   let holder = BLOCK_HOLDERS.get(id)
   if (holder !== undefined && holder.signature !== signature) {
     releaseBlockHolder(id)
     holder = undefined
   }
-  if (blocks.sections.size === 0 && blocks.contexts.size === 0) return result
+  if (blocks.sections.size === 0 && blocks.contexts.size === 0) return withTools(result)
   if (holder === undefined) {
     holder = { signature, disposers: [] }
     BLOCK_HOLDERS.set(id, holder)
@@ -831,11 +857,11 @@ function applyAssemblyBlocks(api, id, scope, result, latch) {
     neutralizeEntries(api, scope, holder, 'sections', (name) => blocks.sections.has(name))
     neutralizeEntries(api, scope, holder, 'contexts', (name) => blocks.contexts.has(name))
   }
-  return {
+  return withTools({
     ...result,
     sections: (result?.sections ?? []).filter((entry) => !blocks.sections.has(entry?.name)),
     contexts: (result?.contexts ?? []).filter((entry) => !blocks.contexts.has(entry?.name)),
-  }
+  })
 }
 
 /** `session/event` 观察者：把落进会话、会进模型的未登记注入记下来。 */
@@ -855,7 +881,7 @@ export function applyMessageBlocks(api, payload, incoming, decision) {
   const id = payload?.agent?.id
   if (typeof id !== 'string') return decision
   notePrestepKinds(id, incoming?.messages)
-  const blocks = blocksFor(api.readState?.(), id)
+  const blocks = blocksFor(api.readState?.(), id, knownInjectionNames(api.rootCtx))
   if (!hasBlocks(blocks)) return decision
   const { decision: next, dropped } = dropBlockedMessages(decision, blocks)
   if (dropped.length > 0) api.note({ blocked: 'messages', id, dropped })
@@ -1052,7 +1078,9 @@ function mountLevers(agent, state, api, sink) {
   // 清单先与官方 `restrictableNames` 求交集：`restrict()` 遇到未知名字会**抛错**，
   // 一个过期名字就能把该会话的挂载链搞挂（`dsh-tools:2908`）。
   // 会话级映射统一支持 `'*'` 通配（无头探针用），别只按键精确查——这个坑踩过一次。
-  const wantedTools = state?.sessionTools?.[agent?.id] ?? state?.sessionTools?.['*'] ?? state?.tools
+  // 会话沙盒第 1 步：旧 sessionTools[会话] ?? sessionTools['*'] 现在是规则表的 tools 族（undefined = 没配，回落全局 state.tools）。
+  const sandboxTools = resolveSandbox(state, agent?.id).toolAllow
+  const wantedTools = sandboxTools !== undefined ? sandboxTools : state?.tools
   if (Array.isArray(wantedTools) && typeof toolService?.restrict === 'function') {
     const known = new Set(restrictableToolNames(toolService, agent))
     const allow = known.size === 0
@@ -1132,8 +1160,7 @@ export async function prime(api, agent) {
   // 与 step() 的武装判定保持一致：**只配了注入改写（例如人格预设）**的会话也要急切挂载，
   // 否则首个请求的装配抢在 pre-step 之前 ⇒ 人格段"首轮不生效、第二轮才生效"。
   const hasOverrides = overridesFor(state, agent.id) !== undefined
-  const hasInjects =
-    (Array.isArray(state?.injects?.[agent.id]) && state.injects[agent.id].length > 0) || everyTurnFor(state, agent.id) !== undefined
+  const hasInjects = queueOf(state, agent.id).length > 0 || everyTurnFor(state, agent.id) !== undefined
   if (!state.armed.includes(agent.id) && !state.armed.includes('*') && !hasOverrides && !hasInjects) return
   const disposers = []
   let error = ''
@@ -1187,6 +1214,29 @@ export async function prime(api, agent) {
 }
 
 /**
+ * 首轮锁定（issue #19 A，turn-lock.js）：会话真正开跑的第 1 步（decision enter）还没有锁 ⇒ 请壳记一条。
+ * 物化了开场对话的会话在 onInboxInserted 里已经锁过（带 items），这里只兜没有开场对话的会话、
+ * 和本版之前就开跑的会话（日志里本轮之前已经有真实轮 ⇒ legacy：快照不是真正的开局配置）。
+ */
+function lockOnStep(api, agent, payload, decision) {
+  if (typeof api?.lockSession !== 'function' || typeof agent?.id !== 'string') return
+  if ((payload?.step ?? 1) !== 1 || decision?.kind !== 'enter' || !Number.isFinite(payload?.turn)) return
+  try {
+    if (lockOf(api.readState(), agent.id) !== undefined) return
+    let events = []
+    try {
+      events = agent.session?.snapshotEvents?.() ?? []
+    } catch {
+      events = []
+    }
+    const earlier = firstRealTurn(splitTurns(events).filter((turn) => turn.turn < payload.turn))
+    api.lockSession(agent.id, earlier !== undefined ? { turn: earlier, items: [], legacy: true } : { turn: payload.turn, items: [] })
+  } catch (error) {
+    api.note?.({ lock: 'failed', id: agent.id, error: String(error?.message ?? error) })
+  }
+}
+
+/**
  * 一次 pre-step 的全部闸门处理：取值 → 轮次闩锁 → 消息过滤。
  * 幂等：多个座位（根级 / per-agent）重复进入时靠 signature 短路。
  */
@@ -1195,6 +1245,8 @@ export async function step(api, payload, decision) {
   const agent = payload?.agent
   // 无论是否武装都要挂"装配观察者"：Q17 的注入清单（段/上下文名）靠它拿。
   ensureToolsBlocker(api)
+  // 首轮锁定（issue #19 A）：每轮第 1 步发现还没有锁 ⇒ 记一条（不论是否武装；状态写入由壳做，已有就不动）。
+  lockOnStep(api, agent, payload, decision)
   // M2：`state` 已经是"折算过按会话闸门"的有效状态（见 effectiveStateFor）。
   const state0 = effectiveStateFor(applyEnabled(readState()), payload?.agent?.id)
   // 三种情况都算"要接管这个会话"：
@@ -1202,11 +1254,9 @@ export async function step(api, payload, decision) {
   // ③ 是必需的：用户要的是"预填装留空、只改系统提示"，那种情况下没有任何 lever，
   // 光靠 armed 永远进不来，改写就静默不生效了。
   const hasOverrides = overridesFor(state0, agent?.id) !== undefined
-  // ④ 会话配了**每轮注入**（开跑后写的开场对话）：没有系统提示改写时也必须进来，
+  // ④ 会话配了**每轮注入**，或状态队列里有待发的手动注入：没有系统提示改写时也必须进来，
   // 否则注入静默不生效（实测：只写每轮注入、不套人格的会话，日志里一条注入消息都没有）。
-  const hasInjects =
-    (Array.isArray(state0?.injects?.[agent?.id]) && state0.injects[agent.id].length > 0) ||
-    everyTurnFor(state0, agent?.id) !== undefined
+  const hasInjects = queueOf(state0, agent?.id).length > 0 || everyTurnFor(state0, agent?.id) !== undefined
   // ⑤ 工作区说明设成关闭 / 改写：同样要进来（否则 AGENTS.md 原样照发）。
   const hasWorkspace = workspaceInstructionsFor(state0, agent?.id) !== undefined
   const armed =
@@ -1365,47 +1415,39 @@ export async function step(api, payload, decision) {
     }
   }
 
-  // ── 会话内注入（模式 B · "首轮之后再预填装"）──────────────────────────────
-  // 首轮之后"写进历史"这条路已经被物理约束关死了（F11：`session.append` 禁止在系统节点与
-  // 首条用户消息之间重入插入；F12：assistant/message 必须在已开的 turn+step 内），
-  // 所以改成**每轮注入**：把预填装内容渲染成一条注入消息，插在真实用户消息**之前**
-  // （位置与 harness 自己的 runtime-context 一致），既不写 session、也不是历史。
+  // ── 手动注入 · 兜底通道（issue #19「C」，见 inject-once.js）─────────────────
+  // 0.15.2 之前这里是「会话内注入」：开跑后把开场对话（state.injects）**每轮**渲染成一条注入消息。
+  // 现在手动注入只发一次：正常走 agent.inbox（壳在点「注入」/ agent/created 时送进去，循环自己领取、
+  // 写进会话日志）；这里只处理 inbox 送不进去时留在 state.injectQueue 里的条目。旧 injects 由壳在
+  // 读状态时迁成每轮注入积木（migrateLegacyInjects），闸门不再读它。
   //
-  // 只在 `turn > 1` 生效：首轮仍然走物化 —— 那才是"变成真实历史"。
-  const injectItems = filledItems(state?.injects?.[agent.id])
-  if (
-    injectItems.length > 0 &&
-    Number.isFinite(payload?.turn) &&
-    payload.turn > 1 &&
-    // 只在每轮第 1 步注入：注入消息会落进会话日志、后续步骤作为历史重放，
-    // 每步都插会在多步（工具调用）回合里叠出 N 份（实测一轮 10 份）。
-    (payload?.step ?? 1) === 1 &&
-    decision?.kind === 'enter' &&
-    Array.isArray(next.messages) &&
-    // 幂等：pre-step 会从根级和 per-agent 两个座位各进一次，不查重就会插两条（实测每轮两份注入）。
-    !next.messages.some((message) => message?.source?.kind === 'prefill' && message?.source?.prefill === 'inject')
-  ) {
-    const messages = [...next.messages]
-    // 借用 harness 自己那条注入消息的形状（省得猜字段），只换 kind 和正文。
-    const text = renderInjectBlock(injectItems)
-    const injected = {
-      id: `prefill-inject-${payload.turn}-${payload.step ?? 0}`,
-      role: 'user',
-      source: { kind: 'prefill', prefill: 'inject' },
-      content: [{ type: 'text', text }],
+  // 只在每轮第 1 步（真实用户消息那一轮的 enter）插，位置同其他注入（最后一条真实用户消息之前；
+  // 首轮有物化时，物化的开场在会话历史里、不在本次 messages 里，所以天然排在它之后）。
+  // 去重 / 不丢的权衡：
+  //   · 已送达 = 会话日志里有同 id 的手动注入 ⇒ 不发，并请壳从状态里删（api.pruneQueue）；
+  //   · 本次插了也**不立刻删**：若这一步在写进日志前被中止，下一轮还会再发（不丢）；
+  //     若已落盘，下一次 pre-step 看到日志就删（不重复）。
+  //   · 双座位重入：本次 messages 里已有同 id ⇒ 不再插；同轮后续 step 不进这段；循环重试不重跑 pre-step。
+  const queued = queueOf(state, agent.id)
+  if (queued.length > 0 && decision?.kind === 'enter' && Array.isArray(next.messages)) {
+    let events = []
+    try {
+      events = agent.session?.snapshotEvents?.() ?? []
+    } catch {
+      events = []
     }
-    // 插在**最后一条真实用户消息之前**（没有就追加）。
-    let at = -1
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      if (messages[index]?.source?.kind === 'user') {
-        at = index
-        break
+    const { send, drop } = planQueued(queued, events, next.messages)
+    if (drop.length > 0) {
+      try {
+        api.pruneQueue?.(agent.id, drop)
+      } catch (error) {
+        note({ manual: 'prune-failed', id: agent.id, error: String(error?.message ?? error) })
       }
     }
-    if (at >= 0) messages.splice(at, 0, injected)
-    else messages.push(injected)
-    next = { ...next, messages }
-    note({ inject: 'done', id: agent.id, turn: payload.turn, chars: text.length, items: injectItems.length })
+    if (send.length > 0 && (payload?.step ?? 1) === 1) {
+      next = { ...next, messages: insertBeforeLastUser(next.messages, send.map(manualMessage)) }
+      note({ manual: 'queued-sent', id: agent.id, turn: payload?.turn, ids: send.map((entry) => entry.id) })
+    }
   }
 
   // ── 每轮注入（可选功能，`state.everyTurn`）─────────────────────────────────
@@ -1419,6 +1461,8 @@ export async function step(api, payload, decision) {
   // 已注入几次、自动模式下这一轮发不发：都从会话事件重放（只看本轮之前的轮），
   // 同一轮经过多次（双座位、标题生成等旁路请求）结果一样，不会被旁路请求先吃掉首轮专用段。
   let plan
+  let first
+  let seam = false
   if (everyTurn !== undefined && Number.isFinite(payload?.turn) && (payload?.step ?? 1) === 1 && decision?.kind === 'enter') {
     let events = []
     try {
@@ -1426,15 +1470,26 @@ export async function step(api, payload, decision) {
     } catch {
       events = []
     }
-    plan = replay(splitTurns(events), everyTurn, payload.turn)
+    const turns = splitTurns(events)
+    plan = replay(turns, everyTurn, payload.turn)
+    // 接缝提醒：从会话存下的预设开的新会话，开场历史里一句提醒都没有（存预设时注入被跳过），
+    // 第一条真实消息那轮实测常常不听 ⇒ 这一轮发首轮段并附「以上历史均遵守这些要求，继续保持」。
+    // 首轮段（issue #19 B）：只在会话第一条真实消息那轮发；开跑之后（锁住）默认跳过，
+    // 除非用户点了「下一轮发一次」。以前按「本会话第一次注入」判，开跑后才打开 / 套用带首轮段的预设，
+    // 第 N 轮会突然发出整段开场设定。
+    first = firstPlan(everyTurn, plan, { lock: lockOf(state, agent.id), turns, currentTurn: payload.turn })
+    if (first.force) plan = { ...plan, inject: true }
+    // 接缝提醒只属于会话的第一条真实消息（开场导入历史之后那一轮）。
+    seam = seamApplies(everyTurn, turns, plan.isFirst && !first.locked)
     if (everyTurn.mode === 'auto') {
       const last = plan.history.at(-1)
       note({ everyTurn: 'auto', id: agent.id, turn: payload.turn, state: plan.state, inject: plan.inject, streak: plan.streak, need: plan.need, resumes: plan.resumes, reason: plan.reason, lastTurn: last?.turn, lastVerdict: last?.verdict, lastScores: last?.scores })
     }
   }
-  const isFirst = plan?.isFirst === true
-  const everyTurnText =
+  const isFirst = first?.useFirst === true
+  const baseEveryTurnText =
     everyTurn === undefined ? '' : isFirst && everyTurn.firstText !== '' ? everyTurn.firstText : everyTurn.text
+  const everyTurnText = seam ? withSeam(baseEveryTurnText) : baseEveryTurnText
   if (
     everyTurn !== undefined &&
     everyTurnText !== '' &&
@@ -1452,7 +1507,9 @@ export async function step(api, payload, decision) {
     const injected = {
       id: `prefill-everyturn-${payload.turn}`,
       role: 'user',
-      source: { kind: 'prefill', prefill: 'every-turn' },
+      // from / seam：给「存为预设」认约束来源用（constraint-carry.js），模型看不到 source。
+      // first：这一轮发的是首轮段（或接缝那轮）—— 自动模式靠它把这一轮排除在判定外，「下一轮发一次」靠它知道已经发过。
+      source: { kind: 'prefill', prefill: 'every-turn', from: everyTurn.from, first: isFirst || seam, ...(seam ? { seam: true } : {}) },
       // 必须套"背景"外壳：裸发正文时 step-5 把它当成用户本轮的要求，四段直接写进了回答正文、
       // 思维链反而不守格式（实测 D1：注入的 5 轮四段只命中 1 轮）；套上外壳后与 B2b 一致（13/14）。
       content: [{ type: 'text', text: renderInjectBlock([{ role: 'user', text: everyTurnText }]) }],
@@ -1467,7 +1524,7 @@ export async function step(api, payload, decision) {
     if (at >= 0) messages.splice(at, 0, injected)
     else messages.push(injected)
     next = { ...next, messages }
-    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: plan.nth, first: isFirst && everyTurn.firstText !== '', chars: everyTurnText.length, mode: everyTurn.mode, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
+    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: plan.nth, first: isFirst && everyTurn.firstText !== '', firstReason: first?.reason, seam, chars: everyTurnText.length, mode: everyTurn.mode, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
   }
 
   // ── 世界书关键词注入（v0.6 二期，只对套了角色卡的会话）────────────────────
@@ -1713,6 +1770,76 @@ export const PREFILL_PROBE_ANSWER = probeText(
 export const PREFILL_PACK_ID = probeText('PREFILL_PACK_ID', 'probe')
 
 /**
+ * 开场历史的系统提示对齐（约束承接 · 接缝）。
+ *
+ * 物化开场历史时写进去的 system/message 是 `agent/created` 那一刻渲染的（见 computeRendered），
+ * 那时别的插件（如 Agent Teams）还没挂完段 ⇒ 和第一条真实消息那一步真正渲染出来的不一样。
+ * dsh-agent-loop 的 SystemPromptProjection 发现「最新一条 system 节点 ≠ 本步渲染」就**追加**一条
+ * system/message，线上它排在本轮用户消息和运行时上下文之后 —— 也就是模型生成前看到的最后一段，
+ * 一整份系统提示，排在紧挨用户消息的每轮注入 / 接缝提醒之后；而且之后每轮的历史里都带着两份系统提示。
+ *
+ * 做法：第一条真实消息那一步（开场里有合成轮、还没有真实轮、system 节点只有开头那一条），
+ * 在 `agent/request` 座位（step/start 已落盘、投影还没比较）把开头那条按本步的渲染结果原地替换掉
+ * （带当前轮 / 步，否则会话日志校验不过）⇒ 投影比较时一致，不再追加。
+ * 只改合成轮自己写的那条，条件不满足或失败就什么都不做（回到原行为）。
+ * @param position { turn, step }：当前轮 / 步。
+ */
+export async function alignSyntheticSystemPrompt(agent, turns, position = {}) {
+  const session = agent?.session
+  const surface = session?.surface
+  if (typeof session?.append !== 'function' || typeof session?.eventAt !== 'function' || typeof surface?.nodes?.[Symbol.iterator] !== 'function') {
+    return { ok: false, reason: 'no-surface' }
+  }
+  if (!hasImportedHistory(turns) || turns.some((turn) => !turn.synthetic && turn.completed)) return { ok: false, reason: 'not-seam' }
+  const nodes = []
+  for (const seq of surface.nodes) {
+    const event = session.eventAt(seq)
+    if (event?.type === 'system/message') nodes.push({ seq, event })
+  }
+  if (nodes.length !== 1) return { ok: false, reason: `system-nodes:${nodes.length}` }
+  let rendered
+  try {
+    const assembly = await systemPromptOf(agent)?.assemble?.({ agent, scope: agent })
+    if (assembly === undefined) return { ok: false, reason: 'no-assembly' }
+    rendered = renderPrompt(assembly)
+  } catch (error) {
+    return { ok: false, reason: `render:${String(error?.message ?? error)}` }
+  }
+  const [{ seq, event }] = nodes
+  const current = (event.data?.message?.content ?? []).map((part) => (part?.type === 'text' ? part.text : '')).join('')
+  if (current === rendered || rendered === '') return { ok: true, changed: false }
+  session.append(
+    'system/message',
+    { turn: position.turn, step: position.step ?? 1, message: { role: 'system', content: [{ type: 'text', text: rendered }], source: { kind: 'system-prompt' }, id: randomUUID() } },
+    { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] },
+  )
+  return { ok: true, changed: true, from: current.length, to: rendered.length }
+}
+
+/**
+ * `agent/request` 座位：此刻 step/start 已落盘、系统提示投影还没比较 ⇒ 正好对齐开场那条 system。
+ * 只在每轮第 1 步、开场有合成轮且还没有真实轮时动手。
+ */
+export async function alignOnRequest(api, payload) {
+  const agent = payload?.agent
+  if (typeof agent?.id !== 'string' || !Number.isFinite(payload?.turn) || (payload?.step ?? 1) !== 1) return
+  let events = []
+  try {
+    events = agent.session?.snapshotEvents?.() ?? []
+  } catch {
+    return
+  }
+  const turns = splitTurns(events)
+  if (!hasImportedHistory(turns)) return
+  try {
+    const aligned = await alignSyntheticSystemPrompt(agent, turns, { turn: payload.turn, step: payload.step ?? 1 })
+    if (aligned.reason !== 'not-seam') api.note({ alignSystem: aligned, id: agent.id, turn: payload.turn })
+  } catch (error) {
+    api.note({ alignSystem: { ok: false, reason: String(error?.message ?? error) }, id: agent.id, turn: payload.turn })
+  }
+}
+
+/**
  * 多轮预填装的内容模型。
  *
  * 一条 item 只有两种形态，**思维链是 ai 那一部分里的一个字段**：
@@ -1892,37 +2019,8 @@ function resolveItems(state, agentId) {
   return []
 }
 
-/**
- * 只留"有正文"的条目（issue #1）。面板里点了「＋ 用户说 / ＋ AI 回答」没填的空行，
- * 原样写进历史会变成 `text: ""` 的消息：有的网关直接 400（user message must have content），
- * 而且物化不可逆，之后每轮都带着它 ⇒ 会话报废。判定看 `text`，只有思维链没有回答的
- * AI 条目同样跳过（回答为空的 assistant 消息一样会被拒）。
- */
-export function filledItems(items) {
-  if (!Array.isArray(items)) return []
-  return items.filter((item) => typeof item?.text === 'string' && item.text.trim() !== '')
-}
-
-/**
- * 把预填装条目渲染成"会话内注入"的正文（模式 B）。
- *
- * 与模式 A（物化成真实消息）的区别：这里是**一整块文本**塞进一条注入消息，
- * 不写 session、不进历史、每轮都要重新注入（所以要花 token）。
- */
-function renderInjectBlock(items) {
-  const lines = ['【预填装 · 会话内注入】以下内容视为本会话开始前就已存在的背景：']
-  for (const item of items) {
-    const text = typeof item?.text === 'string' ? item.text : ''
-    if (item?.role === 'assistant') {
-      const reasoning =
-        typeof item?.reasoning === 'string' && item.reasoning !== '' ? `（思维链：${item.reasoning}）` : ''
-      lines.push(`AI：${text}${reasoning}`)
-    } else {
-      lines.push(`用户：${text}`)
-    }
-  }
-  return lines.join('\n')
-}
+// filledItems / renderInjectBlock 搬到 inject-once.js（旧 injects 迁移要用同一套），这里转出口保持原有导入不变。
+export { filledItems }
 
 /** 会话里是否已经有轮次（幂等守卫）。读不出来就当有，宁可不动。 */
 function hasTurn(session) {  try {
@@ -1980,14 +2078,28 @@ export function onInboxInserted(api, agent, message) {
   const session = agent.session
   if (session === null || typeof session?.append !== 'function') return
   if (hasTurn(session)) return
+  // 首轮锁定（issue #19 A）：锁过的会话（已经开跑过）不再物化开场对话。hasTurn 本来就挡着，这里再加一道。
+  if (lockOf(state, agent.id) !== undefined) {
+    api.note({ prefill: 'skip-locked', id: agent.id })
+    return
+  }
   const rendered = PROMPTS.get(agent.id)
   if (rendered === undefined) {
     api.note({ prefill: 'no-cached-prompt', id: agent.id })
     return
   }
-  const turns = writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id))
-  // 物化成功 ⇒ 顺手把会话标题钉到**这次的真实提问**上（F18 收尾）。
-  if (typeof turns === 'number' && turns > 0) pinTitle(api, agent, session, message)
+  const items = resolveItems(state, agent.id)
+  const turns = writeSyntheticTurns(api, agent, session, rendered, items)
+  if (typeof turns === 'number' && turns > 0) {
+    // 物化成功 ⇒ 锁住：记下写进历史的开场对话和此刻的配置快照；第一条真实消息在第 turns + 1 轮。
+    try {
+      api.lockSession?.(agent.id, { turn: turns + 1, items: filledItems(items) })
+    } catch (error) {
+      api.note({ lock: 'failed', id: agent.id, error: String(error?.message ?? error) })
+    }
+    // 顺手把会话标题钉到**这次的真实提问**上（F18 收尾）。
+    pinTitle(api, agent, session, message)
+  }
 }
 
 /**
@@ -2048,7 +2160,7 @@ export async function materializePrefill(api, agent) {
     api.note({ prefill: 'no-session', id: agent.id })
     return
   }
-  if (hasTurn(session)) {
+  if (hasTurn(session) || lockOf(state, agent.id) !== undefined) {
     api.note({ prefill: 'skip-has-turn', id: agent.id, seq: session.seq })
     return
   }
@@ -2062,7 +2174,9 @@ export async function materializePrefill(api, agent) {
       return
     }
   }
-  writeSyntheticTurns(api, agent, session, rendered, resolveItems(state, agent.id))
+  const items = resolveItems(state, agent.id)
+  const turns = writeSyntheticTurns(api, agent, session, rendered, items)
+  if (typeof turns === 'number' && turns > 0) api.lockSession?.(agent.id, { turn: turns + 1, items: filledItems(items) })
 }
 
 /**
