@@ -138,13 +138,25 @@ function note(entry) {
   }
 }
 
-function normalizeState(raw) {
+/**
+ * 面板的全局偏好 `state.ui`（不进预设、不随导出，只在 state.json 里）：
+ *   motion = 'full' | 'lite' | 'off'（动效档位；缺 = 跟随系统「减少动态效果」）。
+ * 认不出的键 / 值一律丢掉；什么都不剩 ⇒ undefined（state 里就没有 ui 这一键）。
+ */
+export function sanitizeUi(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out = {}
+  if (['full', 'lite', 'off'].includes(raw.motion)) out.motion = raw.motion
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+export function normalizeState(raw) {
   const source = raw !== null && typeof raw === 'object' ? raw : {}
   const levers = source.levers !== null && typeof source.levers === 'object' ? source.levers : {}
   // 会话沙盒第 1 步（issue #15）：overrides / sessionAllowKinds / sessionTools / injectionBlocks / gate 'pure'
   // 读取时迁进 state.sandbox（幂等），旧字段从内存结果里删掉；writeState 写盘时再补回镜像（防降级）。
   // 面板写回的旧字段（patchState 把它们摊在当前状态上）也在这里被整族吸收。
-  return migrateSandbox({
+  const out = migrateSandbox({
     // 先摊开原始对象：**保留未知字段**。M2 的按会话闸门映射 `gate`、
     // Q9 的 `noticeSeen` 都靠这一行才不至于被规范化抹掉（否则 UI 写进去就没了）。
     ...source,
@@ -154,7 +166,11 @@ function normalizeState(raw) {
     allowKinds: Array.isArray(source.allowKinds)
       ? source.allowKinds.filter((kind) => typeof kind === 'string')
       : [...DEFAULT_ALLOW_KINDS],
+    // 面板全局偏好：合法才留，否则连键一起去掉（`...source` 摊进来的脏值也盖掉）。
+    ui: sanitizeUi(source.ui),
   })
+  if (out.ui === undefined) delete out.ui
+  return out
 }
 
 let cache = { state: null, mtimeMs: -1 }
@@ -232,6 +248,11 @@ function writeState(next) {
   return readState()
 }
 
+function mergeUi(current, patch) {
+  if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return current
+  return { ...(current ?? {}), ...patch }
+}
+
 function patchState(patch) {
   const current = readState()
   return writeState(
@@ -239,6 +260,8 @@ function patchState(patch) {
       ...current,
       ...patch,
       levers: { ...current.levers, ...(patch?.levers ?? {}) },
+      // ui 按键合并（以后多了别的偏好，写 motion 不抹掉它们）；`motion: null` = 改回跟随系统。
+      ...(patch?.ui !== undefined ? { ui: mergeUi(current.ui, patch.ui) } : {}),
     }),
   )
 }
