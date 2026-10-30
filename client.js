@@ -19,6 +19,216 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
 
+    // <motion>
+    /**
+     * 动效（docs/规划-动效.md）：一处常量 + 档位 + `play()` 包装 + presence（延迟卸载）。
+     * 原则：只动 transform / opacity；短（120–260ms，出场快于入场）；不引库（WAAPI）；流式时收敛；可关。
+     * 档位 full / lite / off：
+     *   full = 全部；
+     *   lite = 只留淡入淡出：spring 换成 ease，去掉 transform（位移 / 缩放 / 旋转），位移类（FLIP）和装饰类不播；
+     *   off  = 不调用 animate，状态直接切换。
+     * 档位 = 用户手选（state.ui.motion，全局设置，不进预设、不随导出）?? （系统「减少动态效果」? lite : full）；
+     * 系统设置变化会被监听（matchMedia change），各组件经 MOTION_EVENT 重渲染。
+     * 这一段只依赖 window，单测切出来直接跑（tests/motion.test.mjs）。
+     */
+    const MOTION = {
+      fast: 120,
+      base: 180,
+      slow: 260,
+      ease: 'cubic-bezier(.2,.7,.2,1)', // 入场 / 位移
+      easeOut: 'cubic-bezier(.4,0,1,1)', // 出场
+      spring: 'cubic-bezier(.34,1.56,.64,1)', // 落地、小点弹出（带轻微回弹）
+      stagger: 30,
+    }
+    const MOTION_LEVELS = ['full', 'lite', 'off']
+    const MOTION_EVENT = 'dsh-prefill:motion'
+    const REDUCE_QUERY = '(prefers-reduced-motion: reduce)'
+    /** 手选值规范化：只认三档，其余（缺 / 'auto' / 乱写）= 没手选。 */
+    function normalizeMotion(value) {
+      return MOTION_LEVELS.includes(value) ? value : null
+    }
+    /** 手选优先；没手选时系统「减少动态效果」⇒ lite，否则 full。 */
+    function resolveMotion(pref, reduce) {
+      return normalizeMotion(pref) ?? (reduce === true ? 'lite' : 'full')
+    }
+    const motionState = { pref: null, reduce: false, mql: null }
+    function emitMotion() {
+      try {
+        window.dispatchEvent(new CustomEvent(MOTION_EVENT))
+      } catch {
+        // 广播失败不该拖垮 UI。
+      }
+    }
+    /** 第一次用到时读系统设置并挂监听（之后系统里切「减少动态效果」，档位跟着变）。 */
+    function watchReduce() {
+      if (motionState.mql !== null || typeof window.matchMedia !== 'function') return
+      try {
+        const mql = window.matchMedia(REDUCE_QUERY)
+        motionState.mql = mql
+        motionState.reduce = mql.matches === true
+        const onChange = (event) => {
+          const next = event?.matches === true
+          if (next === motionState.reduce) return
+          motionState.reduce = next
+          emitMotion()
+        }
+        if (typeof mql.addEventListener === 'function') mql.addEventListener('change', onChange)
+        else if (typeof mql.addListener === 'function') mql.addListener(onChange)
+      } catch {
+        motionState.mql = false
+      }
+    }
+    function motionLevel() {
+      watchReduce()
+      return resolveMotion(motionState.pref, motionState.reduce)
+    }
+    /** 用户手选（来自 state.ui.motion）；null = 跟随系统。变了才广播。 */
+    function setMotionPref(value) {
+      const next = normalizeMotion(value)
+      if (next === motionState.pref) return
+      motionState.pref = next
+      emitMotion()
+    }
+    const MOVE_PROPS = ['transform', 'translate', 'scale', 'rotate']
+    /** lite：每帧去掉位移 / 缩放 / 旋转、spring 换 ease；去完一帧都没剩下可动的属性 ⇒ null（不播）。 */
+    function liteFrames(keyframes) {
+      if (!Array.isArray(keyframes)) return null
+      let live = false
+      const frames = keyframes.map((frame) => {
+        const next = {}
+        for (const [key, value] of Object.entries(frame ?? {})) {
+          if (MOVE_PROPS.includes(key)) continue
+          if (key === 'easing' && value === MOTION.spring) next.easing = MOTION.ease
+          else next[key] = value
+          if (!['offset', 'easing', 'composite', 'transformOrigin'].includes(key)) live = true
+        }
+        return next
+      })
+      return live ? frames : null
+    }
+    /**
+     * 所有动画都经过这里。opts = WAAPI 时间参数 + `kind`（'enter' 默认 | 'move' 位移类如 FLIP | 'decor' 装饰类如扫光）
+     * + `level`（测试 / 特殊场合指定档位）。off ⇒ 返回 null、不调 animate；lite 见 liteFrames。
+     * 动画期间加 will-change，结束或被 cancel 都摘掉（不残留）。
+     */
+    function play(el, keyframes, opts = {}) {
+      const { kind = 'enter', level: forced, ...timing } = opts ?? {}
+      const level = MOTION_LEVELS.includes(forced) ? forced : motionLevel()
+      if (level === 'off' || el === null || el === undefined || typeof el.animate !== 'function') return null
+      let frames = keyframes
+      if (level === 'lite') {
+        if (kind === 'move' || kind === 'decor') return null
+        frames = liteFrames(keyframes)
+        if (frames === null) return null
+        if (timing.easing === MOTION.spring) timing.easing = MOTION.ease
+      }
+      let animation
+      try {
+        animation = el.animate(frames, timing)
+      } catch {
+        return null
+      }
+      if (animation === null || animation === undefined) return null
+      const style = el.style
+      if (style !== undefined && style !== null) {
+        style.willChange = 'transform, opacity'
+        const clear = () => {
+          style.willChange = ''
+        }
+        const settled = animation.finished
+        if (settled !== undefined && settled !== null && typeof settled.then === 'function') settled.then(clear, clear)
+        else {
+          animation.onfinish = clear
+          animation.oncancel = clear
+        }
+      }
+      return animation
+    }
+    /**
+     * presence 的退场：等退场动画结束（finished resolve）或被 cancel（finished reject）后卸载；
+     * 没有动画（off / lite 去光了 / 元素不在）⇒ 当场卸载；兜底计时防止 finished 永远不落定。
+     * 返回 `{ abort }`：退场中又要显示 ⇒ abort（取消动画、不卸载）。
+     */
+    function presenceExit(animation, unmount, fallbackMs = 600) {
+      let live = true
+      let timer = 0
+      const done = () => {
+        if (!live) return
+        live = false
+        clearTimeout(timer)
+        unmount()
+      }
+      if (animation === null || animation === undefined) {
+        done()
+        return { abort() {} }
+      }
+      timer = setTimeout(done, fallbackMs)
+      const settled = animation.finished
+      if (settled !== undefined && settled !== null && typeof settled.then === 'function') settled.then(done, done)
+      else {
+        animation.onfinish = done
+        animation.oncancel = done
+      }
+      return {
+        abort() {
+          if (!live) return
+          live = false
+          clearTimeout(timer)
+          try {
+            animation.cancel()
+          } catch {
+            // 已经结束。
+          }
+        },
+      }
+    }
+    /**
+     * 卡片几何（纯函数）：宽 clamp(560px, 62vw, 920px) 但不超过视口；以输入框为中线、贴在输入框上方 10px；
+     * 高度 = min(70vh, 输入框上方剩余空间 − 20px)，至少 200。**高度固定**（P1-2）：不随小节内容变，
+     * 内容区自己滚动 ⇒ 底部锚定时切小节 / 套预设 / 撤销条出现，顶边都不动。窄屏（<820）同一套。
+     * box = 输入框外框 { top, left, width } 或 null；inputTop = 找不到外框时的输入框顶。
+     */
+    function cardGeometry(vw, vh, box, inputTop) {
+      const top = box?.top ?? (Number.isFinite(inputTop) ? inputTop : vh - 160)
+      const center = box ? box.left + box.width / 2 : vw / 2
+      const width = Math.round(Math.min(Math.max(560, vw * 0.62), 920, vw - 24))
+      const left = Math.round(Math.min(Math.max(12, center - width / 2), vw - 12 - width))
+      const bottom = Math.round(vh - top + 10)
+      const maxHeight = Math.round(Math.max(200, Math.min(vh * 0.7, top - 20)))
+      return { width, left, bottom, maxHeight, height: maxHeight, narrow: vw < 820, vw }
+    }
+    function sameGeometry(a, b) {
+      return a !== null && b !== null && ['width', 'left', 'bottom', 'maxHeight', 'height', 'narrow', 'vw'].every((key) => a[key] === b[key])
+    }
+    /** 入场 / 收起的 transform-origin：对准芯片中心（相对卡片左上角，x 夹在卡片宽度内）；没有芯片 ⇒ 底边中点。 */
+    function cardOrigin(chip, geo, vh) {
+      const cardTop = vh - geo.bottom - geo.height
+      if (!chip || !Number.isFinite(chip.left) || !Number.isFinite(chip.top)) return `50% 100%`
+      const x = Math.round(Math.min(Math.max(chip.left + chip.width / 2 - geo.left, 0), geo.width))
+      const y = Math.round(chip.top + chip.height / 2 - cardTop)
+      return `${x}px ${y}px`
+    }
+    const CARD_ENTER = (origin) => [
+      { opacity: 0, transform: 'translateY(6px) scale(.96)', transformOrigin: origin },
+      { opacity: 1, transform: 'none', transformOrigin: origin },
+    ]
+    const CARD_EXIT = (origin) => [
+      { opacity: 1, transform: 'none', transformOrigin: origin },
+      { opacity: 0, transform: 'translateY(6px) scale(.96)', transformOrigin: origin },
+    ]
+    // </motion>
+
+    /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
+    function useMotionLevel() {
+      const [, setTick] = React.useState(0)
+      React.useEffect(() => {
+        const onMotion = () => setTick((value) => value + 1)
+        window.addEventListener(MOTION_EVENT, onMotion)
+        return () => window.removeEventListener(MOTION_EVENT, onMotion)
+      }, [])
+      return motionLevel()
+    }
+
     /**
      * 图标：Lucide（https://lucide.dev，ISC 许可，见 THIRD_PARTY_NOTICES.md）。
      * 只内联用到的几个，按名字取；没有对应图标时回落到 emoji 文本（兼容旧的文件预设）。
@@ -872,6 +1082,14 @@ window.__ModuleLoader__.load({
       noteSwitch: '切换预设 / 纯净 / 接管的那一轮，系统提示变了，缓存基本不命中，下一轮恢复。',
       noteMinCache: '很短的请求（例如纯净模式的头几轮）可能达不到服务商的最小缓存长度，命中 0% 属正常。',
       guideShow: '新手指南',
+      moreTitle: '更多设置',
+      motionTitle: '动效',
+      motionFull: '完整',
+      motionLite: '简洁',
+      motionOff: '关',
+      motionAuto: '改回跟随系统',
+      motionAutoNow: '现在跟随系统：开着「减少动态效果」时用简洁，否则完整。全局设置，不进预设、不随导出。',
+      motionManualNow: '已手动选择，不再跟随系统「减少动态效果」。全局设置，不进预设、不随导出。',
       guideTitle: '三步上手',
       guide1: '在「预设」里点一张卡片：想换人格选人格卡，想完全自己写系统提示选「自定义系统提示」，想什么都不发选「纯净模式」。',
       guide2: '「系统提示」里选模式：追加（保留 dsh 能力）/ 替换正文（工具照旧）/ 接管（像直接调 API）。框里的文字可以随时改，800 毫秒后自动保存；要停用就关掉这一项的开关，正文会保留。',
@@ -1198,6 +1416,14 @@ window.__ModuleLoader__.load({
       noteSwitch: 'The turn where you switch preset / pure / take over changes the system prompt and mostly misses the cache; the next turn recovers.',
       noteMinCache: 'Very short requests may be below the provider minimum cache length; 0% is normal then.',
       guideShow: 'Guide',
+      moreTitle: 'More settings',
+      motionTitle: 'Motion',
+      motionFull: 'Full',
+      motionLite: 'Lite',
+      motionOff: 'Off',
+      motionAuto: 'Follow system again',
+      motionAutoNow: 'Following the system: Lite when “reduce motion” is on, otherwise Full. Global; not saved in presets or exports.',
+      motionManualNow: 'Chosen manually; no longer follows the system “reduce motion” setting. Global; not saved in presets or exports.',
       guideTitle: 'Get started',
       guide1: 'Pick a preset card: personas change the voice, "Custom system prompt" lets you write it all, "Pure" sends nothing.',
       guide2: 'Choose the system-prompt mode: append (keeps dsh abilities) / replace body (tools stay) / take over (like a raw API call). Edits autosave; to stop sending it, turn this item’s switch off — the text is kept.',
@@ -1548,12 +1774,14 @@ window.__ModuleLoader__.load({
       knob: (on) => ({
         position: 'absolute',
         top: 2,
-        left: on ? 18 : 2,
+        left: 2,
         width: 16,
         height: 16,
         borderRadius: 8,
         background: on ? 'var(--dsw-alias-bg-base)' : 'var(--dsw-alias-state-idle-primary)',
-        transition: 'left 120ms ease',
+        // 只动 transform；档位非 full（简洁 = 不做位移 / 关）直接跳。
+        transform: on ? 'translateX(16px)' : 'none',
+        transition: motionLevel() === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none',
       }),
       label: { color: 'var(--dsw-alias-label-secondary)' },
       input: {
@@ -1972,6 +2200,7 @@ window.__ModuleLoader__.load({
       const adopt = React.useCallback((next) => {
         setEnvelope(next)
         setState(next?.state ?? null)
+        setMotionPref(next?.state?.ui?.motion)
         setArmedDraft((next?.state?.armed ?? []).join(' '))
         setAllowDraft((next?.state?.allowKinds ?? []).join(', '))
         const toolList = next?.state?.tools
@@ -2251,6 +2480,12 @@ window.__ModuleLoader__.load({
         }
       }, [call, sessionId])
 
+      // 动效档位：芯片箭头受它控制；顺手把 state.ui.motion 交给模块级档位（没开卡片时也认得用户手选）。
+      const motion = useMotionLevel()
+      React.useEffect(() => {
+        if (envelope !== null) setMotionPref(envelope?.state?.ui?.motion)
+      }, [envelope])
+
       // 卡片开没开 / 卡片发来的摘要（预设名 + 彩点）：都走 CARD_EVENT。
       const [, setTick] = React.useState(0)
       React.useEffect(() => {
@@ -2337,7 +2572,7 @@ window.__ModuleLoader__.load({
                   }),
                 ),
               ),
-              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: 'transform 150ms ease', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
+              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
             ],
       )
     }
@@ -2913,7 +3148,7 @@ window.__ModuleLoader__.load({
         width: 10,
         color: 'var(--dsw-alias-label-tertiary)',
         transform: open ? 'rotate(90deg)' : 'none',
-        transition: 'transform 120ms ease',
+        transition: motionLevel() === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none',
       }),
       hint: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12.5, lineHeight: 1.6, maxWidth: '68ch' },
       popover: {
@@ -3415,10 +3650,8 @@ window.__ModuleLoader__.load({
           if (reordered && before !== undefined) {
             const delta = before.top - top
             if (Math.abs(delta) > 1 && Math.abs(delta) < rect.height * 3) {
-              node.animate([{ transform: 'translateY(' + delta + 'px)' }, { transform: 'none' }], {
-                duration: 170,
-                easing: 'cubic-bezier(.2,.7,.2,1)',
-              })
+              // 位移类：off / 简洁（含系统「减少动态效果」默认）都不播。
+              play(node, [{ transform: 'translateY(' + delta + 'px)' }, { transform: 'none' }], { kind: 'move', duration: MOTION.base, easing: MOTION.ease })
             }
           }
         }
@@ -3539,6 +3772,34 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener(CARD_EVENT, onCard)
       }, [sessionId])
       const closeCard = React.useCallback(() => setCardOpen(sessionId, false), [sessionId])
+      // 动效（P1-10）：档位订阅；state.ui.motion 交给模块级档位。
+      const motion = useMotionLevel()
+      React.useEffect(() => {
+        if (envelope !== null) setMotionPref(envelope?.state?.ui?.motion)
+      }, [envelope])
+      // presence（P1-3）：收起时先播退场（fast / easeOut），结束（或被 cancel）后才卸载；退场中又打开 ⇒ 取消退场接着用。
+      const [cardMounted, setCardMounted] = React.useState(cardOpen)
+      const exitRef = React.useRef(null)
+      const enterPending = React.useRef(cardOpen)
+      const originRef = React.useRef('50% 100%')
+      React.useLayoutEffect(() => {
+        if (cardOpen) {
+          exitRef.current?.abort()
+          exitRef.current = null
+          enterPending.current = true
+          setCardMounted(true)
+          return
+        }
+        if (!cardMounted) return
+        const el = cardRef.current
+        const animation = el && el.getAttribute('data-shrunk') !== 'true' ? play(el, CARD_EXIT(originRef.current), { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' }) : null
+        exitRef.current = presenceExit(animation, () => {
+          exitRef.current = null
+          setCardMounted(false)
+        }, MOTION.fast + 240)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [cardOpen])
+      React.useEffect(() => () => exitRef.current?.abort(), [])
       // 芯片的摘要：渲染时算好放进 ref，提交后再广播（不在渲染里改别的组件）。
       const summaryRef = React.useRef(null)
       React.useEffect(() => {
@@ -3619,9 +3880,9 @@ window.__ModuleLoader__.load({
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [holdOpen])
 
-      // 几何：宽 clamp(560px, 62vw, 920px) 但不超过视口；以输入框为中线、贴在输入框上方 10px；
-      // 高度上限 = min(70vh, 输入框上方剩余空间 − 20px)。只读几何。
-      React.useEffect(() => {
+      // 几何（cardGeometry）：宽 clamp(560px, 62vw, 920px)、贴在输入框上方 10px、**高度固定**（P1-2）。只读几何。
+      // P1-1：第一次测量放在 useLayoutEffect 里（绘制前同步），首帧就在正确位置；之后 resize / 500ms 轮询照旧。
+      React.useLayoutEffect(() => {
         if (!cardOpen) return undefined
         const measure = () => {
           const input = document.querySelector('[contenteditable="true"]')
@@ -3638,20 +3899,14 @@ window.__ModuleLoader__.load({
             }
             node = node.parentElement
           }
-          const top = box?.top ?? (input instanceof HTMLElement ? input.getBoundingClientRect().top : vh - 160)
-          const center = box ? box.left + box.width / 2 : vw / 2
-          const width = Math.round(Math.min(Math.max(560, vw * 0.62), 920, vw - 24))
-          const left = Math.round(Math.min(Math.max(12, center - width / 2), vw - 12 - width))
-          const bottom = Math.round(vh - top + 10)
-          const maxHeight = Math.round(Math.max(200, Math.min(vh * 0.7, top - 20)))
-          const narrow = vw < 820
-          setBounds((current) =>
-            current !== null && current.width === width && current.left === left && current.bottom === bottom && current.maxHeight === maxHeight && current.narrow === narrow && current.vw === vw
-              ? current
-              : { width, left, bottom, maxHeight, narrow, vw },
-          )
+          const geo = cardGeometry(vw, vh, box, input instanceof HTMLElement ? input.getBoundingClientRect().top : undefined)
+          setBounds((current) => (sameGeometry(current, geo) ? current : geo))
+          return geo
         }
-        measure()
+        const first = measure()
+        // 入场的 transform-origin 对准芯片（读芯片几何，不改它）。
+        const chip = document.querySelector('[data-prefill-chip]')
+        originRef.current = cardOrigin(chip instanceof Element ? chip.getBoundingClientRect() : null, first, window.innerHeight)
         window.addEventListener('resize', measure)
         const timer = setInterval(measure, 500)
         return () => {
@@ -3659,6 +3914,15 @@ window.__ModuleLoader__.load({
           clearInterval(timer)
         }
       }, [cardOpen])
+      // 入场（P1-3）：位置量好之后、绘制之前开始播（首帧就是动画第一帧，不会先闪一下实心卡片）。
+      // 钉住 / 取消钉住、缩成标记再恢复不走这里（不做动画）。卡片还没渲染（items 未到）就等下一次提交。
+      React.useLayoutEffect(() => {
+        if (!cardOpen || bounds === null || !enterPending.current) return
+        const el = cardRef.current
+        if (el === null) return
+        enterPending.current = false
+        play(el, CARD_ENTER(originRef.current), { duration: MOTION.base, easing: MOTION.ease })
+      })
 
       React.useEffect(() => {
         const onChanged = () => setRevision((value) => value + 1)
@@ -7103,9 +7367,9 @@ window.__ModuleLoader__.load({
             cursor: 'pointer',
             position: 'relative',
             background: on ? color : 'var(--pf-off)',
-            transition: 'background 120ms ease',
+            transition: motion === 'off' ? 'none' : `background ${MOTION.fast}ms ease`,
           },
-        }, h('span', { style: { position: 'absolute', top: 2, left: on ? 14 : 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transition: 'left 120ms ease' } }))
+        }, h('span', { style: { position: 'absolute', top: 2, left: 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transform: on ? 'translateX(12px)' : 'none', transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none' } }))
       }
       const navItem = (key, paneId, color, parent) => {
         const selected = shownPane === paneId
@@ -7237,6 +7501,7 @@ window.__ModuleLoader__.load({
           narrow ? null : badge('var(--pf-turn)', t('badgeTurn'), `+${num(perTurnTok)}`, 'tok', 'turn'),
           narrow ? null : badge('var(--pf-ai)', t('badgeCache'), cacheHit === null ? '—' : `${cacheHit}%`, '', 'cache'),
         ),
+        h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'data-prefill-more': '', 'aria-haspopup': 'menu', 'aria-expanded': menu === 'more' ? 'true' : 'false', title: t('moreTitle'), 'aria-label': t('moreTitle'), onClick: () => setMenu(menu === 'more' ? '' : 'more') }, '⋯'),
         h('button', { type: 'button', style: V.btnGhost, 'aria-expanded': open.guide ? 'true' : 'false', title: t('guideShow'), onClick: () => toggle('guide') }, '?'),
         h(
           'button',
@@ -7255,6 +7520,37 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'aria-label': t('collapseCard'), title: t('collapseCard'), 'data-prefill-collapse': '', onClick: closeCard }, h(Icon, { name: 'chevron-down', size: 15 })),
         h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 14, padding: '0 6px' }, 'aria-label': t('closeCard'), title: t('closeCard'), 'data-prefill-close': '', onClick: closeCard }, h(Icon, { name: 'x', size: 14 })),
         ),
+      )
+
+      // 「⋯」菜单：全局的面板偏好（目前只有动效档位）。写 state.ui.motion：全局，不进预设、不随导出。
+      const motionPref = normalizeMotion(envelope?.state?.ui?.motion)
+      const writeMotion = (value) => {
+        const before = motionPref
+        setMotionPref(value)
+        void postJson(STATE_ROUTE, { ui: { motion: value } })
+          .then((data) => setEnvelope(data))
+          .catch(() => {
+            setMotionPref(before)
+            setStatus('error')
+          })
+      }
+      const moreMenu = h(
+        'div',
+        { 'data-prefill-menu': 'more', role: 'menu', style: { ...V.popover, left: 'auto', right: 12, width: 'min(320px, calc(100% - 24px))', gap: 8 } },
+        h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, t('motionTitle')),
+        h(
+          'div',
+          { style: { ...V.seg, alignSelf: 'flex-start' }, role: 'radiogroup', 'aria-label': t('motionTitle') },
+          ...MOTION_LEVELS.map((level) =>
+            h(
+              'button',
+              { key: level, type: 'button', role: 'radio', 'aria-checked': motion === level ? 'true' : 'false', style: V.segBtn(motion === level), 'data-prefill-motion-opt': level, onClick: () => writeMotion(level) },
+              t(level === 'full' ? 'motionFull' : level === 'lite' ? 'motionLite' : 'motionOff'),
+            ),
+          ),
+        ),
+        h('div', { style: { ...V.hint, fontSize: 11.5, whiteSpace: 'normal' } }, motionPref === null ? t('motionAutoNow') : t('motionManualNow')),
+        motionPref === null ? null : h('button', { type: 'button', style: { ...V.btnGhost, alignSelf: 'flex-start' }, 'data-prefill-motion-opt': 'auto', onClick: () => writeMotion(null) }, t('motionAuto')),
       )
 
       // 世界书 / 故事记忆是角色卡的子项（0.14）：只在套用的卡带了它们时出现在左栏，缩进挂在「角色卡」下面。
@@ -7277,7 +7573,7 @@ window.__ModuleLoader__.load({
 
       const main = h(
         'div',
-        { style: { flex: '1 1 auto', minWidth: 0, overflowY: 'auto', padding: narrow ? '12px 14px' : '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 } },
+        { 'data-prefill-main': '', style: { flex: '1 1 auto', minWidth: 0, minHeight: 0, overflowY: 'auto', padding: narrow ? '12px 14px' : '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 } },
         conflict
           ? h(
               'div',
@@ -7290,8 +7586,9 @@ window.__ModuleLoader__.load({
         sections[shownPane] ?? itemsSection,
       )
 
-      if (!cardOpen) return h('div', { 'data-prefill-anchor': '1', style: { height: 0, width: '100%' } })
-      const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      if (!cardOpen && !cardMounted) return h('div', { 'data-prefill-anchor': '1', style: { height: 0, width: '100%' } })
+      // 正在退场：不接收点击、对读屏隐藏，等 presence 卸载。
+      const closing = !cardOpen
 
       return h(
         'div',
@@ -7304,7 +7601,7 @@ window.__ModuleLoader__.load({
             onMouseDown: (event) => {
               if (menu === '') return
               const target = event.target
-              if (target instanceof Element && target.closest('[data-prefill-menu],[data-prefill-preset-select],[data-prefill-save-as]') !== null) return
+              if (target instanceof Element && target.closest('[data-prefill-menu],[data-prefill-preset-select],[data-prefill-save-as],[data-prefill-more]') !== null) return
               setMenu('')
             },
             onMouseEnter: () => {
@@ -7322,23 +7619,32 @@ window.__ModuleLoader__.load({
             'data-prefill-dock': '1',
             'data-prefill-card-panel': '1',
             'data-shrunk': shrunk ? 'true' : 'false',
-            'aria-hidden': shrunk ? 'true' : undefined,
+            'data-prefill-motion': motion,
+            'data-closing': closing ? 'true' : undefined,
+            'aria-hidden': shrunk || closing ? 'true' : undefined,
             role: 'dialog',
             'aria-label': t('dockTitle'),
             style: {
               ...COLOR_VARS,
               // 钉住缩成标记时：淡出、不接收点击（下面的对话照常可点）。
+              // 档位：off 直接切；简洁只淡出不位移。
               opacity: shrunk ? 0 : 1,
-              transform: shrunk ? 'translateY(6px) scale(0.98)' : 'none',
+              transform: shrunk && motion === 'full' ? 'translateY(6px) scale(0.98)' : 'none',
               transformOrigin: 'bottom right',
-              pointerEvents: shrunk ? 'none' : 'auto',
-              visibility: shrunk ? 'hidden' : 'visible',
-              transition: reduceMotion ? 'none' : shrunk ? 'opacity 150ms ease, transform 150ms ease, visibility 0s linear 150ms' : 'opacity 150ms ease, transform 150ms ease',
+              pointerEvents: shrunk || closing ? 'none' : 'auto',
+              // 还没量到位置（理论上 useLayoutEffect 已在绘制前量好）：先藏着，绝不在默认位置闪一下（P1-1）。
+              visibility: shrunk || bounds === null ? 'hidden' : 'visible',
+              transition:
+                motion === 'off'
+                  ? 'none'
+                  : `opacity 150ms ease${motion === 'full' ? ', transform 150ms ease' : ''}${shrunk ? ', visibility 0s linear 150ms' : ''}`,
               position: 'fixed',
               zIndex: 60,
               left: bounds?.left ?? 12,
               bottom: bounds?.bottom ?? 160,
               width: bounds?.width ?? 'min(920px, calc(100vw - 24px))',
+              // P1-2：固定高度（不随小节内容变），内容区自己滚动 ⇒ 底部锚定时顶边不跳。
+              height: bounds?.height ?? '60vh',
               maxHeight: bounds?.maxHeight ?? '60vh',
               boxSizing: 'border-box',
               display: 'flex',
@@ -7363,7 +7669,7 @@ window.__ModuleLoader__.load({
                 h('button', { type: 'button', style: V.btn, 'data-prefill-preset-undo': '', onClick: () => void undoClearPreset().catch(() => setStatus('error')) }, t('undo')),
               ),
           h('div', { style: { display: 'flex', flexDirection: narrow ? 'column' : 'row', minHeight: 0, flex: '1 1 auto' } }, nav, main),
-          menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : null,
+          menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : menu === 'more' ? moreMenu : null,
           toast === '' ? null : h('div', { 'data-prefill-toast': '', style: { position: 'absolute', right: 14, bottom: 10, zIndex: 6, padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)', boxShadow: '0 2px 8px rgba(0,0,0,.15)' } }, toast),
         ),
         shrunk
@@ -7398,7 +7704,7 @@ window.__ModuleLoader__.load({
                   fontFamily: 'inherit',
                   fontSize: 12,
                   cursor: 'pointer',
-                  animation: reduceMotion ? 'none' : 'dsh-prefill-pop 150ms ease',
+                  animation: motion === 'off' ? 'none' : motion === 'lite' ? 'dsh-prefill-fade 150ms ease' : 'dsh-prefill-pop 150ms ease',
                 },
               },
               h('span', { style: { display: 'inline-flex', color: 'var(--pf-system)' } }, h(Icon, { name: 'pin', size: 12, fill: 'currentColor' })),
@@ -7413,7 +7719,7 @@ window.__ModuleLoader__.load({
                   }),
                 ),
               ),
-              reduceMotion ? null : h('style', null, '@keyframes dsh-prefill-pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}'),
+              motion === 'off' ? null : h('style', null, '@keyframes dsh-prefill-pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}@keyframes dsh-prefill-fade{from{opacity:0}to{opacity:1}}'),
             )
           : null,
       )
