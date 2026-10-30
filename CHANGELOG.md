@@ -21,6 +21,16 @@
     - 打开 / 收起：full 档入场约 180ms、退场约 120ms 后节点才卸载；lite 只有 opacity 动画、transform 一直是 none；off 下 `getAnimations()` 始终 0，点收起下一帧节点就没了。
     - 三档切换：「⋯」菜单点完整 / 简洁 / 关，根节点 `data-prefill-motion` 和分段按钮选中态立即跟着变；从接口写 `ui.motion` 后，卡片随下一次状态刷新换档。
     - `reducedMotion: 'reduce'`：未手选时档位是 lite，工作台 ↑ 移动时块上没有动画（full 档同一操作 FLIP 播放 translateY 162→0）；芯片箭头、开关圆点的 transition 为 none，缩标记只剩 opacity 过渡。
+- **动效第 3 步：可见性——错误 pill、忙碌态、新积木滚入视野、toast**（规划 `docs/规划-动效.md` §4.1，审视 P0-1 / P0-2 / P0-3 / P1-8）。
+  - 现象：① 出错只在「开场对话」节 meta 行的小字里显示；在别的节（如「系统提示」节切开关）写入失败，界面一点变化都没有，开关停在原样也没人告诉你为什么。② 网络稍慢时首次点芯片、保存 / 另存为、套用 / 取消预设、开关、切沙盒档位都没有「进行中」：点完到返回之前界面不动，开关要等服务端返回才动，可以连点好几下。③ 点按钮加的积木落在工作台底部视野外，只靠右下角 toast 知道成功了。④ toast 固定在卡片右下角，没有入场退场、没有 `aria-live`，常压在积木的编辑按钮 / 手动注入按钮上，离触发点很远。
+  - 原因：卡片二十多处 `.catch(() => setStatus('error'))` 只写一个只在开场对话节渲染的状态；没有统一的忙碌机制，开关不做乐观更新；加积木后不管它在哪；toast 是一个写死位置的 div。
+  - 改法（新逻辑在 `client.js` 新的 `// <feedback>` 段，紧跟 `<motion>`；所有动画都经 `play()`，跟随三档：简洁只淡入淡出、off 不动画）：
+    - P0-1：头部错误 pill「⚠ <哪个操作>失败 ×N」，点开看原因（如 `HTTP 500`）/ 时间 / 「界面已恢复成操作前」，✕ 关掉；同一操作后来成功自动收起；所有节都看得见，外层常驻 `aria-live="assertive"`。pill 出现时临时占住 token 读数徽章的位置（不另起一项，头部不折行、内容区不被挤下去）。入场淡入 + 上移 4px、退场 presence。卡片的失败全部改走 `failed(key, 操作名)` → 窗口事件 `dsh-prefill:error`；会话沙盒页、高级注入改写、芯片首次打开也报到这里。失败的开关回到原状态，完整档再左右晃一次（位移类，简洁 / off 不晃）。
+    - P0-2：`createBusy()` / `useBusy()`：进行中再点直接忽略；**超过 150ms 才显示忙碌**（`aria-busy`、变暗、按钮里转圈；快于 150ms 不闪）。接上保存、另存为、套用预设（一次只跑一个）、取消预设、撤销、左栏开关、沙盒档位、首次点芯片（失败时芯片显示「开启失败 · 再点一次重试」6 秒）。转圈只在完整档旋转，简洁 / off 是静态圆环。开关乐观更新：点下去立刻按新值显示，失败回弹到原状态并接 P0-1。
+    - P0-3：加积木后只滚卡片内容区到「刚好看得见」（nearest；完整档平滑滚动、简洁 / off 直接跳），入场 `opacity + translateY(-6px)`（简洁只透明度），再叠 1s 描边高亮（只动 opacity）。
+    - P1-8：toast 入场 / 退场（presence），贴着触发它的控件（上方 6px、右边对齐，放不下放下方；刚加的积木贴新块滚完后的位置；没有触发点卡片底部居中），`pointer-events: none` 不挡操作；打开下拉菜单时收掉旧 toast；读屏走常驻 `role="status" aria-live="polite"` 区域。
+  - 单测 `tests/motion-visibility.test.mjs`（11 项：busy 150ms 阈值 / 重复点击忽略 / 失败照样结束；乐观更新失败回弹、成功停在新值；错误 pill 状态机与上报事件；off 不调 animate 但新积木照样滚到位；简洁只剩透明度、回弹与转圈不播；完整档关键帧只动 transform / opacity；`nearestScrollTop` / `toastPlace`；面板接线；会话沙盒页切档位进行中再点被忽略），切 `<motion>` + `<feedback>` 两段配假 window 跑；改前 11 项全部失败。`tests/sandbox-harness.mjs` 跟着把 `<feedback>` 段一起切进去；`clear-preset.test.mjs` 撤销按钮那条断言改成走 `act()`。共 287/287。
+  - 实测（DSH Web + Playwright，`page.route` 让 POST 状态返回 500 / 加 1–1.2s 延迟）：在「系统提示」节切开关写入失败，改前四帧完全相同、只有开场对话节有小字；改后约 400ms 头部出现「⚠「工作区说明」开关失败」，开关回到「开」，切到「开场对话」节 pill 仍在，详情写明 `HTTP 500`。慢网切开关：改后 0ms 就按新值显示、约 290ms 起变暗（`opacity .6`），返回后恢复；套「纯净模式」约 430ms 起该预设变暗 + 转圈；沙盒切档位出转圈；改前全程不变。加积木（工作台已比可视区长）：改前新块 top 989、可视区底 861，在视野外；改后新块 749–853 落在视野内，入场 translateY -6→0 / opacity 0→1，描边高亮约 1s 后撤掉，toast 出现在新块正上方。简洁档（系统「减少动态效果」）：pill / 新块 / toast 只有 opacity 动画、transform 始终 none；off 档 `getAnimations()` 始终 0，pill、滚动、高亮照样出现。
 
 ## 0.16.0 — 2026-10-30
 - **会话沙盒第 1 步：合并规则表 + 迁移旧字段**（issue #15，数据层；旧数据行为不变）。原来散在 state.json 顶层的 `overrides` / `sessionAllowKinds` / `sessionTools` / `injectionBlocks`（注入审计的按名阻断）/ `gate[会话] = 'pure'` 合成一张表 `state.sandbox[会话 | '*'] = { level, own, rules: [{ match, action: allow | deny | rewrite, … }] }`，规划见 `docs/会话沙盒-规划.md`。

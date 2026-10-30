@@ -6,6 +6,8 @@ import { migrateSandbox } from '../sandbox.js'
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 const panelSrc = src.slice(src.indexOf('    // ── 会话沙盒（issue #15 第 3 步）'), src.indexOf('    function InjectionSection(props) {'))
+// 动效第 3 步：面板用到 <feedback> 段的 createBusy（忙碌态）和错误上报；切出来一起跑（play 用不到，给个空的）。
+const feedbackSrc = src.slice(src.indexOf('    // <feedback>'), src.indexOf('    // </feedback>'))
 
 
 export function makeHarness(envelope, { sid: SID, sources, routes = {} }) {
@@ -38,7 +40,8 @@ export function makeHarness(envelope, { sid: SID, sources, routes = {} }) {
     }
     return clone(current)
   }
-  const window = { dispatchEvent() {}, addEventListener() {}, removeEventListener() {} }
+  const errors = []
+  const window = { dispatchEvent(event) { if (event?.detail?.type) errors.push(event.detail) }, addEventListener() {}, removeEventListener() {} }
   // eslint-disable-next-line no-new-func
   const make = new Function(
     'React',
@@ -52,9 +55,18 @@ export function makeHarness(envelope, { sid: SID, sources, routes = {} }) {
     'InjectionSection',
     'window',
     'CustomEvent',
-    `${panelSrc}\nreturn { SandboxSection, sandboxSummary, SBX_TEXT }`,
+    'play',
+    'motionLevel',
+    'MOTION',
+    `${feedbackSrc}\nconst busyCtl = createBusy()\nconst useBusy = () => busyCtl\nconst Spinner = () => null\nconst BUSY_LOOK = {}\n${panelSrc}\nreturn { SandboxSection, sandboxSummary, SBX_TEXT, busyCtl, createBusy }`,
   )
-  const mod = make(React, h, anything, anything, () => '', postJson, '/api/dsh-prefill/state', 'evt', () => null, window, class {})
+  class FakeCustomEvent {
+    constructor(type, init) {
+      this.type = type
+      this.detail = init?.detail
+    }
+  }
+  const mod = make(React, h, anything, anything, () => '', postJson, '/api/dsh-prefill/state', 'evt', () => null, window, FakeCustomEvent, () => null, () => 'full', { fast: 120, base: 180, ease: '' })
   const t = (key) => mod.SBX_TEXT.zh[key] ?? key
   const render = () => {
     cursor = 0
@@ -77,6 +89,6 @@ export function makeHarness(envelope, { sid: SID, sources, routes = {} }) {
     return out
   }
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
-  return { render, find, posts, settle, mod, t }
+  return { render, find, posts, settle, mod, t, errors }
 }
 
