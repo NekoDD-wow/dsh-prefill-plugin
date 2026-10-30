@@ -3,6 +3,25 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **动效第 1、2 步：档位与 `play()` 基础设施 + 消除卡片跳变**（规划 `docs/规划-动效.md`，审视 `docs/审视-动效-0.16.0.md` 的 P1-1 / P1-2 / P1-3 / P1-10）。
+  - 现象：① 刷新后第一次打开卡片，先在左下角默认位置（`left:12`、宽 920）闪约 160ms，再瞬移到输入框上方（layout-shift ≈ 0.19；窄屏还先按宽屏左栏布局画一帧）。② 卡片高度跟着当前小节内容变、又贴着底部定位，切小节 / 套预设 / 撤销条出现时顶边上下跳：宽屏约 100px，窄屏最大约 370px，刚点的标签跑到别处。③ 打开 / 收起没有过渡，点收起约 90ms 节点就没了。④ 系统开着「减少动态效果」时，工作台 FLIP（170ms）、开关圆点、芯片箭头照样动；`prefers-reduced-motion` 只在渲染时读一次、只管钉住缩标记，系统里切换后不刷新页面不生效；也没有办法手动关动效。
+  - 原因：几何在 `useEffect` 里测（首帧绘制之后），首帧用默认值；卡片只给了 `maxHeight`，高度由内容决定；卡片 `cardOpen` 一变 false 就直接 return 掉；动效时长 / 缓动散落在各调用处，没有统一的档位和出口。
+  - 改法：
+    - `client.js` 顶部新增 `// <motion>` 段：`MOTION` 常量（fast 120 / base 180 / slow 260、ease / easeOut / spring、stagger 30）；`motionLevel()` = 手选 `state.ui.motion` ?? （系统 reduce ? `lite` : `full`），第一次用时 `matchMedia` 并**监听 change**，变化经 `dsh-prefill:motion` 事件让芯片 / 卡片 / 设置页重渲染；`play(el, keyframes, opts)` 是所有动画的唯一出口：`off` 返回 null 且不调 `animate`，`lite` 把 spring 换 ease、每帧去掉 transform / translate / scale / rotate（只剩淡入淡出），`kind: 'move'`（位移类，如 FLIP）和 `kind: 'decor'`（装饰类）不播；动画期间加 `will-change`，结束或被 cancel 都摘掉；`presenceExit()`：退场动画 finished（resolve 或 cancel 导致的 reject）后才卸载，没动画当场卸载，有兜底计时，退场中又打开可 abort。
+    - 现有动效全部接上档位：工作台 FLIP 改走 `play(..., { kind: 'move' })`（170 → `MOTION.base` 180ms）；面板和设置页的开关圆点从 `left` 过渡改成 `transform: translateX()`，只在 full 档过渡；芯片箭头、设置页折叠箭头只在 full 档旋转过渡；钉住缩成标记 off 不过渡、lite 只淡出不位移；标记弹出 lite 换成纯淡入。卡片根节点加 `data-prefill-motion="full|lite|off"`。
+    - P1-1：卡片几何抽成纯函数 `cardGeometry()`，第一次测量放进 `useLayoutEffect`（绘制前同步），之后 resize / 500ms 轮询照旧；兜底 `bounds === null` 时卡片 `visibility: hidden`。
+    - P1-2：卡片 `height` 固定为 `min(70vh, 输入框上方剩余空间 − 20px)`（至少 200），不随小节变；内容区（新标记 `data-prefill-main`，加 `minHeight: 0`）和左栏各自滚动，窄屏（<820 顶部标签）同一套。撤销条出现只挤压内容区。
+    - P1-3：打开时在量好位置的同一 layout 阶段播入场 `scale(.96) translateY(6px) opacity 0 → 1`（base / ease），`transform-origin` 对准芯片中心（`cardOrigin()`）；收起播反向（fast / easeOut，`fill: forwards`），presence 等动画结束后才卸载，退场期间不接收点击、`aria-hidden`。已缩成标记时收起不播。钉住 / 取消钉住不做动画。没有新增任何自动播放的动效（流式期间不会多出动画）。
+    - 档位入口：卡片头部工具组新增「⋯」→「动效：完整 / 简洁 / 关」（分段按钮，`data-prefill-motion-opt`），说明当前是跟随系统还是手选，手选后可「改回跟随系统」。写 `state.ui.motion`：**全局**，只在 `state.json`，不进预设、不随导出、不进首轮锁定快照。`impl.js` 新增 `sanitizeUi()`（只认 full / lite / off），`normalizeState` 剔掉非法值（连 `ui` 键一起去掉），`patchState` 按键合并 `ui`，`motion: null` = 改回跟随系统。
+  - 单测 `tests/motion.test.mjs`（10 项：常量；off 不调 animate；full 原样播且 will-change 结束 / cancel 后都摘掉；lite 无 spring / 无 transform、move / decor 不播；reduce 默认 lite、手选优先、非法手选跟随系统、监听系统变化、老式 addListener；presence 动画结束后卸载、cancel 也卸载、off 当场卸载、abort 不卸载、兜底计时；`cardGeometry` 固定高度 / 窄屏 / 兜底、`cardOrigin`；面板接线（layout effect 测量、固定高度、presence、`data-prefill-motion`、除 `play()` 外没有直接 `.animate(`、开关 / 箭头 / 缩标记走档位、「⋯」菜单与文案）；`state.ui.motion` 规范化）。把 `<motion>` 段切出来配假 window 跑；改前 10 项全部失败。`card-ux.test.mjs` 里缩标记那条断言跟着改成 `pointerEvents: shrunk || closing`。共 276/276。
+  - 实测（DSH Web + Playwright，rAF 逐帧采样卡片 rect / opacity / transform / `getAnimations()`）：
+    - 首次打开：宽屏 1400 和 780 下，卡片第一次可见的那一帧就在终点位置（只有入场的 scale(.96) 和 opacity 0），之前不出现在 `left:12`；打开期间 layout-shift 为空（改前 0.19 / 0.195）。
+    - 切小节：宽屏 9 个节卡片顶边始终 y=162、高 700；780 下始终 y=132、高 630（改前宽屏跳约 100px、窄屏最大约 370px）。套「纯净模式」、取消预设（撤销条出现）、撤销：顶边都不动。
+    - 打开 / 收起：full 档入场约 180ms、退场约 120ms 后节点才卸载；lite 只有 opacity 动画、transform 一直是 none；off 下 `getAnimations()` 始终 0，点收起下一帧节点就没了。
+    - 三档切换：「⋯」菜单点完整 / 简洁 / 关，根节点 `data-prefill-motion` 和分段按钮选中态立即跟着变；从接口写 `ui.motion` 后，卡片随下一次状态刷新换档。
+    - `reducedMotion: 'reduce'`：未手选时档位是 lite，工作台 ↑ 移动时块上没有动画（full 档同一操作 FLIP 播放 translateY 162→0）；芯片箭头、开关圆点的 transition 为 none，缩标记只剩 opacity 过渡。
+
 ## 0.16.0 — 2026-10-30
 - **会话沙盒第 1 步：合并规则表 + 迁移旧字段**（issue #15，数据层；旧数据行为不变）。原来散在 state.json 顶层的 `overrides` / `sessionAllowKinds` / `sessionTools` / `injectionBlocks`（注入审计的按名阻断）/ `gate[会话] = 'pure'` 合成一张表 `state.sandbox[会话 | '*'] = { level, own, rules: [{ match, action: allow | deny | rewrite, … }] }`，规划见 `docs/会话沙盒-规划.md`。
   - match 只认一个维度：`kind`（消息 source.kind）/ `section` / `context` / `tool`，值里的 `*` 是通配（`team:*` 前缀）；旧字段迁来的名字都带 `exact: true`，旧名单里字面的 `*` 不会变成「全部」。
