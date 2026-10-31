@@ -581,6 +581,8 @@ window.__ModuleLoader__.load({
       if (!Number.isFinite(a) || !Number.isFinite(b) || a === b) return 1
       return b > a ? 1 : -1
     }
+    /** 来源标签闪（P2-4）：标签换了来源（来自角色卡 → 本会话改过 …）时整枚标签淡一下再回来。只动 opacity。 */
+    const SOURCE_FLASH = [{ opacity: 1 }, { opacity: 0.3, offset: 0.35 }, { opacity: 1 }]
     /** 撤销条（P1-4）：「取消预设」后 UNDO_MS 内可撤销；从卡片底部滑入、叠在内容上（不占文档流），带倒计时线。 */
     const UNDO_MS = 8000
     const UNDO_ENTER = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }]
@@ -787,6 +789,16 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 来源标签（P2-4）：pulse 变成非空 ⇒ 闪一下（cue: auto，流式中攒着）。其余同原来的 span。 */
+    function SourceTag(props) {
+      const { pulse = '', defer = false, ...rest } = props
+      const ref = React.useRef(null)
+      React.useLayoutEffect(() => {
+        if (pulse !== '') play(ref.current, SOURCE_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, cueKey: `source:${pulse}` })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [pulse])
+      return h('span', { ref, ...rest })
+    }
     /**
      * 文字滚动切换（P1-9 状态文字、P2-3 数字）：value 变了 ⇒ 新内容从下 / 上滚进来（rollFrames），旧内容叠在原处滚出去（presence）。
      * still = 这次不滚（用户自己点 / 打字引起的变化，或刚挂上）；defer = 回合刚结束这一刻（直接进队列，和攒着的一起放）。
@@ -4875,6 +4887,13 @@ window.__ModuleLoader__.load({
       //   user（P0-4）：变了的项扫光（简洁档闪底色），toast 列出连带改动（当前节和刚点的开关自己不算「连带」）。
       const navSigRef = React.useRef(null)
       const markerRef = React.useRef(null)
+      // P2-4：每格来源标签上一次提交时是什么（按会话）；这一次渲染里看到的先记在 srcNow，提交后再写回。
+      const srcSeen = React.useRef({ sessionId: '', kinds: {} })
+      const srcNow = React.useRef({})
+      React.useLayoutEffect(() => {
+        if (srcSeen.current.sessionId !== sessionId) srcSeen.current = { sessionId, kinds: {} }
+        srcSeen.current.kinds = { ...srcSeen.current.kinds, ...srcNow.current }
+      })
       const cueInfoRef = React.useRef(null)
       const cueSince = React.useRef({ sessionId, at: Date.now() })
       if (cueSince.current.sessionId !== sessionId) cueSince.current = { sessionId, at: Date.now() }
@@ -6207,13 +6226,20 @@ window.__ModuleLoader__.load({
       // 会话开跑后开场对话已写进历史、草稿清空：这时不标来源（不是「本会话改过」）。
       const tagOf = (slot) => (slot === 'items' && injectMode && items.length === 0 ? '' : slotTag(slotSrc, slot, currentSlots, slotHas[slot]))
       const TAG_COLOR = { card: 'var(--pf-card)', preset: 'var(--pf-system)', session: 'var(--dsw-alias-state-warn-primary)' }
-      const sourceTag = (kind, prefix) =>
-        kind === ''
+      // P2-4：这一格的来源和上一次提交时不一样（刚挂上 / 换会话的头几秒除外）⇒ 标签闪一下。
+      const srcSettled = srcSeen.current.sessionId === sessionId && Date.now() - cueSince.current.at >= CUE_SETTLE_MS
+      const sourceTag = (kind, prefix, slot = prefix ?? '') => {
+        const before = srcSeen.current.kinds[slot]
+        srcNow.current[slot] = kind
+        const pulse = srcSettled && before !== undefined && before !== kind && kind !== '' ? `${slot}:${kind}:${Date.now()}` : ''
+        return kind === ''
           ? null
           : h(
-              'span',
+              SourceTag,
               {
                 key: `src-${prefix ?? ''}`,
+                pulse,
+                defer: turnEnded,
                 'data-prefill-source': kind,
                 title: t(`sourceTip_${kind}`),
                 style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', color: `color-mix(in srgb, ${TAG_COLOR[kind]} 75%, var(--dsw-alias-label-primary))`, background: tint(TAG_COLOR[kind], 12) },
@@ -6221,6 +6247,7 @@ window.__ModuleLoader__.load({
               h('i', { style: { width: 6, height: 6, borderRadius: '50%', background: TAG_COLOR[kind], display: 'inline-block' } }),
               prefix ? `${prefix} · ${t(`source_${kind}`)}` : t(`source_${kind}`),
             )
+      }
       // 套着角色卡时，系统提示里多一组「带工具（Agent）/ 纯角色扮演」（原来在角色卡面板里）。
       const cardModeSeg = appliedRef
         ? h(
@@ -6250,7 +6277,7 @@ window.__ModuleLoader__.load({
         Section,
         {
           id: 'system',
-          tags: sourceTag(tagOf('system')),
+          tags: sourceTag(tagOf('system'), undefined, 'system'),
           title: t('systemTitle'),
           meta: systemMode === 'off' ? t('systemOffMeta') : systemMode === 'append' ? `${t('systemAppendMeta')} · ≈${systemTok} tok` : systemMode === 'replace' ? `${t('systemReplaceMeta')} · ≈${systemTok} tok` : `${t('systemTakeoverMeta')} · ≈${systemTok} tok`,
           off: !isOn('system') || systemFromCardOff,
@@ -6581,7 +6608,7 @@ window.__ModuleLoader__.load({
         Section,
         {
           id: 'items',
-          tags: sourceTag(tagOf('items')),
+          tags: sourceTag(tagOf('items'), undefined, 'items'),
           title: t('itemsTitle'),
           meta: `${countFilled(items)}${t('countSuffix')}${countFilled(items) < items.length ? t('emptyRowsSkipped').replace('%N', String(items.length - countFilled(items))) : ''} · ≈${itemsTok} tok · ${injectMode ? t('itemsAfterRun') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
           off: !isOn('items'),
@@ -7736,7 +7763,7 @@ window.__ModuleLoader__.load({
         Section,
         {
           id: 'every-turn',
-          tags: sourceTag(tagOf('everyTurn')),
+          tags: sourceTag(tagOf('everyTurn'), undefined, 'everyTurn'),
           title: t('everyTurnTitle'),
           meta: everyTurnActive
             ? autoStatus !== null
@@ -8028,7 +8055,7 @@ window.__ModuleLoader__.load({
           id: 'inject',
           title: t('injectTitle'),
           meta: t('sbxWas'),
-          tags: [h('span', { key: 'pure', style: { padding: '1px 8px', borderRadius: 6, fontSize: 11.5, background: tint('var(--dsw-alias-state-error-primary, #e5484d)', 14), color: 'var(--dsw-alias-state-error-primary, #e5484d)', fontWeight: 600 } }, t('sbxReplacesPure')), sourceTag(tagOf('tools'), t('toolsTag'))],
+          tags: [h('span', { key: 'pure', style: { padding: '1px 8px', borderRadius: 6, fontSize: 11.5, background: tint('var(--dsw-alias-state-error-primary, #e5484d)', 14), color: 'var(--dsw-alias-state-error-primary, #e5484d)', fontWeight: 600 } }, t('sbxReplacesPure')), sourceTag(tagOf('tools'), t('toolsTag'), 'tools')],
           off: !isOn('inject'),
           offTitle: t('offTitle'),
           offBody: t('injectOffBody'),
@@ -8272,7 +8299,7 @@ window.__ModuleLoader__.load({
         Section,
         {
           id: 'workspace',
-          tags: sourceTag(tagOf('workspace')),
+          tags: sourceTag(tagOf('workspace'), undefined, 'workspace'),
           title: t('wsTitle'),
           meta: t('wsMeta'),
           off: !isOn('workspace'),
@@ -8557,8 +8584,9 @@ window.__ModuleLoader__.load({
       const usageTotal = usage?.total ?? null
       const usagePrompt = usageTotal ? usageTotal.input + usageTotal.cacheRead : 0
       const cacheHit = usagePrompt > 0 ? Math.round((usageTotal.cacheRead / usagePrompt) * 100) : null
+      // P2-3：读数变了 ⇒ 数字上下滚动（变大往上、变小往下）；打字时边打边变的不滚，刚挂上的头几秒也不滚。
       const badge = (color, label, value, unit, attr) =>
-        h('span', { key: attr, 'data-prefill-badge': attr, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', background: tint(color, 14), color: 'var(--dsw-alias-label-secondary)' } }, label, h('b', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 700 } }, value), unit)
+        h('span', { key: attr, 'data-prefill-badge': attr, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', background: tint(color, 14), color: 'var(--dsw-alias-label-secondary)' } }, label, h('b', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 700 } }, h(RollText, { value: String(value), still: cueCause === 'typing' || Date.now() - cueSince.current.at < CUE_SETTLE_MS, defer: turnEnded, attr: 'data-prefill-badge-roll' }, value)), unit)
       const narrow = bounds?.narrow === true
       const header = h(
         'div',

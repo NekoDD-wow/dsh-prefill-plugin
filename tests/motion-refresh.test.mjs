@@ -381,3 +381,29 @@ test('面板接线（P1-9）：后台变化闪左栏 / 标记 / 芯片小点；�
   const impl = readFileSync(new URL('../impl.js', import.meta.url), 'utf8')
   assert.match(impl, /manualInbox: Object\.fromEntries\(\[\.\.\.liveAgents\]\.map\(\(\[id, agent\]\) => \[id, pendingInInbox\(agent\)\.length\]\)\)/)
 })
+
+// ── 4. P2-3 头部读数滚动；P2-4 来源标签闪 ─────────────────────────────────────
+
+test('来源标签闪只动 opacity；off 不动；流式中攒着', () => {
+  const { M } = load()
+  assert.deepEqual([...props(M.SOURCE_FLASH)], ['opacity'])
+  M.setMotionPref('off')
+  const off = fakeEl()
+  assert.equal(M.play(off, M.SOURCE_FLASH, { duration: M.FLASH_MS, cue: 'auto' }), null)
+  assert.equal(off.calls.length, 0)
+  M.setMotionPref('full')
+  const root = fakeRoot('stream')
+  const tag = fakeEl(root)
+  assert.equal(M.play(tag, M.SOURCE_FLASH, { duration: M.FLASH_MS, cue: 'auto' }), null)
+  root.busy = undefined
+  assert.equal(M.flushCues().length, 1)
+})
+
+test('面板接线（P2-3 / P2-4）：头部读数用 RollText（打字不滚）；来源标签换来源时闪', () => {
+  assert.match(dockSrc, /h\(RollText, \{ value: String\(value\), still: cueCause === 'typing' \|\| Date\.now\(\) - cueSince\.current\.at < CUE_SETTLE_MS, defer: turnEnded, attr: 'data-prefill-badge-roll' \}, value\)/)
+  assert.match(dockSrc, /const pulse = srcSettled && before !== undefined && before !== kind && kind !== ''/)
+  assert.match(dockSrc, /h\(\s+SourceTag,\s+\{\s+key: `src-\$\{prefix \?\? ''\}`,\s+pulse,/)
+  for (const slot of ['system', 'items', 'everyTurn', 'workspace']) assert.match(dockSrc, new RegExp(`sourceTag\\(tagOf\\('${slot}'\\), undefined, '${slot}'\\)`), slot)
+  const tag = cut('    function SourceTag(props) {', '    function RollText(props) {')
+  assert.match(tag, /if \(pulse !== ''\) play\(ref\.current, SOURCE_FLASH, \{ duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto'/)
+})
