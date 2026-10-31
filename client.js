@@ -52,7 +52,13 @@ window.__ModuleLoader__.load({
       return normalizeMotion(pref) ?? (reduce === true ? 'lite' : 'full')
     }
     const motionState = { pref: null, reduce: false, mql: null }
+    /** 正挂着 will-change 的元素样式（动画进行中）：档位切到 off 时当场摘掉（off 档下不留 will-change）。 */
+    const willChanged = new Set()
     function emitMotion() {
+      if (resolveMotion(motionState.pref, motionState.reduce) === 'off') {
+        for (const style of willChanged) style.willChange = ''
+        willChanged.clear()
+      }
       try {
         window.dispatchEvent(new CustomEvent(MOTION_EVENT))
       } catch {
@@ -107,12 +113,75 @@ window.__ModuleLoader__.load({
       return live ? frames : null
     }
     /**
+     * 流式输出时收敛（docs/规划-动效.md §5）：卡片根节点（以及钉住后的标记、芯片）在模型正在输出时带
+     * `data-prefill-busy="stream"`（按钮自己的忙碌态是 `data-prefill-busy="true"`，两者不混）。
+     * 这时 play() 只放行按压 / 直接反馈（用户点出来的入场、退场、FLIP、toast……）；
+     * 自动提示（`cue: 'auto'`：后台状态变化的闪、数字滚动、来源标签闪）和装饰类（`kind: 'decor'`：扫光、倒计时线）
+     * 记进队列，回合结束后 flushCues() 统一播放：最多 CUE_MAX 个，依次错开 CUE_STAGGER。
+     * `cue: 'press'` = 按压微反馈（装饰类也放行）。队列按 `cueKey`（缺省 = 元素）去重，同一处只留最后一次。
+     */
+    const STREAM_BUSY = 'stream'
+    const CUE_MAX = 3
+    const CUE_STAGGER = 60
+    const CUE_QUEUE_CAP = 24
+    const cueState = { queue: [] }
+    function streamRoot(el) {
+      try {
+        return typeof el?.closest === 'function' ? el.closest(`[data-prefill-busy="${STREAM_BUSY}"]`) : null
+      } catch {
+        return null
+      }
+    }
+    function deferrable(kind, cue) {
+      if (cue === 'press' || cue === 'flush') return false
+      return cue === 'auto' || kind === 'decor'
+    }
+    function enqueueCue(el, keyframes, opts, root) {
+      const key = opts.cueKey ?? el
+      const queue = cueState.queue.filter((entry) => entry.key !== key)
+      queue.push({ el, keyframes, opts, key, root, prio: Number(opts.prio) || 0 })
+      cueState.queue = queue.slice(-CUE_QUEUE_CAP)
+    }
+    function stillStreaming(root) {
+      if (root === null || root === undefined) return false
+      if (root.isConnected === false) return false
+      try {
+        return root.getAttribute?.('data-prefill-busy') === STREAM_BUSY
+      } catch {
+        return false
+      }
+    }
+    /**
+     * 回合结束：把根节点已经不在输出的那些排队提示放掉，最多 CUE_MAX 个（prio 大的先，同级按先后），
+     * 依次 delay = i × CUE_STAGGER；其余丢掉（已经过时的提示不补播）。元素已卸载的跳过。返回播出的动画。
+     */
+    function flushCues() {
+      const ready = []
+      const rest = []
+      for (const entry of cueState.queue) (stillStreaming(entry.root) ? rest : ready).push(entry)
+      cueState.queue = rest
+      const live = ready.filter((entry) => entry.el?.isConnected !== false)
+      live.sort((a, b) => b.prio - a.prio)
+      const out = []
+      for (const entry of live.slice(0, CUE_MAX)) {
+        const { cueKey: _key, prio: _prio, defer: _defer, ...rest2 } = entry.opts
+        const animation = play(entry.el, entry.keyframes, { ...rest2, cue: 'flush', delay: (Number(rest2.delay) || 0) + out.length * CUE_STAGGER })
+        if (animation !== null) out.push(animation)
+      }
+      return out
+    }
+    function pendingCues() {
+      return cueState.queue.length
+    }
+    /**
      * 所有动画都经过这里。opts = WAAPI 时间参数 + `kind`（'enter' 默认 | 'move' 位移类如 FLIP | 'decor' 装饰类如扫光）
-     * + `level`（测试 / 特殊场合指定档位）。off ⇒ 返回 null、不调 animate；lite 见 liteFrames。
+     * + `level`（测试 / 特殊场合指定档位）+ `cue`（'auto' 自动提示 | 'press' 按压反馈 | 缺省 = 直接反馈）
+     * + `cueKey` / `prio`（排队去重键 / 优先级）+ `defer`（直接记进队列，等下一次 flushCues）。
+     * off ⇒ 返回 null、不调 animate、不排队；lite 见 liteFrames；流式中见上。
      * 动画期间加 will-change，结束或被 cancel 都摘掉（不残留）。
      */
     function play(el, keyframes, opts = {}) {
-      const { kind = 'enter', level: forced, ...timing } = opts ?? {}
+      const { kind = 'enter', level: forced, cue, cueKey, prio, defer, ...timing } = opts ?? {}
       const level = MOTION_LEVELS.includes(forced) ? forced : motionLevel()
       if (level === 'off' || el === null || el === undefined || typeof el.animate !== 'function') return null
       let frames = keyframes
@@ -121,6 +190,10 @@ window.__ModuleLoader__.load({
         frames = liteFrames(keyframes)
         if (frames === null) return null
         if (timing.easing === MOTION.spring) timing.easing = MOTION.ease
+      }
+      if (defer === true || (deferrable(kind, cue) && streamRoot(el) !== null)) {
+        enqueueCue(el, keyframes, { ...opts, defer: undefined }, defer === true ? null : streamRoot(el))
+        return null
       }
       let animation
       try {
@@ -131,9 +204,12 @@ window.__ModuleLoader__.load({
       if (animation === null || animation === undefined) return null
       const style = el.style
       if (style !== undefined && style !== null) {
-        style.willChange = 'transform, opacity'
+        // 简洁档只剩透明度：只提示 opacity（少占一层合成）；off 档上面已经返回，不会走到这里。
+        style.willChange = level === 'lite' ? 'opacity' : 'transform, opacity'
+        willChanged.add(style)
         const clear = () => {
           style.willChange = ''
+          willChanged.delete(style)
         }
         const settled = animation.finished
         if (settled !== undefined && settled !== null && typeof settled.then === 'function') settled.then(clear, clear)
@@ -417,6 +493,266 @@ window.__ModuleLoader__.load({
     }
     // </feedback>
 
+    // <drag>
+    /**
+     * 拖动动效（docs/规划-动效.md 第 5 步：P0-5 / P1-11 / P1-5）。只依赖 window 和上面的 <motion>（play / presenceExit），
+     * 单测切出来直接跑（tests/motion-drag.test.mjs）。startDrag 自己的逻辑（落点、取消、#27 / #28）不在这里，
+     * 它经 `DRAG_FX` 调这些件；tests/drag-cancel.test.mjs 单独切 startDrag 跑时 DRAG_FX 不存在 ⇒ 退回原来的瞬现瞬灭。
+     *   - 影子拔出：scale 1→1.04 + 只晃一次（lite 只淡入，off 直接出现）。拖动中跟手属直接反馈，流式中照常。
+     *   - 松手：影子飞到落点（spring）后淡掉；拖出列表 / Esc 取消 ⇒ 飞回原位。lite 只淡出，off 直接消失。
+     *   - 落点：被拖的块本身渲染成占位（虚线框 + 内容 30%），其余块让位走工作台 FLIP（kind: 'move'）。
+     *   - 边缘自动滚动：指针进到滚动区上 / 下边缘 DRAG_EDGE 内，按深入程度滚，最多 DRAG_SCROLL_MAX px/帧（功能性，各档都有）。
+     *   - 拿走一块：先淡出 + scale .97，再卸载（其余块 FLIP 收拢）。
+     */
+    /** 落点占位里的内容压到 30%（内联样式管不到子元素）；拖动中才挂上。 */
+    const BENCH_SLOT_CSS = '[data-prefill-drop-slot]>*{opacity:.3;pointer-events:none}'
+    const BADGE_POP = [
+      { opacity: 0, transform: 'scale(.4)' },
+      { opacity: 1, transform: 'scale(1)' },
+    ]
+    const DRAG_EDGE = 32
+    const DRAG_SCROLL_MAX = 14
+    const GHOST_BASE = 'translate(-50%,-50%)'
+    const DRAG_LIFT = [
+      { opacity: 0, transform: GHOST_BASE + ' scale(1)' },
+      { opacity: 1, transform: GHOST_BASE + ' scale(1.04) rotate(-2deg)', offset: 0.45 },
+      { transform: GHOST_BASE + ' scale(1.04) rotate(1.2deg)', offset: 0.75 },
+      { opacity: 1, transform: GHOST_BASE + ' scale(1.04)' },
+    ]
+    /** 影子从指针处飞到 (dx, dy) 之外（落点 / 原位），最后 25% 淡掉。 */
+    const dragLandFrames = (dx, dy) => [
+      { opacity: 1, transform: GHOST_BASE + ' scale(1.04)' },
+      { opacity: 1, transform: `translate(calc(-50% + ${Math.round(dx)}px),calc(-50% + ${Math.round(dy)}px)) scale(1)`, offset: 0.75 },
+      { opacity: 0, transform: `translate(calc(-50% + ${Math.round(dx)}px),calc(-50% + ${Math.round(dy)}px)) scale(1)` },
+    ]
+    const DRAG_FADE_OUT = [{ opacity: 1 }, { opacity: 0 }]
+    /** 落地：占位（内容 30%）变回正常块时内容淡回来。只动 opacity，lite 也播。 */
+    const DRAG_SETTLE = [{ opacity: 0.3 }, { opacity: 1 }]
+    const BLOCK_EXIT = [
+      { opacity: 1, transform: 'none' },
+      { opacity: 0, transform: 'scale(.97)' },
+    ]
+    /**
+     * 指针 y 离滚动区上 / 下边缘多近 ⇒ 每帧滚多少（负 = 往上）；不在边缘带里 = 0。
+     * 只认滚动区里面的边缘带：指针已经拖出滚动区（远处 / 列表外 = 取消区）就不滚，免得列表在取消区里自己跑。
+     */
+    function edgeScrollSpeed(y, top, bottom, edge = DRAG_EDGE, max = DRAG_SCROLL_MAX) {
+      if (!Number.isFinite(y) || !Number.isFinite(top) || !Number.isFinite(bottom) || bottom - top < edge * 2) return 0
+      if (y < top || y > bottom) return 0
+      if (y < top + edge) return -Math.ceil(max * Math.min(1, (top + edge - y) / edge))
+      if (y > bottom - edge) return Math.ceil(max * Math.min(1, (y - (bottom - edge)) / edge))
+      return 0
+    }
+    /** 列表往上找第一个能纵向滚的祖先（面板内容区 data-prefill-main 优先）。 */
+    function dragScroller(list) {
+      try {
+        const main = typeof list?.closest === 'function' ? list.closest('[data-prefill-main]') : null
+        if (main) return main
+        for (let node = list?.parentElement; node; node = node.parentElement) {
+          const style = window.getComputedStyle?.(node)
+          if (style && /(auto|scroll)/.test(style.overflowY ?? '') && node.scrollHeight > node.clientHeight) return node
+        }
+      } catch {
+        // 量不到就不自动滚。
+      }
+      return null
+    }
+    const DRAG_FX = {
+      /** 影子拔出（直接反馈：流式中也放行）。 */
+      lift(ghost) {
+        return play(ghost, DRAG_LIFT, { duration: MOTION.slow, easing: MOTION.ease, fill: 'forwards' })
+      },
+      /**
+       * 影子收场：full 飞 (dx, dy) 到落点 / 原位再淡掉；lite 原地淡出；off 当场移除。
+       * 动画结束（或被 cancel、或兜底计时）后才移除影子。返回动画（off = null）。
+       */
+      land(ghost, dx, dy, back = false) {
+        let animation = null
+        if (Number.isFinite(dx) && Number.isFinite(dy) && Math.hypot(dx, dy) > 2) {
+          animation = play(ghost, dragLandFrames(dx, dy), { kind: 'move', duration: back ? MOTION.base : MOTION.slow, easing: back ? MOTION.ease : MOTION.spring, fill: 'forwards' })
+        }
+        if (animation === null) animation = play(ghost, DRAG_FADE_OUT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' })
+        presenceExit(animation, () => ghost.remove(), 700)
+        return animation
+      },
+      /** 落地的块：内容从占位的 30% 淡回 1。 */
+      settle(node) {
+        return play(node, DRAG_SETTLE, { duration: MOTION.base, easing: MOTION.ease })
+      },
+      /** 被拖块（落点占位）的把手中心，作为影子飞去的目标；找不到 ⇒ null。 */
+      target(list, key) {
+        try {
+          const nodes = [...list.querySelectorAll('[data-prefill-bench-block]')]
+          const node = nodes.find((item) => item.getAttribute('data-prefill-bench-block') === key)
+          if (!node) return null
+          const grip = node.querySelector('[data-prefill-bench-grip]') ?? node
+          const rect = grip.getBoundingClientRect()
+          return { node, x: rect.right + 8, y: rect.top + rect.height / 2 }
+        } catch {
+          return null
+        }
+      },
+      /**
+       * 边缘自动滚动：返回 { update(x, y), stop() }。update 每次 pointermove 调；指针在边缘带里就开一个 rAF 循环，
+       * 按 edgeScrollSpeed 滚滚动区（滚动事件照旧触发 startDrag 的重算）；离开边缘带 / stop ⇒ 停。
+       */
+      autoScroll(list) {
+        const scroller = dragScroller(list)
+        const raf = typeof window.requestAnimationFrame === 'function' ? window.requestAnimationFrame.bind(window) : null
+        const caf = typeof window.cancelAnimationFrame === 'function' ? window.cancelAnimationFrame.bind(window) : () => {}
+        let speed = 0
+        let frame = 0
+        // 按下时把手就在边缘带里（列表顶上那块）：先别滚，等指针离开过一次边缘带再说，否则一拿起来列表就跑。
+        let armed = false
+        const step = () => {
+          frame = 0
+          if (speed === 0 || scroller === null) return
+          const before = scroller.scrollTop
+          scroller.scrollTop = before + speed
+          if (scroller.scrollTop === before) return // 到头了
+          frame = raf(step)
+        }
+        return {
+          update(x, y) {
+            if (scroller === null || raf === null) return 0
+            const box = scroller.getBoundingClientRect()
+            const lbox = list.getBoundingClientRect()
+            const want = x < lbox.left - DRAG_EDGE || x > lbox.right + DRAG_EDGE ? 0 : edgeScrollSpeed(y, box.top, box.bottom)
+            if (want === 0 && y >= box.top && y <= box.bottom) armed = true
+            speed = armed ? want : 0
+            if (speed !== 0 && frame === 0) frame = raf(step)
+            return speed
+          },
+          stop() {
+            speed = 0
+            if (frame !== 0) caf(frame)
+            frame = 0
+          },
+        }
+      },
+      /** 拿走一块（P1-5）：先淡出缩小，结束后 unmount（其余块由工作台 FLIP 收拢）。off ⇒ 当场。 */
+      exit(node, unmount) {
+        const animation = play(node, BLOCK_EXIT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' })
+        return presenceExit(animation, () => {
+          unmount()
+          // 拿走失败（写入出错、状态回滚）块还在 ⇒ 撤掉 fill: forwards，别让它停在透明。
+          if (animation !== null) setTimeout(() => { if (node.isConnected !== false) animation.cancel?.() }, 1000)
+        }, 400)
+      },
+    }
+    // </drag>
+
+    // <refresh>
+    /**
+     * 「刷」（docs/规划-动效.md 第 4 步：P0-4 连带变化扫光、P1-4 撤销条、P1-9 后台状态变化提示、P2-3 数字滚动、P2-4 来源标签闪）。
+     * 这一段只依赖上面的 <motion>（play / motionLevel）和 <feedback>，单测切出来直接跑（tests/motion-refresh.test.mjs）。
+     * 所有动效都经 play()：完整 = 全部；简洁 = 只淡入淡出（扫光换成同一处的透明度闪）；off = 不调 animate。
+     */
+    /** 闪一下的时长：升到峰值再落回（0.13→0.35→0.13 这种「呼一下」比普通过渡长，单程仍是 slow 260ms）。 */
+    const FLASH_MS = MOTION.slow * 2
+    /** 徽章闪（P1-9）：徽章底色层常驻 0.13，闪到 0.35 再回来。只动 opacity。 */
+    const BADGE_FLASH = [{ opacity: 0.13 }, { opacity: 0.35, offset: 0.4 }, { opacity: 0.13 }]
+    /** 左栏项的底色层：平时 0（透明），闪到 0.18 再回来；简洁档的扫光也换成它。 */
+    const NAV_FLASH = [{ opacity: 0 }, { opacity: 0.18, offset: 0.4 }, { opacity: 0 }]
+    /** 扫光（P0-4，装饰类）：一条渐变带从左扫到右（带宽 55%，-100% → 190% 正好扫过整项）。 */
+    const SWEEP = [
+      { opacity: 0, transform: 'translateX(-100%)' },
+      { opacity: 1, transform: 'translateX(40%)', offset: 0.45 },
+      { opacity: 0, transform: 'translateX(190%)' },
+    ]
+    /** 把 React 子节点（字符串 / 数字 / 数组 / 元素）摊平成纯文本：签名用，不看样式。 */
+    function nodeText(node) {
+      if (node === null || node === undefined || node === false || node === true) return ''
+      if (typeof node === 'string' || typeof node === 'number') return String(node)
+      if (Array.isArray(node)) return node.map(nodeText).join('')
+      if (typeof node === 'object' && node.props !== undefined) return nodeText(node.props.children)
+      return ''
+    }
+    /** 左栏状态签名（P0-4）：每项 = 状态行文字 + 开关 + 是否随角色卡停用。 */
+    function navSignature(keys, textOf, isOn, offBy) {
+      const sig = {}
+      for (const key of keys) sig[key] = `${nodeText(textOf(key))}\u0001${isOn(key) ? 1 : 0}\u0001${offBy?.[key] === true ? 1 : 0}`
+      return sig
+    }
+    /** 两份签名里变了的项（按 next 的顺序）；没有上一份（刚挂上 / 换会话）⇒ 什么都不算变。 */
+    function diffSigs(prev, next) {
+      if (prev === null || prev === undefined || next === null || next === undefined) return []
+      return Object.keys(next).filter((key) => Object.hasOwn(prev, key) && prev[key] !== next[key])
+    }
+    /**
+     * 这次变化是谁引起的：最近一次在卡片里按下 / 按键（CAUSE_MS 内）的控件
+     *   是输入框 / 文本框 ⇒ 'typing'（边打字边变的读数不提示）；
+     *   是别的控件（切开关、套预设、切档位……；左栏切节不算）⇒ 'user'（P0-4：扫光 + toast 列出连带改动）；
+     *   没有 ⇒ 'background'（P1-9：后台变化，闪一下、文字滚动，流式中攒到回合结束）。
+     * trigger = { tag, nav, at }（纯数据，单测好造）。
+     */
+    const CAUSE_MS = 6000
+    /** 卡片刚挂上 / 刚换会话的这段时间里陆续到达的数据（卡片列表、记忆状态……）不算「变化」。 */
+    const CUE_SETTLE_MS = 2500
+    function changeCause(trigger, now) {
+      if (trigger === null || trigger === undefined || !(now - trigger.at <= CAUSE_MS)) return 'background'
+      if (trigger.typing === true) return 'typing'
+      if (trigger.nav === true) return 'background'
+      return 'user'
+    }
+    /** toast 里的「连带改了：A、B」；没有连带项 ⇒ ''。 */
+    function linkedText(template, titles) {
+      const list = (titles ?? []).filter((title) => typeof title === 'string' && title !== '')
+      return list.length === 0 ? '' : String(template ?? '{list}').replace('{list}', list.join('、'))
+    }
+    /**
+     * 扫一下（P0-4）：完整档 = 渐变带扫过（装饰类，slow，按 index 错开 stagger）；简洁档 = 同一项的底色层闪一下
+     * （只动透明度）；off = 不动。host 里找 [data-prefill-sweep-band] / [data-prefill-flash]。流式中照规则排队。
+     */
+    function flashOrSweep(host, index = 0) {
+      if (!host || typeof host.querySelector !== 'function') return null
+      const delay = Math.max(0, index) * MOTION.stagger
+      if (motionLevel() === 'lite') return play(host.querySelector('[data-prefill-flash]'), NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', delay, cue: 'auto' })
+      return play(host.querySelector('[data-prefill-sweep-band]'), SWEEP, { duration: MOTION.slow, easing: MOTION.ease, delay, kind: 'decor' })
+    }
+    /** 芯片 / 标记上的小点闪（P1-9，卡片关着或缩成标记时）：完整档放大一下 + 变淡，简洁只变淡。 */
+    const DOT_FLASH = [
+      { opacity: 1, transform: 'none' },
+      { opacity: 0.35, transform: 'scale(1.7)', offset: 0.4 },
+      { opacity: 1, transform: 'none' },
+    ]
+    /** 卡片发给芯片的「这几项后台变了」（芯片在别的槽位组件里，不碰它的 DOM，让它自己闪）。 */
+    const CUE_EVENT = 'dsh-prefill:cue'
+    /**
+     * 文字上下滚动（P1-9 状态文字、P2-3 数字）：dir = 1（变大 / 往后）新的从下面滚上来、旧的往上走；-1 反过来。
+     * phase = 'in' | 'out'。只动 transform / opacity；简洁档 play() 去掉位移 ⇒ 变成交叉淡入淡出。
+     */
+    function rollFrames(dir, phase) {
+      const d = dir < 0 ? -1 : 1
+      return phase === 'out'
+        ? [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateY(${-60 * d}%)` }]
+        : [{ opacity: 0, transform: `translateY(${60 * d}%)` }, { opacity: 1, transform: 'none' }]
+    }
+    /** 滚动方向：两边都读得出数字（「+1,234」「45%」「拦 3」）⇒ 按大小；读不出 / 一样 ⇒ 1（往上滚）。 */
+    function rollDir(prev, next) {
+      const num = (value) => {
+        const match = /-?\d[\d,]*(?:\.\d+)?/.exec(String(value ?? ''))
+        return match ? Number(match[0].replace(/,/g, '')) : NaN
+      }
+      const a = num(prev)
+      const b = num(next)
+      if (!Number.isFinite(a) || !Number.isFinite(b) || a === b) return 1
+      return b > a ? 1 : -1
+    }
+    /** 来源标签闪（P2-4）：标签换了来源（来自角色卡 → 本会话改过 …）时整枚标签淡一下再回来。只动 opacity。 */
+    const SOURCE_FLASH = [{ opacity: 1 }, { opacity: 0.3, offset: 0.35 }, { opacity: 1 }]
+    /** 撤销条（P1-4）：「取消预设」后 UNDO_MS 内可撤销；从卡片底部滑入、叠在内容上（不占文档流），带倒计时线。 */
+    const UNDO_MS = 8000
+    const UNDO_ENTER = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }]
+    const UNDO_EXIT = [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(12px)' }]
+    /** 倒计时线：从满宽缩到 0（装饰类；简洁 / off 不画线，只看秒数）。 */
+    const UNDO_COUNTDOWN = [{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }]
+    /** 还剩几秒（向上取整，到 0 为止）。 */
+    function undoLeft(startedAt, now, total = UNDO_MS) {
+      return Math.max(0, Math.ceil((startedAt + total - now) / 1000))
+    }
+    // </refresh>
+
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
     function useMotionLevel() {
       const [, setTick] = React.useState(0)
@@ -551,12 +887,26 @@ window.__ModuleLoader__.load({
       const at = placeRef.current
       const outer = at
         ? { position: 'absolute', zIndex: 6, right: at.right, ...(at.top !== undefined ? { top: at.top } : { bottom: at.bottom }), pointerEvents: 'none', maxWidth: 'calc(100% - 20px)' }
-        : { position: 'absolute', zIndex: 6, left: 10, right: 10, bottom: 10, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
+        : { position: 'absolute', zIndex: 6, left: 10, right: 10, bottom: 'var(--pf-toast-bottom, 10px)', display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
       return h(
         'div',
         { 'data-prefill-toast-wrap': at ? (at.top !== undefined ? 'below' : 'above') : 'bottom', style: outer },
         h('div', { ref, 'data-prefill-toast': '', 'aria-hidden': 'true', style: { padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)', boxShadow: '0 2px 8px rgba(0,0,0,.15)' } }, shown),
       )
+    }
+    /**
+     * ⇄ 重叠徽章（P2-5）：第一次出现时 pop 一下（scale .4→1，spring；简洁只淡入，off 直接出现）。
+     * pop = 父组件判定「这枚徽章是这次新出现的」（打开面板 / 切到这节时已经在的不算）；只在挂上时看一次。
+     */
+    function PopBadge(props) {
+      const { pop, children, ...rest } = props
+      const ref = React.useRef(null)
+      React.useLayoutEffect(() => {
+        if (pop !== true) return undefined
+        const animation = play(ref.current, BADGE_POP, { duration: MOTION.base, easing: MOTION.spring })
+        return () => animation?.cancel?.()
+      }, [])
+      return h('span', { ...rest, ref }, children)
     }
     /** 新积木的高亮描边层（P0-3）：淡入、停一下、淡出；off 档静态显示，计时到了随状态卸载。 */
     function BlockGlow() {
@@ -566,6 +916,92 @@ window.__ModuleLoader__.load({
         return () => animation?.cancel?.()
       }, [])
       return h('span', { ref, 'aria-hidden': 'true', 'data-prefill-bench-glow': '', style: { position: 'absolute', inset: -1, borderRadius: 10, pointerEvents: 'none', boxShadow: '0 0 0 2px var(--pf-turn), 0 0 0 6px color-mix(in srgb, var(--pf-turn) 22%, transparent)' } })
+    }
+
+    /**
+     * 撤销条（P1-4）：token（撤销快照）有值就显示，变空播退场（presence）。绝对定位在卡片底部、叠在内容上；
+     * 底边一条倒计时线 UNDO_MS 内从满宽缩到 0（完整档；装饰类，但它是对刚才那下点击的直接反馈 ⇒ cue: 'press'，流式中也照常走），
+     * 旁边写剩余秒数（各档都有，简洁 / off 靠它）。
+     */
+    function UndoBar(props) {
+      const { token, text, button, secondsLabel } = props
+      const [shown, ref] = usePresence(token, UNDO_ENTER, UNDO_EXIT)
+      const lineRef = React.useRef(null)
+      const startedAt = React.useRef(0)
+      const startedFor = React.useRef(null)
+      if (token && startedFor.current !== token) {
+        startedFor.current = token
+        startedAt.current = Date.now()
+      }
+      const [, setTick] = React.useState(0)
+      React.useEffect(() => {
+        if (!token) return undefined
+        const timer = setInterval(() => setTick((value) => value + 1), 1000)
+        return () => clearInterval(timer)
+      }, [token])
+      // 倒计时线：presence 第一次提交时还没画出条（shown 下一帧才有），所以等条挂上再开始；
+      // 退场时不取消（线停在当前位置跟着淡出），换了新的撤销快照或卸载时才取消。
+      const visible = shown !== null
+      const lineAnim = React.useRef(null)
+      React.useLayoutEffect(() => {
+        if (!token || !visible || lineAnim.current?.token === token) return
+        lineAnim.current?.animation?.cancel?.()
+        lineAnim.current = { token, animation: play(lineRef.current, UNDO_COUNTDOWN, { duration: Math.max(0, startedAt.current + UNDO_MS - Date.now()), easing: 'linear', fill: 'forwards', kind: 'decor', cue: 'press' }) }
+      }, [token, visible])
+      React.useEffect(() => () => lineAnim.current?.animation?.cancel?.(), [])
+      if (shown === null) return null
+      const left = undoLeft(startedAt.current, Date.now())
+      return h(
+        'div',
+        { ref, 'data-prefill-preset-undo-bar': '', role: 'status', style: { position: 'absolute', zIndex: 5, left: 12, right: 12, bottom: 12, overflow: 'hidden', ...V.row, ...V.callout('brand'), maxWidth: 'none', flexWrap: 'wrap', paddingBottom: 9, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 6px 20px rgba(0,0,0,.14), 0 1px 4px rgba(0,0,0,.06)' } },
+        h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, text),
+        h('span', { 'data-prefill-undo-seconds': String(left), style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' } }, String(secondsLabel ?? '{n}s').replace('{n}', String(left))),
+        button,
+        h('span', { ref: lineRef, 'aria-hidden': 'true', 'data-prefill-undo-countdown': '', style: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'var(--pf-system)', opacity: 0.55, transformOrigin: 'left center' } }),
+      )
+    }
+
+    /** 来源标签（P2-4）：pulse 变成非空 ⇒ 闪一下（cue: auto，流式中攒着）。其余同原来的 span。 */
+    function SourceTag(props) {
+      const { pulse = '', defer = false, ...rest } = props
+      const ref = React.useRef(null)
+      React.useLayoutEffect(() => {
+        if (pulse !== '') play(ref.current, SOURCE_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, cueKey: `source:${pulse}` })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [pulse])
+      return h('span', { ref, ...rest })
+    }
+    /**
+     * 文字滚动切换（P1-9 状态文字、P2-3 数字）：value 变了 ⇒ 新内容从下 / 上滚进来（rollFrames），旧内容叠在原处滚出去（presence）。
+     * still = 这次不滚（用户自己点 / 打字引起的变化，或刚挂上）；defer = 回合刚结束这一刻（直接进队列，和攒着的一起放）。
+     * 默认 cue: 'auto'（流式中攒着；prio -1：上限 3 个时让徽章 / 左栏的闪先播）。新内容没播（off / 排队）就不画旧内容。
+     */
+    function RollText(props) {
+      const { value, children, still = false, defer = false, block = false, dir, attr = 'data-prefill-roll' } = props
+      const ref = React.useRef(null)
+      const ghostRef = React.useRef(null)
+      const prev = React.useRef({ value, children })
+      const [ghost, setGhost] = React.useState(null)
+      React.useLayoutEffect(() => {
+        const before = prev.current
+        prev.current = { value, children }
+        if (before.value === value || still) return
+        const d = dir ?? rollDir(before.value, value)
+        const animation = play(ref.current, rollFrames(d, 'in'), { duration: MOTION.base, easing: MOTION.ease, cue: 'auto', defer, prio: -1 })
+        if (animation !== null) setGhost({ children: before.children, d, at: Date.now() })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [value])
+      React.useLayoutEffect(() => {
+        if (ghost === null) return undefined
+        const ctl = presenceExit(play(ghostRef.current, rollFrames(ghost.d, 'out'), { duration: MOTION.base, easing: MOTION.easeOut, fill: 'forwards' }), () => setGhost((current) => (current === ghost ? null : current)), MOTION.base + 200)
+        return () => ctl.abort()
+      }, [ghost])
+      return h(
+        'span',
+        { [attr]: '', style: { position: 'relative', display: block ? 'block' : 'inline-block', verticalAlign: block ? undefined : 'bottom', overflow: 'hidden', maxWidth: '100%' } },
+        h('span', { ref, style: { display: block ? 'block' : 'inline-block' } }, children),
+        ghost === null ? null : h('span', { ref: ghostRef, 'aria-hidden': 'true', 'data-prefill-roll-ghost': '', style: { position: 'absolute', left: 0, top: 0, right: block ? 0 : undefined, whiteSpace: block ? undefined : 'nowrap', pointerEvents: 'none' } }, ghost.children),
+      )
     }
 
     /**
@@ -1445,11 +1881,13 @@ window.__ModuleLoader__.load({
       errOpChip: '开启预填装',
       chipOpenFailed: '开启失败 · 再点一次重试',
       motionTitle: '动效',
+      linkedChanged: '连带改了：{list}',
+      undoSecondsLeft: '{n} 秒',
       motionFull: '完整',
-      motionLite: '简洁',
+      motionLite: '减少动效',
       motionOff: '关',
       motionAuto: '改回跟随系统',
-      motionAutoNow: '现在跟随系统：开着「减少动态效果」时用简洁，否则完整。全局设置，不进预设、不随导出。',
+      motionAutoNow: '现在跟随系统：开着「减少动态效果」时用「减少动效」（只保留淡入淡出），否则完整。全局设置，不进预设、不随导出。',
       motionManualNow: '已手动选择，不再跟随系统「减少动态效果」。全局设置，不进预设、不随导出。',
       guideTitle: '三步上手',
       guide1: '在「预设」里点一张卡片：想换人格选人格卡，想完全自己写系统提示选「自定义系统提示」，想什么都不发选「纯净模式」。',
@@ -1801,11 +2239,13 @@ window.__ModuleLoader__.load({
       errOpChip: 'Turning on prefill',
       chipOpenFailed: 'Failed · click to retry',
       motionTitle: 'Motion',
+      linkedChanged: 'Also changed: {list}',
+      undoSecondsLeft: '{n}s',
       motionFull: 'Full',
-      motionLite: 'Lite',
+      motionLite: 'Reduced',
       motionOff: 'Off',
       motionAuto: 'Follow system again',
-      motionAutoNow: 'Following the system: Lite when “reduce motion” is on, otherwise Full. Global; not saved in presets or exports.',
+      motionAutoNow: 'Following the system: Reduced (fades only) when “reduce motion” is on, otherwise Full. Global; not saved in presets or exports.',
       motionManualNow: 'Chosen manually; no longer follows the system “reduce motion” setting. Global; not saved in presets or exports.',
       guideTitle: 'Get started',
       guide1: 'Pick a preset card: personas change the voice, "Custom system prompt" lets you write it all, "Pure" sends nothing.',
@@ -2888,6 +3328,26 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener(CARD_EVENT, onCard)
       }, [sessionId])
 
+      // P1-9：卡片关着 / 缩成标记时，卡片把「后台变了哪几项」广播过来，芯片自己让对应的小点闪一下（不碰别人的 DOM）。
+      const chipRef = React.useRef(null)
+      React.useEffect(() => {
+        const onCue = (event) => {
+          const detail = event?.detail
+          if (detail?.sessionId !== sessionId || !Array.isArray(detail.keys)) return
+          for (const key of detail.keys) play(chipRef.current?.querySelector(`[data-prefill-chip-dot="${key}"]`) ?? null, DOT_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer: detail.defer === true, prio: 1, cueKey: `chip:${key}` })
+        }
+        window.addEventListener(CUE_EVENT, onCue)
+        return () => window.removeEventListener(CUE_EVENT, onCue)
+      }, [sessionId])
+      // §5：模型正在输出时芯片也标 stream（小点的闪攒着）；跑完统一放掉。
+      const chipStreaming = Array.isArray(envelope?.running) && envelope.running.includes(sessionId)
+      const chipStreamRef = React.useRef(false)
+      React.useLayoutEffect(() => {
+        const ended = chipStreamRef.current && !chipStreaming
+        chipStreamRef.current = chipStreaming
+        if (ended) flushCues()
+      })
+
       if (sessionId === '') return null
       const state = envelope?.state ?? null
       const map = state?.prefill !== null && typeof state?.prefill === 'object' ? state.prefill : {}
@@ -2907,12 +3367,14 @@ window.__ModuleLoader__.load({
         'button',
         {
           type: 'button',
+          ref: chipRef,
           // 首次打开：一点下去就按「已开」显示按下态（乐观），失败再回来。
           'aria-pressed': on || opening ? 'true' : 'false',
           'aria-expanded': cardOpen ? 'true' : 'false',
           'aria-busy': openingShown ? 'true' : undefined,
           'data-prefill-chip': '1',
-          'data-prefill-busy': openingShown ? 'true' : undefined,
+          // 按钮忙碌（首次打开）= 'true'；模型正在输出 = 'stream'（小点的闪攒到回合结束，§5）。
+          'data-prefill-busy': openingShown ? 'true' : chipStreaming ? STREAM_BUSY : undefined,
           'data-prefill-chip-error': chipError !== '' ? 'true' : undefined,
           title: chipError !== '' ? `${t('errPill').replace('{op}', t('errOpChip'))}：${chipError}` : title,
           'data-open': cardOpen ? 'true' : 'false',
@@ -3811,8 +4273,30 @@ window.__ModuleLoader__.load({
           h('span', { style: { flex: '1 1 auto' } }),
           props.right ?? null,
         ),
-        props.off ? h('div', { style: { ...V.callout('warn'), maxWidth: '68ch' }, 'data-prefill-off-note': props.id }, h('b', null, props.offTitle), props.offBody ? ` ${props.offBody}` : '') : null,
+        h(OffNote, { id: props.id, off: props.off === true, title: props.offTitle, body: props.offBody }),
         props.children,
+      )
+    }
+    /**
+     * 节顶部的黄色「已停用」说明（P0-4）：用 grid-template-rows 0fr ↔ 1fr 展开 / 收起，内容是慢慢让开而不是一下被推下去。
+     * 完整档：行高 + 透明度过渡；简洁档：只淡入淡出（行高直接到位，不做位移）；off：直接切换。
+     * 收起的那一段保留最后一次的文字；一直没停用过就什么都不画（0fr，不占地方）。
+     */
+    function OffNote(props) {
+      const motion = useMotionLevel()
+      const last = React.useRef(null)
+      if (props.off) last.current = { title: props.title, body: props.body }
+      const view = last.current
+      const transition = motion === 'off' ? 'none' : motion === 'lite' ? `opacity ${MOTION.base}ms ease` : `grid-template-rows ${MOTION.base}ms ${MOTION.ease}, opacity ${MOTION.base}ms ease`
+      return h(
+        'div',
+        // section 的 gap 是 10：收起时用 -10 抵掉，展开时里面再垫回 10 ⇒ 收起 = 不占地方，展开 = 和以前一样。
+        { 'data-prefill-off-wrap': props.id, 'data-open': props.off ? 'true' : 'false', 'aria-hidden': props.off ? undefined : 'true', style: { display: 'grid', gridTemplateRows: props.off ? '1fr' : '0fr', opacity: props.off ? 1 : 0, marginTop: -10, transition } },
+        h(
+          'div',
+          { style: { minHeight: 0, overflow: 'hidden' } },
+          view === null ? null : h('div', { style: { paddingTop: 10 } }, h('div', { style: { ...V.callout('warn'), maxWidth: '68ch' }, 'data-prefill-off-note': props.off ? props.id : undefined }, h('b', null, view.title), view.body ? ` ${view.body}` : '')),
+        ),
       )
     }
 
@@ -3850,8 +4334,12 @@ window.__ModuleLoader__.load({
       )
       const call = React.useCallback((payload) => postJson(INJECT_ROUTE, { sessionId, ...payload }).then(absorb), [sessionId, absorb])
 
+      // P1-9：「已写入会话」里新出现的一行（刚发出去）底色闪一下；第一次拿到列表时只记下，不闪。
+      const recentSeen = React.useRef(null)
+      const recentRef = React.useRef(null)
       React.useEffect(() => {
         seenPending.current = new Set()
+        recentSeen.current = null
         setData(null)
         setEditing(null)
         setNotice(null)
@@ -3863,6 +4351,19 @@ window.__ModuleLoader__.load({
       const pending = Array.isArray(data?.pending) ? data.pending : []
       // 最近写进会话的几条（面板重开、发送时面板被收起也看得到「已写入会话 · 第 N 轮」）。
       const recent = Array.isArray(data?.recent) ? data.recent.slice(-3).reverse() : []
+      React.useLayoutEffect(() => {
+        if (data === null) return
+        const ids = recent.map((entry) => String(entry.id))
+        if (recentSeen.current === null) {
+          recentSeen.current = new Set(ids)
+          return
+        }
+        const fresh = ids.filter((id) => !recentSeen.current.has(id))
+        for (const id of ids) recentSeen.current.add(id)
+        for (const row of recentRef.current?.querySelectorAll('[data-prefill-manual-delivered]') ?? []) {
+          if (fresh.includes(row.getAttribute('data-prefill-manual-delivered'))) play(row.querySelector('[data-prefill-flash-bg]'), NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', prio: 1 })
+        }
+      })
       // 有待发的就轮询，等它被领取（领取后从列表消失，提示写进了第几轮）。
       React.useEffect(() => {
         if (sessionId === '' || pending.length === 0) return undefined
@@ -3930,7 +4431,7 @@ window.__ModuleLoader__.load({
           'div',
           { style: V.row },
           h('b', { style: { fontSize: 13.5 } }, t('manualTitle')),
-          status === '' ? null : h('span', { style: V.sectionMeta, 'data-prefill-manual-status': '' }, status),
+          status === '' ? null : h('span', { style: V.sectionMeta, 'data-prefill-manual-status': '' }, h(RollText, { value: status }, status)),
         ),
         h('div', { style: V.hint }, t('manualHint')),
         h(
@@ -3992,11 +4493,12 @@ window.__ModuleLoader__.load({
           ? null
           : h(
               'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: 4 }, 'data-prefill-manual-recent': String(recent.length) },
+              { ref: recentRef, style: { display: 'flex', flexDirection: 'column', gap: 4 }, 'data-prefill-manual-recent': String(recent.length) },
               ...recent.map((entry) =>
                 h(
                   'div',
-                  { key: entry.id, style: { ...V.row, flexWrap: 'nowrap', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', maxWidth: '80ch' } },
+                  { key: entry.id, 'data-prefill-manual-delivered': String(entry.id), style: { ...V.row, position: 'relative', flexWrap: 'nowrap', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', maxWidth: '80ch' } },
+                  h('span', { 'aria-hidden': 'true', 'data-prefill-flash-bg': '', style: { position: 'absolute', inset: '-2px -6px', borderRadius: 6, background: 'var(--pf-user)', opacity: 0, pointerEvents: 'none' } }),
                   h('span', { style: { whiteSpace: 'nowrap' } }, `✓ ${t('manualDelivered').replace('{n}', String(entry.turn))}`),
                   h('span', { style: { whiteSpace: 'nowrap' } }, entry.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
                   h('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(entry.text ?? '').replace(/\s+/g, ' ')),
@@ -4043,24 +4545,44 @@ window.__ModuleLoader__.load({
       const [benchMenu, setBenchMenu] = React.useState(null)
       const [benchFocus, setBenchFocus] = React.useState('')
       const [dragKey, setDragKey] = React.useState('')
-      const [dropIndex, setDropIndex] = React.useState(-1)
+      const [, setDropIndexState] = React.useState(-1)
+      // P0-5 落点：插到哪块前面 + 归哪个塔（startDrag 写在 dragInfo.current 里，这里跟着 setDropIndex 同步成状态）。
+      // 只靠 dropIndex（bench 下标）分不出「T1 前、塔外」和「T1 前、塔内」，占位会画错地方。
+      const [dropAt, setDropAt] = React.useState(null)
       const [hiddenOpen, setHiddenOpen] = React.useState(false)
       const benchListRef = React.useRef(null)
       const dragInfo = React.useRef(null)
+      const setDropIndex = (value) => {
+        setDropIndexState(value)
+        const info = dragInfo.current
+        const next = info !== null && info !== undefined && 'before' in info ? { before: info.before ?? null, tower: info.tower ?? null } : null
+        setDropAt((current) => (current === next || (current !== null && next !== null && current.before === next.before && current.tower === next.tower) ? current : next))
+      }
       const benchRects = React.useRef(new Map())
       const benchSig = React.useRef('')
+      const benchFlipNext = React.useRef(false)
+      // P2-5：上一次渲染时工作台这节里已经有的 ⇄ 徽章（null = 这节不在屏幕上）。只有相对上一次新出现的才 pop。
+      const overlapSeen = React.useRef(null)
+      const overlapNow = React.useRef(new Set())
+      /** 正在播退场的块 / 塔（P1-5）：退场中再点 × 不重复拿。 */
+      const benchExiting = React.useRef(new Set())
       // 拖动/排序后做 FLIP 滑动。三条约束（否则整屏乱跳）：
       //   ① 只在「工作台顺序真的变了」时动画（切格、套预设、面板重排都不算）；
       //   ② 只比相对列表的位置（卡片被别的格顶上去、面板整体位移不算位移）；
       //   ③ 位移超过一块高度太多 ⇒ 当成布局抖动，不做动画。
       React.useLayoutEffect(() => {
         const list = benchListRef.current
+        overlapSeen.current = list === null ? null : overlapNow.current
         if (list === null) return
         const nodes = [...list.querySelectorAll('[data-prefill-bench-block]')]
         const listTop = list.getBoundingClientRect().top
         const order = nodes.map((node) => node.getAttribute('data-prefill-bench-block') ?? '')
         const sig = order.join('|')
-        const reordered = benchSig.current !== '' && benchSig.current !== sig && dragInfo.current === null
+        // 拖动中被拖的块就是落点占位（P0-5）：落点一变顺序就变，其余块让位也走这条 FLIP。
+        // 长块展开 / 收起（P1-5）：顺序没变，但下面的块整体位移 ⇒ 这一次也按位移滑过去。
+        const folded = benchFlipNext.current
+        benchFlipNext.current = false
+        const reordered = benchSig.current !== '' && (benchSig.current !== sig || folded)
         const next = new Map()
         for (const node of nodes) {
           const key = node.getAttribute('data-prefill-bench-block') ?? ''
@@ -4142,7 +4664,7 @@ window.__ModuleLoader__.load({
       }, [undoSnap])
       React.useEffect(() => {
         if (presetUndo === null) return undefined
-        const timer = setTimeout(() => setPresetUndo((current) => (current === presetUndo ? null : current)), 8000)
+        const timer = setTimeout(() => setPresetUndo((current) => (current === presetUndo ? null : current)), UNDO_MS)
         return () => clearTimeout(timer)
       }, [presetUndo])
       React.useEffect(() => setPresetUndo(null), [sessionId])
@@ -4216,7 +4738,11 @@ window.__ModuleLoader__.load({
       /** 套预设一次只跑一个（不管点的是哪张）。 */
       const actApply = (key, fn) => {
         if (busyCtl.anyPending('apply:')) return
-        act(`apply:${key}`, t('errOpApply'), fn)
+        // P1-4：套上了就收起菜单（不再盖住右边、挡住刚变了的内容）；失败留着菜单，方便再点一次。
+        act(`apply:${key}`, t('errOpApply'), async () => {
+          await fn()
+          setMenu((current) => (current === 'presets' ? '' : current))
+        })
       }
       const flash = React.useCallback((text) => {
         // 触发点：最近一次在卡片里按下 / 按键的控件（4 秒内、还在卡片里）。
@@ -4238,11 +4764,55 @@ window.__ModuleLoader__.load({
           const hidden = areaRect !== null && area.contains(trigger.el) && (rect.bottom < areaRect.top || rect.top > areaRect.bottom)
           place = hidden ? null : toastPlace(card.getBoundingClientRect(), rect, areaRect)
         }
+        // P0-4：刚才的操作还连带改了别的项 ⇒ 接在这条后面一起说。
+        const linked = linkedRef.current
+        let shownText = text
+        if (linked !== null && Date.now() - linked.at < 2500) {
+          linkedRef.current = null
+          clearTimeout(linked.timer)
+          if (!text.includes(linked.text)) shownText = `${text} · ${linked.text}`
+        }
+        lastToastRef.current = { text: shownText, at: Date.now() }
         setToastAt(place)
-        setToast(text)
-        setTimeout(() => setToast((current) => (current === text ? '' : current)), 3200)
+        setToast(shownText)
+        setTimeout(() => setToast((current) => (current === shownText ? '' : current)), shownText === text ? 3200 : 4800)
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [])
+      const linkedRef = React.useRef(null)
+      const lastToastRef = React.useRef(null)
+      /** P0-4 的连带改动：刚出过 toast（同一次操作的结果）就接在它后面；否则等 600ms，没有别的 toast 再单独说。 */
+      const announceLinked = React.useCallback(
+        (text) => {
+          if (text === '') return
+          const last = lastToastRef.current
+          if (last !== null && Date.now() - last.at < 2500) {
+            if (!last.text.includes(text)) flash(`${last.text} · ${text}`)
+            return
+          }
+          clearTimeout(linkedRef.current?.timer)
+          const entry = { text, at: Date.now(), timer: 0 }
+          entry.timer = setTimeout(() => {
+            if (linkedRef.current !== entry) return
+            linkedRef.current = null
+            flash(text)
+          }, 600)
+          linkedRef.current = entry
+        },
+        [flash],
+      )
+      /** 记下最近一次在卡片里按下 / 按键的控件：toast 贴着它（P1-8），也用来判断状态变化是谁引起的（P0-4 / P1-9）。 */
+      const noteTrigger = (event) => {
+        const el = event.target instanceof Element ? event.target.closest('button,[role=switch],[role=tab],[role=radio],input,textarea,select,label') : null
+        if (!el) return
+        const enable = el.closest('[data-prefill-enable]')
+        lastTrigger.current = {
+          el,
+          at: Date.now(),
+          typing: el.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=file]),textarea,select'),
+          nav: enable === null && el.closest('[data-prefill-nav]') !== null,
+          enable: enable?.getAttribute('data-prefill-enable') ?? '',
+        }
+      }
 
       // ── 悬浮卡片（v0.10）：开关、钉住、左栏选中项、下拉菜单 ──
       const [cardOpen, setCardOpenLocal] = React.useState(() => cardOpenMap.get(sessionId) === true)
@@ -4314,6 +4884,14 @@ window.__ModuleLoader__.load({
         const timer = setTimeout(() => setJustAdded((current) => (current === justAdded ? '' : current)), BLOCK_GLOW_MS + 60)
         return () => clearTimeout(timer)
       }, [justAdded])
+      // P1-11：↑↓ 挪过的块短暂描边（窄屏没有拖动、只能 ↑↓；简洁 / off 下 FLIP 不播，宽屏也靠它看出挪了哪块）。
+      // n 每次递增 ⇒ 连点同一块也重新亮一次（BlockGlow 按 key 重挂）。
+      const [benchNudged, setBenchNudged] = React.useState(null)
+      React.useEffect(() => {
+        if (benchNudged === null) return undefined
+        const timer = setTimeout(() => setBenchNudged((current) => (current === benchNudged ? null : current)), BLOCK_GLOW_MS + 60)
+        return () => clearTimeout(timer)
+      }, [benchNudged])
       React.useEffect(() => {
         revealRef.current = ''
         setJustAdded('')
@@ -4492,12 +5070,81 @@ window.__ModuleLoader__.load({
         }
       }, [sessionId, revision])
 
-      // 状态轮询：轮次数 / 闸门 / 注入数会在别处变（跑完一轮、点了芯片）。
+      // 流式输出（§5）：宿主说这个会话正在跑 ⇒ 卡片根节点标 data-prefill-busy="stream"，play() 把自动提示攒起来；
+      // 跑完（running → 否）在 layout 阶段统一放掉（flushCues，最多 3 个、错开 60ms）。
+      const streaming = Array.isArray(envelope?.running) && envelope.running.includes(sessionId)
+      const streamingRef = React.useRef(false)
+      // 这一次提交是不是「刚跑完」（渲染里只读 ref；ref 在 layout effect 里更新）。
+      const turnEnded = streamingRef.current && !streaming
+
+      // 状态轮询：轮次数 / 闸门 / 注入数会在别处变（跑完一轮、点了芯片）。跑着的时候勤一点，好及时认出「跑完了」。
       React.useEffect(() => {
         if (!enabled || sessionId === '') return undefined
-        const timer = setInterval(refreshEnvelope, 3000)
+        const timer = setInterval(refreshEnvelope, streaming ? 1500 : 3000)
         return () => clearInterval(timer)
-      }, [enabled, refreshEnvelope, sessionId])
+      }, [enabled, refreshEnvelope, sessionId, streaming])
+      // 「刷」（第 4 步）：渲染时算好左栏状态签名和变化（cueInfoRef），提交后在这里按「谁引起的」分别提示。
+      //   user（P0-4）：变了的项扫光（简洁档闪底色），toast 列出连带改动（当前节和刚点的开关自己不算「连带」）。
+      const navSigRef = React.useRef(null)
+      const markerRef = React.useRef(null)
+      // P2-4：每格来源标签上一次提交时是什么（按会话）；这一次渲染里看到的先记在 srcNow，提交后再写回。
+      const srcSeen = React.useRef({ sessionId: '', kinds: {} })
+      const srcNow = React.useRef({})
+      React.useLayoutEffect(() => {
+        if (srcSeen.current.sessionId !== sessionId) srcSeen.current = { sessionId, kinds: {} }
+        srcSeen.current.kinds = { ...srcSeen.current.kinds, ...srcNow.current }
+      })
+      const cueInfoRef = React.useRef(null)
+      const cueSince = React.useRef({ sessionId, at: Date.now() })
+      if (cueSince.current.sessionId !== sessionId) cueSince.current = { sessionId, at: Date.now() }
+      cueInfoRef.current = null
+      React.useLayoutEffect(() => {
+        const info = cueInfoRef.current
+        if (info === null) return
+        const prevSession = navSigRef.current?.sessionId
+        navSigRef.current = { sessionId: info.sessionId, sig: info.navSig, bg: info.bgSig, locked: info.locked }
+        if (prevSession !== info.sessionId) return
+        // 刚挂上 / 刚换会话的头几秒：卡片列表、记忆状态等陆续到达，不算「变化」。
+        if (Date.now() - cueSince.current.at < CUE_SETTLE_MS) return
+        const card = cardRef.current
+        const defer = info.turnEnded
+        // P1-9：首轮锁定徽章变了（不管谁引起的，打字除外）⇒ 徽章底色闪一下（0.13→0.35→0.13）。
+        if (info.lockChanged && info.cause !== 'typing' && card !== null && info.visible) {
+          play(card.querySelector('[data-prefill-lock-badge] [data-prefill-flash-bg]'), BADGE_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 2, cueKey: 'badge:lock' })
+        }
+        //   background（P1-9）：左栏变了的项底色闪一下（状态行文字自己滚动，见 RollText）；卡片关着 / 缩成标记 ⇒ 芯片（和标记）上对应的小点闪。
+        //   流式中这些都攒着，回合结束统一放（最多 3 个）。
+        if (info.cause === 'background' && info.bgChanged.length > 0) {
+          if (card !== null && info.visible) {
+            for (const key of info.bgChanged) for (const host of card.querySelectorAll(`[data-prefill-flash="${key}"]`)) play(host, NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 1, cueKey: `nav:${key}` })
+          } else {
+            const marker = markerRef.current
+            if (marker !== null && info.shrunk) for (const key of info.bgChanged) play(marker.querySelector(`[data-prefill-marker-dot="${key}"]`), DOT_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 1, cueKey: `marker:${key}` })
+            try {
+              window.dispatchEvent(new CustomEvent(CUE_EVENT, { detail: { sessionId: info.sessionId, keys: info.bgChanged, defer } }))
+            } catch {
+              // 广播失败不该拖垮 UI。
+            }
+          }
+          return
+        }
+        if (info.navChanged.length === 0) return
+        if (info.cause === 'user') {
+          const changed = info.navChanged.filter((key) => key !== info.directKey)
+          if (card !== null && info.visible) {
+            changed.forEach((key, index) => {
+              for (const host of card.querySelectorAll(`[data-prefill-sweep="${key}"]`)) flashOrSweep(host, index)
+            })
+          }
+          announceLinked(linkedText(info.linkedTemplate, changed.filter((key) => key !== info.paneKey).map((key) => info.titles[key])))
+        }
+      })
+      // 跑完：排队的自动提示统一播放（放在所有「排提示」的 layout effect 之后）。
+      React.useLayoutEffect(() => {
+        const ended = streamingRef.current && !streaming
+        streamingRef.current = streaming
+        if (ended) flushCues()
+      })
 
       // 启用后先登记一份空草稿：声明"本会话用预填装"，也让 host 预热系统提示。
       React.useEffect(() => {
@@ -4681,6 +5328,9 @@ window.__ModuleLoader__.load({
       }, [sessionId])
 
       if (sessionId === '' || !enabled || items === null) return null
+      // 「刷」：这次渲染里的变化是谁引起的（changeCause）；只有后台变化才滚动文字（P1-9），刚挂上的头几秒也不滚。
+      const cueCause = changeCause(lastTrigger.current, Date.now())
+      const rollStill = cueCause !== 'background' || Date.now() - cueSince.current.at < CUE_SETTLE_MS
 
       const toggle = (key) => setOpen((current) => ({ ...current, [key]: !current[key] }))
       const edit = (next) => {
@@ -5776,13 +6426,20 @@ window.__ModuleLoader__.load({
       // 会话开跑后开场对话已写进历史、草稿清空：这时不标来源（不是「本会话改过」）。
       const tagOf = (slot) => (slot === 'items' && injectMode && items.length === 0 ? '' : slotTag(slotSrc, slot, currentSlots, slotHas[slot]))
       const TAG_COLOR = { card: 'var(--pf-card)', preset: 'var(--pf-system)', session: 'var(--dsw-alias-state-warn-primary)' }
-      const sourceTag = (kind, prefix) =>
-        kind === ''
+      // P2-4：这一格的来源和上一次提交时不一样（刚挂上 / 换会话的头几秒除外）⇒ 标签闪一下。
+      const srcSettled = srcSeen.current.sessionId === sessionId && Date.now() - cueSince.current.at >= CUE_SETTLE_MS
+      const sourceTag = (kind, prefix, slot = prefix ?? '') => {
+        const before = srcSeen.current.kinds[slot]
+        srcNow.current[slot] = kind
+        const pulse = srcSettled && before !== undefined && before !== kind && kind !== '' ? `${slot}:${kind}:${Date.now()}` : ''
+        return kind === ''
           ? null
           : h(
-              'span',
+              SourceTag,
               {
                 key: `src-${prefix ?? ''}`,
+                pulse,
+                defer: turnEnded,
                 'data-prefill-source': kind,
                 title: t(`sourceTip_${kind}`),
                 style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', color: `color-mix(in srgb, ${TAG_COLOR[kind]} 75%, var(--dsw-alias-label-primary))`, background: tint(TAG_COLOR[kind], 12) },
@@ -5790,6 +6447,7 @@ window.__ModuleLoader__.load({
               h('i', { style: { width: 6, height: 6, borderRadius: '50%', background: TAG_COLOR[kind], display: 'inline-block' } }),
               prefix ? `${prefix} · ${t(`source_${kind}`)}` : t(`source_${kind}`),
             )
+      }
       // 套着角色卡时，系统提示里多一组「带工具（Agent）/ 纯角色扮演」（原来在角色卡面板里）。
       const cardModeSeg = appliedRef
         ? h(
@@ -5819,7 +6477,7 @@ window.__ModuleLoader__.load({
         Section,
         {
           id: 'system',
-          tags: sourceTag(tagOf('system')),
+          tags: sourceTag(tagOf('system'), undefined, 'system'),
           title: t('systemTitle'),
           meta: systemMode === 'off' ? t('systemOffMeta') : systemMode === 'append' ? `${t('systemAppendMeta')} · ≈${systemTok} tok` : systemMode === 'replace' ? `${t('systemReplaceMeta')} · ≈${systemTok} tok` : `${t('systemTakeoverMeta')} · ≈${systemTok} tok`,
           off: !isOn('system') || systemFromCardOff,
@@ -6150,7 +6808,7 @@ window.__ModuleLoader__.load({
         Section,
         {
           id: 'items',
-          tags: sourceTag(tagOf('items')),
+          tags: sourceTag(tagOf('items'), undefined, 'items'),
           title: t('itemsTitle'),
           meta: `${countFilled(items)}${t('countSuffix')}${countFilled(items) < items.length ? t('emptyRowsSkipped').replace('%N', String(items.length - countFilled(items))) : ''} · ≈${itemsTok} tok · ${injectMode ? t('itemsAfterRun') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
           off: !isOn('items'),
@@ -6558,8 +7216,12 @@ window.__ModuleLoader__.load({
        * 渲染（benchRows）、↑↓（moveBenchBlock）都按这个行序算 —— 行 = 渲染单位 = 注入顺序。
        */
       const benchDisplayRows = () => {
+        return benchSplitRows(bench)
+      }
+      /** 纯函数：同上，按任意顺序切（拖动中按落点预览画占位用）。 */
+      const benchSplitRows = (list) => {
         const rows = []
-        for (const block of bench) {
+        for (const block of list) {
           const last = rows[rows.length - 1]
           if (last !== undefined && (last[0].tower ?? '') === (block.tower ?? '')) last.push(block)
           else rows.push([block])
@@ -6595,15 +7257,23 @@ window.__ModuleLoader__.load({
        * 落点按 key 记、在这里换算成 bench 下标：屏幕行号 ≠ bench 下标（收起的塔不画块），不能直接当下标用（#28）。
        */
       const moveBlockTo = (key, before, tower) => {
-        const at = bench.findIndex((block) => block.key === key)
-        if (at < 0) return
-        const next = [...bench]
+        const next = benchMoved(bench, key, before, tower)
+        if (next !== null) setBench(next)
+      }
+      /**
+       * 纯函数：list 里把 key 挪到 before 前面（null = 末尾）、归入 tower；没变 / 落不了 ⇒ null。
+       * 松手落位（moveBlockTo）和拖动中的落点占位（benchDragView）共用 ⇒ 占位画在哪，松手就落在哪。
+       */
+      const benchMoved = (list, key, before, tower) => {
+        const at = list.findIndex((block) => block.key === key)
+        if (at < 0) return null
+        const next = [...list]
         const moved = { ...next.splice(at, 1)[0], tower: tower ?? null }
         const target = before === key ? at : before === null ? next.length : next.findIndex((block) => block.key === before)
-        if (target < 0) return // before 已经不在台上（拖动中被别处改了）：不落位
-        if (target === at && (bench[at].tower ?? null) === moved.tower) return // 原地松手：什么都没变
+        if (target < 0) return null // before 已经不在台上（拖动中被别处改了）：不落位
+        if (target === at && (list[at].tower ?? null) === moved.tower) return null // 原地松手：什么都没变
         next.splice(target, 0, moved)
-        setBench(next)
+        return next
       }
       const addTowerToBenchNow = (tower) => {
         const nextBench = addTowerToBench(bench, tower, allTowers, allBlocks, nextBenchKey)
@@ -6719,6 +7389,34 @@ window.__ModuleLoader__.load({
         if (block.ref === 'card:reinforce') return removeCardTower()
         removeBlockFromBench(block.key)
       }
+      /**
+       * P1-5 拿走：列表里 match 命中的块 / 塔框先淡出 + scale .97（DRAG_FX.exit），结束后才真正拿走，
+       * 其余块随后走工作台 FLIP 收拢。off / 不在屏幕上 ⇒ 当场拿走。id 防退场中重复点。
+       */
+      const exitFromBench = (id, match, unmount) => {
+        if (benchExiting.current.has(id)) return
+        const list = benchListRef.current
+        const nodes = list === null ? [] : [...list.querySelectorAll('[data-prefill-bench-block],[data-prefill-bench-tower]')].filter(match)
+        if (nodes.length === 0) return unmount()
+        benchExiting.current.add(id)
+        let left = nodes.length
+        for (const node of nodes) {
+          DRAG_FX.exit(node, () => {
+            left -= 1
+            if (left > 0) return
+            benchExiting.current.delete(id)
+            unmount()
+          })
+        }
+      }
+      const isBlockNode = (key) => (node) => node.getAttribute('data-prefill-bench-block') === key
+      const isTowerNode = (key) => (node) => node.getAttribute('data-prefill-bench-tower') === key
+      /** × / 菜单「从工作台拿走」：带退场。角色提醒块 = 整座卡塔一起退。 */
+      const dropBlockAnimated = (block) =>
+        block.ref === 'card:reinforce'
+          ? exitFromBench('tower:card', isTowerNode('card'), () => dropBlockFromBench(block))
+          : exitFromBench('block:' + block.key, isBlockNode(block.key), () => dropBlockFromBench(block))
+      const removeTowerAnimated = (towerKey, unmount) => exitFromBench('tower:' + towerKey, isTowerNode(towerKey), unmount)
       /** 预览分段（状态 B）：每块一段，带来源色；纯首轮块在第 2 轮那栏划掉。 */
       const previewSegments = (round) => {
         const out = []
@@ -6733,11 +7431,18 @@ window.__ModuleLoader__.load({
         }
         return out
       }
+      /** ↑↓：挪一行 + 被挪的块短暂描边（P1-11）。 */
+      const nudgeBenchBlock = (key, delta) => {
+        moveBenchBlock(key, delta)
+        setBenchNudged((current) => ({ key, n: (current?.n ?? 0) + 1 }))
+      }
       /** 拖动：Pointer Events 自己实现（影子挂 body，落点算插入位置）。 */
       const startDrag = (event, block) => {
         if (event.button !== undefined && event.button !== 0) return
         const list = benchListRef.current
         if (list === null) return
+        // 拖动动效件（<drag> 段）。单测单独切 startDrag 跑时没有它 ⇒ 退回瞬现瞬灭，落点 / 取消逻辑不受影响。
+        const fx = typeof DRAG_FX === 'undefined' ? null : DRAG_FX
         /** 指针离列表矩形超过这么多 px 就算拖出列表：插入线隐藏，此时松手 = 放弃（#27）。 */
         const DRAG_CANCEL_MARGIN = 24
         // 不拦默认行为的话，按住把手往下拖就是一次文字框选：沿途的块名 / 文字被选中（蓝条）。
@@ -6748,10 +7453,13 @@ window.__ModuleLoader__.load({
         // 每次都现量：拖动中列表 / 外层面板滚动后，按下时量的位置就错位了（#27）。
         const measure = () => ({
           box: list.getBoundingClientRect(),
-          rects: [...list.querySelectorAll('[data-prefill-bench-block]')].map((node) => {
-            const rect = node.getBoundingClientRect()
-            return { key: node.getAttribute('data-prefill-bench-block') ?? '', top: rect.top, height: rect.height }
-          }),
+          // 被拖的块自己不参与：拖动中它就是落点占位（跟着落点走），拿它的中线比会来回跳。
+          rects: [...list.querySelectorAll('[data-prefill-bench-block]')]
+            .filter((node) => node.getAttribute('data-prefill-bench-block') !== block.key)
+            .map((node) => {
+              const rect = node.getBoundingClientRect()
+              return { key: node.getAttribute('data-prefill-bench-block') ?? '', top: rect.top, height: rect.height }
+            }),
           frames: [...list.querySelectorAll('[data-prefill-bench-tower]')].map((node) => {
             const rect = node.getBoundingClientRect()
             return { key: node.getAttribute('data-prefill-bench-tower') ?? '', top: rect.top, bottom: rect.bottom }
@@ -6781,12 +7489,20 @@ window.__ModuleLoader__.load({
         ghost.style.left = event.clientX + 'px'
         ghost.style.top = event.clientY + 'px'
         dragInfo.current = { key: block.key }
+        // 取消时影子飞回的地方：按下时把手的位置，记成相对列表的偏移（列表滚了也对得上）。
+        const home = (() => {
+          if (fx === null) return null
+          const at = fx.target(list, block.key)
+          const box = list.getBoundingClientRect()
+          return at === null ? null : { x: at.x - box.left, y: at.y - box.top }
+        })()
+        let edge = null
         const track = (x, y) => {
           lastX = x
           lastY = y
           const at = locate(x, y)
           dragInfo.current = at === null ? { key: block.key } : { key: block.key, ...at }
-          // 插入线画在 bench 下标 = dropIndex 的那块上；出了列表 ⇒ -1（不画）。
+          // dropIndex = 落点的 bench 下标（出了列表 ⇒ -1）；落点占位按 dragInfo 里的 before / tower 画（见 setDropIndex）。
           const index = at === null ? -1 : at.before === null ? bench.length : bench.findIndex((item) => item.key === at.before)
           setDropIndex((current) => (current === index ? current : index))
         }
@@ -6796,10 +7512,15 @@ window.__ModuleLoader__.load({
             moved = true
             document.body.appendChild(ghost)
             setDragKey(block.key)
+            if (fx !== null) {
+              fx.lift(ghost)
+              edge = fx.autoScroll(list)
+            }
           }
           ghost.style.left = ev.clientX + 'px'
           ghost.style.top = ev.clientY + 'px'
           track(ev.clientX, ev.clientY)
+          edge?.update(ev.clientX, ev.clientY)
         }
         // 滚轮滚动不发 pointermove：滚动时按最后的指针位置重算插入线。
         const scroll = () => {
@@ -6812,13 +7533,24 @@ window.__ModuleLoader__.load({
           document.removeEventListener('scroll', scroll, true)
           window.removeEventListener('keydown', key, true)
           document.body.style.userSelect = prevSelect
-          ghost.remove()
+          edge?.stop()
+          const x = ev?.clientX ?? lastX
+          const y = ev?.clientY ?? lastY
+          // 以 pointerup 自己的坐标、按此刻的版面再算一次；在列表外 ⇒ 放弃，不落位。
+          const at = commit && moved ? locate(x, y) : null
+          if (fx === null || !moved) ghost.remove()
+          else {
+            // 影子收场：落位 ⇒ 飞到落点占位（此刻占位已经在最终位置）；取消 ⇒ 飞回按下时的位置。
+            const half = (ghost.getBoundingClientRect?.().width ?? 0) / 2
+            const dest = at !== null ? fx.target(list, block.key) : null
+            const box = list.getBoundingClientRect()
+            const to = dest ?? (home === null ? null : { x: box.left + home.x, y: box.top + home.y })
+            fx.land(ghost, to === null ? NaN : to.x + half - x, to === null ? NaN : to.y - y, at === null)
+            if (dest !== null) fx.settle(dest.node)
+          }
           dragInfo.current = null
           setDragKey('')
           setDropIndex(-1)
-          if (!commit || !moved) return
-          // 以 pointerup 自己的坐标、按此刻的版面再算一次；在列表外 ⇒ 放弃，不落位。
-          const at = locate(ev?.clientX ?? lastX, ev?.clientY ?? lastY)
           if (at !== null) moveBlockTo(block.key, at.before, at.tower)
         }
         const up = (ev) => finish(true, ev)
@@ -6846,6 +7578,7 @@ window.__ModuleLoader__.load({
       const setBenchBlockOpen = (key, open) =>
         setBenchOpen((current) => {
           if (current.has(key) === open) return current
+          benchFlipNext.current = true
           const next = new Set(current)
           if (open) next.add(key)
           else next.delete(key)
@@ -6860,6 +7593,13 @@ window.__ModuleLoader__.load({
           benchFocusNext.current = ''
           node.focus()
         }
+      }
+      // P2-5：这次渲染里出现的 ⇄ 徽章（layout effect 存成 overlapSeen，供下一次比对）。
+      const overlapIds = new Set()
+      overlapNow.current = overlapIds
+      const popIf = (id) => {
+        overlapIds.add(id)
+        return overlapSeen.current !== null && !overlapSeen.current.has(id)
       }
       const benchCard = (block) => {
         const index = bench.findIndex((item) => item.key === block.key)
@@ -6883,14 +7623,17 @@ window.__ModuleLoader__.load({
               border: '1px solid var(--dsw-alias-border-secondary)',
               borderLeft: '4px solid ' + color,
               borderTop: '1px solid var(--dsw-alias-border-secondary)',
-              ...(dropIndex === index && dragKey !== '' ? { boxShadow: 'inset 0 3px 0 var(--pf-turn)' } : {}),
               borderRadius: 10,
               background: 'var(--dsw-alias-bg-layer-1)',
-              ...(dragKey === block.key ? { opacity: 0.45 } : {}),
               ...(benchFocus === block.key ? { boxShadow: '0 0 0 3px color-mix(in srgb, var(--pf-turn) 18%, transparent)' } : {}),
+              // P0-5 落点占位：被拖的块画在落点上，虚线框 + 内容 30%（子元素透明度见 BENCH_SLOT_CSS）。
+              // 用 outline 不用 border：换边框样式会改盒子高度（拿起时整列下移几 px，落点跟着偏）。
+              ...(dragKey === block.key ? { outline: '1.5px dashed var(--pf-turn)', outlineOffset: -1, background: 'color-mix(in srgb, var(--pf-turn) 5%, transparent)', boxShadow: 'none' } : {}),
             },
+            'data-prefill-drop-slot': dragKey === block.key ? (dropAt === null ? 'home' : 'true') : undefined,
           },
           justAdded === block.key ? h(BlockGlow, { key: 'glow' }) : null,
+          benchNudged !== null && benchNudged.key === block.key ? h(BlockGlow, { key: 'nudge-' + benchNudged.n }) : null,
           h(
             'div',
             { style: { ...V.row, gap: 6, alignItems: 'center', padding: '5px 8px 0 6px', fontSize: 12 } },
@@ -6908,7 +7651,7 @@ window.__ModuleLoader__.load({
               ? null
               : h('span', { style: { ...V.sectionMeta, border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: 999, padding: '0 7px' } }, t('benchFirstTag')),
             overlaps.length > 0
-              ? h('span', { 'data-prefill-overlap-narrow': block.key + ':' + overlaps[0], style: { ...V.sectionMeta, color: 'var(--pf-turn)', border: '1px solid color-mix(in srgb, var(--pf-turn) 50%, var(--dsw-alias-border-secondary))', borderRadius: 999, padding: '0 6px' } }, t('benchOverlapNarrow').replace('{name}', other ? other.name : overlaps[0]))
+              ? h(PopBadge, { pop: popIf('narrow:' + block.key + ':' + overlaps[0]), 'data-prefill-overlap-narrow': block.key + ':' + overlaps[0], style: { ...V.sectionMeta, color: 'var(--pf-turn)', border: '1px solid color-mix(in srgb, var(--pf-turn) 50%, var(--dsw-alias-border-secondary))', borderRadius: 999, padding: '0 6px' } }, t('benchOverlapNarrow').replace('{name}', other ? other.name : overlaps[0]))
               : null,
             h(
               'span',
@@ -6916,10 +7659,10 @@ window.__ModuleLoader__.load({
               long
                 ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-bench-fold': block.key, 'aria-expanded': folded ? 'false' : 'true', onClick: () => setBenchBlockOpen(block.key, folded), title: folded ? t('benchExpand') : t('benchCollapse') }, folded ? '▸' : '▾')
                 : null,
-              h('button', { type: 'button', style: V.btnGhost, disabled: index <= 0, title: t('benchMoveUp'), 'data-prefill-bench-up': block.key, onClick: () => moveBenchBlock(block.key, -1) }, '↑'),
-              h('button', { type: 'button', style: V.btnGhost, disabled: index >= bench.length - 1, title: t('benchMoveDown'), 'data-prefill-bench-down': block.key, onClick: () => moveBenchBlock(block.key, 1) }, '↓'),
+              h('button', { type: 'button', style: V.btnGhost, disabled: index <= 0, title: t('benchMoveUp'), 'data-prefill-bench-up': block.key, onClick: () => nudgeBenchBlock(block.key, -1) }, '↑'),
+              h('button', { type: 'button', style: V.btnGhost, disabled: index >= bench.length - 1, title: t('benchMoveDown'), 'data-prefill-bench-down': block.key, onClick: () => nudgeBenchBlock(block.key, 1) }, '↓'),
               h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuTitle'), 'data-prefill-bench-menu': block.key, onClick: (event) => openBlockMenu(event, block) }, '⋯'),
-              h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuDrop'), 'data-prefill-bench-drop': block.key, onClick: () => dropBlockFromBench(block) }, '×'),
+              h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuDrop'), 'data-prefill-bench-drop': block.key, onClick: () => dropBlockAnimated(block) }, '×'),
             ),
           ),
           folded
@@ -6976,11 +7719,18 @@ window.__ModuleLoader__.load({
             : null,
         )
       }
+      /** list 缺省 = bench；拖动中传落点预览（benchDragView），被拖的块画在落点上当占位。 */
+      /** 拖动中的显示顺序：落点（dropAt）预览；出了列表 / 还没落点 ⇒ 原顺序（占位回到原位 = 松手会弹回）。 */
+      const benchDragView = dragKey !== '' && dropAt !== null ? benchMoved(bench, dragKey, dropAt.before, dropAt.tower) ?? bench : bench
       const benchRows = () => {
+        return benchRowsOf(bench)
+      }
+      /** 按 shown 的顺序画；拖动中传落点预览（benchDragView），被拖的块画在落点上当占位。 */
+      const benchRowsOf = (shown) => {
         const rows = []
         // 渲染行和 ↑↓ / 拖动共用同一套 benchDisplayRows（单一来源）：否则「显示顺序」和「注入顺序」
         // 会各说各话 —— 比如把紧挨塔上方的块按 ↓，面板上什么都没变，注入顺序却已经变了（#22）。
-        for (const list of benchDisplayRows()) {
+        for (const list of benchSplitRows(shown)) {
           const towerKey = list[0]?.tower ?? ''
           const tower = towerKey === '' ? null : benchTowers[towerKey]
           if (tower === null || tower === undefined) {
@@ -7001,7 +7751,7 @@ window.__ModuleLoader__.load({
                 'div',
                 { style: { ...V.row, gap: 6, alignItems: 'center', fontSize: 12, fontWeight: 700 } },
                 h('span', { style: { cursor: 'pointer' }, 'data-prefill-tower-collapse': towerKey, onClick: () => toggleTowerCollapsed(towerKey) }, (collapsed ? '▸ ' : '▾ ') + String(tower.name ?? towerKey)),
-                h('span', { style: { marginLeft: 'auto', fontWeight: 400 } }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-tower-remove': towerKey, onClick: () => removeTowerFromBench(towerKey) }, t('benchTowerRemove'))),
+                h('span', { style: { marginLeft: 'auto', fontWeight: 400 } }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-tower-remove': towerKey, onClick: () => removeTowerAnimated(towerKey, () => removeTowerFromBench(towerKey)) }, t('benchTowerRemove'))),
               ),
               ...(collapsed ? [] : list.map((block) => benchCard(block))),
             ),
@@ -7064,13 +7814,13 @@ window.__ModuleLoader__.load({
             onBlur: () => setBenchFocus(''),
             onMouseEnter: () => setBenchFocus((current) => (current === tower.id ? current : tower.id)),
             onMouseLeave: () => setBenchFocus((current) => (current === '' ? current : '')),
-            onClick: () => (state === 'off' ? (tower.card === true ? applyCardTower() : addTowerToBenchNow(tower)) : tower.card === true ? removeCardTower() : removeTowerFromBench(tower.id)),
+            onClick: () => (state === 'off' ? (tower.card === true ? applyCardTower() : addTowerToBenchNow(tower)) : tower.card === true ? removeTowerAnimated('card', removeCardTower) : removeTowerAnimated(tower.id, () => removeTowerFromBench(tower.id))),
             onContextMenu: (event) => openTowerMenu(event, tower),
           },
           stackIcon(color),
           tower.name,
           towerEdited(tower) ? h('span', { style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
-          towerOverlaps(tower) ? h('span', { title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
+          towerOverlaps(tower) ? h(PopBadge, { pop: popIf('tower:' + tower.id), 'data-prefill-overlap-badge': 'tower:' + tower.id, title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
         )
       }
       const blockButton = (block) => {
@@ -7098,12 +7848,12 @@ window.__ModuleLoader__.load({
             onBlur: () => setBenchFocus(''),
             onMouseEnter: () => setBenchFocus((current) => (current === 'btn:' + block.id ? current : 'btn:' + block.id)),
             onMouseLeave: () => setBenchFocus((current) => (current === '' ? current : '')),
-            onClick: () => (on ? setBench(bench.filter((item) => item.ref !== block.id)) : addBlockToBench(block)),
+            onClick: () => (on ? exitFromBench('ref:' + block.id, (node) => node.getAttribute('data-ref') === block.id, () => setBench(bench.filter((item) => item.ref !== block.id))) : addBlockToBench(block)),
             onContextMenu: (event) => openBlockMenu(event, block),
           },
           block.name,
           edited ? h('span', { style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
-          overlapOn && !on ? h('span', { title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
+          overlapOn && !on ? h(PopBadge, { pop: popIf('block:' + block.id), 'data-prefill-overlap-badge': 'block:' + block.id, title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
         )
       }
       const openBlockMenu = (event, target) => {
@@ -7181,7 +7931,7 @@ window.__ModuleLoader__.load({
           if (bench.length > 0) rows.push(row('savebench', t('benchMenuSaveBench'), () => saveWholeBenchAsTower()))
           rows.push(h('div', { key: 'sep', style: { height: 1, background: 'var(--dsw-alias-border-secondary)', margin: '4px 2px' } }))
           if (benchBlock !== null && benchBlock.edited) rows.push(row('revert', t('benchMenuRevert'), () => patchBenchBlock(benchBlock.key, revertPatch(benchBlock))))
-          if (benchBlock !== null) rows.push(row('drop', t('benchMenuDrop'), () => removeBlockFromBench(benchBlock.key)))
+          if (benchBlock !== null) rows.push(row('drop', t('benchMenuDrop'), () => exitFromBench('block:' + benchBlock.key, isBlockNode(benchBlock.key), () => removeBlockFromBench(benchBlock.key))))
           if (isMine && def !== null) rows.push(row('rename', t('benchMenuRename'), () => renameMyBlock(def)))
           if (isMine && def !== null) rows.push(row('delblock', t('benchMenuDeleteBlock'), () => deleteMyBlock(def.id)))
           if (menu.builtin === true) rows.push(row('hide', t('benchMenuHide'), () => hideBuiltin(menu.ref)))
@@ -7305,7 +8055,7 @@ window.__ModuleLoader__.load({
         Section,
         {
           id: 'every-turn',
-          tags: sourceTag(tagOf('everyTurn')),
+          tags: sourceTag(tagOf('everyTurn'), undefined, 'everyTurn'),
           title: t('everyTurnTitle'),
           meta: everyTurnActive
             ? autoStatus !== null
@@ -7471,12 +8221,16 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   style: { ...V.btnGhost, alignSelf: 'flex-end' },
                   'data-prefill-bench-fold-all': benchAllOpen ? 'collapse' : 'expand',
-                  onClick: () => setBenchOpen(benchAllOpen ? new Set() : new Set([...benchOpen, ...benchLongKeys])),
+                  onClick: () => {
+                    benchFlipNext.current = true
+                    setBenchOpen(benchAllOpen ? new Set() : new Set([...benchOpen, ...benchLongKeys]))
+                  },
                 },
                 benchAllOpen ? t('benchCollapseAll') : t('benchExpandAll'),
               )
             : null,
-          ...benchRows(),
+          dragKey !== '' ? h('style', { key: 'slot-css' }, BENCH_SLOT_CSS) : null,
+          ...benchRowsOf(benchDragView),
           bench.length === 0 ? h('div', { style: V.sectionMeta }, t('benchEmpty')) : null,
           h(
             'div',
@@ -7551,7 +8305,7 @@ window.__ModuleLoader__.load({
                 ? h(
                     'div',
                     { style: { ...V.row, gap: 8, flexWrap: 'wrap', fontSize: 12 } },
-                    h('span', { 'data-prefill-everyturn-state': autoStatus.state, title: autoStatus.reason }, autoStateText),
+                    h('span', { 'data-prefill-everyturn-state': autoStatus.state, title: autoStatus.reason }, h(RollText, { value: autoStateText, still: rollStill, defer: turnEnded }, autoStateText)),
                     h(
                       'span',
                       { style: { display: 'inline-flex', gap: 3, alignItems: 'center' }, 'data-prefill-everyturn-dots': '1' },
@@ -7597,7 +8351,7 @@ window.__ModuleLoader__.load({
           id: 'inject',
           title: t('injectTitle'),
           meta: t('sbxWas'),
-          tags: [h('span', { key: 'pure', style: { padding: '1px 8px', borderRadius: 6, fontSize: 11.5, background: tint('var(--dsw-alias-state-error-primary, #e5484d)', 14), color: 'var(--dsw-alias-state-error-primary, #e5484d)', fontWeight: 600 } }, t('sbxReplacesPure')), sourceTag(tagOf('tools'), t('toolsTag'))],
+          tags: [h('span', { key: 'pure', style: { padding: '1px 8px', borderRadius: 6, fontSize: 11.5, background: tint('var(--dsw-alias-state-error-primary, #e5484d)', 14), color: 'var(--dsw-alias-state-error-primary, #e5484d)', fontWeight: 600 } }, t('sbxReplacesPure')), sourceTag(tagOf('tools'), t('toolsTag'), 'tools')],
           off: !isOn('inject'),
           offTitle: t('offTitle'),
           offBody: t('injectOffBody'),
@@ -7841,7 +8595,7 @@ window.__ModuleLoader__.load({
         Section,
         {
           id: 'workspace',
-          tags: sourceTag(tagOf('workspace')),
+          tags: sourceTag(tagOf('workspace'), undefined, 'workspace'),
           title: t('wsTitle'),
           meta: t('wsMeta'),
           off: !isOn('workspace'),
@@ -7957,6 +8711,33 @@ window.__ModuleLoader__.load({
         inject: overrideCount > 0 || (sbxSummary !== null && (sbxSummary.level !== 'observe' || sbxSummary.blocked > 0)),
       }
       const featureTitle = { card: t('cardsTitle'), lore: t('loreTitle'), memory: t('memoryTitle'), system: t('systemTitle'), everyTurn: t('everyTurnTitle'), items: t('itemsNavTitle'), workspace: t('wsTitle'), inject: t('injectTitle') }
+      // 「刷」：左栏状态签名（navStatus + isOn + offBy）和上一次提交比，变了哪些、谁引起的；提交后由 layout effect 提示。
+      {
+        const navSig = navSignature(FEATURE_NAV.map(([key]) => key), (key) => navStatus[key], isOn, offBy)
+        const same = navSigRef.current?.sessionId === sessionId
+        const prevSig = same ? navSigRef.current.sig : null
+        // P1-9 的后台信号比左栏状态行多一样：手动注入还挂着几条（变少 = 刚发出去，算在「开场对话」这一项上）。
+        const manualPending = (envelope?.manualQueued?.[sessionId] ?? 0) + (envelope?.manualInbox?.[sessionId] ?? 0)
+        const bgSig = { ...navSig, items: `${navSig.items}\u0001m${manualPending}` }
+        const trigger = lastTrigger.current
+        cueInfoRef.current = {
+          sessionId,
+          navSig,
+          bgSig,
+          navChanged: diffSigs(prevSig, navSig),
+          bgChanged: diffSigs(same ? navSigRef.current.bg : null, bgSig),
+          locked: lock.locked,
+          lockChanged: same && navSigRef.current.locked !== lock.locked,
+          shrunk: cardOpen && shrunk,
+          turnEnded,
+          cause: cueCause,
+          directKey: trigger?.enable ?? '',
+          paneKey: FEATURE_NAV.find(([, paneId]) => paneId === pane)?.[0] ?? '',
+          titles: featureTitle,
+          linkedTemplate: t('linkedChanged'),
+          visible: cardOpen && !shrunk,
+        }
+      }
       const sections = { cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, workspace: workspaceSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection }
 
       // 芯片的摘要：预设名 + 每项一个点（关 = 灰；开但没内容 = 空心）。
@@ -8014,6 +8795,14 @@ window.__ModuleLoader__.load({
           },
         }, h('span', { style: { position: 'absolute', top: 2, left: 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transform: on ? 'translateX(12px)' : 'none', transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none' } }))
       }
+      // P0-4 / P1-9：每个左栏项（窄屏标签）底下垫一层：扫光带 + 底色闪层，平时完全透明、不接收点击。
+      const sweepLayer = (key, color, radius) =>
+        h(
+          'span',
+          { key: 'sweep', 'aria-hidden': 'true', 'data-prefill-sweep': key, style: { position: 'absolute', inset: 0, borderRadius: radius, overflow: 'hidden', pointerEvents: 'none' } },
+          h('span', { 'data-prefill-flash': key, style: { position: 'absolute', inset: 0, background: color, opacity: 0 } }),
+          h('span', { 'data-prefill-sweep-band': key, style: { position: 'absolute', top: 0, bottom: 0, left: 0, width: '55%', opacity: 0, transform: 'translateX(-100%)', background: `linear-gradient(90deg, transparent, color-mix(in srgb, ${color} 32%, transparent), transparent)` } }),
+        )
       const navItem = (key, paneId, color, parent) => {
         const selected = shownPane === paneId
         const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
@@ -8045,6 +8834,7 @@ window.__ModuleLoader__.load({
               boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none',
             },
           },
+          key === 'usage' ? null : sweepLayer(key, color, 8),
           h('span', { style: { position: 'absolute', left: parent ? 16 : 4, top: parent ? 7 : 9, bottom: parent ? 7 : 9, width: 3, borderRadius: 2, background: stripe } }),
           h(
             'div',
@@ -8055,8 +8845,11 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: { fontSize: 11.5, lineHeight: 1.45, marginTop: 1, color: 'var(--dsw-alias-label-tertiary)', opacity: off ? 0.85 : 1 }, 'data-prefill-nav-status': paneId },
-            ...(key === 'usage' ? [turns > 0 ? [B(String(turns)), ` ${t('turnsUnit')}`] : t('usageNoTurns')] : navStatus[key]),
-            off ? ` · ${!isOn(key) ? t('navDisabled') : t('navOffByCard')}` : '',
+            // P1-9：后台变化（自动模式计数、拦截数、锁定……）时状态行上下滚动切换；用户自己点 / 打字引起的不滚。
+            (() => {
+              const parts = [...(key === 'usage' ? [turns > 0 ? [B(String(turns)), ` ${t('turnsUnit')}`] : t('usageNoTurns')] : navStatus[key]), off ? ` · ${!isOn(key) ? t('navDisabled') : t('navOffByCard')}` : '']
+              return h(RollText, { value: nodeText(parts), still: rollStill, defer: turnEnded, block: true }, ...parts)
+            })(),
           ),
         )
       }
@@ -8065,8 +8858,9 @@ window.__ModuleLoader__.load({
         const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
         return h(
           'span',
-          { key: paneId, style: { display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '3px 6px 3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)', background: selected ? 'var(--dsw-alias-bg-base)' : 'transparent', boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none' } },
+          { key: paneId, style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '3px 6px 3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)', background: selected ? 'var(--dsw-alias-bg-base)' : 'transparent', boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none' } },
           h('span', { role: 'tab', 'aria-selected': selected ? 'true' : 'false', 'data-prefill-nav': paneId, ...(parent ? { 'data-prefill-nav-parent': parent } : {}), 'data-off': off ? 'true' : 'false', onClick: () => setPane(paneId), style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
+            key === 'usage' ? null : sweepLayer(key, color, 999),
             parent ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 } }, '└') : null,
             h('i', { style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', background: key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? 'var(--pf-off)' : color } }),
             key === 'usage' ? t('usageShort') : featureTitle[key],
@@ -8086,8 +8880,9 @@ window.__ModuleLoader__.load({
       const usageTotal = usage?.total ?? null
       const usagePrompt = usageTotal ? usageTotal.input + usageTotal.cacheRead : 0
       const cacheHit = usagePrompt > 0 ? Math.round((usageTotal.cacheRead / usagePrompt) * 100) : null
+      // P2-3：读数变了 ⇒ 数字上下滚动（变大往上、变小往下）；打字时边打边变的不滚，刚挂上的头几秒也不滚。
       const badge = (color, label, value, unit, attr) =>
-        h('span', { key: attr, 'data-prefill-badge': attr, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', background: tint(color, 14), color: 'var(--dsw-alias-label-secondary)' } }, label, h('b', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 700 } }, value), unit)
+        h('span', { key: attr, 'data-prefill-badge': attr, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', background: tint(color, 14), color: 'var(--dsw-alias-label-secondary)' } }, label, h('b', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 700 } }, h(RollText, { value: String(value), still: cueCause === 'typing' || Date.now() - cueSince.current.at < CUE_SETTLE_MS, defer: turnEnded, attr: 'data-prefill-badge-roll' }, value)), unit)
       const narrow = bounds?.narrow === true
       const header = h(
         'div',
@@ -8134,9 +8929,11 @@ window.__ModuleLoader__.load({
           {
             'data-prefill-lock-badge': lock.locked ? 'locked' : 'open',
             title: lock.locked ? t('lockBadgeTip') : t('lockOpenTip'),
-            style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', background: lock.locked ? tint('var(--pf-ai)', 16) : tint('var(--pf-system)', 12), color: 'var(--dsw-alias-label-secondary)' },
+            // 底色放在一层里（常驻 0.13）：P1-9 锁定状态变化时这一层闪到 0.35 再回来（只动 opacity）。
+            style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', color: 'var(--dsw-alias-label-secondary)' },
           },
-          lock.locked ? t('lockBadge') : t('lockOpenBadge'),
+          h('span', { 'aria-hidden': 'true', 'data-prefill-flash-bg': '', style: { position: 'absolute', inset: 0, borderRadius: 999, background: lock.locked ? 'var(--pf-ai)' : 'var(--pf-system)', opacity: 0.13, pointerEvents: 'none' } }),
+          h('span', { style: { position: 'relative' } }, h(RollText, { value: lock.locked ? 'locked' : 'open', still: cueCause === 'typing', defer: turnEnded }, lock.locked ? t('lockBadge') : t('lockOpenBadge'))),
         ),
         h('span', { style: { flex: '1 1 auto' } }),
         // 右侧一组（读数 + ? + 钉住 + 收起 + 关闭）不拆开：窄屏换行时整组挪到第二行靠右，关闭按钮不会单独掉下去。
@@ -8288,14 +9085,8 @@ window.__ModuleLoader__.load({
             ref: cardRef,
             // 卡片里点下拉菜单以外的地方 = 收起菜单。
             // toast 的触发点：最近一次在卡片里按下 / 按键的控件。
-            onPointerDownCapture: (event) => {
-              const el = event.target instanceof Element ? event.target.closest('button,[role=switch],[role=tab],[role=radio],input,textarea,select,label') : null
-              if (el) lastTrigger.current = { el, at: Date.now() }
-            },
-            onKeyDownCapture: (event) => {
-              const el = event.target instanceof Element ? event.target.closest('button,[role=switch],[role=tab],[role=radio],input,textarea,select,label') : null
-              if (el) lastTrigger.current = { el, at: Date.now() }
-            },
+            onPointerDownCapture: (event) => noteTrigger(event),
+            onKeyDownCapture: (event) => noteTrigger(event),
             onMouseDown: (event) => {
               if (error?.open && !(event.target instanceof Element && event.target.closest('[data-prefill-error-pill],[data-prefill-error-detail]') !== null)) setError((current) => errorsReduce(current, { type: 'close' }))
               if (menu === '') return
@@ -8319,12 +9110,16 @@ window.__ModuleLoader__.load({
             'data-prefill-card-panel': '1',
             'data-shrunk': shrunk ? 'true' : 'false',
             'data-prefill-motion': motion,
+            // §5：模型正在输出 ⇒ 自动提示（扫光、闪、数字滚动）攒到回合结束再播。
+            'data-prefill-busy': streaming ? STREAM_BUSY : undefined,
             'data-closing': closing ? 'true' : undefined,
             'aria-hidden': shrunk || closing ? 'true' : undefined,
             role: 'dialog',
             'aria-label': t('dockTitle'),
             style: {
               ...COLOR_VARS,
+              // 撤销条（P1-4）叠在卡片底部时，没有触发点的 toast 退到它上面（不然两条叠在一起，实测踩到）。
+              '--pf-toast-bottom': presetUndo !== null ? '64px' : '10px',
               // 钉住缩成标记时：淡出、不接收点击（下面的对话照常可点）。
               // 档位：off 直接切；简洁只淡出不位移。
               opacity: shrunk ? 0 : 1,
@@ -8359,21 +9154,20 @@ window.__ModuleLoader__.load({
             },
           },
           header,
-          presetUndo === null
-            ? null
-            : h(
-                'div',
-                { 'data-prefill-preset-undo-bar': '', style: { ...V.row, ...V.callout('brand'), margin: '8px 12px 0', flexWrap: 'wrap' } },
-                h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, t('presetUndoBar')),
-                h(
-                  'button',
-                  { type: 'button', style: { ...V.btn, ...(busyCtl.shown('undo') ? BUSY_LOOK : {}) }, 'data-prefill-preset-undo': '', ...busyAttrs(busyCtl, 'undo'), onClick: () => act('undo', t('errOpUndo'), undoClearPreset) },
-                  busyCtl.shown('undo') ? h(Spinner, { key: 'spin' }) : null,
-                  busyCtl.shown('undo') ? ' ' : null,
-                  t('undo'),
-                ),
-              ),
           h('div', { style: { display: 'flex', flexDirection: narrow ? 'column' : 'row', minHeight: 0, flex: '1 1 auto' } }, nav, main),
+          // P1-4：撤销条从底部滑入、叠在内容上（不占文档流 ⇒ 内容不被推开），带倒计时线和剩余秒数。
+          h(UndoBar, {
+            token: presetUndo,
+            text: t('presetUndoBar'),
+            secondsLabel: t('undoSecondsLeft'),
+            button: h(
+              'button',
+              { type: 'button', style: { ...V.btn, ...(busyCtl.shown('undo') ? BUSY_LOOK : {}) }, 'data-prefill-preset-undo': '', ...busyAttrs(busyCtl, 'undo'), onClick: () => act('undo', t('errOpUndo'), undoClearPreset) },
+              busyCtl.shown('undo') ? h(Spinner, { key: 'spin' }) : null,
+              busyCtl.shown('undo') ? ' ' : null,
+              t('undo'),
+            ),
+          }),
           menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : menu === 'more' ? moreMenu : null,
           error?.open ? errorPanel : null,
           // P1-8：toast 贴着触发点、不接收点击；读屏念的是下面常驻的 polite 区域。
@@ -8385,7 +9179,9 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
+                ref: markerRef,
                 'data-prefill-marker': '1',
+                'data-prefill-busy': streaming ? STREAM_BUSY : undefined,
                 title: t('markerTip'),
                 'aria-label': t('markerTip'),
                 onMouseEnter: restoreCard,
@@ -8423,6 +9219,7 @@ window.__ModuleLoader__.load({
                 ...summaryDots.map((dot) =>
                   h('i', {
                     key: dot.key,
+                    'data-prefill-marker-dot': dot.key,
                     style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', boxSizing: 'border-box', background: dot.on && dot.filled ? dot.color : dot.on ? 'transparent' : 'var(--pf-off)', border: `1.5px solid ${dot.on ? dot.color : 'var(--pf-off)'}` },
                   }),
                 ),
