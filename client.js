@@ -493,6 +493,85 @@ window.__ModuleLoader__.load({
     }
     // </feedback>
 
+    // <drag>
+    /**
+     * 拖动动效（docs/规划-动效.md 第 5 步：P0-5 / P1-11 / P1-5）。只依赖 window 和上面的 <motion>（play / presenceExit），
+     * 单测切出来直接跑（tests/motion-drag.test.mjs）。startDrag 自己的逻辑（落点、取消、#27 / #28）不在这里，
+     * 它经 `DRAG_FX` 调这些件；tests/drag-cancel.test.mjs 单独切 startDrag 跑时 DRAG_FX 不存在 ⇒ 退回原来的瞬现瞬灭。
+     *   - 落点：被拖的块本身渲染成占位（虚线框 + 内容 30%），其余块让位走工作台 FLIP（kind: 'move'）。
+     *   - 边缘自动滚动：指针进到滚动区上 / 下边缘 DRAG_EDGE 内，按深入程度滚，最多 DRAG_SCROLL_MAX px/帧（功能性，各档都有）。
+     */
+    /** 落点占位里的内容压到 30%（内联样式管不到子元素）；拖动中才挂上。 */
+    const BENCH_SLOT_CSS = '[data-prefill-drop-slot]>*{opacity:.3;pointer-events:none}'
+    const DRAG_EDGE = 32
+    const DRAG_SCROLL_MAX = 14
+    /**
+     * 指针 y 离滚动区上 / 下边缘多近 ⇒ 每帧滚多少（负 = 往上）；不在边缘带里 = 0。
+     * 只认滚动区里面的边缘带：指针已经拖出滚动区（远处 / 列表外 = 取消区）就不滚，免得列表在取消区里自己跑。
+     */
+    function edgeScrollSpeed(y, top, bottom, edge = DRAG_EDGE, max = DRAG_SCROLL_MAX) {
+      if (!Number.isFinite(y) || !Number.isFinite(top) || !Number.isFinite(bottom) || bottom - top < edge * 2) return 0
+      if (y < top || y > bottom) return 0
+      if (y < top + edge) return -Math.ceil(max * Math.min(1, (top + edge - y) / edge))
+      if (y > bottom - edge) return Math.ceil(max * Math.min(1, (y - (bottom - edge)) / edge))
+      return 0
+    }
+    /** 列表往上找第一个能纵向滚的祖先（面板内容区 data-prefill-main 优先）。 */
+    function dragScroller(list) {
+      try {
+        const main = typeof list?.closest === 'function' ? list.closest('[data-prefill-main]') : null
+        if (main) return main
+        for (let node = list?.parentElement; node; node = node.parentElement) {
+          const style = window.getComputedStyle?.(node)
+          if (style && /(auto|scroll)/.test(style.overflowY ?? '') && node.scrollHeight > node.clientHeight) return node
+        }
+      } catch {
+        // 量不到就不自动滚。
+      }
+      return null
+    }
+    const DRAG_FX = {
+      /**
+       * 边缘自动滚动：返回 { update(x, y), stop() }。update 每次 pointermove 调；指针在边缘带里就开一个 rAF 循环，
+       * 按 edgeScrollSpeed 滚滚动区（滚动事件照旧触发 startDrag 的重算）；离开边缘带 / stop ⇒ 停。
+       */
+      autoScroll(list) {
+        const scroller = dragScroller(list)
+        const raf = typeof window.requestAnimationFrame === 'function' ? window.requestAnimationFrame.bind(window) : null
+        const caf = typeof window.cancelAnimationFrame === 'function' ? window.cancelAnimationFrame.bind(window) : () => {}
+        let speed = 0
+        let frame = 0
+        // 按下时把手就在边缘带里（列表顶上那块）：先别滚，等指针离开过一次边缘带再说，否则一拿起来列表就跑。
+        let armed = false
+        const step = () => {
+          frame = 0
+          if (speed === 0 || scroller === null) return
+          const before = scroller.scrollTop
+          scroller.scrollTop = before + speed
+          if (scroller.scrollTop === before) return // 到头了
+          frame = raf(step)
+        }
+        return {
+          update(x, y) {
+            if (scroller === null || raf === null) return 0
+            const box = scroller.getBoundingClientRect()
+            const lbox = list.getBoundingClientRect()
+            const want = x < lbox.left - DRAG_EDGE || x > lbox.right + DRAG_EDGE ? 0 : edgeScrollSpeed(y, box.top, box.bottom)
+            if (want === 0 && y >= box.top && y <= box.bottom) armed = true
+            speed = armed ? want : 0
+            if (speed !== 0 && frame === 0) frame = raf(step)
+            return speed
+          },
+          stop() {
+            speed = 0
+            if (frame !== 0) caf(frame)
+            frame = 0
+          },
+        }
+      },
+    }
+    // </drag>
+
     // <refresh>
     /**
      * 「刷」（docs/规划-动效.md 第 4 步：P0-4 连带变化扫光、P1-4 撤销条、P1-9 后台状态变化提示、P2-3 数字滚动、P2-4 来源标签闪）。
@@ -4382,10 +4461,19 @@ window.__ModuleLoader__.load({
       const [benchMenu, setBenchMenu] = React.useState(null)
       const [benchFocus, setBenchFocus] = React.useState('')
       const [dragKey, setDragKey] = React.useState('')
-      const [dropIndex, setDropIndex] = React.useState(-1)
+      const [, setDropIndexState] = React.useState(-1)
+      // P0-5 落点：插到哪块前面 + 归哪个塔（startDrag 写在 dragInfo.current 里，这里跟着 setDropIndex 同步成状态）。
+      // 只靠 dropIndex（bench 下标）分不出「T1 前、塔外」和「T1 前、塔内」，占位会画错地方。
+      const [dropAt, setDropAt] = React.useState(null)
       const [hiddenOpen, setHiddenOpen] = React.useState(false)
       const benchListRef = React.useRef(null)
       const dragInfo = React.useRef(null)
+      const setDropIndex = (value) => {
+        setDropIndexState(value)
+        const info = dragInfo.current
+        const next = info !== null && info !== undefined && 'before' in info ? { before: info.before ?? null, tower: info.tower ?? null } : null
+        setDropAt((current) => (current === next || (current !== null && next !== null && current.before === next.before && current.tower === next.tower) ? current : next))
+      }
       const benchRects = React.useRef(new Map())
       const benchSig = React.useRef('')
       // 拖动/排序后做 FLIP 滑动。三条约束（否则整屏乱跳）：
@@ -4399,7 +4487,8 @@ window.__ModuleLoader__.load({
         const listTop = list.getBoundingClientRect().top
         const order = nodes.map((node) => node.getAttribute('data-prefill-bench-block') ?? '')
         const sig = order.join('|')
-        const reordered = benchSig.current !== '' && benchSig.current !== sig && dragInfo.current === null
+        // 拖动中被拖的块就是落点占位（P0-5）：落点一变顺序就变，其余块让位也走这条 FLIP。
+        const reordered = benchSig.current !== '' && benchSig.current !== sig
         const next = new Map()
         for (const node of nodes) {
           const key = node.getAttribute('data-prefill-bench-block') ?? ''
@@ -7025,8 +7114,12 @@ window.__ModuleLoader__.load({
        * 渲染（benchRows）、↑↓（moveBenchBlock）都按这个行序算 —— 行 = 渲染单位 = 注入顺序。
        */
       const benchDisplayRows = () => {
+        return benchSplitRows(bench)
+      }
+      /** 纯函数：同上，按任意顺序切（拖动中按落点预览画占位用）。 */
+      const benchSplitRows = (list) => {
         const rows = []
-        for (const block of bench) {
+        for (const block of list) {
           const last = rows[rows.length - 1]
           if (last !== undefined && (last[0].tower ?? '') === (block.tower ?? '')) last.push(block)
           else rows.push([block])
@@ -7062,15 +7155,23 @@ window.__ModuleLoader__.load({
        * 落点按 key 记、在这里换算成 bench 下标：屏幕行号 ≠ bench 下标（收起的塔不画块），不能直接当下标用（#28）。
        */
       const moveBlockTo = (key, before, tower) => {
-        const at = bench.findIndex((block) => block.key === key)
-        if (at < 0) return
-        const next = [...bench]
+        const next = benchMoved(bench, key, before, tower)
+        if (next !== null) setBench(next)
+      }
+      /**
+       * 纯函数：list 里把 key 挪到 before 前面（null = 末尾）、归入 tower；没变 / 落不了 ⇒ null。
+       * 松手落位（moveBlockTo）和拖动中的落点占位（benchDragView）共用 ⇒ 占位画在哪，松手就落在哪。
+       */
+      const benchMoved = (list, key, before, tower) => {
+        const at = list.findIndex((block) => block.key === key)
+        if (at < 0) return null
+        const next = [...list]
         const moved = { ...next.splice(at, 1)[0], tower: tower ?? null }
         const target = before === key ? at : before === null ? next.length : next.findIndex((block) => block.key === before)
-        if (target < 0) return // before 已经不在台上（拖动中被别处改了）：不落位
-        if (target === at && (bench[at].tower ?? null) === moved.tower) return // 原地松手：什么都没变
+        if (target < 0) return null // before 已经不在台上（拖动中被别处改了）：不落位
+        if (target === at && (list[at].tower ?? null) === moved.tower) return null // 原地松手：什么都没变
         next.splice(target, 0, moved)
-        setBench(next)
+        return next
       }
       const addTowerToBenchNow = (tower) => {
         const nextBench = addTowerToBench(bench, tower, allTowers, allBlocks, nextBenchKey)
@@ -7186,6 +7287,7 @@ window.__ModuleLoader__.load({
         if (block.ref === 'card:reinforce') return removeCardTower()
         removeBlockFromBench(block.key)
       }
+
       /** 预览分段（状态 B）：每块一段，带来源色；纯首轮块在第 2 轮那栏划掉。 */
       const previewSegments = (round) => {
         const out = []
@@ -7205,6 +7307,8 @@ window.__ModuleLoader__.load({
         if (event.button !== undefined && event.button !== 0) return
         const list = benchListRef.current
         if (list === null) return
+        // 拖动动效件（<drag> 段）。单测单独切 startDrag 跑时没有它 ⇒ 退回瞬现瞬灭，落点 / 取消逻辑不受影响。
+        const fx = typeof DRAG_FX === 'undefined' ? null : DRAG_FX
         /** 指针离列表矩形超过这么多 px 就算拖出列表：插入线隐藏，此时松手 = 放弃（#27）。 */
         const DRAG_CANCEL_MARGIN = 24
         // 不拦默认行为的话，按住把手往下拖就是一次文字框选：沿途的块名 / 文字被选中（蓝条）。
@@ -7215,10 +7319,13 @@ window.__ModuleLoader__.load({
         // 每次都现量：拖动中列表 / 外层面板滚动后，按下时量的位置就错位了（#27）。
         const measure = () => ({
           box: list.getBoundingClientRect(),
-          rects: [...list.querySelectorAll('[data-prefill-bench-block]')].map((node) => {
-            const rect = node.getBoundingClientRect()
-            return { key: node.getAttribute('data-prefill-bench-block') ?? '', top: rect.top, height: rect.height }
-          }),
+          // 被拖的块自己不参与：拖动中它就是落点占位（跟着落点走），拿它的中线比会来回跳。
+          rects: [...list.querySelectorAll('[data-prefill-bench-block]')]
+            .filter((node) => node.getAttribute('data-prefill-bench-block') !== block.key)
+            .map((node) => {
+              const rect = node.getBoundingClientRect()
+              return { key: node.getAttribute('data-prefill-bench-block') ?? '', top: rect.top, height: rect.height }
+            }),
           frames: [...list.querySelectorAll('[data-prefill-bench-tower]')].map((node) => {
             const rect = node.getBoundingClientRect()
             return { key: node.getAttribute('data-prefill-bench-tower') ?? '', top: rect.top, bottom: rect.bottom }
@@ -7248,12 +7355,13 @@ window.__ModuleLoader__.load({
         ghost.style.left = event.clientX + 'px'
         ghost.style.top = event.clientY + 'px'
         dragInfo.current = { key: block.key }
+        let edge = null
         const track = (x, y) => {
           lastX = x
           lastY = y
           const at = locate(x, y)
           dragInfo.current = at === null ? { key: block.key } : { key: block.key, ...at }
-          // 插入线画在 bench 下标 = dropIndex 的那块上；出了列表 ⇒ -1（不画）。
+          // dropIndex = 落点的 bench 下标（出了列表 ⇒ -1）；落点占位按 dragInfo 里的 before / tower 画（见 setDropIndex）。
           const index = at === null ? -1 : at.before === null ? bench.length : bench.findIndex((item) => item.key === at.before)
           setDropIndex((current) => (current === index ? current : index))
         }
@@ -7263,10 +7371,12 @@ window.__ModuleLoader__.load({
             moved = true
             document.body.appendChild(ghost)
             setDragKey(block.key)
+            if (fx !== null) edge = fx.autoScroll(list)
           }
           ghost.style.left = ev.clientX + 'px'
           ghost.style.top = ev.clientY + 'px'
           track(ev.clientX, ev.clientY)
+          edge?.update(ev.clientX, ev.clientY)
         }
         // 滚轮滚动不发 pointermove：滚动时按最后的指针位置重算插入线。
         const scroll = () => {
@@ -7279,13 +7389,15 @@ window.__ModuleLoader__.load({
           document.removeEventListener('scroll', scroll, true)
           window.removeEventListener('keydown', key, true)
           document.body.style.userSelect = prevSelect
+          edge?.stop()
+          const x = ev?.clientX ?? lastX
+          const y = ev?.clientY ?? lastY
+          // 以 pointerup 自己的坐标、按此刻的版面再算一次；在列表外 ⇒ 放弃，不落位。
+          const at = commit && moved ? locate(x, y) : null
           ghost.remove()
           dragInfo.current = null
           setDragKey('')
           setDropIndex(-1)
-          if (!commit || !moved) return
-          // 以 pointerup 自己的坐标、按此刻的版面再算一次；在列表外 ⇒ 放弃，不落位。
-          const at = locate(ev?.clientX ?? lastX, ev?.clientY ?? lastY)
           if (at !== null) moveBlockTo(block.key, at.before, at.tower)
         }
         const up = (ev) => finish(true, ev)
@@ -7350,12 +7462,14 @@ window.__ModuleLoader__.load({
               border: '1px solid var(--dsw-alias-border-secondary)',
               borderLeft: '4px solid ' + color,
               borderTop: '1px solid var(--dsw-alias-border-secondary)',
-              ...(dropIndex === index && dragKey !== '' ? { boxShadow: 'inset 0 3px 0 var(--pf-turn)' } : {}),
               borderRadius: 10,
               background: 'var(--dsw-alias-bg-layer-1)',
-              ...(dragKey === block.key ? { opacity: 0.45 } : {}),
               ...(benchFocus === block.key ? { boxShadow: '0 0 0 3px color-mix(in srgb, var(--pf-turn) 18%, transparent)' } : {}),
+              // P0-5 落点占位：被拖的块画在落点上，虚线框 + 内容 30%（子元素透明度见 BENCH_SLOT_CSS）。
+              // 用 outline 不用 border：换边框样式会改盒子高度（拿起时整列下移几 px，落点跟着偏）。
+              ...(dragKey === block.key ? { outline: '1.5px dashed var(--pf-turn)', outlineOffset: -1, background: 'color-mix(in srgb, var(--pf-turn) 5%, transparent)', boxShadow: 'none' } : {}),
             },
+            'data-prefill-drop-slot': dragKey === block.key ? (dropAt === null ? 'home' : 'true') : undefined,
           },
           justAdded === block.key ? h(BlockGlow, { key: 'glow' }) : null,
           h(
@@ -7443,11 +7557,18 @@ window.__ModuleLoader__.load({
             : null,
         )
       }
+      /** list 缺省 = bench；拖动中传落点预览（benchDragView），被拖的块画在落点上当占位。 */
+      /** 拖动中的显示顺序：落点（dropAt）预览；出了列表 / 还没落点 ⇒ 原顺序（占位回到原位 = 松手会弹回）。 */
+      const benchDragView = dragKey !== '' && dropAt !== null ? benchMoved(bench, dragKey, dropAt.before, dropAt.tower) ?? bench : bench
       const benchRows = () => {
+        return benchRowsOf(bench)
+      }
+      /** 按 shown 的顺序画；拖动中传落点预览（benchDragView），被拖的块画在落点上当占位。 */
+      const benchRowsOf = (shown) => {
         const rows = []
         // 渲染行和 ↑↓ / 拖动共用同一套 benchDisplayRows（单一来源）：否则「显示顺序」和「注入顺序」
         // 会各说各话 —— 比如把紧挨塔上方的块按 ↓，面板上什么都没变，注入顺序却已经变了（#22）。
-        for (const list of benchDisplayRows()) {
+        for (const list of benchSplitRows(shown)) {
           const towerKey = list[0]?.tower ?? ''
           const tower = towerKey === '' ? null : benchTowers[towerKey]
           if (tower === null || tower === undefined) {
@@ -7943,7 +8064,8 @@ window.__ModuleLoader__.load({
                 benchAllOpen ? t('benchCollapseAll') : t('benchExpandAll'),
               )
             : null,
-          ...benchRows(),
+          dragKey !== '' ? h('style', { key: 'slot-css' }, BENCH_SLOT_CSS) : null,
+          ...benchRowsOf(benchDragView),
           bench.length === 0 ? h('div', { style: V.sectionMeta }, t('benchEmpty')) : null,
           h(
             'div',
