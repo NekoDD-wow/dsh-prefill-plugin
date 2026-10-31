@@ -37,7 +37,7 @@ function fakeWindow() {
 }
 const NAMES = [
   'MOTION', 'setMotionPref', 'motionLevel', 'play', 'flushCues', 'pendingCues', 'STREAM_BUSY', 'CUE_MAX', 'CUE_STAGGER',
-  'navSignature', 'diffSigs', 'linkedText', 'statusText', 'userCaused', 'BADGE_FLASH', 'NAV_FLASH', 'DOT_FLASH', 'SWEEP', 'flashOrSweep',
+  'navSignature', 'diffSigs', 'linkedText', 'nodeText', 'changeCause', 'CAUSE_MS', 'CUE_SETTLE_MS', 'BADGE_FLASH', 'NAV_FLASH', 'DOT_FLASH', 'SWEEP', 'flashOrSweep',
   'UNDO_MS', 'undoLeft', 'UNDO_ENTER', 'UNDO_EXIT', 'UNDO_COUNTDOWN', 'rollFrames', 'rollDir', 'FLASH_MS', 'SOURCE_FLASH',
 ]
 function load(win = fakeWindow()) {
@@ -166,4 +166,95 @@ test('面板接线：卡片根节点 / 标记 / 芯片在输出时标 data-prefi
   assert.match(chipSrc, /if \(ended\) flushCues\(\)/)
   const impl = readFileSync(new URL('../impl.js', import.meta.url), 'utf8')
   assert.match(impl, /running: \[\.\.\.liveAgents\]\.filter\(\(\[, agent\]\) => isRunning\(agent\)\)/)
+})
+
+// ── 1. P0-4 连带变化：状态签名对比 + 扫光 + toast ─────────────────────────────
+
+/** 假的左栏项：里面有扫光带和底色闪层。 */
+function fakeNavHost(root = null) {
+  const band = fakeEl(root)
+  const layer = fakeEl(root)
+  return {
+    band,
+    layer,
+    querySelector: (sel) => (sel === '[data-prefill-sweep-band]' ? band : sel === '[data-prefill-flash]' ? layer : null),
+  }
+}
+const el = (children) => ({ props: { children } })
+
+test('状态签名：状态行文字（摊平 React 子节点）+ 开关 + 随角色卡停用；只标出变了的项', () => {
+  const { M } = load()
+  assert.equal(M.nodeText(['', el('唐团团'), ' · ', el(['纯角色扮演', 3]), null, false]), '唐团团 · 纯角色扮演3')
+  const keys = ['card', 'system', 'everyTurn', 'inject']
+  const before = M.navSignature(keys, (key) => ({ card: [el('唐团团'), ' · 带工具'], system: [el('追加'), ' · ≈', el('120'), ' tok'], everyTurn: ['关'], inject: [el('观察')] })[key], () => true, { system: false })
+  // 切「严格」：角色卡模式、系统提示模式、沙盒档位变了；每轮注入没变
+  const after = M.navSignature(keys, (key) => ({ card: [el('唐团团'), ' · 纯角色扮演'], system: [el('接管'), ' · ≈', el('120'), ' tok'], everyTurn: ['关'], inject: [el('严格'), ' · 拦 5'] })[key], () => true, { system: false })
+  assert.deepEqual(M.diffSigs(before, after), ['card', 'system', 'inject'])
+  // 只是开关 / offBy 变了也算
+  const off = M.navSignature(keys, (key) => ({ card: [el('唐团团'), ' · 带工具'], system: [el('追加'), ' · ≈', el('120'), ' tok'], everyTurn: ['关'], inject: [el('观察')] })[key], (key) => key !== 'card', { system: true })
+  assert.deepEqual(M.diffSigs(before, off), ['card', 'system'])
+  // 没有上一份（刚挂上 / 换会话）⇒ 什么都不算变；同一份 ⇒ 空
+  assert.deepEqual(M.diffSigs(null, after), [])
+  assert.deepEqual(M.diffSigs(after, after), [])
+})
+
+test('谁引起的：点控件 = user（扫光 + toast）；打字 = typing（不提示）；左栏切节 / 很久以前 / 没有 = background', () => {
+  const { M } = load()
+  const now = 100000
+  assert.equal(M.changeCause({ at: now - 500 }, now), 'user')
+  assert.equal(M.changeCause({ at: now - 500, enable: 'card' }, now), 'user')
+  assert.equal(M.changeCause({ at: now - 500, typing: true }, now), 'typing')
+  assert.equal(M.changeCause({ at: now - 500, nav: true }, now), 'background')
+  assert.equal(M.changeCause({ at: now - M.CAUSE_MS - 1 }, now), 'background')
+  assert.equal(M.changeCause(null, now), 'background')
+  assert.equal(M.linkedText('连带改了：{list}', ['角色卡', '系统提示', '']), '连带改了：角色卡、系统提示')
+  assert.equal(M.linkedText('连带改了：{list}', []), '')
+})
+
+test('扫光：完整 = 渐变带扫过（装饰类，slow，按序错开 stagger）；简洁 = 底色层只闪透明度；off = 不调 animate', () => {
+  const { M } = load()
+  M.setMotionPref('full')
+  const a = fakeNavHost()
+  const b = fakeNavHost()
+  M.flashOrSweep(a, 0)
+  M.flashOrSweep(b, 2)
+  assert.equal(a.band.calls.length, 1)
+  assert.equal(a.layer.calls.length, 0)
+  assert.equal(a.band.calls[0].timing.duration, M.MOTION.slow)
+  assert.equal(b.band.calls[0].timing.delay, 2 * M.MOTION.stagger)
+  assert.deepEqual([...props(a.band.calls[0].frames)].sort(), ['opacity', 'transform'], '只动 transform / opacity')
+  M.setMotionPref('lite')
+  const c = fakeNavHost()
+  M.flashOrSweep(c, 1)
+  assert.equal(c.band.calls.length, 0, '简洁不扫（位移）')
+  assert.equal(c.layer.calls.length, 1)
+  assert.deepEqual([...props(c.layer.calls[0].frames)], ['opacity'], '简洁只动透明度')
+  M.setMotionPref('off')
+  const d = fakeNavHost()
+  assert.equal(M.flashOrSweep(d, 0), null)
+  assert.equal(d.band.calls.length + d.layer.calls.length, 0)
+  // 流式中：扫光（装饰类）攒到回合结束
+  M.setMotionPref('full')
+  const root = fakeRoot('stream')
+  const e = fakeNavHost(root)
+  assert.equal(M.flashOrSweep(e, 0), null)
+  assert.equal(e.band.calls.length, 0)
+  root.busy = undefined
+  assert.equal(M.flushCues().length, 1)
+  assert.equal(e.band.calls.length, 1)
+})
+
+test('面板接线（P0-4）：渲染时算签名、提交后按原因提示；每个左栏项 / 窄屏标签垫扫光层；黄色说明 grid-template-rows 展开', () => {
+  assert.match(dockSrc, /navSignature\(FEATURE_NAV\.map\(\(\[key\]\) => key\), \(key\) => navStatus\[key\], isOn, offBy\)/)
+  assert.match(dockSrc, /cause: changeCause\(trigger, Date\.now\(\)\)/)
+  assert.match(dockSrc, /if \(info\.cause === 'user'\)/)
+  assert.match(dockSrc, /flashOrSweep\(host, index\)/)
+  assert.match(dockSrc, /announceLinked\(linkedText\(/)
+  assert.match(dockSrc, /key !== info\.directKey/, '刚点的开关自己不扫')
+  assert.equal((dockSrc.match(/sweepLayer\(key, color, /g) ?? []).length, 2, '宽屏左栏 + 窄屏标签')
+  const off = cut('    function OffNote(props) {', '    function ManualInject(props) {')
+  assert.match(off, /gridTemplateRows: props\.off \? '1fr' : '0fr'/)
+  assert.match(off, /motion === 'off' \? 'none' : motion === 'lite' \? `opacity/)
+  assert.match(src, /h\(OffNote, \{ id: props\.id, off: props\.off === true/)
+  assert.equal(src.match(/\blinkedChanged:/g)?.length, 2, '中英文案')
 })

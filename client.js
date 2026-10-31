@@ -484,6 +484,76 @@ window.__ModuleLoader__.load({
     }
     // </feedback>
 
+    // <refresh>
+    /**
+     * 「刷」（docs/规划-动效.md 第 4 步：P0-4 连带变化扫光、P1-4 撤销条、P1-9 后台状态变化提示、P2-3 数字滚动、P2-4 来源标签闪）。
+     * 这一段只依赖上面的 <motion>（play / motionLevel）和 <feedback>，单测切出来直接跑（tests/motion-refresh.test.mjs）。
+     * 所有动效都经 play()：完整 = 全部；简洁 = 只淡入淡出（扫光换成同一处的透明度闪）；off = 不调 animate。
+     */
+    /** 闪一下的时长：升到峰值再落回（0.13→0.35→0.13 这种「呼一下」比普通过渡长，单程仍是 slow 260ms）。 */
+    const FLASH_MS = MOTION.slow * 2
+    /** 徽章闪（P1-9）：徽章底色层常驻 0.13，闪到 0.35 再回来。只动 opacity。 */
+    const BADGE_FLASH = [{ opacity: 0.13 }, { opacity: 0.35, offset: 0.4 }, { opacity: 0.13 }]
+    /** 左栏项的底色层：平时 0（透明），闪到 0.18 再回来；简洁档的扫光也换成它。 */
+    const NAV_FLASH = [{ opacity: 0 }, { opacity: 0.18, offset: 0.4 }, { opacity: 0 }]
+    /** 扫光（P0-4，装饰类）：一条渐变带从左扫到右（带宽 55%，-100% → 190% 正好扫过整项）。 */
+    const SWEEP = [
+      { opacity: 0, transform: 'translateX(-100%)' },
+      { opacity: 1, transform: 'translateX(40%)', offset: 0.45 },
+      { opacity: 0, transform: 'translateX(190%)' },
+    ]
+    /** 把 React 子节点（字符串 / 数字 / 数组 / 元素）摊平成纯文本：签名用，不看样式。 */
+    function nodeText(node) {
+      if (node === null || node === undefined || node === false || node === true) return ''
+      if (typeof node === 'string' || typeof node === 'number') return String(node)
+      if (Array.isArray(node)) return node.map(nodeText).join('')
+      if (typeof node === 'object' && node.props !== undefined) return nodeText(node.props.children)
+      return ''
+    }
+    /** 左栏状态签名（P0-4）：每项 = 状态行文字 + 开关 + 是否随角色卡停用。 */
+    function navSignature(keys, textOf, isOn, offBy) {
+      const sig = {}
+      for (const key of keys) sig[key] = `${nodeText(textOf(key))}\u0001${isOn(key) ? 1 : 0}\u0001${offBy?.[key] === true ? 1 : 0}`
+      return sig
+    }
+    /** 两份签名里变了的项（按 next 的顺序）；没有上一份（刚挂上 / 换会话）⇒ 什么都不算变。 */
+    function diffSigs(prev, next) {
+      if (prev === null || prev === undefined || next === null || next === undefined) return []
+      return Object.keys(next).filter((key) => Object.hasOwn(prev, key) && prev[key] !== next[key])
+    }
+    /**
+     * 这次变化是谁引起的：最近一次在卡片里按下 / 按键（CAUSE_MS 内）的控件
+     *   是输入框 / 文本框 ⇒ 'typing'（边打字边变的读数不提示）；
+     *   是别的控件（切开关、套预设、切档位……；左栏切节不算）⇒ 'user'（P0-4：扫光 + toast 列出连带改动）；
+     *   没有 ⇒ 'background'（P1-9：后台变化，闪一下、文字滚动，流式中攒到回合结束）。
+     * trigger = { tag, nav, at }（纯数据，单测好造）。
+     */
+    const CAUSE_MS = 6000
+    /** 卡片刚挂上 / 刚换会话的这段时间里陆续到达的数据（卡片列表、记忆状态……）不算「变化」。 */
+    const CUE_SETTLE_MS = 2500
+    function changeCause(trigger, now) {
+      if (trigger === null || trigger === undefined || !(now - trigger.at <= CAUSE_MS)) return 'background'
+      if (trigger.typing === true) return 'typing'
+      if (trigger.nav === true) return 'background'
+      return 'user'
+    }
+    /** toast 里的「连带改了：A、B」；没有连带项 ⇒ ''。 */
+    function linkedText(template, titles) {
+      const list = (titles ?? []).filter((title) => typeof title === 'string' && title !== '')
+      return list.length === 0 ? '' : String(template ?? '{list}').replace('{list}', list.join('、'))
+    }
+    /**
+     * 扫一下（P0-4）：完整档 = 渐变带扫过（装饰类，slow，按 index 错开 stagger）；简洁档 = 同一项的底色层闪一下
+     * （只动透明度）；off = 不动。host 里找 [data-prefill-sweep-band] / [data-prefill-flash]。流式中照规则排队。
+     */
+    function flashOrSweep(host, index = 0) {
+      if (!host || typeof host.querySelector !== 'function') return null
+      const delay = Math.max(0, index) * MOTION.stagger
+      if (motionLevel() === 'lite') return play(host.querySelector('[data-prefill-flash]'), NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', delay, cue: 'auto' })
+      return play(host.querySelector('[data-prefill-sweep-band]'), SWEEP, { duration: MOTION.slow, easing: MOTION.ease, delay, kind: 'decor' })
+    }
+    // </refresh>
+
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
     function useMotionLevel() {
       const [, setTick] = React.useState(0)
@@ -1512,6 +1582,7 @@ window.__ModuleLoader__.load({
       errOpChip: '开启预填装',
       chipOpenFailed: '开启失败 · 再点一次重试',
       motionTitle: '动效',
+      linkedChanged: '连带改了：{list}',
       motionFull: '完整',
       motionLite: '简洁',
       motionOff: '关',
@@ -1868,6 +1939,7 @@ window.__ModuleLoader__.load({
       errOpChip: 'Turning on prefill',
       chipOpenFailed: 'Failed · click to retry',
       motionTitle: 'Motion',
+      linkedChanged: 'Also changed: {list}',
       motionFull: 'Full',
       motionLite: 'Lite',
       motionOff: 'Off',
@@ -3888,8 +3960,30 @@ window.__ModuleLoader__.load({
           h('span', { style: { flex: '1 1 auto' } }),
           props.right ?? null,
         ),
-        props.off ? h('div', { style: { ...V.callout('warn'), maxWidth: '68ch' }, 'data-prefill-off-note': props.id }, h('b', null, props.offTitle), props.offBody ? ` ${props.offBody}` : '') : null,
+        h(OffNote, { id: props.id, off: props.off === true, title: props.offTitle, body: props.offBody }),
         props.children,
+      )
+    }
+    /**
+     * 节顶部的黄色「已停用」说明（P0-4）：用 grid-template-rows 0fr ↔ 1fr 展开 / 收起，内容是慢慢让开而不是一下被推下去。
+     * 完整档：行高 + 透明度过渡；简洁档：只淡入淡出（行高直接到位，不做位移）；off：直接切换。
+     * 收起的那一段保留最后一次的文字；一直没停用过就什么都不画（0fr，不占地方）。
+     */
+    function OffNote(props) {
+      const motion = useMotionLevel()
+      const last = React.useRef(null)
+      if (props.off) last.current = { title: props.title, body: props.body }
+      const view = last.current
+      const transition = motion === 'off' ? 'none' : motion === 'lite' ? `opacity ${MOTION.base}ms ease` : `grid-template-rows ${MOTION.base}ms ${MOTION.ease}, opacity ${MOTION.base}ms ease`
+      return h(
+        'div',
+        // section 的 gap 是 10：收起时用 -10 抵掉，展开时里面再垫回 10 ⇒ 收起 = 不占地方，展开 = 和以前一样。
+        { 'data-prefill-off-wrap': props.id, 'data-open': props.off ? 'true' : 'false', 'aria-hidden': props.off ? undefined : 'true', style: { display: 'grid', gridTemplateRows: props.off ? '1fr' : '0fr', opacity: props.off ? 1 : 0, marginTop: -10, transition } },
+        h(
+          'div',
+          { style: { minHeight: 0, overflow: 'hidden' } },
+          view === null ? null : h('div', { style: { paddingTop: 10 } }, h('div', { style: { ...V.callout('warn'), maxWidth: '68ch' }, 'data-prefill-off-note': props.off ? props.id : undefined }, h('b', null, view.title), view.body ? ` ${view.body}` : '')),
+        ),
       )
     }
 
@@ -4315,11 +4409,55 @@ window.__ModuleLoader__.load({
           const hidden = areaRect !== null && area.contains(trigger.el) && (rect.bottom < areaRect.top || rect.top > areaRect.bottom)
           place = hidden ? null : toastPlace(card.getBoundingClientRect(), rect, areaRect)
         }
+        // P0-4：刚才的操作还连带改了别的项 ⇒ 接在这条后面一起说。
+        const linked = linkedRef.current
+        let shownText = text
+        if (linked !== null && Date.now() - linked.at < 2500) {
+          linkedRef.current = null
+          clearTimeout(linked.timer)
+          if (!text.includes(linked.text)) shownText = `${text} · ${linked.text}`
+        }
+        lastToastRef.current = { text: shownText, at: Date.now() }
         setToastAt(place)
-        setToast(text)
-        setTimeout(() => setToast((current) => (current === text ? '' : current)), 3200)
+        setToast(shownText)
+        setTimeout(() => setToast((current) => (current === shownText ? '' : current)), shownText === text ? 3200 : 4800)
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [])
+      const linkedRef = React.useRef(null)
+      const lastToastRef = React.useRef(null)
+      /** P0-4 的连带改动：刚出过 toast（同一次操作的结果）就接在它后面；否则等 600ms，没有别的 toast 再单独说。 */
+      const announceLinked = React.useCallback(
+        (text) => {
+          if (text === '') return
+          const last = lastToastRef.current
+          if (last !== null && Date.now() - last.at < 2500) {
+            if (!last.text.includes(text)) flash(`${last.text} · ${text}`)
+            return
+          }
+          clearTimeout(linkedRef.current?.timer)
+          const entry = { text, at: Date.now(), timer: 0 }
+          entry.timer = setTimeout(() => {
+            if (linkedRef.current !== entry) return
+            linkedRef.current = null
+            flash(text)
+          }, 600)
+          linkedRef.current = entry
+        },
+        [flash],
+      )
+      /** 记下最近一次在卡片里按下 / 按键的控件：toast 贴着它（P1-8），也用来判断状态变化是谁引起的（P0-4 / P1-9）。 */
+      const noteTrigger = (event) => {
+        const el = event.target instanceof Element ? event.target.closest('button,[role=switch],[role=tab],[role=radio],input,textarea,select,label') : null
+        if (!el) return
+        const enable = el.closest('[data-prefill-enable]')
+        lastTrigger.current = {
+          el,
+          at: Date.now(),
+          typing: el.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=file]),textarea,select'),
+          nav: enable === null && el.closest('[data-prefill-nav]') !== null,
+          enable: enable?.getAttribute('data-prefill-enable') ?? '',
+        }
+      }
 
       // ── 悬浮卡片（v0.10）：开关、钉住、左栏选中项、下拉菜单 ──
       const [cardOpen, setCardOpenLocal] = React.useState(() => cardOpenMap.get(sessionId) === true)
@@ -4582,6 +4720,32 @@ window.__ModuleLoader__.load({
         const timer = setInterval(refreshEnvelope, streaming ? 1500 : 3000)
         return () => clearInterval(timer)
       }, [enabled, refreshEnvelope, sessionId, streaming])
+      // 「刷」（第 4 步）：渲染时算好左栏状态签名和变化（cueInfoRef），提交后在这里按「谁引起的」分别提示。
+      //   user（P0-4）：变了的项扫光（简洁档闪底色），toast 列出连带改动（当前节和刚点的开关自己不算「连带」）。
+      const navSigRef = React.useRef(null)
+      const cueInfoRef = React.useRef(null)
+      const cueSince = React.useRef({ sessionId, at: Date.now() })
+      if (cueSince.current.sessionId !== sessionId) cueSince.current = { sessionId, at: Date.now() }
+      cueInfoRef.current = null
+      React.useLayoutEffect(() => {
+        const info = cueInfoRef.current
+        if (info === null) return
+        const prevSession = navSigRef.current?.sessionId
+        navSigRef.current = { sessionId: info.sessionId, sig: info.navSig }
+        if (prevSession !== info.sessionId || info.navChanged.length === 0) return
+        // 刚挂上 / 刚换会话的头几秒：卡片列表、记忆状态等陆续到达，不算「变化」。
+        if (Date.now() - cueSince.current.at < CUE_SETTLE_MS) return
+        if (info.cause === 'user') {
+          const changed = info.navChanged.filter((key) => key !== info.directKey)
+          const card = cardRef.current
+          if (card !== null && info.visible) {
+            changed.forEach((key, index) => {
+              for (const host of card.querySelectorAll(`[data-prefill-sweep="${key}"]`)) flashOrSweep(host, index)
+            })
+          }
+          announceLinked(linkedText(info.linkedTemplate, changed.filter((key) => key !== info.paneKey).map((key) => info.titles[key])))
+        }
+      })
       // 跑完：排队的自动提示统一播放（放在所有「排提示」的 layout effect 之后）。
       React.useLayoutEffect(() => {
         const ended = streamingRef.current && !streaming
@@ -8047,6 +8211,23 @@ window.__ModuleLoader__.load({
         inject: overrideCount > 0 || (sbxSummary !== null && (sbxSummary.level !== 'observe' || sbxSummary.blocked > 0)),
       }
       const featureTitle = { card: t('cardsTitle'), lore: t('loreTitle'), memory: t('memoryTitle'), system: t('systemTitle'), everyTurn: t('everyTurnTitle'), items: t('itemsNavTitle'), workspace: t('wsTitle'), inject: t('injectTitle') }
+      // 「刷」：左栏状态签名（navStatus + isOn + offBy）和上一次提交比，变了哪些、谁引起的；提交后由 layout effect 提示。
+      {
+        const navSig = navSignature(FEATURE_NAV.map(([key]) => key), (key) => navStatus[key], isOn, offBy)
+        const prevSig = navSigRef.current?.sessionId === sessionId ? navSigRef.current.sig : null
+        const trigger = lastTrigger.current
+        cueInfoRef.current = {
+          sessionId,
+          navSig,
+          navChanged: diffSigs(prevSig, navSig),
+          cause: changeCause(trigger, Date.now()),
+          directKey: trigger?.enable ?? '',
+          paneKey: FEATURE_NAV.find(([, paneId]) => paneId === pane)?.[0] ?? '',
+          titles: featureTitle,
+          linkedTemplate: t('linkedChanged'),
+          visible: cardOpen && !shrunk,
+        }
+      }
       const sections = { cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, workspace: workspaceSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection }
 
       // 芯片的摘要：预设名 + 每项一个点（关 = 灰；开但没内容 = 空心）。
@@ -8104,6 +8285,14 @@ window.__ModuleLoader__.load({
           },
         }, h('span', { style: { position: 'absolute', top: 2, left: 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transform: on ? 'translateX(12px)' : 'none', transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none' } }))
       }
+      // P0-4 / P1-9：每个左栏项（窄屏标签）底下垫一层：扫光带 + 底色闪层，平时完全透明、不接收点击。
+      const sweepLayer = (key, color, radius) =>
+        h(
+          'span',
+          { key: 'sweep', 'aria-hidden': 'true', 'data-prefill-sweep': key, style: { position: 'absolute', inset: 0, borderRadius: radius, overflow: 'hidden', pointerEvents: 'none' } },
+          h('span', { 'data-prefill-flash': key, style: { position: 'absolute', inset: 0, background: color, opacity: 0 } }),
+          h('span', { 'data-prefill-sweep-band': key, style: { position: 'absolute', top: 0, bottom: 0, left: 0, width: '55%', opacity: 0, transform: 'translateX(-100%)', background: `linear-gradient(90deg, transparent, color-mix(in srgb, ${color} 32%, transparent), transparent)` } }),
+        )
       const navItem = (key, paneId, color, parent) => {
         const selected = shownPane === paneId
         const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
@@ -8135,6 +8324,7 @@ window.__ModuleLoader__.load({
               boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none',
             },
           },
+          key === 'usage' ? null : sweepLayer(key, color, 8),
           h('span', { style: { position: 'absolute', left: parent ? 16 : 4, top: parent ? 7 : 9, bottom: parent ? 7 : 9, width: 3, borderRadius: 2, background: stripe } }),
           h(
             'div',
@@ -8155,8 +8345,9 @@ window.__ModuleLoader__.load({
         const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
         return h(
           'span',
-          { key: paneId, style: { display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '3px 6px 3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)', background: selected ? 'var(--dsw-alias-bg-base)' : 'transparent', boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none' } },
+          { key: paneId, style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '3px 6px 3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)', background: selected ? 'var(--dsw-alias-bg-base)' : 'transparent', boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none' } },
           h('span', { role: 'tab', 'aria-selected': selected ? 'true' : 'false', 'data-prefill-nav': paneId, ...(parent ? { 'data-prefill-nav-parent': parent } : {}), 'data-off': off ? 'true' : 'false', onClick: () => setPane(paneId), style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
+            key === 'usage' ? null : sweepLayer(key, color, 999),
             parent ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 } }, '└') : null,
             h('i', { style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', background: key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? 'var(--pf-off)' : color } }),
             key === 'usage' ? t('usageShort') : featureTitle[key],
@@ -8378,14 +8569,8 @@ window.__ModuleLoader__.load({
             ref: cardRef,
             // 卡片里点下拉菜单以外的地方 = 收起菜单。
             // toast 的触发点：最近一次在卡片里按下 / 按键的控件。
-            onPointerDownCapture: (event) => {
-              const el = event.target instanceof Element ? event.target.closest('button,[role=switch],[role=tab],[role=radio],input,textarea,select,label') : null
-              if (el) lastTrigger.current = { el, at: Date.now() }
-            },
-            onKeyDownCapture: (event) => {
-              const el = event.target instanceof Element ? event.target.closest('button,[role=switch],[role=tab],[role=radio],input,textarea,select,label') : null
-              if (el) lastTrigger.current = { el, at: Date.now() }
-            },
+            onPointerDownCapture: (event) => noteTrigger(event),
+            onKeyDownCapture: (event) => noteTrigger(event),
             onMouseDown: (event) => {
               if (error?.open && !(event.target instanceof Element && event.target.closest('[data-prefill-error-pill],[data-prefill-error-detail]') !== null)) setError((current) => errorsReduce(current, { type: 'close' }))
               if (menu === '') return
