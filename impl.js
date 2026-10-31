@@ -594,14 +594,10 @@ export function stampEveryTurn(previous, next, lastTurnFor) {
       else delete auto.override
     }
     // 「下一轮发一次」首轮段（issue #19 B）：true ⇒ 盖成 { atTurn: 下一轮 }；没带 ⇒ 首轮段没变就沿用。
-    // 不知道轮数时不能盖成第 1 轮，最多原样沿用。
+    // 「首轮段变了 ⇒ 旧 firstOnce 作废」不需要轮数，未知时也照做；只有 true（要盖下一轮）没法盖、按没带处理。
     const firstOnce = knownLast
       ? stampFirstOnce(entry, old, last)
-      : entry?.firstOnce === false || entry?.firstOnce === null
-        ? undefined
-        : entry?.firstOnce !== null && typeof entry?.firstOnce === 'object'
-          ? entry.firstOnce
-          : old?.firstOnce
+      : stampFirstOnce(entry?.firstOnce === true ? { ...entry, firstOnce: undefined } : entry, old, 0)
     const { firstOnce: _wanted, ...rest } = entry
     out[key] = { ...rest, since, auto, ...(firstOnce !== undefined ? { firstOnce } : {}) }
   }
@@ -762,6 +758,21 @@ function decodeSessionLog(buffer) {
   return text
 }
 
+/** 解码一份落盘会话日志成事件列表（读不了 / 解压失败会抛，调用方决定怎么兜底）。 */
+function readSessionLog(file) {
+  return decodeSessionLog(readFileSync(file))
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return undefined
+      }
+    })
+    .filter((event) => event !== undefined)
+}
+
 /** 取会话事件：在册 agent 直接读内存快照，否则解码落盘日志（只读）。 */
 function sessionEvents(agent, sessionId) {
   try {
@@ -773,19 +784,27 @@ function sessionEvents(agent, sessionId) {
   const file = sessionLogFile(sessionId)
   if (file === undefined) return []
   try {
-    return decodeSessionLog(readFileSync(file))
-      .split('\n')
-      .filter((line) => line.trim() !== '')
-      .map((line) => {
-        try {
-          return JSON.parse(line)
-        } catch {
-          return undefined
-        }
-      })
-      .filter((event) => event !== undefined)
+    return readSessionLog(file)
   } catch {
     return []
+  }
+}
+
+/**
+ * 每轮注入盖章用的「会话最后一轮」（state 路由的 lastTurnFor）：
+ * - 在册 ⇒ 读内存快照（快照拿不到时照旧落到日志）；
+ * - 不在册、有落盘日志且读得了 ⇒ 按日志算（会话没在跑，日志就是它的最终轮数）；
+ * - 不在册且**没有日志 / 日志读不了** ⇒ undefined = 轮数未知，stampEveryTurn 沿用旧值（#44：
+ *   以前这里得到 0，会把别的会话的 since 夹成 1）。区分不了「没跑过」和「日志不在本机」，按未知处理。
+ */
+export function stampLastTurn(agent, sessionId) {
+  if (agent !== undefined) return lastTurnOf(sessionEvents(agent, sessionId))
+  const file = sessionLogFile(sessionId)
+  if (file === undefined) return undefined
+  try {
+    return splitTurns(readSessionLog(file)).at(-1)?.turn ?? 0
+  } catch {
+    return undefined
   }
 }
 
@@ -1260,12 +1279,9 @@ export function apply(ctx) {
             if (patch !== null && typeof patch === 'object' && Object.keys(patch).length > 0) {
               if (patch.everyTurn !== null && typeof patch.everyTurn === 'object') {
                 const previous = readState()?.everyTurn ?? {}
-                // 只有要盖章的那格才去读会话（读落盘日志要解压，别对每个旧会话都读一遍）。
-                // 不在册的会话返回 undefined（= 不知道轮数）：以前返回 0 会把别的会话的 since 夹成 1（#44）。
-                const lastTurnFor = (key) => {
-                  const live = liveAgents.get(key)
-                  return live === undefined ? undefined : lastTurnOf(sessionEvents(live, key))
-                }
+                // 不在册的会话按落盘日志算；没有日志 / 读不了才返回 undefined（= 不知道轮数，#44）。
+                // 只在 0.17.0 那样一律返回 undefined 会让编辑历史会话时改正文 / 下一轮发一次 / 立即恢复暂停失效。
+                const lastTurnFor = (key) => stampLastTurn(liveAgents.get(key), key)
                 patch = { ...patch, everyTurn: stampEveryTurn(previous, patch.everyTurn, lastTurnFor) }
               }
               patchState(patch)
