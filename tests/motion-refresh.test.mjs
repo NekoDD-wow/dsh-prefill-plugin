@@ -38,7 +38,7 @@ function fakeWindow() {
 const NAMES = [
   'MOTION', 'setMotionPref', 'motionLevel', 'play', 'flushCues', 'pendingCues', 'STREAM_BUSY', 'CUE_MAX', 'CUE_STAGGER',
   'navSignature', 'diffSigs', 'linkedText', 'nodeText', 'changeCause', 'CAUSE_MS', 'CUE_SETTLE_MS', 'BADGE_FLASH', 'NAV_FLASH', 'DOT_FLASH', 'SWEEP', 'flashOrSweep',
-  'UNDO_MS', 'undoLeft', 'UNDO_ENTER', 'UNDO_EXIT', 'UNDO_COUNTDOWN', 'rollFrames', 'rollDir', 'FLASH_MS', 'SOURCE_FLASH',
+  'UNDO_MS', 'undoLeft', 'UNDO_ENTER', 'UNDO_EXIT', 'UNDO_COUNTDOWN', 'rollFrames', 'rollDir', 'FLASH_MS', 'SOURCE_FLASH', 'CUE_EVENT',
 ]
 function load(win = fakeWindow()) {
   const body = `${motionSrc}\n${feedbackSrc}\n${refreshSrc}\nreturn { ${NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(', ')} }`
@@ -246,7 +246,8 @@ test('扫光：完整 = 渐变带扫过（装饰类，slow，按序错开 stagge
 
 test('面板接线（P0-4）：渲染时算签名、提交后按原因提示；每个左栏项 / 窄屏标签垫扫光层；黄色说明 grid-template-rows 展开', () => {
   assert.match(dockSrc, /navSignature\(FEATURE_NAV\.map\(\(\[key\]\) => key\), \(key\) => navStatus\[key\], isOn, offBy\)/)
-  assert.match(dockSrc, /cause: changeCause\(trigger, Date\.now\(\)\)/)
+  assert.match(dockSrc, /const cueCause = changeCause\(lastTrigger\.current, Date\.now\(\)\)/)
+  assert.match(dockSrc, /cause: cueCause,/)
   assert.match(dockSrc, /if \(info\.cause === 'user'\)/)
   assert.match(dockSrc, /flashOrSweep\(host, index\)/)
   assert.match(dockSrc, /announceLinked\(linkedText\(/)
@@ -305,4 +306,78 @@ test('面板接线（P1-4）：套用成功后收起预设菜单；撤销条绝�
   assert.match(src, /bottom: 'var\(--pf-toast-bottom, 10px\)'/)
   // 撤销条不再插在头部下面（旧写法 margin: '8px 12px 0'）
   assert.doesNotMatch(dockSrc, /'data-prefill-preset-undo-bar': '', style: \{ \.\.\.V\.row, \.\.\.V\.callout\('brand'\), margin: '8px 12px 0'/)
+})
+
+// ── 3. P1-9 后台状态变化：回合结束后闪一下、芯片 / 标记小点闪、状态文字滚动 ──
+
+test('徽章闪 0.13→0.35→0.13（只动 opacity）；简洁照样闪；off 不动；流式中攒到回合结束', () => {
+  const { M } = load()
+  assert.deepEqual(M.BADGE_FLASH.map((f) => f.opacity), [0.13, 0.35, 0.13])
+  assert.deepEqual([...props(M.BADGE_FLASH)], ['opacity'])
+  assert.deepEqual([...props(M.NAV_FLASH)], ['opacity'])
+  M.setMotionPref('lite')
+  const a = fakeEl()
+  const anim = M.play(a, M.BADGE_FLASH, { duration: M.FLASH_MS, cue: 'auto' })
+  assert.deepEqual(anim.frames.map((f) => f.opacity), [0.13, 0.35, 0.13], '简洁：透明度闪照播')
+  M.setMotionPref('off')
+  assert.equal(M.play(fakeEl(), M.BADGE_FLASH, { duration: M.FLASH_MS, cue: 'auto' }), null)
+  M.setMotionPref('full')
+  const root = fakeRoot('stream')
+  const lockBadge = fakeEl(root)
+  const nav = [fakeEl(root), fakeEl(root), fakeEl(root)]
+  const roll = fakeEl(root)
+  M.play(roll, M.rollFrames(1, 'in'), { duration: 180, cue: 'auto', prio: -1 })
+  for (const el of nav) M.play(el, M.NAV_FLASH, { duration: M.FLASH_MS, cue: 'auto', prio: 1 })
+  M.play(lockBadge, M.BADGE_FLASH, { duration: M.FLASH_MS, cue: 'auto', prio: 2 })
+  assert.equal(lockBadge.calls.length + roll.calls.length + nav.reduce((n, el) => n + el.calls.length, 0), 0, '输出中一个都不播')
+  root.busy = undefined
+  const out = M.flushCues()
+  assert.equal(out.length, 3)
+  assert.equal(out[0], lockBadge.calls[0], '锁定徽章（prio 2）先播')
+  assert.equal(roll.calls.length, 0, '文字滚动（prio -1）让位给闪')
+})
+
+test('小点闪：完整 = 放大 + 变淡；简洁 = 只变淡；文字滚动方向按数字大小，简洁变成交叉淡入淡出', () => {
+  const { M } = load()
+  M.setMotionPref('full')
+  const dot = fakeEl()
+  M.play(dot, M.DOT_FLASH, { duration: M.FLASH_MS, cue: 'auto' })
+  assert.deepEqual([...props(dot.calls[0].frames)].sort(), ['opacity', 'transform'])
+  M.setMotionPref('lite')
+  const d2 = fakeEl()
+  M.play(d2, M.DOT_FLASH, { duration: M.FLASH_MS, cue: 'auto' })
+  assert.deepEqual([...props(d2.calls[0].frames)], ['opacity'])
+  assert.equal(M.rollDir('+1,200', '+1,350'), 1)
+  assert.equal(M.rollDir('45%', '30%'), -1)
+  assert.equal(M.rollDir('观察', '严格'), 1, '读不出数字 ⇒ 往上滚')
+  assert.equal(M.rollDir('拦 3', '拦 3'), 1)
+  assert.deepEqual(M.rollFrames(1, 'in')[0], { opacity: 0, transform: 'translateY(60%)' })
+  assert.deepEqual(M.rollFrames(-1, 'in')[0], { opacity: 0, transform: 'translateY(-60%)' })
+  assert.deepEqual(M.rollFrames(1, 'out')[1], { opacity: 0, transform: 'translateY(-60%)' })
+  const r = fakeEl()
+  const anim = M.play(r, M.rollFrames(1, 'in'), { duration: 180, cue: 'auto' })
+  assert.deepEqual(anim.frames, [{ opacity: 0 }, { opacity: 1 }], '简洁：没有位移')
+})
+
+test('面板接线（P1-9）：后台变化闪左栏 / 标记 / 芯片小点；锁定徽章底色层；状态行 / 自动模式状态 / 手动注入状态用 RollText；宿主给 manualInbox', () => {
+  assert.match(dockSrc, /if \(info\.cause === 'background' && info\.bgChanged\.length > 0\)/)
+  assert.match(dockSrc, /play\(host, NAV_FLASH, \{ duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 1/)
+  assert.match(dockSrc, /data-prefill-marker-dot="\$\{key\}"\]`\), DOT_FLASH/)
+  assert.match(dockSrc, /new CustomEvent\(CUE_EVENT, \{ detail: \{ sessionId: info\.sessionId, keys: info\.bgChanged, defer \} \}\)/)
+  assert.match(dockSrc, /'\[data-prefill-lock-badge\] \[data-prefill-flash-bg\]'\), BADGE_FLASH/)
+  assert.match(dockSrc, /'data-prefill-flash-bg': '', style: \{ position: 'absolute', inset: 0, borderRadius: 999, background: lock\.locked \? 'var\(--pf-ai\)' : 'var\(--pf-system\)', opacity: 0\.13/)
+  assert.match(dockSrc, /h\(RollText, \{ value: nodeText\(parts\), still: rollStill, defer: turnEnded, block: true \}/)
+  assert.match(dockSrc, /h\(RollText, \{ value: autoStateText, still: rollStill, defer: turnEnded \}/)
+  assert.match(dockSrc, /manualInbox\?\.\[sessionId\]/)
+  assert.match(chipSrc, /window\.addEventListener\(CUE_EVENT, onCue\)/)
+  assert.match(chipSrc, /data-prefill-chip-dot="\$\{key\}"\]`\) \?\? null, DOT_FLASH/)
+  const manual = cut('    function ManualInject(props) {', '    function PrefillDock(props) {')
+  assert.match(manual, /h\(RollText, \{ value: status \}, status\)/)
+  assert.match(manual, /play\(row\.querySelector\('\[data-prefill-flash-bg\]'\), NAV_FLASH/)
+  const roll = cut('    function RollText(props) {', '    const ICONS = ')
+  assert.match(roll, /if \(before\.value === value \|\| still\) return/)
+  assert.match(roll, /cue: 'auto', defer, prio: -1/)
+  assert.match(roll, /if \(animation !== null\) setGhost/, '新内容没播（off / 排队）就不画旧内容')
+  const impl = readFileSync(new URL('../impl.js', import.meta.url), 'utf8')
+  assert.match(impl, /manualInbox: Object\.fromEntries\(\[\.\.\.liveAgents\]\.map\(\(\[id, agent\]\) => \[id, pendingInInbox\(agent\)\.length\]\)\)/)
 })

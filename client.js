@@ -552,6 +552,35 @@ window.__ModuleLoader__.load({
       if (motionLevel() === 'lite') return play(host.querySelector('[data-prefill-flash]'), NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', delay, cue: 'auto' })
       return play(host.querySelector('[data-prefill-sweep-band]'), SWEEP, { duration: MOTION.slow, easing: MOTION.ease, delay, kind: 'decor' })
     }
+    /** 芯片 / 标记上的小点闪（P1-9，卡片关着或缩成标记时）：完整档放大一下 + 变淡，简洁只变淡。 */
+    const DOT_FLASH = [
+      { opacity: 1, transform: 'none' },
+      { opacity: 0.35, transform: 'scale(1.7)', offset: 0.4 },
+      { opacity: 1, transform: 'none' },
+    ]
+    /** 卡片发给芯片的「这几项后台变了」（芯片在别的槽位组件里，不碰它的 DOM，让它自己闪）。 */
+    const CUE_EVENT = 'dsh-prefill:cue'
+    /**
+     * 文字上下滚动（P1-9 状态文字、P2-3 数字）：dir = 1（变大 / 往后）新的从下面滚上来、旧的往上走；-1 反过来。
+     * phase = 'in' | 'out'。只动 transform / opacity；简洁档 play() 去掉位移 ⇒ 变成交叉淡入淡出。
+     */
+    function rollFrames(dir, phase) {
+      const d = dir < 0 ? -1 : 1
+      return phase === 'out'
+        ? [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateY(${-60 * d}%)` }]
+        : [{ opacity: 0, transform: `translateY(${60 * d}%)` }, { opacity: 1, transform: 'none' }]
+    }
+    /** 滚动方向：两边都读得出数字（「+1,234」「45%」「拦 3」）⇒ 按大小；读不出 / 一样 ⇒ 1（往上滚）。 */
+    function rollDir(prev, next) {
+      const num = (value) => {
+        const match = /-?\d[\d,]*(?:\.\d+)?/.exec(String(value ?? ''))
+        return match ? Number(match[0].replace(/,/g, '')) : NaN
+      }
+      const a = num(prev)
+      const b = num(next)
+      if (!Number.isFinite(a) || !Number.isFinite(b) || a === b) return 1
+      return b > a ? 1 : -1
+    }
     /** 撤销条（P1-4）：「取消预设」后 UNDO_MS 内可撤销；从卡片底部滑入、叠在内容上（不占文档流），带倒计时线。 */
     const UNDO_MS = 8000
     const UNDO_ENTER = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }]
@@ -755,6 +784,39 @@ window.__ModuleLoader__.load({
         h('span', { 'data-prefill-undo-seconds': String(left), style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' } }, String(secondsLabel ?? '{n}s').replace('{n}', String(left))),
         button,
         h('span', { ref: lineRef, 'aria-hidden': 'true', 'data-prefill-undo-countdown': '', style: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'var(--pf-system)', opacity: 0.55, transformOrigin: 'left center' } }),
+      )
+    }
+
+    /**
+     * 文字滚动切换（P1-9 状态文字、P2-3 数字）：value 变了 ⇒ 新内容从下 / 上滚进来（rollFrames），旧内容叠在原处滚出去（presence）。
+     * still = 这次不滚（用户自己点 / 打字引起的变化，或刚挂上）；defer = 回合刚结束这一刻（直接进队列，和攒着的一起放）。
+     * 默认 cue: 'auto'（流式中攒着；prio -1：上限 3 个时让徽章 / 左栏的闪先播）。新内容没播（off / 排队）就不画旧内容。
+     */
+    function RollText(props) {
+      const { value, children, still = false, defer = false, block = false, dir, attr = 'data-prefill-roll' } = props
+      const ref = React.useRef(null)
+      const ghostRef = React.useRef(null)
+      const prev = React.useRef({ value, children })
+      const [ghost, setGhost] = React.useState(null)
+      React.useLayoutEffect(() => {
+        const before = prev.current
+        prev.current = { value, children }
+        if (before.value === value || still) return
+        const d = dir ?? rollDir(before.value, value)
+        const animation = play(ref.current, rollFrames(d, 'in'), { duration: MOTION.base, easing: MOTION.ease, cue: 'auto', defer, prio: -1 })
+        if (animation !== null) setGhost({ children: before.children, d, at: Date.now() })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [value])
+      React.useLayoutEffect(() => {
+        if (ghost === null) return undefined
+        const ctl = presenceExit(play(ghostRef.current, rollFrames(ghost.d, 'out'), { duration: MOTION.base, easing: MOTION.easeOut, fill: 'forwards' }), () => setGhost((current) => (current === ghost ? null : current)), MOTION.base + 200)
+        return () => ctl.abort()
+      }, [ghost])
+      return h(
+        'span',
+        { [attr]: '', style: { position: 'relative', display: block ? 'block' : 'inline-block', verticalAlign: block ? undefined : 'bottom', overflow: 'hidden', maxWidth: '100%' } },
+        h('span', { ref, style: { display: block ? 'block' : 'inline-block' } }, children),
+        ghost === null ? null : h('span', { ref: ghostRef, 'aria-hidden': 'true', 'data-prefill-roll-ghost': '', style: { position: 'absolute', left: 0, top: 0, right: block ? 0 : undefined, whiteSpace: block ? undefined : 'nowrap', pointerEvents: 'none' } }, ghost.children),
       )
     }
 
@@ -3082,6 +3144,17 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener(CARD_EVENT, onCard)
       }, [sessionId])
 
+      // P1-9：卡片关着 / 缩成标记时，卡片把「后台变了哪几项」广播过来，芯片自己让对应的小点闪一下（不碰别人的 DOM）。
+      const chipRef = React.useRef(null)
+      React.useEffect(() => {
+        const onCue = (event) => {
+          const detail = event?.detail
+          if (detail?.sessionId !== sessionId || !Array.isArray(detail.keys)) return
+          for (const key of detail.keys) play(chipRef.current?.querySelector(`[data-prefill-chip-dot="${key}"]`) ?? null, DOT_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer: detail.defer === true, prio: 1, cueKey: `chip:${key}` })
+        }
+        window.addEventListener(CUE_EVENT, onCue)
+        return () => window.removeEventListener(CUE_EVENT, onCue)
+      }, [sessionId])
       // §5：模型正在输出时芯片也标 stream（小点的闪攒着）；跑完统一放掉。
       const chipStreaming = Array.isArray(envelope?.running) && envelope.running.includes(sessionId)
       const chipStreamRef = React.useRef(false)
@@ -3110,6 +3183,7 @@ window.__ModuleLoader__.load({
         'button',
         {
           type: 'button',
+          ref: chipRef,
           // 首次打开：一点下去就按「已开」显示按下态（乐观），失败再回来。
           'aria-pressed': on || opening ? 'true' : 'false',
           'aria-expanded': cardOpen ? 'true' : 'false',
@@ -4076,8 +4150,12 @@ window.__ModuleLoader__.load({
       )
       const call = React.useCallback((payload) => postJson(INJECT_ROUTE, { sessionId, ...payload }).then(absorb), [sessionId, absorb])
 
+      // P1-9：「已写入会话」里新出现的一行（刚发出去）底色闪一下；第一次拿到列表时只记下，不闪。
+      const recentSeen = React.useRef(null)
+      const recentRef = React.useRef(null)
       React.useEffect(() => {
         seenPending.current = new Set()
+        recentSeen.current = null
         setData(null)
         setEditing(null)
         setNotice(null)
@@ -4089,6 +4167,19 @@ window.__ModuleLoader__.load({
       const pending = Array.isArray(data?.pending) ? data.pending : []
       // 最近写进会话的几条（面板重开、发送时面板被收起也看得到「已写入会话 · 第 N 轮」）。
       const recent = Array.isArray(data?.recent) ? data.recent.slice(-3).reverse() : []
+      React.useLayoutEffect(() => {
+        if (data === null) return
+        const ids = recent.map((entry) => String(entry.id))
+        if (recentSeen.current === null) {
+          recentSeen.current = new Set(ids)
+          return
+        }
+        const fresh = ids.filter((id) => !recentSeen.current.has(id))
+        for (const id of ids) recentSeen.current.add(id)
+        for (const row of recentRef.current?.querySelectorAll('[data-prefill-manual-delivered]') ?? []) {
+          if (fresh.includes(row.getAttribute('data-prefill-manual-delivered'))) play(row.querySelector('[data-prefill-flash-bg]'), NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', prio: 1 })
+        }
+      })
       // 有待发的就轮询，等它被领取（领取后从列表消失，提示写进了第几轮）。
       React.useEffect(() => {
         if (sessionId === '' || pending.length === 0) return undefined
@@ -4156,7 +4247,7 @@ window.__ModuleLoader__.load({
           'div',
           { style: V.row },
           h('b', { style: { fontSize: 13.5 } }, t('manualTitle')),
-          status === '' ? null : h('span', { style: V.sectionMeta, 'data-prefill-manual-status': '' }, status),
+          status === '' ? null : h('span', { style: V.sectionMeta, 'data-prefill-manual-status': '' }, h(RollText, { value: status }, status)),
         ),
         h('div', { style: V.hint }, t('manualHint')),
         h(
@@ -4218,11 +4309,12 @@ window.__ModuleLoader__.load({
           ? null
           : h(
               'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: 4 }, 'data-prefill-manual-recent': String(recent.length) },
+              { ref: recentRef, style: { display: 'flex', flexDirection: 'column', gap: 4 }, 'data-prefill-manual-recent': String(recent.length) },
               ...recent.map((entry) =>
                 h(
                   'div',
-                  { key: entry.id, style: { ...V.row, flexWrap: 'nowrap', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', maxWidth: '80ch' } },
+                  { key: entry.id, 'data-prefill-manual-delivered': String(entry.id), style: { ...V.row, position: 'relative', flexWrap: 'nowrap', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', maxWidth: '80ch' } },
+                  h('span', { 'aria-hidden': 'true', 'data-prefill-flash-bg': '', style: { position: 'absolute', inset: '-2px -6px', borderRadius: 6, background: 'var(--pf-user)', opacity: 0, pointerEvents: 'none' } }),
                   h('span', { style: { whiteSpace: 'nowrap' } }, `✓ ${t('manualDelivered').replace('{n}', String(entry.turn))}`),
                   h('span', { style: { whiteSpace: 'nowrap' } }, entry.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
                   h('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, String(entry.text ?? '').replace(/\s+/g, ' ')),
@@ -4782,6 +4874,7 @@ window.__ModuleLoader__.load({
       // 「刷」（第 4 步）：渲染时算好左栏状态签名和变化（cueInfoRef），提交后在这里按「谁引起的」分别提示。
       //   user（P0-4）：变了的项扫光（简洁档闪底色），toast 列出连带改动（当前节和刚点的开关自己不算「连带」）。
       const navSigRef = React.useRef(null)
+      const markerRef = React.useRef(null)
       const cueInfoRef = React.useRef(null)
       const cueSince = React.useRef({ sessionId, at: Date.now() })
       if (cueSince.current.sessionId !== sessionId) cueSince.current = { sessionId, at: Date.now() }
@@ -4790,13 +4883,35 @@ window.__ModuleLoader__.load({
         const info = cueInfoRef.current
         if (info === null) return
         const prevSession = navSigRef.current?.sessionId
-        navSigRef.current = { sessionId: info.sessionId, sig: info.navSig }
-        if (prevSession !== info.sessionId || info.navChanged.length === 0) return
+        navSigRef.current = { sessionId: info.sessionId, sig: info.navSig, bg: info.bgSig, locked: info.locked }
+        if (prevSession !== info.sessionId) return
         // 刚挂上 / 刚换会话的头几秒：卡片列表、记忆状态等陆续到达，不算「变化」。
         if (Date.now() - cueSince.current.at < CUE_SETTLE_MS) return
+        const card = cardRef.current
+        const defer = info.turnEnded
+        // P1-9：首轮锁定徽章变了（不管谁引起的，打字除外）⇒ 徽章底色闪一下（0.13→0.35→0.13）。
+        if (info.lockChanged && info.cause !== 'typing' && card !== null && info.visible) {
+          play(card.querySelector('[data-prefill-lock-badge] [data-prefill-flash-bg]'), BADGE_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 2, cueKey: 'badge:lock' })
+        }
+        //   background（P1-9）：左栏变了的项底色闪一下（状态行文字自己滚动，见 RollText）；卡片关着 / 缩成标记 ⇒ 芯片（和标记）上对应的小点闪。
+        //   流式中这些都攒着，回合结束统一放（最多 3 个）。
+        if (info.cause === 'background' && info.bgChanged.length > 0) {
+          if (card !== null && info.visible) {
+            for (const key of info.bgChanged) for (const host of card.querySelectorAll(`[data-prefill-flash="${key}"]`)) play(host, NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 1, cueKey: `nav:${key}` })
+          } else {
+            const marker = markerRef.current
+            if (marker !== null && info.shrunk) for (const key of info.bgChanged) play(marker.querySelector(`[data-prefill-marker-dot="${key}"]`), DOT_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 1, cueKey: `marker:${key}` })
+            try {
+              window.dispatchEvent(new CustomEvent(CUE_EVENT, { detail: { sessionId: info.sessionId, keys: info.bgChanged, defer } }))
+            } catch {
+              // 广播失败不该拖垮 UI。
+            }
+          }
+          return
+        }
+        if (info.navChanged.length === 0) return
         if (info.cause === 'user') {
           const changed = info.navChanged.filter((key) => key !== info.directKey)
-          const card = cardRef.current
           if (card !== null && info.visible) {
             changed.forEach((key, index) => {
               for (const host of card.querySelectorAll(`[data-prefill-sweep="${key}"]`)) flashOrSweep(host, index)
@@ -4994,6 +5109,9 @@ window.__ModuleLoader__.load({
       }, [sessionId])
 
       if (sessionId === '' || !enabled || items === null) return null
+      // 「刷」：这次渲染里的变化是谁引起的（changeCause）；只有后台变化才滚动文字（P1-9），刚挂上的头几秒也不滚。
+      const cueCause = changeCause(lastTrigger.current, Date.now())
+      const rollStill = cueCause !== 'background' || Date.now() - cueSince.current.at < CUE_SETTLE_MS
 
       const toggle = (key) => setOpen((current) => ({ ...current, [key]: !current[key] }))
       const edit = (next) => {
@@ -7864,7 +7982,7 @@ window.__ModuleLoader__.load({
                 ? h(
                     'div',
                     { style: { ...V.row, gap: 8, flexWrap: 'wrap', fontSize: 12 } },
-                    h('span', { 'data-prefill-everyturn-state': autoStatus.state, title: autoStatus.reason }, autoStateText),
+                    h('span', { 'data-prefill-everyturn-state': autoStatus.state, title: autoStatus.reason }, h(RollText, { value: autoStateText, still: rollStill, defer: turnEnded }, autoStateText)),
                     h(
                       'span',
                       { style: { display: 'inline-flex', gap: 3, alignItems: 'center' }, 'data-prefill-everyturn-dots': '1' },
@@ -8273,13 +8391,23 @@ window.__ModuleLoader__.load({
       // 「刷」：左栏状态签名（navStatus + isOn + offBy）和上一次提交比，变了哪些、谁引起的；提交后由 layout effect 提示。
       {
         const navSig = navSignature(FEATURE_NAV.map(([key]) => key), (key) => navStatus[key], isOn, offBy)
-        const prevSig = navSigRef.current?.sessionId === sessionId ? navSigRef.current.sig : null
+        const same = navSigRef.current?.sessionId === sessionId
+        const prevSig = same ? navSigRef.current.sig : null
+        // P1-9 的后台信号比左栏状态行多一样：手动注入还挂着几条（变少 = 刚发出去，算在「开场对话」这一项上）。
+        const manualPending = (envelope?.manualQueued?.[sessionId] ?? 0) + (envelope?.manualInbox?.[sessionId] ?? 0)
+        const bgSig = { ...navSig, items: `${navSig.items}\u0001m${manualPending}` }
         const trigger = lastTrigger.current
         cueInfoRef.current = {
           sessionId,
           navSig,
+          bgSig,
           navChanged: diffSigs(prevSig, navSig),
-          cause: changeCause(trigger, Date.now()),
+          bgChanged: diffSigs(same ? navSigRef.current.bg : null, bgSig),
+          locked: lock.locked,
+          lockChanged: same && navSigRef.current.locked !== lock.locked,
+          shrunk: cardOpen && shrunk,
+          turnEnded,
+          cause: cueCause,
           directKey: trigger?.enable ?? '',
           paneKey: FEATURE_NAV.find(([, paneId]) => paneId === pane)?.[0] ?? '',
           titles: featureTitle,
@@ -8394,8 +8522,11 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: { fontSize: 11.5, lineHeight: 1.45, marginTop: 1, color: 'var(--dsw-alias-label-tertiary)', opacity: off ? 0.85 : 1 }, 'data-prefill-nav-status': paneId },
-            ...(key === 'usage' ? [turns > 0 ? [B(String(turns)), ` ${t('turnsUnit')}`] : t('usageNoTurns')] : navStatus[key]),
-            off ? ` · ${!isOn(key) ? t('navDisabled') : t('navOffByCard')}` : '',
+            // P1-9：后台变化（自动模式计数、拦截数、锁定……）时状态行上下滚动切换；用户自己点 / 打字引起的不滚。
+            (() => {
+              const parts = [...(key === 'usage' ? [turns > 0 ? [B(String(turns)), ` ${t('turnsUnit')}`] : t('usageNoTurns')] : navStatus[key]), off ? ` · ${!isOn(key) ? t('navDisabled') : t('navOffByCard')}` : '']
+              return h(RollText, { value: nodeText(parts), still: rollStill, defer: turnEnded, block: true }, ...parts)
+            })(),
           ),
         )
       }
@@ -8474,9 +8605,11 @@ window.__ModuleLoader__.load({
           {
             'data-prefill-lock-badge': lock.locked ? 'locked' : 'open',
             title: lock.locked ? t('lockBadgeTip') : t('lockOpenTip'),
-            style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', background: lock.locked ? tint('var(--pf-ai)', 16) : tint('var(--pf-system)', 12), color: 'var(--dsw-alias-label-secondary)' },
+            // 底色放在一层里（常驻 0.13）：P1-9 锁定状态变化时这一层闪到 0.35 再回来（只动 opacity）。
+            style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', color: 'var(--dsw-alias-label-secondary)' },
           },
-          lock.locked ? t('lockBadge') : t('lockOpenBadge'),
+          h('span', { 'aria-hidden': 'true', 'data-prefill-flash-bg': '', style: { position: 'absolute', inset: 0, borderRadius: 999, background: lock.locked ? 'var(--pf-ai)' : 'var(--pf-system)', opacity: 0.13, pointerEvents: 'none' } }),
+          h('span', { style: { position: 'relative' } }, h(RollText, { value: lock.locked ? 'locked' : 'open', still: cueCause === 'typing', defer: turnEnded }, lock.locked ? t('lockBadge') : t('lockOpenBadge'))),
         ),
         h('span', { style: { flex: '1 1 auto' } }),
         // 右侧一组（读数 + ? + 钉住 + 收起 + 关闭）不拆开：窄屏换行时整组挪到第二行靠右，关闭按钮不会单独掉下去。
@@ -8722,6 +8855,7 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
+                ref: markerRef,
                 'data-prefill-marker': '1',
                 'data-prefill-busy': streaming ? STREAM_BUSY : undefined,
                 title: t('markerTip'),
@@ -8761,6 +8895,7 @@ window.__ModuleLoader__.load({
                 ...summaryDots.map((dot) =>
                   h('i', {
                     key: dot.key,
+                    'data-prefill-marker-dot': dot.key,
                     style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', boxSizing: 'border-box', background: dot.on && dot.filled ? dot.color : dot.on ? 'transparent' : 'var(--pf-off)', border: `1.5px solid ${dot.on ? dot.color : 'var(--pf-off)'}` },
                   }),
                 ),

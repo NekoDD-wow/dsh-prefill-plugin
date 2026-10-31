@@ -1211,6 +1211,8 @@ export function apply(ctx) {
         pendingReprime: [...pendingReprime],
         // 正在跑（流式输出中）的会话：面板据此在卡片根节点标 data-prefill-busy="stream"，自动提示攒到回合结束再播。
         running: [...liveAgents].filter(([, agent]) => isRunning(agent)).map(([id]) => id),
+        // 每会话 inbox 里还挂着（没被领取）的手动注入条数：变少了 = 刚发出去（面板回合结束后提示一下，P1-9）。
+        manualInbox: Object.fromEntries([...liveAgents].map(([id, agent]) => [id, pendingInInbox(agent).length])),
         // 预填装已写成真实历史的会话（会话 → 条数）。
         materialized: typeof gateCache.module?.materialized === 'function' ? gateCache.module.materialized() : {},
         // 诊断（给脚本/排查用）。
