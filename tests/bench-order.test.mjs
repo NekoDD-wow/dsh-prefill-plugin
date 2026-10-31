@@ -15,10 +15,10 @@ const T = 'rp'
 const block = (key, tower = null) => ({ key, ref: key, tower })
 const initial = () => [block('A'), block('t1', T), block('t2', T), block('B')]
 const harness = (bench, capture) =>
-  new Function('bench', 'setBench', region + '\nreturn { benchDisplayRows, moveBenchBlock, moveBlockTo }')(bench, (next) => capture.push(next))
+  new Function('bench', 'benchTowers', 'setBench', region + '\nreturn { benchDisplayRows, moveBenchBlock, moveBlockTo }')(bench, { [T]: { ref: T, name: '塔', collapsed: false } }, (next) => capture.push(next))
 const keys = (list) => list.map((item) => item.key)
 
-test('显示行：塔成员合并成一行、普通块各自一行；行序 = 第一次出现顺序', () => {
+test('显示行：相邻的同塔块合并成一行、普通块各自一行；行序 = bench 顺序', () => {
   const h = harness(initial(), [])
   assert.deepEqual(h.benchDisplayRows().map(keys), [['A'], ['t1', 't2'], ['B']])
 })
