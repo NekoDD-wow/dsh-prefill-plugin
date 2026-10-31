@@ -6549,47 +6549,49 @@ window.__ModuleLoader__.load({
         // 打字（immediate = false）走 700ms 去抖，别每个键都整份写两趟状态（并发写可能乱序、丢最后几个字）。
         setBench(bench.map((block) => (block.key === key ? { ...block, ...patch, edited: true } : block)), benchTowers, immediate !== false)
       /**
-       * 显示行 = 工作台按「塔」分组后的行：塔成员合并成一行，普通块各自一行；行序 = bench 里第一次出现的顺序。
-       * 渲染（benchRows）、↑↓、拖动都按这个行序算；bench 数组顺序 = 注入顺序，两者必须一致（#22）。
-       */
-      /**
-       * 显示行 = 按 bench 顺序切的「连续段」：相邻同塔的块合并成一行，普通块各自一行；行序 = bench 顺序。
-       * 不按塔全局分组：否则塔后面的散块会被排到塔前，屏幕顺序 ≠ 注入顺序（#28）；同一个塔被散块隔开时画成两个框。
-       * 渲染（benchRows）、↑↓（moveBenchBlock）都按这个行序算 —— 行 = 渲染单位 = 注入顺序。
+       * 显示行 = 按 bench 顺序切的「连续段」：相邻且属于同一个（benchTowers 里存在的）塔的块合并成一行（塔框），
+       * 散块各自一行；行序 = bench 顺序。不按塔全局分组：否则塔后面的散块会被排到塔前，屏幕顺序 ≠ 注入顺序（#28）；
+       * 同一个塔被散块隔开时画成两个框。tower 在 benchTowers 里找不到的（孤儿）按散块算，和 benchRows 画成散卡一致。
+       * 渲染（benchRows）、↑↓ 的移动和可点状态（benchMoveResult）都按这个行序算 —— 行 = 渲染单位 = 注入顺序。
        */
       const benchDisplayRows = () => {
         const rows = []
         for (const block of bench) {
+          const tower = block.tower ?? ''
           const last = rows[rows.length - 1]
-          if (last !== undefined && (last[0].tower ?? '') === (block.tower ?? '')) last.push(block)
+          if (tower !== '' && benchTowers[tower] !== undefined && last !== undefined && last[0].tower === tower) last.push(block)
           else rows.push([block])
         }
         return rows
       }
-      const moveBenchBlock = (key, delta) => {
+      /** ↑↓ 一步之后的 bench；动不了返回 null（按钮据此 disabled，和点击用同一套规则）。 */
+      const benchMoveResult = (key, delta) => {
         const rows = benchDisplayRows()
         const rowAt = rows.findIndex((row) => row.some((block) => block.key === key))
-        if (rowAt < 0) return
+        if (rowAt < 0) return null
         const row = rows[rowAt]
         if (row.length > 1) {
-          // 塔里的块：只在塔框内换位，不能一步跳出塔组。
+          // 塔框里的块：只在框内换位；框首 ↑ / 框尾 ↓ 不往外跳（出塔用拖动）。
           const at = row.findIndex((block) => block.key === key)
           const to = at + delta
-          if (to < 0 || to >= row.length) return
+          if (to < 0 || to >= row.length) return null
           const nextRow = [...row]
           const [moved] = nextRow.splice(at, 1)
           nextRow.splice(to, 0, moved)
           rows[rowAt] = nextRow
         } else {
           const target = rowAt + delta
-          if (target < 0 || target >= rows.length) return
+          if (target < 0 || target >= rows.length) return null
           const [moved] = rows.splice(rowAt, 1)
           rows.splice(target, 0, moved)
         }
         // 归一化：显示顺序 = bench 顺序 = 注入顺序。
-        setBench(rows.flat())
+        return rows.flat()
       }
-      /** 拖到显示顺序的第 index 个位置（0..块数），顺带决定它属不属于某个塔框。 */
+      const moveBenchBlock = (key, delta) => {
+        const next = benchMoveResult(key, delta)
+        if (next !== null) setBench(next)
+      }
       /**
        * 拖到 before 这块前面（before 为 null = 放到末尾），顺带决定它属不属于某个塔框。
        * 落点按 key 记、在这里换算成 bench 下标：屏幕行号 ≠ bench 下标（收起的塔不画块），不能直接当下标用（#28）。
@@ -6916,8 +6918,8 @@ window.__ModuleLoader__.load({
               long
                 ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-bench-fold': block.key, 'aria-expanded': folded ? 'false' : 'true', onClick: () => setBenchBlockOpen(block.key, folded), title: folded ? t('benchExpand') : t('benchCollapse') }, folded ? '▸' : '▾')
                 : null,
-              h('button', { type: 'button', style: V.btnGhost, disabled: index <= 0, title: t('benchMoveUp'), 'data-prefill-bench-up': block.key, onClick: () => moveBenchBlock(block.key, -1) }, '↑'),
-              h('button', { type: 'button', style: V.btnGhost, disabled: index >= bench.length - 1, title: t('benchMoveDown'), 'data-prefill-bench-down': block.key, onClick: () => moveBenchBlock(block.key, 1) }, '↓'),
+              h('button', { type: 'button', style: V.btnGhost, disabled: benchMoveResult(block.key, -1) === null, title: t('benchMoveUp'), 'data-prefill-bench-up': block.key, onClick: () => moveBenchBlock(block.key, -1) }, '↑'),
+              h('button', { type: 'button', style: V.btnGhost, disabled: benchMoveResult(block.key, 1) === null, title: t('benchMoveDown'), 'data-prefill-bench-down': block.key, onClick: () => moveBenchBlock(block.key, 1) }, '↓'),
               h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuTitle'), 'data-prefill-bench-menu': block.key, onClick: (event) => openBlockMenu(event, block) }, '⋯'),
               h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuDrop'), 'data-prefill-bench-drop': block.key, onClick: () => dropBlockFromBench(block) }, '×'),
             ),
@@ -6978,7 +6980,7 @@ window.__ModuleLoader__.load({
       }
       const benchRows = () => {
         const rows = []
-        // 渲染行和 ↑↓ / 拖动共用同一套 benchDisplayRows（单一来源）：否则「显示顺序」和「注入顺序」
+        // 渲染行和 ↑↓（移动 + 能否点）共用同一套 benchDisplayRows（单一来源；拖动按 key 落位，不经过它）：否则「显示顺序」和「注入顺序」
         // 会各说各话 —— 比如把紧挨塔上方的块按 ↓，面板上什么都没变，注入顺序却已经变了（#22）。
         for (const list of benchDisplayRows()) {
           const towerKey = list[0]?.tower ?? ''
