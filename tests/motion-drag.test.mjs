@@ -323,6 +323,30 @@ test('[P1-5] 拿走：完整档先淡出 + scale .97（easeOut、fast），结�
 })
 
 // ── P2-5 ⇄ 徽章 pop ───────────────────────────────────────────────────
+test('[P2-5] ⇄ 徽章 pop：完整档 scale .4→1 + 淡入；简洁只淡入', () => {
+  const M = load()
+  assert.ok(Array.isArray(M.BADGE_POP), '没有 BADGE_POP')
+  M.setMotionPref('full')
+  const el = fakeEl()
+  M.play(el, M.BADGE_POP, { duration: M.MOTION.base, easing: M.MOTION.spring })
+  assert.deepEqual([...props(el.calls[0].frames)].sort(), ['opacity', 'transform'])
+  M.setMotionPref('lite')
+  const e2 = fakeEl()
+  M.play(e2, M.BADGE_POP, { duration: M.MOTION.base, easing: M.MOTION.spring })
+  assert.deepEqual([...props(e2.calls[0].frames)], ['opacity'])
+  assert.equal(e2.calls[0].timing.easing, M.MOTION.ease)
+})
+
+test('[P2-5] PopBadge：只在 pop = true 时挂上播一次（经 play）', () => {
+  assert.ok(popSrc.length > 100, '没切到 PopBadge')
+  assert.match(popSrc, /if \(pop !== true\) return/)
+  assert.match(popSrc, /play\(ref\.current, BADGE_POP/)
+  // 三处 ⇄ 徽章（块头标签、塔按钮角标、积木按钮角标）都换成 PopBadge，按「这次新出现」判定。
+  assert.equal((dockSrc.match(/h\(PopBadge, \{ pop: popIf\(/g) ?? []).length, 3)
+  assert.match(dockSrc, /overlapSeen\.current = list === null \? null : overlapNow\.current/)
+})
+
+
 test('[P0-5] 被拖的块就是落点占位：算落点时不拿它自己的中线比（占位已挪到末尾，指针在占位上 ⇒ 落到末尾）', () => {
   // 拖动中 A 的占位已经渲染在末尾（DOM：B 100 · C 148 · A 196）；指针停在 A 占位的上半部 y=205。
   const { drag, order } = loadDrag({ bench: ABC, rows: [['B', 100], ['C', 148], ['A', 196]] })

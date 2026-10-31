@@ -506,6 +506,10 @@ window.__ModuleLoader__.load({
      */
     /** 落点占位里的内容压到 30%（内联样式管不到子元素）；拖动中才挂上。 */
     const BENCH_SLOT_CSS = '[data-prefill-drop-slot]>*{opacity:.3;pointer-events:none}'
+    const BADGE_POP = [
+      { opacity: 0, transform: 'scale(.4)' },
+      { opacity: 1, transform: 'scale(1)' },
+    ]
     const DRAG_EDGE = 32
     const DRAG_SCROLL_MAX = 14
     const GHOST_BASE = 'translate(-50%,-50%)'
@@ -889,6 +893,20 @@ window.__ModuleLoader__.load({
         { 'data-prefill-toast-wrap': at ? (at.top !== undefined ? 'below' : 'above') : 'bottom', style: outer },
         h('div', { ref, 'data-prefill-toast': '', 'aria-hidden': 'true', style: { padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)', boxShadow: '0 2px 8px rgba(0,0,0,.15)' } }, shown),
       )
+    }
+    /**
+     * ⇄ 重叠徽章（P2-5）：第一次出现时 pop 一下（scale .4→1，spring；简洁只淡入，off 直接出现）。
+     * pop = 父组件判定「这枚徽章是这次新出现的」（打开面板 / 切到这节时已经在的不算）；只在挂上时看一次。
+     */
+    function PopBadge(props) {
+      const { pop, children, ...rest } = props
+      const ref = React.useRef(null)
+      React.useLayoutEffect(() => {
+        if (pop !== true) return undefined
+        const animation = play(ref.current, BADGE_POP, { duration: MOTION.base, easing: MOTION.spring })
+        return () => animation?.cancel?.()
+      }, [])
+      return h('span', { ...rest, ref }, children)
     }
     /** 新积木的高亮描边层（P0-3）：淡入、停一下、淡出；off 档静态显示，计时到了随状态卸载。 */
     function BlockGlow() {
@@ -4543,6 +4561,9 @@ window.__ModuleLoader__.load({
       const benchRects = React.useRef(new Map())
       const benchSig = React.useRef('')
       const benchFlipNext = React.useRef(false)
+      // P2-5：上一次渲染时工作台这节里已经有的 ⇄ 徽章（null = 这节不在屏幕上）。只有相对上一次新出现的才 pop。
+      const overlapSeen = React.useRef(null)
+      const overlapNow = React.useRef(new Set())
       /** 正在播退场的块 / 塔（P1-5）：退场中再点 × 不重复拿。 */
       const benchExiting = React.useRef(new Set())
       // 拖动/排序后做 FLIP 滑动。三条约束（否则整屏乱跳）：
@@ -4551,6 +4572,7 @@ window.__ModuleLoader__.load({
       //   ③ 位移超过一块高度太多 ⇒ 当成布局抖动，不做动画。
       React.useLayoutEffect(() => {
         const list = benchListRef.current
+        overlapSeen.current = list === null ? null : overlapNow.current
         if (list === null) return
         const nodes = [...list.querySelectorAll('[data-prefill-bench-block]')]
         const listTop = list.getBoundingClientRect().top
@@ -7572,6 +7594,13 @@ window.__ModuleLoader__.load({
           node.focus()
         }
       }
+      // P2-5：这次渲染里出现的 ⇄ 徽章（layout effect 存成 overlapSeen，供下一次比对）。
+      const overlapIds = new Set()
+      overlapNow.current = overlapIds
+      const popIf = (id) => {
+        overlapIds.add(id)
+        return overlapSeen.current !== null && !overlapSeen.current.has(id)
+      }
       const benchCard = (block) => {
         const index = bench.findIndex((item) => item.key === block.key)
         const long = benchLong(block)
@@ -7622,7 +7651,7 @@ window.__ModuleLoader__.load({
               ? null
               : h('span', { style: { ...V.sectionMeta, border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: 999, padding: '0 7px' } }, t('benchFirstTag')),
             overlaps.length > 0
-              ? h('span', { 'data-prefill-overlap-narrow': block.key + ':' + overlaps[0], style: { ...V.sectionMeta, color: 'var(--pf-turn)', border: '1px solid color-mix(in srgb, var(--pf-turn) 50%, var(--dsw-alias-border-secondary))', borderRadius: 999, padding: '0 6px' } }, t('benchOverlapNarrow').replace('{name}', other ? other.name : overlaps[0]))
+              ? h(PopBadge, { pop: popIf('narrow:' + block.key + ':' + overlaps[0]), 'data-prefill-overlap-narrow': block.key + ':' + overlaps[0], style: { ...V.sectionMeta, color: 'var(--pf-turn)', border: '1px solid color-mix(in srgb, var(--pf-turn) 50%, var(--dsw-alias-border-secondary))', borderRadius: 999, padding: '0 6px' } }, t('benchOverlapNarrow').replace('{name}', other ? other.name : overlaps[0]))
               : null,
             h(
               'span',
@@ -7791,7 +7820,7 @@ window.__ModuleLoader__.load({
           stackIcon(color),
           tower.name,
           towerEdited(tower) ? h('span', { style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
-          towerOverlaps(tower) ? h('span', { title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
+          towerOverlaps(tower) ? h(PopBadge, { pop: popIf('tower:' + tower.id), 'data-prefill-overlap-badge': 'tower:' + tower.id, title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
         )
       }
       const blockButton = (block) => {
@@ -7824,7 +7853,7 @@ window.__ModuleLoader__.load({
           },
           block.name,
           edited ? h('span', { style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
-          overlapOn && !on ? h('span', { title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
+          overlapOn && !on ? h(PopBadge, { pop: popIf('block:' + block.id), 'data-prefill-overlap-badge': 'block:' + block.id, title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
         )
       }
       const openBlockMenu = (event, target) => {
