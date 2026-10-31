@@ -753,6 +753,33 @@ window.__ModuleLoader__.load({
     }
     // </refresh>
 
+    // <dialog>
+    /**
+     * 弹窗与确认（docs/规划-动效.md 第 6 步：P1-6 二次确认按钮、P1-7 溯源 / 事后改写弹窗）。
+     * 这一段只依赖 window / setTimeout 和上面的 <motion>（play / presenceExit），单测切出来直接跑（tests/motion-dialog.test.mjs）。
+     * 都是用户直接操作的反馈：流式输出中照常播（倒计时线是装饰类，带 cue: 'press' 放行）。
+     */
+    /** 二次确认「再点一次」的有效期：过了就复原（P1-6）。各处的复原计时和倒计时线都用它。 */
+    const CONFIRM_MS = 4000
+    /** 倒计时线：从满宽缩到 0（装饰类：完整档才走；减少动效 / 关是一条静止的警告色底线）。 */
+    const CONFIRM_COUNTDOWN = [{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }]
+    /** 文字换成「确认？」/ 复原时淡入（只动 opacity，减少动效也播）：复原不再是静默一跳。 */
+    const CONFIRM_SWAP = [{ opacity: 0 }, { opacity: 1 }]
+    const CONFIRM_TONE = 'var(--dsw-alias-state-warn-primary)'
+    /** 锁宽：进入待确认时按钮至少保持原来的宽（换成短文字不缩、旁边的按钮不跟着挪）；量不到 ⇒ 不锁。 */
+    function confirmMinWidth(restWidth) {
+      return Number.isFinite(restWidth) && restWidth > 0 ? Math.ceil(restWidth) : undefined
+    }
+    const CONFIRM_FX = {
+      swap(label) {
+        return play(label, CONFIRM_SWAP, { duration: MOTION.fast, easing: MOTION.ease, cue: 'press' })
+      },
+      countdown(line, ms = CONFIRM_MS) {
+        return play(line, CONFIRM_COUNTDOWN, { duration: Math.max(0, ms), easing: 'linear', fill: 'forwards', kind: 'decor', cue: 'press' })
+      },
+    }
+    // </dialog>
+
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
     function useMotionLevel() {
       const [, setTick] = React.useState(0)
@@ -916,6 +943,54 @@ window.__ModuleLoader__.load({
         return () => animation?.cancel?.()
       }, [])
       return h('span', { ref, 'aria-hidden': 'true', 'data-prefill-bench-glow': '', style: { position: 'absolute', inset: -1, borderRadius: 10, pointerEvents: 'none', boxShadow: '0 0 0 2px var(--pf-turn), 0 0 0 6px color-mix(in srgb, var(--pf-turn) 22%, transparent)' } })
+    }
+
+    /**
+     * 二次确认按钮（P1-6）：armed = 已点过一次、等第二下。待确认时警告色（字 + 边 + 淡底），min-width 锁住原来的宽
+     * （文字变短不缩、旁边按钮不挪），底边一条 CONFIRM_MS 的倒计时线（完整档缩到 0；减少动效 / 关静止）；
+     * 进入 / 复原时文字淡入一下，到时复原不再是静默一跳。复原计时仍由调用方管（setTimeout CONFIRM_MS）。
+     */
+    function ConfirmButton(props) {
+      const { armed, style, children, ...rest } = props
+      const ref = React.useRef(null)
+      const labelRef = React.useRef(null)
+      const lineRef = React.useRef(null)
+      const restWidth = React.useRef(0)
+      // 没在待确认时每次提交都量一下（只读 offsetWidth）：进入待确认的那次渲染就按这个宽锁住。
+      React.useLayoutEffect(() => {
+        if (!armed && ref.current) restWidth.current = ref.current.offsetWidth
+      })
+      const was = React.useRef(armed === true)
+      React.useLayoutEffect(() => {
+        const on = armed === true
+        if (was.current === on) return undefined
+        was.current = on
+        const swap = CONFIRM_FX.swap(labelRef.current)
+        const line = on ? CONFIRM_FX.countdown(lineRef.current) : null
+        return () => {
+          swap?.cancel?.()
+          line?.cancel?.()
+        }
+      }, [armed])
+      const on = armed === true
+      const look = on
+        ? {
+            color: CONFIRM_TONE,
+            background: tint(CONFIRM_TONE, 10),
+            ...(style?.border !== undefined && style.border !== 'none' ? { borderColor: CONFIRM_TONE } : {}),
+            minWidth: confirmMinWidth(restWidth.current),
+            position: 'relative',
+            overflow: 'hidden',
+          }
+        : null
+      return h(
+        'button',
+        { type: 'button', ...rest, ref, 'data-prefill-armed': on ? 'true' : undefined, style: { ...style, ...look } },
+        h('span', { ref: labelRef, 'data-prefill-confirm-label': '', style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, width: '100%' } }, children),
+        on
+          ? h('span', { ref: lineRef, 'aria-hidden': 'true', 'data-prefill-confirm-countdown': '', style: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: CONFIRM_TONE, opacity: 0.7, transformOrigin: 'left center', pointerEvents: 'none' } })
+          : null,
+      )
     }
 
     /**
@@ -5354,7 +5429,7 @@ window.__ModuleLoader__.load({
       const armConfirm = (key) => {
         if (confirming === key) return true
         setConfirming(key)
-        setTimeout(() => setConfirming((current) => (current === key ? '' : current)), 4000)
+        setTimeout(() => setConfirming((current) => (current === key ? '' : current)), CONFIRM_MS)
         return false
       }
 
@@ -6050,9 +6125,9 @@ window.__ModuleLoader__.load({
               h('span', { style: { flex: '1 1 260px', minWidth: 0 } }, t('lockPresetsNote')),
               lock.hasSnapshot
                 ? h(
-                    'button',
+                    ConfirmButton,
                     {
-                      type: 'button',
+                      armed: confirming === 'restore-opening',
                       style: V.btn,
                       'data-prefill-lock-restore-menu': '',
                       title: t('lockRestoreTip'),
@@ -6140,10 +6215,11 @@ window.__ModuleLoader__.load({
           detail[2] ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, `· ${detail[2]}`) : null,
           hoveredPack
             ? h(
-                'button',
+                ConfirmButton,
                 {
-                  type: 'button',
-                  style: { ...V.btnGhost, color: confirming === `del:${hoveredPack.name}` ? 'var(--dsw-alias-state-warn-primary)' : V.btnGhost.color },
+                  armed: confirming === `del:${hoveredPack.name}`,
+                  style: V.btnGhost,
+                  'data-prefill-pack-delete': hoveredPack.name,
                   onClick: () => deletePack(hoveredPack.name),
                 },
                 confirming === `del:${hoveredPack.name}` ? t('confirmYes') : t('deletePack'),
@@ -6397,8 +6473,8 @@ window.__ModuleLoader__.load({
                   ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-card-export-png': '', onClick: () => void exportCardPng().catch(failed()) }, withIcon('image', t('cardExportPng'), 12))
                   : null,
                 h(
-                  'button',
-                  { type: 'button', style: { ...V.btnGhost, color: confirming === `card:${cardPick}` ? 'var(--dsw-alias-state-warn-primary)' : V.btnGhost.color }, onClick: deleteCard },
+                  ConfirmButton,
+                  { armed: confirming === `card:${cardPick}`, style: V.btnGhost, 'data-prefill-card-delete': '', onClick: deleteCard },
                   withIcon('trash-2', confirming === `card:${cardPick}` ? t('confirmYes') : t('cardDelete'), 12),
                 ),
               ),
@@ -6785,9 +6861,9 @@ window.__ModuleLoader__.load({
                   'div',
                   { style: V.row },
                   h(
-                    'button',
+                    ConfirmButton,
                     {
-                      type: 'button',
+                      armed: confirming === 'restore-opening',
                       style: V.btn,
                       'data-prefill-lock-restore': '',
                       title: t('lockRestoreTip'),
@@ -6818,10 +6894,11 @@ window.__ModuleLoader__.load({
             items.length === 0
               ? null
               : h(
-                  'button',
+                  ConfirmButton,
                   {
-                    type: 'button',
+                    armed: confirming === 'clear',
                     style: V.btnGhost,
+                    'data-prefill-items-clear': '',
                     onClick: (event) => {
                       event.stopPropagation()
                       if (!armConfirm('clear')) return
@@ -9824,7 +9901,7 @@ window.__ModuleLoader__.load({
       const clearSession = () => {
         if (!confirmClear) {
           setConfirmClear(true)
-          setTimeout(() => setConfirmClear(false), 4000)
+          setTimeout(() => setConfirmClear(false), CONFIRM_MS)
           return
         }
         setConfirmClear(false)
@@ -10369,7 +10446,7 @@ window.__ModuleLoader__.load({
           { style: { ...V.row, marginTop: 4 } },
           h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12 }, 'aria-expanded': advanced ? 'true' : 'false', onClick: () => setAdvanced(!advanced) }, h('span', { style: V.caret(advanced) }, '▸'), ` ${t('sbxAdvanced')}`),
           h('span', { style: { flex: '1 1 auto' } }),
-          h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12 }, onClick: clearSession, 'data-prefill-sbx-clear': '' }, confirmClear ? t('confirmYes') : t('sbxClear')),
+          h(ConfirmButton, { armed: confirmClear, style: { ...V.btnGhost, fontSize: 12 }, onClick: clearSession, 'data-prefill-sbx-clear': '' }, confirmClear ? t('confirmYes') : t('sbxClear')),
         ),
         advanced ? h(InjectionSection, { t, sessionId, compact: true }) : null,
       )
@@ -10583,7 +10660,7 @@ window.__ModuleLoader__.load({
         // 同样两步确认（不用 window.confirm：可能被屏蔽 ⇒ 静默失败）。
         if (!confirmClear) {
           setConfirmClear(true)
-          setTimeout(() => setConfirmClear(false), 4000)
+          setTimeout(() => setConfirmClear(false), CONFIRM_MS)
           return
         }
         setConfirmClear(false)
@@ -10684,8 +10761,8 @@ window.__ModuleLoader__.load({
           statusLine,
           // 删除功能：一键清掉本会话的注入配置（改写 / 每轮注入 / 独立白名单）。
           h(
-            'button',
-            { type: 'button', style: S.gateBtn, title: t('sessionClearTip'), onClick: clearSessionConfig },
+            ConfirmButton,
+            { armed: confirmClear, style: S.gateBtn, title: t('sessionClearTip'), onClick: clearSessionConfig, 'data-prefill-session-clear': '' },
             confirmClear ? t('confirmYes') : t('sessionClear'),
           ),
         ),
