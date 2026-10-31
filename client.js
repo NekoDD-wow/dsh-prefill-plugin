@@ -52,7 +52,13 @@ window.__ModuleLoader__.load({
       return normalizeMotion(pref) ?? (reduce === true ? 'lite' : 'full')
     }
     const motionState = { pref: null, reduce: false, mql: null }
+    /** 正挂着 will-change 的元素样式（动画进行中）：档位切到 off 时当场摘掉（off 档下不留 will-change）。 */
+    const willChanged = new Set()
     function emitMotion() {
+      if (resolveMotion(motionState.pref, motionState.reduce) === 'off') {
+        for (const style of willChanged) style.willChange = ''
+        willChanged.clear()
+      }
       try {
         window.dispatchEvent(new CustomEvent(MOTION_EVENT))
       } catch {
@@ -198,9 +204,12 @@ window.__ModuleLoader__.load({
       if (animation === null || animation === undefined) return null
       const style = el.style
       if (style !== undefined && style !== null) {
-        style.willChange = 'transform, opacity'
+        // 简洁档只剩透明度：只提示 opacity（少占一层合成）；off 档上面已经返回，不会走到这里。
+        style.willChange = level === 'lite' ? 'opacity' : 'transform, opacity'
+        willChanged.add(style)
         const clear = () => {
           style.willChange = ''
+          willChanged.delete(style)
         }
         const settled = animation.finished
         if (settled !== undefined && settled !== null && typeof settled.then === 'function') settled.then(clear, clear)
@@ -1712,10 +1721,10 @@ window.__ModuleLoader__.load({
       linkedChanged: '连带改了：{list}',
       undoSecondsLeft: '{n} 秒',
       motionFull: '完整',
-      motionLite: '简洁',
+      motionLite: '减少动效',
       motionOff: '关',
       motionAuto: '改回跟随系统',
-      motionAutoNow: '现在跟随系统：开着「减少动态效果」时用简洁，否则完整。全局设置，不进预设、不随导出。',
+      motionAutoNow: '现在跟随系统：开着「减少动态效果」时用「减少动效」（只保留淡入淡出），否则完整。全局设置，不进预设、不随导出。',
       motionManualNow: '已手动选择，不再跟随系统「减少动态效果」。全局设置，不进预设、不随导出。',
       guideTitle: '三步上手',
       guide1: '在「预设」里点一张卡片：想换人格选人格卡，想完全自己写系统提示选「自定义系统提示」，想什么都不发选「纯净模式」。',
@@ -2070,10 +2079,10 @@ window.__ModuleLoader__.load({
       linkedChanged: 'Also changed: {list}',
       undoSecondsLeft: '{n}s',
       motionFull: 'Full',
-      motionLite: 'Lite',
+      motionLite: 'Reduced',
       motionOff: 'Off',
       motionAuto: 'Follow system again',
-      motionAutoNow: 'Following the system: Lite when “reduce motion” is on, otherwise Full. Global; not saved in presets or exports.',
+      motionAutoNow: 'Following the system: Reduced (fades only) when “reduce motion” is on, otherwise Full. Global; not saved in presets or exports.',
       motionManualNow: 'Chosen manually; no longer follows the system “reduce motion” setting. Global; not saved in presets or exports.',
       guideTitle: 'Get started',
       guide1: 'Pick a preset card: personas change the voice, "Custom system prompt" lets you write it all, "Pure" sends nothing.',

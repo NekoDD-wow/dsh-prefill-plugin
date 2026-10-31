@@ -407,3 +407,31 @@ test('面板接线（P2-3 / P2-4）：头部读数用 RollText（打字不滚）
   const tag = cut('    function SourceTag(props) {', '    function RollText(props) {')
   assert.match(tag, /if \(pulse !== ''\) play\(ref\.current, SOURCE_FLASH, \{ duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto'/)
 })
+
+// ── 5. 维护者建议（PR #25）：菜单文案「减少动效」；off 档下不留 will-change ─────────
+
+test('will-change：完整 = transform, opacity；减少动效 = 只 opacity；切到 off 时进行中的动画当场摘掉；off 档从不加', () => {
+  const { M } = load()
+  M.setMotionPref('full')
+  const a = fakeEl()
+  M.play(a, [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 180 })
+  assert.equal(a.style.willChange, 'transform, opacity')
+  M.setMotionPref('lite')
+  const b = fakeEl()
+  M.play(b, [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 180 })
+  assert.equal(b.style.willChange, 'opacity')
+  M.setMotionPref('off')
+  assert.equal(a.style.willChange, '', '切到 off：进行中的也摘掉')
+  assert.equal(b.style.willChange, '')
+  const c = fakeEl()
+  M.play(c, [{ opacity: 0 }, { opacity: 1 }], { duration: 180 })
+  assert.equal(c.style.willChange, '')
+  assert.equal(c.calls.length, 0)
+})
+
+test('菜单文案：「简洁」改成「减少动效」，跟随系统的说明写明只保留淡入淡出', () => {
+  assert.match(src, /motionLite: '减少动效',/)
+  assert.doesNotMatch(src, /motionLite: '简洁'/)
+  assert.match(src, /motionAutoNow: '现在跟随系统：开着「减少动态效果」时用「减少动效」（只保留淡入淡出）/)
+  assert.match(src, /motionLite: 'Reduced',/)
+})
