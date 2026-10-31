@@ -498,6 +498,8 @@ window.__ModuleLoader__.load({
      * 拖动动效（docs/规划-动效.md 第 5 步：P0-5 / P1-11 / P1-5）。只依赖 window 和上面的 <motion>（play / presenceExit），
      * 单测切出来直接跑（tests/motion-drag.test.mjs）。startDrag 自己的逻辑（落点、取消、#27 / #28）不在这里，
      * 它经 `DRAG_FX` 调这些件；tests/drag-cancel.test.mjs 单独切 startDrag 跑时 DRAG_FX 不存在 ⇒ 退回原来的瞬现瞬灭。
+     *   - 影子拔出：scale 1→1.04 + 只晃一次（lite 只淡入，off 直接出现）。拖动中跟手属直接反馈，流式中照常。
+     *   - 松手：影子飞到落点（spring）后淡掉；拖出列表 / Esc 取消 ⇒ 飞回原位。lite 只淡出，off 直接消失。
      *   - 落点：被拖的块本身渲染成占位（虚线框 + 内容 30%），其余块让位走工作台 FLIP（kind: 'move'）。
      *   - 边缘自动滚动：指针进到滚动区上 / 下边缘 DRAG_EDGE 内，按深入程度滚，最多 DRAG_SCROLL_MAX px/帧（功能性，各档都有）。
      */
@@ -505,6 +507,22 @@ window.__ModuleLoader__.load({
     const BENCH_SLOT_CSS = '[data-prefill-drop-slot]>*{opacity:.3;pointer-events:none}'
     const DRAG_EDGE = 32
     const DRAG_SCROLL_MAX = 14
+    const GHOST_BASE = 'translate(-50%,-50%)'
+    const DRAG_LIFT = [
+      { opacity: 0, transform: GHOST_BASE + ' scale(1)' },
+      { opacity: 1, transform: GHOST_BASE + ' scale(1.04) rotate(-2deg)', offset: 0.45 },
+      { transform: GHOST_BASE + ' scale(1.04) rotate(1.2deg)', offset: 0.75 },
+      { opacity: 1, transform: GHOST_BASE + ' scale(1.04)' },
+    ]
+    /** 影子从指针处飞到 (dx, dy) 之外（落点 / 原位），最后 25% 淡掉。 */
+    const dragLandFrames = (dx, dy) => [
+      { opacity: 1, transform: GHOST_BASE + ' scale(1.04)' },
+      { opacity: 1, transform: `translate(calc(-50% + ${Math.round(dx)}px),calc(-50% + ${Math.round(dy)}px)) scale(1)`, offset: 0.75 },
+      { opacity: 0, transform: `translate(calc(-50% + ${Math.round(dx)}px),calc(-50% + ${Math.round(dy)}px)) scale(1)` },
+    ]
+    const DRAG_FADE_OUT = [{ opacity: 1 }, { opacity: 0 }]
+    /** 落地：占位（内容 30%）变回正常块时内容淡回来。只动 opacity，lite 也播。 */
+    const DRAG_SETTLE = [{ opacity: 0.3 }, { opacity: 1 }]
     /**
      * 指针 y 离滚动区上 / 下边缘多近 ⇒ 每帧滚多少（负 = 往上）；不在边缘带里 = 0。
      * 只认滚动区里面的边缘带：指针已经拖出滚动区（远处 / 列表外 = 取消区）就不滚，免得列表在取消区里自己跑。
@@ -531,6 +549,40 @@ window.__ModuleLoader__.load({
       return null
     }
     const DRAG_FX = {
+      /** 影子拔出（直接反馈：流式中也放行）。 */
+      lift(ghost) {
+        return play(ghost, DRAG_LIFT, { duration: MOTION.slow, easing: MOTION.ease, fill: 'forwards' })
+      },
+      /**
+       * 影子收场：full 飞 (dx, dy) 到落点 / 原位再淡掉；lite 原地淡出；off 当场移除。
+       * 动画结束（或被 cancel、或兜底计时）后才移除影子。返回动画（off = null）。
+       */
+      land(ghost, dx, dy, back = false) {
+        let animation = null
+        if (Number.isFinite(dx) && Number.isFinite(dy) && Math.hypot(dx, dy) > 2) {
+          animation = play(ghost, dragLandFrames(dx, dy), { kind: 'move', duration: back ? MOTION.base : MOTION.slow, easing: back ? MOTION.ease : MOTION.spring, fill: 'forwards' })
+        }
+        if (animation === null) animation = play(ghost, DRAG_FADE_OUT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' })
+        presenceExit(animation, () => ghost.remove(), 700)
+        return animation
+      },
+      /** 落地的块：内容从占位的 30% 淡回 1。 */
+      settle(node) {
+        return play(node, DRAG_SETTLE, { duration: MOTION.base, easing: MOTION.ease })
+      },
+      /** 被拖块（落点占位）的把手中心，作为影子飞去的目标；找不到 ⇒ null。 */
+      target(list, key) {
+        try {
+          const nodes = [...list.querySelectorAll('[data-prefill-bench-block]')]
+          const node = nodes.find((item) => item.getAttribute('data-prefill-bench-block') === key)
+          if (!node) return null
+          const grip = node.querySelector('[data-prefill-bench-grip]') ?? node
+          const rect = grip.getBoundingClientRect()
+          return { node, x: rect.right + 8, y: rect.top + rect.height / 2 }
+        } catch {
+          return null
+        }
+      },
       /**
        * 边缘自动滚动：返回 { update(x, y), stop() }。update 每次 pointermove 调；指针在边缘带里就开一个 rAF 循环，
        * 按 edgeScrollSpeed 滚滚动区（滚动事件照旧触发 startDrag 的重算）；离开边缘带 / stop ⇒ 停。
@@ -4790,6 +4842,14 @@ window.__ModuleLoader__.load({
         const timer = setTimeout(() => setJustAdded((current) => (current === justAdded ? '' : current)), BLOCK_GLOW_MS + 60)
         return () => clearTimeout(timer)
       }, [justAdded])
+      // P1-11：↑↓ 挪过的块短暂描边（窄屏没有拖动、只能 ↑↓；简洁 / off 下 FLIP 不播，宽屏也靠它看出挪了哪块）。
+      // n 每次递增 ⇒ 连点同一块也重新亮一次（BlockGlow 按 key 重挂）。
+      const [benchNudged, setBenchNudged] = React.useState(null)
+      React.useEffect(() => {
+        if (benchNudged === null) return undefined
+        const timer = setTimeout(() => setBenchNudged((current) => (current === benchNudged ? null : current)), BLOCK_GLOW_MS + 60)
+        return () => clearTimeout(timer)
+      }, [benchNudged])
       React.useEffect(() => {
         revealRef.current = ''
         setJustAdded('')
@@ -7302,6 +7362,11 @@ window.__ModuleLoader__.load({
         }
         return out
       }
+      /** ↑↓：挪一行 + 被挪的块短暂描边（P1-11）。 */
+      const nudgeBenchBlock = (key, delta) => {
+        moveBenchBlock(key, delta)
+        setBenchNudged((current) => ({ key, n: (current?.n ?? 0) + 1 }))
+      }
       /** 拖动：Pointer Events 自己实现（影子挂 body，落点算插入位置）。 */
       const startDrag = (event, block) => {
         if (event.button !== undefined && event.button !== 0) return
@@ -7355,6 +7420,13 @@ window.__ModuleLoader__.load({
         ghost.style.left = event.clientX + 'px'
         ghost.style.top = event.clientY + 'px'
         dragInfo.current = { key: block.key }
+        // 取消时影子飞回的地方：按下时把手的位置，记成相对列表的偏移（列表滚了也对得上）。
+        const home = (() => {
+          if (fx === null) return null
+          const at = fx.target(list, block.key)
+          const box = list.getBoundingClientRect()
+          return at === null ? null : { x: at.x - box.left, y: at.y - box.top }
+        })()
         let edge = null
         const track = (x, y) => {
           lastX = x
@@ -7371,7 +7443,10 @@ window.__ModuleLoader__.load({
             moved = true
             document.body.appendChild(ghost)
             setDragKey(block.key)
-            if (fx !== null) edge = fx.autoScroll(list)
+            if (fx !== null) {
+              fx.lift(ghost)
+              edge = fx.autoScroll(list)
+            }
           }
           ghost.style.left = ev.clientX + 'px'
           ghost.style.top = ev.clientY + 'px'
@@ -7394,7 +7469,16 @@ window.__ModuleLoader__.load({
           const y = ev?.clientY ?? lastY
           // 以 pointerup 自己的坐标、按此刻的版面再算一次；在列表外 ⇒ 放弃，不落位。
           const at = commit && moved ? locate(x, y) : null
-          ghost.remove()
+          if (fx === null || !moved) ghost.remove()
+          else {
+            // 影子收场：落位 ⇒ 飞到落点占位（此刻占位已经在最终位置）；取消 ⇒ 飞回按下时的位置。
+            const half = (ghost.getBoundingClientRect?.().width ?? 0) / 2
+            const dest = at !== null ? fx.target(list, block.key) : null
+            const box = list.getBoundingClientRect()
+            const to = dest ?? (home === null ? null : { x: box.left + home.x, y: box.top + home.y })
+            fx.land(ghost, to === null ? NaN : to.x + half - x, to === null ? NaN : to.y - y, at === null)
+            if (dest !== null) fx.settle(dest.node)
+          }
           dragInfo.current = null
           setDragKey('')
           setDropIndex(-1)
@@ -7472,6 +7556,7 @@ window.__ModuleLoader__.load({
             'data-prefill-drop-slot': dragKey === block.key ? (dropAt === null ? 'home' : 'true') : undefined,
           },
           justAdded === block.key ? h(BlockGlow, { key: 'glow' }) : null,
+          benchNudged !== null && benchNudged.key === block.key ? h(BlockGlow, { key: 'nudge-' + benchNudged.n }) : null,
           h(
             'div',
             { style: { ...V.row, gap: 6, alignItems: 'center', padding: '5px 8px 0 6px', fontSize: 12 } },
@@ -7497,8 +7582,8 @@ window.__ModuleLoader__.load({
               long
                 ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-bench-fold': block.key, 'aria-expanded': folded ? 'false' : 'true', onClick: () => setBenchBlockOpen(block.key, folded), title: folded ? t('benchExpand') : t('benchCollapse') }, folded ? '▸' : '▾')
                 : null,
-              h('button', { type: 'button', style: V.btnGhost, disabled: index <= 0, title: t('benchMoveUp'), 'data-prefill-bench-up': block.key, onClick: () => moveBenchBlock(block.key, -1) }, '↑'),
-              h('button', { type: 'button', style: V.btnGhost, disabled: index >= bench.length - 1, title: t('benchMoveDown'), 'data-prefill-bench-down': block.key, onClick: () => moveBenchBlock(block.key, 1) }, '↓'),
+              h('button', { type: 'button', style: V.btnGhost, disabled: index <= 0, title: t('benchMoveUp'), 'data-prefill-bench-up': block.key, onClick: () => nudgeBenchBlock(block.key, -1) }, '↑'),
+              h('button', { type: 'button', style: V.btnGhost, disabled: index >= bench.length - 1, title: t('benchMoveDown'), 'data-prefill-bench-down': block.key, onClick: () => nudgeBenchBlock(block.key, 1) }, '↓'),
               h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuTitle'), 'data-prefill-bench-menu': block.key, onClick: (event) => openBlockMenu(event, block) }, '⋯'),
               h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuDrop'), 'data-prefill-bench-drop': block.key, onClick: () => dropBlockFromBench(block) }, '×'),
             ),

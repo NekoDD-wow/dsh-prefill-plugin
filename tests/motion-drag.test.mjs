@@ -136,6 +136,112 @@ test('切片存在：<drag> 段、startDrag / moveBlockTo / benchRows', () => {
 })
 
 // ── P1-11 影子拔出 ─────────────────────────────────────────────────────
+test('[P1-11] 拔出：完整档 scale 1→1.04 + 晃一次（rotate 一正一负），保持在 1.04（fill forwards）', () => {
+  const M = load()
+  assert.equal(typeof M.DRAG_FX?.lift, 'function')
+  const ghost = fakeEl()
+  M.setMotionPref('full')
+  M.DRAG_FX.lift(ghost)
+  assert.equal(ghost.calls.length, 1)
+  const { frames, timing } = ghost.calls[0]
+  const tf = frames.map((f) => f.transform ?? '').join(' | ')
+  assert.match(tf, /scale\(1\.04\)/)
+  assert.match(tf, /rotate\(-[\d.]+deg\)/)
+  assert.match(tf, /rotate\([\d.]+deg\)/)
+  assert.match(frames.at(-1).transform, /translate\(-50%,-50%\) scale\(1\.04\)$/, '最后一帧要回正、留在 1.04')
+  assert.equal(timing.fill, 'forwards')
+  assert.deepEqual([...props(frames)].sort(), ['opacity', 'transform'])
+})
+
+test('[P1-11] 拔出：简洁只淡入（不缩放不晃）；off 不调 animate', () => {
+  const M = load()
+  const ghost = fakeEl()
+  M.setMotionPref('lite')
+  M.DRAG_FX.lift(ghost)
+  assert.equal(ghost.calls.length, 1)
+  assert.deepEqual([...props(ghost.calls[0].frames)], ['opacity'])
+  M.setMotionPref('off')
+  const g2 = fakeEl()
+  assert.equal(M.DRAG_FX.lift(g2), null)
+  assert.equal(g2.calls.length, 0)
+})
+
+test('[P1-11] 拖动是直接反馈：卡片在流式输出（data-prefill-busy="stream"）时拔出照样播，不进队列', () => {
+  const M = load()
+  M.setMotionPref('full')
+  const root = { isConnected: true, getAttribute: (n) => (n === 'data-prefill-busy' ? 'stream' : null) }
+  const el = fakeEl(root)
+  M.DRAG_FX.lift(el)
+  M.DRAG_FX.settle(el)
+  assert.equal(el.calls.length, 2)
+})
+
+// ── P1-11 松手 / 取消 ─────────────────────────────────────────────────
+test('[P1-11] 松手：完整档影子飞 (dx, dy) 到落点（spring、位移类），动画落定后才移除影子', async () => {
+  const M = load()
+  M.setMotionPref('full')
+  const ghost = fakeEl()
+  M.DRAG_FX.land(ghost, 40, -120)
+  assert.equal(ghost.calls.length, 1)
+  const { frames, timing } = ghost.calls[0]
+  assert.equal(timing.easing, M.MOTION.spring)
+  assert.match(frames.at(-1).transform, /calc\(-50% \+ 40px\),calc\(-50% \+ -120px\)/)
+  assert.equal(frames.at(-1).opacity, 0, '飞到之后淡掉')
+  assert.equal(ghost.removed, 0, '动画还没完就把影子删了')
+  ghost.calls[0].finish()
+  await tick()
+  assert.equal(ghost.removed, 1)
+})
+
+test('[P1-11] 取消（back = true）：飞回原位用 ease、更短；距离太近（≤2px）不飞、只淡出', () => {
+  const M = load()
+  M.setMotionPref('full')
+  const ghost = fakeEl()
+  M.DRAG_FX.land(ghost, -300, 10, true)
+  assert.equal(ghost.calls[0].timing.easing, M.MOTION.ease)
+  assert.equal(ghost.calls[0].timing.duration, M.MOTION.base)
+  const g2 = fakeEl()
+  M.DRAG_FX.land(g2, 1, 1)
+  assert.deepEqual([...props(g2.calls[0].frames)], ['opacity'])
+})
+
+test('[P1-11] 松手：简洁原地淡出（没有位移）；off 当场移除、不调 animate；没有落点坐标（NaN）也只淡出', async () => {
+  const M = load()
+  M.setMotionPref('lite')
+  const ghost = fakeEl()
+  M.DRAG_FX.land(ghost, 40, 80)
+  assert.equal(ghost.calls.length, 1)
+  assert.deepEqual([...props(ghost.calls[0].frames)], ['opacity'])
+  ghost.calls[0].finish()
+  await tick()
+  assert.equal(ghost.removed, 1)
+  M.setMotionPref('off')
+  const g2 = fakeEl()
+  M.DRAG_FX.land(g2, 40, 80)
+  assert.equal(g2.calls.length, 0)
+  assert.equal(g2.removed, 1, 'off 档影子要当场移除')
+  M.setMotionPref('full')
+  const g3 = fakeEl()
+  M.DRAG_FX.land(g3, NaN, NaN)
+  assert.deepEqual([...props(g3.calls[0].frames)], ['opacity'])
+})
+
+test('[P1-11] 落地：占位内容从 30% 淡回 1，只动 opacity（简洁也播，off 不播）', () => {
+  const M = load()
+  for (const level of ['full', 'lite']) {
+    M.setMotionPref(level)
+    const el = fakeEl()
+    M.DRAG_FX.settle(el)
+    assert.equal(el.calls.length, 1, level)
+    assert.deepEqual(el.calls[0].frames.map((f) => f.opacity), [0.3, 1])
+  }
+  M.setMotionPref('off')
+  const el = fakeEl()
+  M.DRAG_FX.settle(el)
+  assert.equal(el.calls.length, 0)
+})
+
+// ── P0-5 边缘自动滚动 ─────────────────────────────────────────────────
 test('[P0-5] edgeScrollSpeed：中间 0；上边缘带负、下边缘带正，越靠边越快（封顶）；出了滚动区 0', () => {
   const M = load()
   assert.equal(typeof M.edgeScrollSpeed, 'function')
@@ -235,5 +341,54 @@ test('[P0-5] 落点状态：setDropIndex 同步出 dropAt（before + tower），
   assert.ok(flip.length > 100, '没切到工作台 FLIP')
   assert.ok(!/dragInfo\.current === null/.test(flip), 'FLIP 仍然排除拖动中 ⇒ 其余块让位不会滑')
   assert.match(flip, /kind: 'move'/)
+})
+
+test('[P1-11] startDrag：越过 4px 拔出影子（lift）；列表内松手 ⇒ 影子飞到落点占位的把手旁（spring），落定后移除', async () => {
+  const { drag, order, dom } = loadDrag({ bench: ABC, rows: [['A', 100], ['B', 148], ['C', 196]] })
+  drag('A', [120, 120], [[120, 140], [120, 230]])
+  assert.equal(order(), 'B,C,A')
+  const ghost = dom.ghosts[0]
+  assert.equal(ghost.calls.length, 2, '应有拔出 + 收场两段动画')
+  assert.match(ghost.calls[0].frames.map((f) => f.transform).join(), /scale\(1\.04\)/)
+  const land = ghost.calls[1]
+  assert.equal(land.timing.easing, load().MOTION.spring)
+  // 落点：A 的把手（假 DOM 里在 A 那行 x 140..152，y 105..121）右侧 8px + 影子半宽 40 ⇒ x = 200；y = 113。指针在 (120, 230)。
+  assert.match(land.frames.at(-1).transform, /calc\(-50% \+ 80px\),calc\(-50% \+ -117px\)/)
+  assert.equal(ghost.removed, 0)
+  land.finish()
+  await tick()
+  assert.equal(ghost.removed, 1)
+})
+
+test('[P1-11] startDrag：拖出列表松手 / Esc ⇒ 不落位，影子飞回按下时的把手（ease）；没过 4px 不出影子动画', () => {
+  const a = loadDrag({ bench: ABC, rows: [['A', 100], ['B', 148], ['C', 196]] })
+  a.drag('A', [120, 120], [[120, 140], [900, 240]])
+  assert.equal(a.order(), 'A,B,C')
+  const back = a.dom.ghosts[0].calls[1]
+  assert.equal(back.timing.easing, load().MOTION.ease)
+  // 原位把手：x 152 + 8 + 40 = 200，y 113；指针在 (900, 240)。
+  assert.match(back.frames.at(-1).transform, /calc\(-50% \+ -700px\),calc\(-50% \+ -127px\)/)
+  const e = loadDrag({ bench: ABC, rows: [['A', 100], ['B', 148], ['C', 196]] })
+  e.drag('A', [120, 120], [[120, 140], [120, 230]], (dom) => dom.fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} }))
+  assert.equal(e.order(), 'A,B,C')
+  assert.equal(e.dom.ghosts[0].calls.length, 2)
+  const s = loadDrag({ bench: ABC, rows: [['A', 100], ['B', 148], ['C', 196]] })
+  s.drag('A', [120, 120], [[300, 122]])
+  assert.equal(s.dom.ghosts[0].calls.length, 0)
+  assert.equal(s.dom.ghosts[0].removed, 1)
+})
+
+test('[P1-11] startDrag：off 档拔出 / 收场都不调 animate，影子当场移除；落位不受影响', () => {
+  const { drag, order, dom } = loadDrag({ bench: ABC, rows: [['A', 100], ['B', 148], ['C', 196]], level: 'off' })
+  drag('A', [120, 120], [[120, 140], [120, 230]])
+  assert.equal(order(), 'B,C,A')
+  assert.equal(dom.ghosts[0].calls.length, 0)
+  assert.equal(dom.ghosts[0].removed, 1)
+})
+
+test('[P1-11] ↑↓ 挪过的块短暂描边：↑↓ 走 nudgeBenchBlock，按递增 n 重挂 BlockGlow', () => {
+  assert.match(dockSrc, /'data-prefill-bench-up': block\.key, onClick: \(\) => nudgeBenchBlock\(block\.key, -1\)/)
+  assert.match(dockSrc, /'data-prefill-bench-down': block\.key, onClick: \(\) => nudgeBenchBlock\(block\.key, 1\)/)
+  assert.match(dockSrc, /benchNudged\.key === block\.key \? h\(BlockGlow, \{ key: 'nudge-' \+ benchNudged\.n \}\)/)
 })
 
