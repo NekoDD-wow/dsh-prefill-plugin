@@ -107,12 +107,75 @@ window.__ModuleLoader__.load({
       return live ? frames : null
     }
     /**
+     * 流式输出时收敛（docs/规划-动效.md §5）：卡片根节点（以及钉住后的标记、芯片）在模型正在输出时带
+     * `data-prefill-busy="stream"`（按钮自己的忙碌态是 `data-prefill-busy="true"`，两者不混）。
+     * 这时 play() 只放行按压 / 直接反馈（用户点出来的入场、退场、FLIP、toast……）；
+     * 自动提示（`cue: 'auto'`：后台状态变化的闪、数字滚动、来源标签闪）和装饰类（`kind: 'decor'`：扫光、倒计时线）
+     * 记进队列，回合结束后 flushCues() 统一播放：最多 CUE_MAX 个，依次错开 CUE_STAGGER。
+     * `cue: 'press'` = 按压微反馈（装饰类也放行）。队列按 `cueKey`（缺省 = 元素）去重，同一处只留最后一次。
+     */
+    const STREAM_BUSY = 'stream'
+    const CUE_MAX = 3
+    const CUE_STAGGER = 60
+    const CUE_QUEUE_CAP = 24
+    const cueState = { queue: [] }
+    function streamRoot(el) {
+      try {
+        return typeof el?.closest === 'function' ? el.closest(`[data-prefill-busy="${STREAM_BUSY}"]`) : null
+      } catch {
+        return null
+      }
+    }
+    function deferrable(kind, cue) {
+      if (cue === 'press' || cue === 'flush') return false
+      return cue === 'auto' || kind === 'decor'
+    }
+    function enqueueCue(el, keyframes, opts, root) {
+      const key = opts.cueKey ?? el
+      const queue = cueState.queue.filter((entry) => entry.key !== key)
+      queue.push({ el, keyframes, opts, key, root, prio: Number(opts.prio) || 0 })
+      cueState.queue = queue.slice(-CUE_QUEUE_CAP)
+    }
+    function stillStreaming(root) {
+      if (root === null || root === undefined) return false
+      if (root.isConnected === false) return false
+      try {
+        return root.getAttribute?.('data-prefill-busy') === STREAM_BUSY
+      } catch {
+        return false
+      }
+    }
+    /**
+     * 回合结束：把根节点已经不在输出的那些排队提示放掉，最多 CUE_MAX 个（prio 大的先，同级按先后），
+     * 依次 delay = i × CUE_STAGGER；其余丢掉（已经过时的提示不补播）。元素已卸载的跳过。返回播出的动画。
+     */
+    function flushCues() {
+      const ready = []
+      const rest = []
+      for (const entry of cueState.queue) (stillStreaming(entry.root) ? rest : ready).push(entry)
+      cueState.queue = rest
+      const live = ready.filter((entry) => entry.el?.isConnected !== false)
+      live.sort((a, b) => b.prio - a.prio)
+      const out = []
+      for (const entry of live.slice(0, CUE_MAX)) {
+        const { cueKey: _key, prio: _prio, defer: _defer, ...rest2 } = entry.opts
+        const animation = play(entry.el, entry.keyframes, { ...rest2, cue: 'flush', delay: (Number(rest2.delay) || 0) + out.length * CUE_STAGGER })
+        if (animation !== null) out.push(animation)
+      }
+      return out
+    }
+    function pendingCues() {
+      return cueState.queue.length
+    }
+    /**
      * 所有动画都经过这里。opts = WAAPI 时间参数 + `kind`（'enter' 默认 | 'move' 位移类如 FLIP | 'decor' 装饰类如扫光）
-     * + `level`（测试 / 特殊场合指定档位）。off ⇒ 返回 null、不调 animate；lite 见 liteFrames。
+     * + `level`（测试 / 特殊场合指定档位）+ `cue`（'auto' 自动提示 | 'press' 按压反馈 | 缺省 = 直接反馈）
+     * + `cueKey` / `prio`（排队去重键 / 优先级）+ `defer`（直接记进队列，等下一次 flushCues）。
+     * off ⇒ 返回 null、不调 animate、不排队；lite 见 liteFrames；流式中见上。
      * 动画期间加 will-change，结束或被 cancel 都摘掉（不残留）。
      */
     function play(el, keyframes, opts = {}) {
-      const { kind = 'enter', level: forced, ...timing } = opts ?? {}
+      const { kind = 'enter', level: forced, cue, cueKey, prio, defer, ...timing } = opts ?? {}
       const level = MOTION_LEVELS.includes(forced) ? forced : motionLevel()
       if (level === 'off' || el === null || el === undefined || typeof el.animate !== 'function') return null
       let frames = keyframes
@@ -121,6 +184,10 @@ window.__ModuleLoader__.load({
         frames = liteFrames(keyframes)
         if (frames === null) return null
         if (timing.easing === MOTION.spring) timing.easing = MOTION.ease
+      }
+      if (defer === true || (deferrable(kind, cue) && streamRoot(el) !== null)) {
+        enqueueCue(el, keyframes, { ...opts, defer: undefined }, defer === true ? null : streamRoot(el))
+        return null
       }
       let animation
       try {
@@ -2888,6 +2955,15 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener(CARD_EVENT, onCard)
       }, [sessionId])
 
+      // §5：模型正在输出时芯片也标 stream（小点的闪攒着）；跑完统一放掉。
+      const chipStreaming = Array.isArray(envelope?.running) && envelope.running.includes(sessionId)
+      const chipStreamRef = React.useRef(false)
+      React.useLayoutEffect(() => {
+        const ended = chipStreamRef.current && !chipStreaming
+        chipStreamRef.current = chipStreaming
+        if (ended) flushCues()
+      })
+
       if (sessionId === '') return null
       const state = envelope?.state ?? null
       const map = state?.prefill !== null && typeof state?.prefill === 'object' ? state.prefill : {}
@@ -2912,7 +2988,8 @@ window.__ModuleLoader__.load({
           'aria-expanded': cardOpen ? 'true' : 'false',
           'aria-busy': openingShown ? 'true' : undefined,
           'data-prefill-chip': '1',
-          'data-prefill-busy': openingShown ? 'true' : undefined,
+          // 按钮忙碌（首次打开）= 'true'；模型正在输出 = 'stream'（小点的闪攒到回合结束，§5）。
+          'data-prefill-busy': openingShown ? 'true' : chipStreaming ? STREAM_BUSY : undefined,
           'data-prefill-chip-error': chipError !== '' ? 'true' : undefined,
           title: chipError !== '' ? `${t('errPill').replace('{op}', t('errOpChip'))}：${chipError}` : title,
           'data-open': cardOpen ? 'true' : 'false',
@@ -4492,12 +4569,25 @@ window.__ModuleLoader__.load({
         }
       }, [sessionId, revision])
 
-      // 状态轮询：轮次数 / 闸门 / 注入数会在别处变（跑完一轮、点了芯片）。
+      // 流式输出（§5）：宿主说这个会话正在跑 ⇒ 卡片根节点标 data-prefill-busy="stream"，play() 把自动提示攒起来；
+      // 跑完（running → 否）在 layout 阶段统一放掉（flushCues，最多 3 个、错开 60ms）。
+      const streaming = Array.isArray(envelope?.running) && envelope.running.includes(sessionId)
+      const streamingRef = React.useRef(false)
+      // 这一次提交是不是「刚跑完」（渲染里只读 ref；ref 在 layout effect 里更新）。
+      const turnEnded = streamingRef.current && !streaming
+
+      // 状态轮询：轮次数 / 闸门 / 注入数会在别处变（跑完一轮、点了芯片）。跑着的时候勤一点，好及时认出「跑完了」。
       React.useEffect(() => {
         if (!enabled || sessionId === '') return undefined
-        const timer = setInterval(refreshEnvelope, 3000)
+        const timer = setInterval(refreshEnvelope, streaming ? 1500 : 3000)
         return () => clearInterval(timer)
-      }, [enabled, refreshEnvelope, sessionId])
+      }, [enabled, refreshEnvelope, sessionId, streaming])
+      // 跑完：排队的自动提示统一播放（放在所有「排提示」的 layout effect 之后）。
+      React.useLayoutEffect(() => {
+        const ended = streamingRef.current && !streaming
+        streamingRef.current = streaming
+        if (ended) flushCues()
+      })
 
       // 启用后先登记一份空草稿：声明"本会话用预填装"，也让 host 预热系统提示。
       React.useEffect(() => {
@@ -8319,6 +8409,8 @@ window.__ModuleLoader__.load({
             'data-prefill-card-panel': '1',
             'data-shrunk': shrunk ? 'true' : 'false',
             'data-prefill-motion': motion,
+            // §5：模型正在输出 ⇒ 自动提示（扫光、闪、数字滚动）攒到回合结束再播。
+            'data-prefill-busy': streaming ? STREAM_BUSY : undefined,
             'data-closing': closing ? 'true' : undefined,
             'aria-hidden': shrunk || closing ? 'true' : undefined,
             role: 'dialog',
@@ -8386,6 +8478,7 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 'data-prefill-marker': '1',
+                'data-prefill-busy': streaming ? STREAM_BUSY : undefined,
                 title: t('markerTip'),
                 'aria-label': t('markerTip'),
                 onMouseEnter: restoreCard,

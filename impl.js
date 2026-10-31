@@ -1209,6 +1209,8 @@ export function apply(ctx) {
         // 有"延后到下一轮"的重挂请求 ⇒ 客户端角标要明说"下一轮生效"，
         // 否则用户在**轮内**翻开关会以为没生效（它会一直跑到本轮结束 —— Q18 的轮次冻结）。
         pendingReprime: [...pendingReprime],
+        // 正在跑（流式输出中）的会话：面板据此在卡片根节点标 data-prefill-busy="stream"，自动提示攒到回合结束再播。
+        running: [...liveAgents].filter(([, agent]) => isRunning(agent)).map(([id]) => id),
         // 预填装已写成真实历史的会话（会话 → 条数）。
         materialized: typeof gateCache.module?.materialized === 'function' ? gateCache.module.materialized() : {},
         // 诊断（给脚本/排查用）。
