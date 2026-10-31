@@ -3,6 +3,17 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **工作台积木拖动可以放弃**（修复 #27）。
+  - 现象：拖出列表（横到聊天区、竖到列表上下方很远）松手照样落位，落到末尾 / 开头，塔里的块还会被拆出塔；拖动中按 Esc 不取消，反而被面板当成「关面板」，松手后照样落位；拖动中滚动（滚轮不发 pointermove）后按拖动开始时的位置落，可能被塞进塔里。
+  - 原因：`startDrag` 只在按下时量一次各行 / 塔框位置，落点只看 `clientY`，没有「离开列表」状态，松手不看自己的坐标；没有 Esc 处理，面板挂在 document 捕获阶段的 Esc 先关了面板。
+  - 改法：每次 move 现量；`document` 捕获阶段的 `scroll` 按最后的指针位置重算插入线；指针离列表矩形外扩 24px 之外 = 拖出列表：插入线隐藏，此时松手不落位，pointerup 以自己的坐标、按此刻的版面再判一次；拖动中 Esc（`window` 捕获阶段，`stopPropagation`，面板不关）= 取消；收尾撤掉全部监听。正常拖动（列表内换序、拖进 / 拖出塔框）不变。
+- **工作台屏幕顺序与注入顺序一致**（修复 #28）。
+  - 现象：工作台里出现「塔后面跟散块」时（拖到塔框下方松手即可造成），屏幕上散块仍排在塔前，实际注入 / 预览顺序却在塔后；之后再拖，落点按屏幕行号当 bench 下标，继续错位（塔收起时同样错位）。
+  - 原因：`benchRows` 用 `Map` 按塔全局分组渲染；`startDrag` 把屏幕行号直接传给 `moveBlockTo` 当 bench 下标。
+  - 改法：`benchRows` 按 bench 顺序切连续段渲染（同一个塔被散块隔开时画两个框，React key 带段首块的 key）；拖动记录「插到哪块前面（key，末尾为 null）」，`moveBlockTo(key, before, tower)` 按 key 换算 bench 下标；原地松手不写 bench。
+- 单测 `tests/drag-cancel.test.mjs`（19 项：把 `startDrag` / `moveBlockTo` / `benchRows` 切出来配假 DOM 跑，只看松手后的 bench：4 项正常拖动对照、#27 的拖出列表 5 种 / 插入线隐藏 / 滚动 2 种 / Esc / 监听清理、#28 的渲染顺序 / 拆成两框 / 塔收起时落点 / 原地松手）；改前 13 项失败。
+
 ## 0.16.0 — 2026-10-30
 - **会话沙盒第 1 步：合并规则表 + 迁移旧字段**（issue #15，数据层；旧数据行为不变）。原来散在 state.json 顶层的 `overrides` / `sessionAllowKinds` / `sessionTools` / `injectionBlocks`（注入审计的按名阻断）/ `gate[会话] = 'pure'` 合成一张表 `state.sandbox[会话 | '*'] = { level, own, rules: [{ match, action: allow | deny | rewrite, … }] }`，规划见 `docs/会话沙盒-规划.md`。
   - match 只认一个维度：`kind`（消息 source.kind）/ `section` / `context` / `tool`，值里的 `*` 是通配（`team:*` 前缀）；旧字段迁来的名字都带 `exact: true`，旧名单里字面的 `*` 不会变成「全部」。

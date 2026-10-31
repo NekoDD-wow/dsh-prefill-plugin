@@ -5744,14 +5744,19 @@ window.__ModuleLoader__.load({
         next.splice(to, 0, moved)
         setBench(next)
       }
-      /** 拖到第 index 个位置（0..bench.length），顺带决定它属不属于某个塔框。 */
-      const moveBlockTo = (key, index, tower) => {
+      /**
+       * 拖到 before 这块前面（before 为 null = 放到末尾），顺带决定它属不属于某个塔框。
+       * 落点按 key 记、在这里换算成 bench 下标：屏幕行号 ≠ bench 下标（收起的塔不画块），不能直接当下标用（#28）。
+       */
+      const moveBlockTo = (key, before, tower) => {
         const at = bench.findIndex((block) => block.key === key)
         if (at < 0) return
         const next = [...bench]
         const moved = { ...next.splice(at, 1)[0], tower: tower ?? null }
-        const target = at < index ? index - 1 : index
-        next.splice(Math.max(0, Math.min(next.length, target)), 0, moved)
+        const target = before === key ? at : before === null ? next.length : next.findIndex((block) => block.key === before)
+        if (target < 0) return // before 已经不在台上（拖动中被别处改了）：不落位
+        if (target === at && (bench[at].tower ?? null) === moved.tower) return // 原地松手：什么都没变
+        next.splice(target, 0, moved)
         setBench(next)
       }
       const addTowerToBenchNow = (tower) => {
@@ -5887,22 +5892,42 @@ window.__ModuleLoader__.load({
         if (event.button !== undefined && event.button !== 0) return
         const list = benchListRef.current
         if (list === null) return
+        /** 指针离列表矩形超过这么多 px 就算拖出列表：插入线隐藏，此时松手 = 放弃（#27）。 */
+        const DRAG_CANCEL_MARGIN = 24
         // 不拦默认行为的话，按住把手往下拖就是一次文字框选：沿途的块名 / 文字被选中（蓝条）。
         event.preventDefault()
         const prevSelect = document.body.style.userSelect
         document.body.style.userSelect = 'none'
         window.getSelection?.()?.removeAllRanges?.()
-        const rows = [...list.querySelectorAll('[data-prefill-bench-block]')]
-        const rects = rows.map((node) => {
-          const rect = node.getBoundingClientRect()
-          return { key: node.getAttribute('data-prefill-bench-block') ?? '', top: rect.top, height: rect.height }
+        // 每次都现量：拖动中列表 / 外层面板滚动后，按下时量的位置就错位了（#27）。
+        const measure = () => ({
+          box: list.getBoundingClientRect(),
+          rects: [...list.querySelectorAll('[data-prefill-bench-block]')].map((node) => {
+            const rect = node.getBoundingClientRect()
+            return { key: node.getAttribute('data-prefill-bench-block') ?? '', top: rect.top, height: rect.height }
+          }),
+          frames: [...list.querySelectorAll('[data-prefill-bench-tower]')].map((node) => {
+            const rect = node.getBoundingClientRect()
+            return { key: node.getAttribute('data-prefill-bench-tower') ?? '', top: rect.top, bottom: rect.bottom }
+          }),
         })
-        const frames = [...list.querySelectorAll('[data-prefill-bench-tower]')].map((node) => {
-          const rect = node.getBoundingClientRect()
-          return { key: node.getAttribute('data-prefill-bench-tower') ?? '', top: rect.top, bottom: rect.bottom }
-        })
+        const outside = (box, x, y) =>
+          x < box.left - DRAG_CANCEL_MARGIN || x > box.right + DRAG_CANCEL_MARGIN || y < box.top - DRAG_CANCEL_MARGIN || y > box.bottom + DRAG_CANCEL_MARGIN
+        /** 按指针位置算落点：插到哪块前面（key，null = 末尾）+ 归哪个塔；出了列表 ⇒ null。 */
+        const locate = (x, y) => {
+          const { box, rects, frames } = measure()
+          if (outside(box, x, y)) return null
+          let before = null
+          for (const item of rects) {
+            if (y < item.top + item.height / 2) { before = item.key; break }
+          }
+          const frame = frames.find((item) => y >= item.top && y <= item.bottom)
+          return { before, tower: frame ? frame.key : null }
+        }
         const startY = event.clientY
         let moved = false
+        let lastX = event.clientX
+        let lastY = event.clientY
         const ghost = document.createElement('div')
         ghost.textContent = block.name
         ghost.style.cssText =
@@ -5910,6 +5935,15 @@ window.__ModuleLoader__.load({
         ghost.style.left = event.clientX + 'px'
         ghost.style.top = event.clientY + 'px'
         dragInfo.current = { key: block.key }
+        const track = (x, y) => {
+          lastX = x
+          lastY = y
+          const at = locate(x, y)
+          dragInfo.current = at === null ? { key: block.key } : { key: block.key, ...at }
+          // 插入线画在 bench 下标 = dropIndex 的那块上；出了列表 ⇒ -1（不画）。
+          const index = at === null ? -1 : at.before === null ? bench.length : bench.findIndex((item) => item.key === at.before)
+          setDropIndex((current) => (current === index ? current : index))
+        }
         const move = (ev) => {
           if (!moved && Math.abs(ev.clientY - startY) < 4) return
           if (!moved) {
@@ -5919,35 +5953,44 @@ window.__ModuleLoader__.load({
           }
           ghost.style.left = ev.clientX + 'px'
           ghost.style.top = ev.clientY + 'px'
-          let index = rects.length
-          for (let i = 0; i < rects.length; i += 1) {
-            const mid = rects[i].top + rects[i].height / 2
-            if (ev.clientY < mid) { index = i; break }
-          }
-          const frame = frames.find((item) => ev.clientY >= item.top && ev.clientY <= item.bottom)
-          dragInfo.current = { key: block.key, index, tower: frame ? frame.key : null }
-          setDropIndex((current) => (current === index ? current : index))
+          track(ev.clientX, ev.clientY)
         }
-        const up = () => {
+        // 滚轮滚动不发 pointermove：滚动时按最后的指针位置重算插入线。
+        const scroll = () => {
+          if (moved) track(lastX, lastY)
+        }
+        const finish = (commit, ev) => {
           document.removeEventListener('pointermove', move)
           document.removeEventListener('pointerup', up)
           document.removeEventListener('pointercancel', cancel)
+          document.removeEventListener('scroll', scroll, true)
+          window.removeEventListener('keydown', key, true)
           document.body.style.userSelect = prevSelect
           ghost.remove()
-          const info = dragInfo.current
           dragInfo.current = null
           setDragKey('')
           setDropIndex(-1)
-          if (moved && info !== null && typeof info.index === 'number') moveBlockTo(block.key, info.index, info.tower ?? null)
+          if (!commit || !moved) return
+          // 以 pointerup 自己的坐标、按此刻的版面再算一次；在列表外 ⇒ 放弃，不落位。
+          const at = locate(ev?.clientX ?? lastX, ev?.clientY ?? lastY)
+          if (at !== null) moveBlockTo(block.key, at.before, at.tower)
+        }
+        const up = (ev) => finish(true, ev)
+        // 被系统打断（切窗口、触屏手势）：收尾但不落位。
+        const cancel = () => finish(false)
+        // 拖动中按 Esc = 放弃。挂在 window 捕获阶段，比面板挂在 document 捕获阶段的 Esc（关面板）更早，
+        // stopPropagation 之后面板不会被一起关掉。
+        const key = (ev) => {
+          if (ev.key !== 'Escape') return
+          ev.preventDefault?.()
+          ev.stopPropagation?.()
+          finish(false)
         }
         document.addEventListener('pointermove', move)
         document.addEventListener('pointerup', up)
-        // 被系统打断（切窗口、触屏手势）：收尾但不落位。
-        const cancel = () => {
-          moved = false
-          up()
-        }
         document.addEventListener('pointercancel', cancel)
+        document.addEventListener('scroll', scroll, true)
+        window.addEventListener('keydown', key, true)
       }
       // 长块默认收起（只渲染几行预览，降低渲染压力）；展开后输入框按内容增高。
       const benchLong = (block) => {
@@ -6087,11 +6130,14 @@ window.__ModuleLoader__.load({
       }
       const benchRows = () => {
         const rows = []
-        const groups = new Map()
+        // 按 bench 顺序切连续段，不按塔全局分组：否则塔后面的散块会被排到塔前，屏幕顺序 ≠ 注入顺序（#28）。
+        // 同一个塔被散块隔开时画成两个框。
+        const groups = []
         for (const block of bench) {
           const key = block.tower ?? ''
-          if (!groups.has(key)) groups.set(key, [])
-          groups.get(key).push(block)
+          const last = groups[groups.length - 1]
+          if (last !== undefined && last[0] === key) last[1].push(block)
+          else groups.push([key, [block]])
         }
         for (const [towerKey, list] of groups) {
           const tower = towerKey === '' ? null : benchTowers[towerKey]
@@ -6105,7 +6151,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               {
-                key: 'tf-' + towerKey,
+                key: 'tf-' + towerKey + '-' + list[0].key,
                 'data-prefill-bench-tower': towerKey,
                 style: { border: '1.5px dashed color-mix(in srgb, ' + color + ' 55%, var(--dsw-alias-border-secondary))', borderRadius: 12, padding: '6px 8px 8px', background: 'color-mix(in srgb, ' + color + ' 4%, transparent)', display: 'flex', flexDirection: 'column', gap: 8 },
               },
