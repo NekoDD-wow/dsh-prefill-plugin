@@ -502,6 +502,7 @@ window.__ModuleLoader__.load({
      *   - 松手：影子飞到落点（spring）后淡掉；拖出列表 / Esc 取消 ⇒ 飞回原位。lite 只淡出，off 直接消失。
      *   - 落点：被拖的块本身渲染成占位（虚线框 + 内容 30%），其余块让位走工作台 FLIP（kind: 'move'）。
      *   - 边缘自动滚动：指针进到滚动区上 / 下边缘 DRAG_EDGE 内，按深入程度滚，最多 DRAG_SCROLL_MAX px/帧（功能性，各档都有）。
+     *   - 拿走一块：先淡出 + scale .97，再卸载（其余块 FLIP 收拢）。
      */
     /** 落点占位里的内容压到 30%（内联样式管不到子元素）；拖动中才挂上。 */
     const BENCH_SLOT_CSS = '[data-prefill-drop-slot]>*{opacity:.3;pointer-events:none}'
@@ -523,6 +524,10 @@ window.__ModuleLoader__.load({
     const DRAG_FADE_OUT = [{ opacity: 1 }, { opacity: 0 }]
     /** 落地：占位（内容 30%）变回正常块时内容淡回来。只动 opacity，lite 也播。 */
     const DRAG_SETTLE = [{ opacity: 0.3 }, { opacity: 1 }]
+    const BLOCK_EXIT = [
+      { opacity: 1, transform: 'none' },
+      { opacity: 0, transform: 'scale(.97)' },
+    ]
     /**
      * 指针 y 离滚动区上 / 下边缘多近 ⇒ 每帧滚多少（负 = 往上）；不在边缘带里 = 0。
      * 只认滚动区里面的边缘带：指针已经拖出滚动区（远处 / 列表外 = 取消区）就不滚，免得列表在取消区里自己跑。
@@ -620,6 +625,15 @@ window.__ModuleLoader__.load({
             frame = 0
           },
         }
+      },
+      /** 拿走一块（P1-5）：先淡出缩小，结束后 unmount（其余块由工作台 FLIP 收拢）。off ⇒ 当场。 */
+      exit(node, unmount) {
+        const animation = play(node, BLOCK_EXIT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' })
+        return presenceExit(animation, () => {
+          unmount()
+          // 拿走失败（写入出错、状态回滚）块还在 ⇒ 撤掉 fill: forwards，别让它停在透明。
+          if (animation !== null) setTimeout(() => { if (node.isConnected !== false) animation.cancel?.() }, 1000)
+        }, 400)
       },
     }
     // </drag>
@@ -4528,6 +4542,9 @@ window.__ModuleLoader__.load({
       }
       const benchRects = React.useRef(new Map())
       const benchSig = React.useRef('')
+      const benchFlipNext = React.useRef(false)
+      /** 正在播退场的块 / 塔（P1-5）：退场中再点 × 不重复拿。 */
+      const benchExiting = React.useRef(new Set())
       // 拖动/排序后做 FLIP 滑动。三条约束（否则整屏乱跳）：
       //   ① 只在「工作台顺序真的变了」时动画（切格、套预设、面板重排都不算）；
       //   ② 只比相对列表的位置（卡片被别的格顶上去、面板整体位移不算位移）；
@@ -4540,7 +4557,10 @@ window.__ModuleLoader__.load({
         const order = nodes.map((node) => node.getAttribute('data-prefill-bench-block') ?? '')
         const sig = order.join('|')
         // 拖动中被拖的块就是落点占位（P0-5）：落点一变顺序就变，其余块让位也走这条 FLIP。
-        const reordered = benchSig.current !== '' && benchSig.current !== sig
+        // 长块展开 / 收起（P1-5）：顺序没变，但下面的块整体位移 ⇒ 这一次也按位移滑过去。
+        const folded = benchFlipNext.current
+        benchFlipNext.current = false
+        const reordered = benchSig.current !== '' && (benchSig.current !== sig || folded)
         const next = new Map()
         for (const node of nodes) {
           const key = node.getAttribute('data-prefill-bench-block') ?? ''
@@ -7347,7 +7367,34 @@ window.__ModuleLoader__.load({
         if (block.ref === 'card:reinforce') return removeCardTower()
         removeBlockFromBench(block.key)
       }
-
+      /**
+       * P1-5 拿走：列表里 match 命中的块 / 塔框先淡出 + scale .97（DRAG_FX.exit），结束后才真正拿走，
+       * 其余块随后走工作台 FLIP 收拢。off / 不在屏幕上 ⇒ 当场拿走。id 防退场中重复点。
+       */
+      const exitFromBench = (id, match, unmount) => {
+        if (benchExiting.current.has(id)) return
+        const list = benchListRef.current
+        const nodes = list === null ? [] : [...list.querySelectorAll('[data-prefill-bench-block],[data-prefill-bench-tower]')].filter(match)
+        if (nodes.length === 0) return unmount()
+        benchExiting.current.add(id)
+        let left = nodes.length
+        for (const node of nodes) {
+          DRAG_FX.exit(node, () => {
+            left -= 1
+            if (left > 0) return
+            benchExiting.current.delete(id)
+            unmount()
+          })
+        }
+      }
+      const isBlockNode = (key) => (node) => node.getAttribute('data-prefill-bench-block') === key
+      const isTowerNode = (key) => (node) => node.getAttribute('data-prefill-bench-tower') === key
+      /** × / 菜单「从工作台拿走」：带退场。角色提醒块 = 整座卡塔一起退。 */
+      const dropBlockAnimated = (block) =>
+        block.ref === 'card:reinforce'
+          ? exitFromBench('tower:card', isTowerNode('card'), () => dropBlockFromBench(block))
+          : exitFromBench('block:' + block.key, isBlockNode(block.key), () => dropBlockFromBench(block))
+      const removeTowerAnimated = (towerKey, unmount) => exitFromBench('tower:' + towerKey, isTowerNode(towerKey), unmount)
       /** 预览分段（状态 B）：每块一段，带来源色；纯首轮块在第 2 轮那栏划掉。 */
       const previewSegments = (round) => {
         const out = []
@@ -7509,6 +7556,7 @@ window.__ModuleLoader__.load({
       const setBenchBlockOpen = (key, open) =>
         setBenchOpen((current) => {
           if (current.has(key) === open) return current
+          benchFlipNext.current = true
           const next = new Set(current)
           if (open) next.add(key)
           else next.delete(key)
@@ -7585,7 +7633,7 @@ window.__ModuleLoader__.load({
               h('button', { type: 'button', style: V.btnGhost, disabled: index <= 0, title: t('benchMoveUp'), 'data-prefill-bench-up': block.key, onClick: () => nudgeBenchBlock(block.key, -1) }, '↑'),
               h('button', { type: 'button', style: V.btnGhost, disabled: index >= bench.length - 1, title: t('benchMoveDown'), 'data-prefill-bench-down': block.key, onClick: () => nudgeBenchBlock(block.key, 1) }, '↓'),
               h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuTitle'), 'data-prefill-bench-menu': block.key, onClick: (event) => openBlockMenu(event, block) }, '⋯'),
-              h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuDrop'), 'data-prefill-bench-drop': block.key, onClick: () => dropBlockFromBench(block) }, '×'),
+              h('button', { type: 'button', style: V.btnGhost, title: t('benchMenuDrop'), 'data-prefill-bench-drop': block.key, onClick: () => dropBlockAnimated(block) }, '×'),
             ),
           ),
           folded
@@ -7674,7 +7722,7 @@ window.__ModuleLoader__.load({
                 'div',
                 { style: { ...V.row, gap: 6, alignItems: 'center', fontSize: 12, fontWeight: 700 } },
                 h('span', { style: { cursor: 'pointer' }, 'data-prefill-tower-collapse': towerKey, onClick: () => toggleTowerCollapsed(towerKey) }, (collapsed ? '▸ ' : '▾ ') + String(tower.name ?? towerKey)),
-                h('span', { style: { marginLeft: 'auto', fontWeight: 400 } }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-tower-remove': towerKey, onClick: () => removeTowerFromBench(towerKey) }, t('benchTowerRemove'))),
+                h('span', { style: { marginLeft: 'auto', fontWeight: 400 } }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-tower-remove': towerKey, onClick: () => removeTowerAnimated(towerKey, () => removeTowerFromBench(towerKey)) }, t('benchTowerRemove'))),
               ),
               ...(collapsed ? [] : list.map((block) => benchCard(block))),
             ),
@@ -7737,7 +7785,7 @@ window.__ModuleLoader__.load({
             onBlur: () => setBenchFocus(''),
             onMouseEnter: () => setBenchFocus((current) => (current === tower.id ? current : tower.id)),
             onMouseLeave: () => setBenchFocus((current) => (current === '' ? current : '')),
-            onClick: () => (state === 'off' ? (tower.card === true ? applyCardTower() : addTowerToBenchNow(tower)) : tower.card === true ? removeCardTower() : removeTowerFromBench(tower.id)),
+            onClick: () => (state === 'off' ? (tower.card === true ? applyCardTower() : addTowerToBenchNow(tower)) : tower.card === true ? removeTowerAnimated('card', removeCardTower) : removeTowerAnimated(tower.id, () => removeTowerFromBench(tower.id))),
             onContextMenu: (event) => openTowerMenu(event, tower),
           },
           stackIcon(color),
@@ -7771,7 +7819,7 @@ window.__ModuleLoader__.load({
             onBlur: () => setBenchFocus(''),
             onMouseEnter: () => setBenchFocus((current) => (current === 'btn:' + block.id ? current : 'btn:' + block.id)),
             onMouseLeave: () => setBenchFocus((current) => (current === '' ? current : '')),
-            onClick: () => (on ? setBench(bench.filter((item) => item.ref !== block.id)) : addBlockToBench(block)),
+            onClick: () => (on ? exitFromBench('ref:' + block.id, (node) => node.getAttribute('data-ref') === block.id, () => setBench(bench.filter((item) => item.ref !== block.id))) : addBlockToBench(block)),
             onContextMenu: (event) => openBlockMenu(event, block),
           },
           block.name,
@@ -7854,7 +7902,7 @@ window.__ModuleLoader__.load({
           if (bench.length > 0) rows.push(row('savebench', t('benchMenuSaveBench'), () => saveWholeBenchAsTower()))
           rows.push(h('div', { key: 'sep', style: { height: 1, background: 'var(--dsw-alias-border-secondary)', margin: '4px 2px' } }))
           if (benchBlock !== null && benchBlock.edited) rows.push(row('revert', t('benchMenuRevert'), () => patchBenchBlock(benchBlock.key, revertPatch(benchBlock))))
-          if (benchBlock !== null) rows.push(row('drop', t('benchMenuDrop'), () => removeBlockFromBench(benchBlock.key)))
+          if (benchBlock !== null) rows.push(row('drop', t('benchMenuDrop'), () => exitFromBench('block:' + benchBlock.key, isBlockNode(benchBlock.key), () => removeBlockFromBench(benchBlock.key))))
           if (isMine && def !== null) rows.push(row('rename', t('benchMenuRename'), () => renameMyBlock(def)))
           if (isMine && def !== null) rows.push(row('delblock', t('benchMenuDeleteBlock'), () => deleteMyBlock(def.id)))
           if (menu.builtin === true) rows.push(row('hide', t('benchMenuHide'), () => hideBuiltin(menu.ref)))
@@ -8144,7 +8192,10 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   style: { ...V.btnGhost, alignSelf: 'flex-end' },
                   'data-prefill-bench-fold-all': benchAllOpen ? 'collapse' : 'expand',
-                  onClick: () => setBenchOpen(benchAllOpen ? new Set() : new Set([...benchOpen, ...benchLongKeys])),
+                  onClick: () => {
+                    benchFlipNext.current = true
+                    setBenchOpen(benchAllOpen ? new Set() : new Set([...benchOpen, ...benchLongKeys]))
+                  },
                 },
                 benchAllOpen ? t('benchCollapseAll') : t('benchExpandAll'),
               )

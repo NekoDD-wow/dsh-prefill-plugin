@@ -296,6 +296,33 @@ test('[P0-5] 自动滚动：按下时就在边缘带里（顶上那块）先不�
 })
 
 // ── P1-5 拿走 ──────────────────────────────────────────────────────────
+test('[P1-5] 拿走：完整档先淡出 + scale .97（easeOut、fast），结束后才 unmount；简洁只淡出；off 当场 unmount', async () => {
+  const M = load()
+  M.setMotionPref('full')
+  const el = fakeEl()
+  let gone = 0
+  M.DRAG_FX.exit(el, () => { gone += 1 })
+  assert.equal(el.calls.length, 1)
+  assert.match(el.calls[0].frames.at(-1).transform, /scale\(\.97\)/)
+  assert.equal(el.calls[0].frames.at(-1).opacity, 0)
+  assert.equal(el.calls[0].timing.easing, M.MOTION.easeOut)
+  assert.equal(gone, 0)
+  el.calls[0].finish()
+  await tick()
+  assert.equal(gone, 1)
+  M.setMotionPref('lite')
+  const e2 = fakeEl()
+  M.DRAG_FX.exit(e2, () => {})
+  assert.deepEqual([...props(e2.calls[0].frames)], ['opacity'])
+  M.setMotionPref('off')
+  const e3 = fakeEl()
+  let g3 = 0
+  M.DRAG_FX.exit(e3, () => { g3 += 1 })
+  assert.equal(e3.calls.length, 0)
+  assert.equal(g3, 1)
+})
+
+// ── P2-5 ⇄ 徽章 pop ───────────────────────────────────────────────────
 test('[P0-5] 被拖的块就是落点占位：算落点时不拿它自己的中线比（占位已挪到末尾，指针在占位上 ⇒ 落到末尾）', () => {
   // 拖动中 A 的占位已经渲染在末尾（DOM：B 100 · C 148 · A 196）；指针停在 A 占位的上半部 y=205。
   const { drag, order } = loadDrag({ bench: ABC, rows: [['B', 100], ['C', 148], ['A', 196]] })
@@ -392,3 +419,15 @@ test('[P1-11] ↑↓ 挪过的块短暂描边：↑↓ 走 nudgeBenchBlock，按
   assert.match(dockSrc, /benchNudged\.key === block\.key \? h\(BlockGlow, \{ key: 'nudge-' \+ benchNudged\.n \}\)/)
 })
 
+test('[P1-5] 拿走接线：×、菜单「从工作台拿走」、积木按钮再点、塔按钮 / 塔框「拿走」都先退场（exitFromBench）；长块展开收起触发 FLIP', () => {
+  assert.match(dockSrc, /'data-prefill-bench-drop': block\.key, onClick: \(\) => dropBlockAnimated\(block\)/)
+  assert.match(dockSrc, /row\('drop', t\('benchMenuDrop'\), \(\) => exitFromBench\(/)
+  assert.match(dockSrc, /on \? exitFromBench\('ref:' \+ block\.id/)
+  assert.match(dockSrc, /removeTowerAnimated\(tower\.id/)
+  assert.match(rowsSrc, /'data-prefill-tower-remove': towerKey, onClick: \(\) => removeTowerAnimated\(/)
+  assert.match(dockSrc, /DRAG_FX\.exit\(node, /)
+  assert.match(dockSrc, /if \(benchExiting\.current\.has\(id\)\) return/)
+  // 展开 / 收起：顺序没变也让这一次 FLIP 生效（下面的块滑过去）。
+  assert.match(dockSrc, /if \(current\.has\(key\) === open\) return current\n\s+benchFlipNext\.current = true/)
+  assert.match(dockSrc, /benchSig\.current !== sig \|\| folded/)
+})
