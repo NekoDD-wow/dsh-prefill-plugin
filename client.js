@@ -552,6 +552,16 @@ window.__ModuleLoader__.load({
       if (motionLevel() === 'lite') return play(host.querySelector('[data-prefill-flash]'), NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', delay, cue: 'auto' })
       return play(host.querySelector('[data-prefill-sweep-band]'), SWEEP, { duration: MOTION.slow, easing: MOTION.ease, delay, kind: 'decor' })
     }
+    /** 撤销条（P1-4）：「取消预设」后 UNDO_MS 内可撤销；从卡片底部滑入、叠在内容上（不占文档流），带倒计时线。 */
+    const UNDO_MS = 8000
+    const UNDO_ENTER = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }]
+    const UNDO_EXIT = [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(12px)' }]
+    /** 倒计时线：从满宽缩到 0（装饰类；简洁 / off 不画线，只看秒数）。 */
+    const UNDO_COUNTDOWN = [{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }]
+    /** 还剩几秒（向上取整，到 0 为止）。 */
+    function undoLeft(startedAt, now, total = UNDO_MS) {
+      return Math.max(0, Math.ceil((startedAt + total - now) / 1000))
+    }
     // </refresh>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -688,7 +698,7 @@ window.__ModuleLoader__.load({
       const at = placeRef.current
       const outer = at
         ? { position: 'absolute', zIndex: 6, right: at.right, ...(at.top !== undefined ? { top: at.top } : { bottom: at.bottom }), pointerEvents: 'none', maxWidth: 'calc(100% - 20px)' }
-        : { position: 'absolute', zIndex: 6, left: 10, right: 10, bottom: 10, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
+        : { position: 'absolute', zIndex: 6, left: 10, right: 10, bottom: 'var(--pf-toast-bottom, 10px)', display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
       return h(
         'div',
         { 'data-prefill-toast-wrap': at ? (at.top !== undefined ? 'below' : 'above') : 'bottom', style: outer },
@@ -703,6 +713,49 @@ window.__ModuleLoader__.load({
         return () => animation?.cancel?.()
       }, [])
       return h('span', { ref, 'aria-hidden': 'true', 'data-prefill-bench-glow': '', style: { position: 'absolute', inset: -1, borderRadius: 10, pointerEvents: 'none', boxShadow: '0 0 0 2px var(--pf-turn), 0 0 0 6px color-mix(in srgb, var(--pf-turn) 22%, transparent)' } })
+    }
+
+    /**
+     * 撤销条（P1-4）：token（撤销快照）有值就显示，变空播退场（presence）。绝对定位在卡片底部、叠在内容上；
+     * 底边一条倒计时线 UNDO_MS 内从满宽缩到 0（完整档；装饰类，但它是对刚才那下点击的直接反馈 ⇒ cue: 'press'，流式中也照常走），
+     * 旁边写剩余秒数（各档都有，简洁 / off 靠它）。
+     */
+    function UndoBar(props) {
+      const { token, text, button, secondsLabel } = props
+      const [shown, ref] = usePresence(token, UNDO_ENTER, UNDO_EXIT)
+      const lineRef = React.useRef(null)
+      const startedAt = React.useRef(0)
+      const startedFor = React.useRef(null)
+      if (token && startedFor.current !== token) {
+        startedFor.current = token
+        startedAt.current = Date.now()
+      }
+      const [, setTick] = React.useState(0)
+      React.useEffect(() => {
+        if (!token) return undefined
+        const timer = setInterval(() => setTick((value) => value + 1), 1000)
+        return () => clearInterval(timer)
+      }, [token])
+      // 倒计时线：presence 第一次提交时还没画出条（shown 下一帧才有），所以等条挂上再开始；
+      // 退场时不取消（线停在当前位置跟着淡出），换了新的撤销快照或卸载时才取消。
+      const visible = shown !== null
+      const lineAnim = React.useRef(null)
+      React.useLayoutEffect(() => {
+        if (!token || !visible || lineAnim.current?.token === token) return
+        lineAnim.current?.animation?.cancel?.()
+        lineAnim.current = { token, animation: play(lineRef.current, UNDO_COUNTDOWN, { duration: Math.max(0, startedAt.current + UNDO_MS - Date.now()), easing: 'linear', fill: 'forwards', kind: 'decor', cue: 'press' }) }
+      }, [token, visible])
+      React.useEffect(() => () => lineAnim.current?.animation?.cancel?.(), [])
+      if (shown === null) return null
+      const left = undoLeft(startedAt.current, Date.now())
+      return h(
+        'div',
+        { ref, 'data-prefill-preset-undo-bar': '', role: 'status', style: { position: 'absolute', zIndex: 5, left: 12, right: 12, bottom: 12, overflow: 'hidden', ...V.row, ...V.callout('brand'), maxWidth: 'none', flexWrap: 'wrap', paddingBottom: 9, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 6px 20px rgba(0,0,0,.14), 0 1px 4px rgba(0,0,0,.06)' } },
+        h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, text),
+        h('span', { 'data-prefill-undo-seconds': String(left), style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' } }, String(secondsLabel ?? '{n}s').replace('{n}', String(left))),
+        button,
+        h('span', { ref: lineRef, 'aria-hidden': 'true', 'data-prefill-undo-countdown': '', style: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'var(--pf-system)', opacity: 0.55, transformOrigin: 'left center' } }),
+      )
     }
 
     /**
@@ -1583,6 +1636,7 @@ window.__ModuleLoader__.load({
       chipOpenFailed: '开启失败 · 再点一次重试',
       motionTitle: '动效',
       linkedChanged: '连带改了：{list}',
+      undoSecondsLeft: '{n} 秒',
       motionFull: '完整',
       motionLite: '简洁',
       motionOff: '关',
@@ -1940,6 +1994,7 @@ window.__ModuleLoader__.load({
       chipOpenFailed: 'Failed · click to retry',
       motionTitle: 'Motion',
       linkedChanged: 'Also changed: {list}',
+      undoSecondsLeft: '{n}s',
       motionFull: 'Full',
       motionLite: 'Lite',
       motionOff: 'Off',
@@ -4313,7 +4368,7 @@ window.__ModuleLoader__.load({
       }, [undoSnap])
       React.useEffect(() => {
         if (presetUndo === null) return undefined
-        const timer = setTimeout(() => setPresetUndo((current) => (current === presetUndo ? null : current)), 8000)
+        const timer = setTimeout(() => setPresetUndo((current) => (current === presetUndo ? null : current)), UNDO_MS)
         return () => clearTimeout(timer)
       }, [presetUndo])
       React.useEffect(() => setPresetUndo(null), [sessionId])
@@ -4387,7 +4442,11 @@ window.__ModuleLoader__.load({
       /** 套预设一次只跑一个（不管点的是哪张）。 */
       const actApply = (key, fn) => {
         if (busyCtl.anyPending('apply:')) return
-        act(`apply:${key}`, t('errOpApply'), fn)
+        // P1-4：套上了就收起菜单（不再盖住右边、挡住刚变了的内容）；失败留着菜单，方便再点一次。
+        act(`apply:${key}`, t('errOpApply'), async () => {
+          await fn()
+          setMenu((current) => (current === 'presets' ? '' : current))
+        })
       }
       const flash = React.useCallback((text) => {
         // 触发点：最近一次在卡片里按下 / 按键的控件（4 秒内、还在卡片里）。
@@ -8602,6 +8661,8 @@ window.__ModuleLoader__.load({
             'aria-label': t('dockTitle'),
             style: {
               ...COLOR_VARS,
+              // 撤销条（P1-4）叠在卡片底部时，没有触发点的 toast 退到它上面（不然两条叠在一起，实测踩到）。
+              '--pf-toast-bottom': presetUndo !== null ? '64px' : '10px',
               // 钉住缩成标记时：淡出、不接收点击（下面的对话照常可点）。
               // 档位：off 直接切；简洁只淡出不位移。
               opacity: shrunk ? 0 : 1,
@@ -8636,21 +8697,20 @@ window.__ModuleLoader__.load({
             },
           },
           header,
-          presetUndo === null
-            ? null
-            : h(
-                'div',
-                { 'data-prefill-preset-undo-bar': '', style: { ...V.row, ...V.callout('brand'), margin: '8px 12px 0', flexWrap: 'wrap' } },
-                h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, t('presetUndoBar')),
-                h(
-                  'button',
-                  { type: 'button', style: { ...V.btn, ...(busyCtl.shown('undo') ? BUSY_LOOK : {}) }, 'data-prefill-preset-undo': '', ...busyAttrs(busyCtl, 'undo'), onClick: () => act('undo', t('errOpUndo'), undoClearPreset) },
-                  busyCtl.shown('undo') ? h(Spinner, { key: 'spin' }) : null,
-                  busyCtl.shown('undo') ? ' ' : null,
-                  t('undo'),
-                ),
-              ),
           h('div', { style: { display: 'flex', flexDirection: narrow ? 'column' : 'row', minHeight: 0, flex: '1 1 auto' } }, nav, main),
+          // P1-4：撤销条从底部滑入、叠在内容上（不占文档流 ⇒ 内容不被推开），带倒计时线和剩余秒数。
+          h(UndoBar, {
+            token: presetUndo,
+            text: t('presetUndoBar'),
+            secondsLabel: t('undoSecondsLeft'),
+            button: h(
+              'button',
+              { type: 'button', style: { ...V.btn, ...(busyCtl.shown('undo') ? BUSY_LOOK : {}) }, 'data-prefill-preset-undo': '', ...busyAttrs(busyCtl, 'undo'), onClick: () => act('undo', t('errOpUndo'), undoClearPreset) },
+              busyCtl.shown('undo') ? h(Spinner, { key: 'spin' }) : null,
+              busyCtl.shown('undo') ? ' ' : null,
+              t('undo'),
+            ),
+          }),
           menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : menu === 'more' ? moreMenu : null,
           error?.open ? errorPanel : null,
           // P1-8：toast 贴着触发点、不接收点击；读屏念的是下面常驻的 polite 区域。

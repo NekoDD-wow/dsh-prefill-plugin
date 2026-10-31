@@ -258,3 +258,51 @@ test('面板接线（P0-4）：渲染时算签名、提交后按原因提示；�
   assert.match(src, /h\(OffNote, \{ id: props\.id, off: props\.off === true/)
   assert.equal(src.match(/\blinkedChanged:/g)?.length, 2, '中英文案')
 })
+
+// ── 2. P1-4 套用后收菜单；撤销条底部滑入 + 8s 倒计时 ─────────────────────────
+
+test('撤销条倒计时：8 秒，剩余秒数向上取整到 0；倒计时线从满宽缩到 0（只动 transform）', () => {
+  const { M } = load()
+  assert.equal(M.UNDO_MS, 8000)
+  assert.equal(M.undoLeft(1000, 1000), 8)
+  assert.equal(M.undoLeft(1000, 1001), 8)
+  assert.equal(M.undoLeft(1000, 2000), 7)
+  assert.equal(M.undoLeft(1000, 8999), 1)
+  assert.equal(M.undoLeft(1000, 9000), 0)
+  assert.equal(M.undoLeft(1000, 20000), 0)
+  assert.deepEqual([...props(M.UNDO_COUNTDOWN)], ['transform'])
+  assert.deepEqual([...props(M.UNDO_ENTER)].sort(), ['opacity', 'transform'])
+  // 完整：滑入 + 倒计时线（装饰类，但 cue: 'press' ⇒ 流式中也照走）；简洁：只淡入、没有线；off：都不动
+  M.setMotionPref('full')
+  const root = fakeRoot('stream')
+  const line = fakeEl(root)
+  assert.ok(M.play(line, M.UNDO_COUNTDOWN, { duration: 8000, easing: 'linear', fill: 'forwards', kind: 'decor', cue: 'press' }), '倒计时线不排队')
+  M.setMotionPref('lite')
+  const bar = fakeEl()
+  const enter = M.play(bar, M.UNDO_ENTER, { duration: 180 })
+  assert.deepEqual([...props(enter.frames)], ['opacity'])
+  assert.equal(M.play(fakeEl(), M.UNDO_COUNTDOWN, { duration: 8000, kind: 'decor', cue: 'press' }), null)
+  M.setMotionPref('off')
+  const b2 = fakeEl()
+  assert.equal(M.play(b2, M.UNDO_ENTER, { duration: 180 }), null)
+  assert.equal(b2.calls.length, 0)
+})
+
+test('面板接线（P1-4）：套用成功后收起预设菜单；撤销条绝对定位在卡片底部（不占文档流），8s 用同一个常量', () => {
+  assert.match(dockSrc, /act\(`apply:\$\{key\}`, t\('errOpApply'\), async \(\) => \{\s+await fn\(\)\s+setMenu\(\(current\) => \(current === 'presets' \? '' : current\)\)/)
+  assert.match(dockSrc, /h\(UndoBar, \{\s+token: presetUndo,/)
+  assert.match(dockSrc, /setPresetUndo\(\(current\) => \(current === presetUndo \? null : current\)\), UNDO_MS\)/)
+  const bar = cut('    function UndoBar(props) {', '    const ICONS = ')
+  assert.match(bar, /position: 'absolute', zIndex: 5, left: 12, right: 12, bottom: 12/)
+  assert.match(bar, /usePresence\(token, UNDO_ENTER, UNDO_EXIT\)/)
+  assert.match(bar, /play\(lineRef\.current, UNDO_COUNTDOWN, \{ duration: Math\.max\(0, startedAt\.current \+ UNDO_MS - Date\.now\(\)\), easing: 'linear', fill: 'forwards', kind: 'decor', cue: 'press' \}\)/)
+  // 倒计时线要等条真的画出来（presence 第二次提交）才开始；只看 token 会在第一次提交时拿到 null（实测踩到）
+  assert.match(bar, /if \(!token \|\| !visible \|\| lineAnim\.current\?\.token === token\) return/)
+  assert.match(bar, /\}, \[token, visible\]\)/)
+  assert.match(bar, /data-prefill-undo-seconds/)
+  // 撤销条在底部时，回落到底部居中的 toast 让到它上面（实测两条叠在一起）
+  assert.match(dockSrc, /'--pf-toast-bottom': presetUndo !== null \? '64px' : '10px'/)
+  assert.match(src, /bottom: 'var\(--pf-toast-bottom, 10px\)'/)
+  // 撤销条不再插在头部下面（旧写法 margin: '8px 12px 0'）
+  assert.doesNotMatch(dockSrc, /'data-prefill-preset-undo-bar': '', style: \{ \.\.\.V\.row, \.\.\.V\.callout\('brand'\), margin: '8px 12px 0'/)
+})
