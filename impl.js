@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { zstdDecompressSync } from 'node:zlib'
-import { builtinPreset, builtinSummaries, everyTurnBlocks, everyTurnPresets, everyTurnTowers } from './builtin-presets.js'
+import { builtinPreset, builtinSummaries, everyTurnBlocks, everyTurnPresets, everyTurnTowers, migrateLegacyCwdOverrides, migrateLegacyCwdPrompt } from './builtin-presets.js'
 import { blockFromPreset, compileBench, makeBlock, normalizeChecks } from './blocks.js'
 import {
   MAX_QUEUE,
@@ -170,7 +170,36 @@ export function normalizeState(raw) {
     ui: sanitizeUi(source.ui),
   })
   if (out.ui === undefined) delete out.ui
-  return out
+  return migrateLegacyCwdSandbox(out)
+}
+
+/**
+ * 旧版内置「中文版官方系统提示」残留的 `你的工作目录是 {{cwd}}。`（见 builtin-presets.js 的 migrateLegacyCwdPrompt）：
+ * 读取时把规则表里 section 改写规则的这一行换成新版文案，否则整段 interpolate:false、`{{model}}` 也不替换。
+ * 只动 `match.section` 的 rewrite 规则（系统提示段）；没变就返回原对象。旧字段镜像由 writeState 按迁移后的表重推。
+ */
+function migrateLegacyCwdSandbox(state) {
+  const table = state?.sandbox
+  if (table === null || typeof table !== 'object') return state
+  let changed = false
+  const nextTable = {}
+  for (const [key, scope] of Object.entries(table)) {
+    if (!Array.isArray(scope?.rules)) {
+      nextTable[key] = scope
+      continue
+    }
+    let scopeChanged = false
+    const rules = scope.rules.map((rule) => {
+      if (rule?.action !== 'rewrite' || typeof rule?.match?.section !== 'string' || typeof rule.text !== 'string') return rule
+      const text = migrateLegacyCwdPrompt(rule.text)
+      if (text === rule.text) return rule
+      scopeChanged = true
+      return { ...rule, text }
+    })
+    nextTable[key] = scopeChanged ? { ...scope, rules } : scope
+    if (scopeChanged) changed = true
+  }
+  return changed ? { ...state, sandbox: nextTable } : state
 }
 
 let cache = { state: null, mtimeMs: -1 }
@@ -302,7 +331,15 @@ function packFileFor(workspace) {
 function readPacks(workspace) {
   try {
     const raw = JSON.parse(readFileSync(packFileFor(workspace), 'utf8'))
-    return Array.isArray(raw?.packs) ? raw.packs.filter((pack) => typeof pack?.name === 'string') : []
+    // 旧预设里存着旧版内置「中文版官方系统提示」（含 `{{cwd}}` 那一行）：读出时换成新版文案，套用 / 导出拿到的都是新文本。
+    return Array.isArray(raw?.packs)
+      ? raw.packs
+          .filter((pack) => typeof pack?.name === 'string')
+          .map((pack) => {
+            const overrides = migrateLegacyCwdOverrides(pack.overrides)
+            return overrides === pack.overrides ? pack : { ...pack, overrides }
+          })
+      : []
   } catch {
     return []
   }
@@ -329,7 +366,8 @@ function sanitizeOverrides(raw) {
     }
     out[group] = table
   }
-  return out
+  // 导入旧版导出的 JSON / 旧面板直接存：同样把旧内置的 `{{cwd}}` 那一行换掉。
+  return migrateLegacyCwdOverrides(out)
 }
 
 /** 校验"工具放行清单"：`['read','edit']`（只放这些）或 `[]`（一个都不给）；`null`/缺省 = 全部放行。 */
