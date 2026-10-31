@@ -58,7 +58,7 @@ export function makeHarness(envelope, { sid: SID, sources, routes = {} }) {
     'play',
     'motionLevel',
     'MOTION',
-    `${feedbackSrc}\nconst busyCtl = createBusy()\nconst useBusy = () => busyCtl\nconst Spinner = () => null\nconst BUSY_LOOK = {}\n// 动效第 6 步：二次确认按钮的替身（动效件不在这一段里；只关心属性和点击）。\nconst ConfirmButton = ({ armed, children, ...rest }) => h('button', { ...rest, 'data-prefill-armed': armed ? 'true' : undefined }, ...[children].flat())\nconst CONFIRM_MS = 4000\n${panelSrc}\nreturn { SandboxSection, sandboxSummary, SBX_TEXT, busyCtl, createBusy }`,
+    `${feedbackSrc}\nconst busyCtl = createBusy()\nconst useBusy = () => busyCtl\nconst Spinner = () => null\nconst BUSY_LOOK = {}\n// 动效第 6 步：二次确认按钮的替身（动效件不在这一段里；只关心属性和点击）。\nconst ConfirmButton = ({ armed, children, ...rest }) => h('button', { ...rest, 'data-prefill-armed': armed ? 'true' : undefined }, ...[children].flat())\nconst CONFIRM_MS = 4000\n// 弹窗的替身：open 才渲染面板（带上调用方给的 data-* 属性），入退场 / 焦点 / Esc 不在这里测（tests/motion-dialog.test.mjs）。\nconst Modal = ({ open, label, panelProps, children }) => (open ? h('div', { 'data-prefill-dialog-layer': 'open' }, h('div', { ...panelProps, role: 'dialog', 'aria-label': label }, ...[children].flat())) : null)\n${panelSrc}\nreturn { SandboxSection, sandboxSummary, SBX_TEXT, busyCtl, createBusy }`,
   )
   class FakeCustomEvent {
     constructor(type, init) {

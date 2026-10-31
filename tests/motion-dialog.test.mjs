@@ -268,3 +268,127 @@ test('[P1-6] 接线：七处二次确认都换成 ConfirmButton；复原计时�
   assert.match(injectSrc, /setTimeout\(\(\) => setConfirmClear\(false\), CONFIRM_MS\)/)
   assert.ok(!/confirming === [^?]+\? 'var\(--dsw-alias-state-warn-primary\)'/.test(dockSrc), '还有只换颜色的确认按钮')
 })
+
+// ── P1-7 弹窗：遮罩和面板入场 / 退场 ─────────────────────────────────
+
+test('[P1-7] DIALOG_FX：完整档遮罩淡入 + 面板 translateY/scale 入场；减少动效两层都只剩 opacity；off 不调 animate', () => {
+  const { DIALOG_FX, MOTION, setMotionPref } = load()
+  const scrim = fakeEl()
+  const panel = fakeEl()
+  DIALOG_FX.enter(scrim, panel)
+  assert.deepEqual([...props(scrim.calls[0].frames)], ['opacity'])
+  assert.match(panel.calls[0].frames[0].transform, /translateY\(8px\) scale\(\.98\)/)
+  assert.equal(panel.calls[0].timing.duration, MOTION.base)
+  setMotionPref('lite')
+  const s2 = fakeEl()
+  const p2 = fakeEl()
+  DIALOG_FX.enter(s2, p2)
+  DIALOG_FX.exit(s2, p2, () => {})
+  for (const call of [...s2.calls, ...p2.calls]) assert.deepEqual([...props(call.frames)], ['opacity'])
+  assert.equal(p2.calls.length, 2)
+  setMotionPref('off')
+  const s3 = fakeEl()
+  const p3 = fakeEl()
+  let gone = 0
+  DIALOG_FX.enter(s3, p3)
+  DIALOG_FX.exit(s3, p3, () => (gone += 1))
+  assert.equal(s3.calls.length + p3.calls.length, 0)
+  assert.equal(gone, 1, 'off：当场卸载')
+})
+
+test('[P1-7] DIALOG_FX.exit：两层都落定才卸载、出场比入场快；被 cancel 也卸载；abort 取消两段动画且不卸载', async () => {
+  const { DIALOG_FX, MOTION } = load()
+  const scrim = fakeEl()
+  const panel = fakeEl()
+  let gone = 0
+  DIALOG_FX.exit(scrim, panel, () => (gone += 1))
+  assert.equal(panel.calls[0].timing.duration, MOTION.fast)
+  assert.ok(MOTION.fast < MOTION.base)
+  assert.equal(panel.calls[0].timing.fill, 'forwards')
+  scrim.calls[0].finish()
+  await tick()
+  assert.equal(gone, 0, '只落定了一层')
+  panel.calls[0].finish()
+  await tick()
+  assert.equal(gone, 1)
+  const s2 = fakeEl()
+  const p2 = fakeEl()
+  let gone2 = 0
+  DIALOG_FX.exit(s2, p2, () => (gone2 += 1))
+  p2.calls[0].cancel()
+  await tick()
+  assert.equal(gone2, 1, '被打断（cancel）也要卸载，不留透明残影')
+  const s3 = fakeEl()
+  const p3 = fakeEl()
+  let gone3 = 0
+  const ctl = DIALOG_FX.exit(s3, p3, () => (gone3 += 1))
+  ctl.abort()
+  await tick()
+  assert.equal(gone3, 0)
+  assert.equal(s3.calls[0].cancelled, 1)
+  assert.equal(p3.calls[0].cancelled, 1, 'fill forwards 一并撤掉')
+})
+
+const modalProps = (open, extra = {}) => ({ open, onClose: () => {}, label: '溯源', panelProps: { 'data-prefill-test-panel': '' }, children: open ? ['内容'] : null, ...extra })
+
+test('[P1-7] Modal：打开播入场（遮罩 + 面板）；关闭先播退场，期间 pointer-events: none、aria-hidden、保留最后一份内容、重复关闭被忽略；落定后卸载', async () => {
+  const els = {}
+  let closes = 0
+  const m = mount('Modal', modalProps(false), { els })
+  assert.equal(typeof m.made.Modal, 'function', '没有 Modal')
+  assert.equal(m.tree, null)
+  let tree = m.render(modalProps(true, { onClose: () => (closes += 1) }))
+  assert.equal(tree.props['data-prefill-dialog-layer'], 'open')
+  const panel = find(tree, (p) => p.role === 'dialog')[0]
+  assert.equal(panel.props['aria-modal'], 'true')
+  assert.equal(panel.props['aria-label'], '溯源')
+  assert.equal(els['data-prefill-dialog-scrim'].calls.length, 1, '遮罩淡入')
+  assert.equal(els['data-prefill-test-panel'].calls.length, 1, '面板入场')
+  // 点遮罩（外层）= onClose；点面板不冒泡
+  tree.props.onClick()
+  assert.equal(closes, 1)
+  let stopped = 0
+  panel.props.onClick({ stopPropagation: () => (stopped += 1) })
+  assert.equal(stopped, 1)
+  // 调用方清空状态 ⇒ open: false、没有内容
+  tree = m.render(modalProps(false, { onClose: () => (closes += 1), label: undefined, panelProps: undefined }))
+  assert.equal(tree.props['data-prefill-dialog-layer'], 'closing')
+  assert.equal(tree.props.style.pointerEvents, 'none')
+  assert.equal(tree.props['aria-hidden'], 'true')
+  assert.match(JSON.stringify(tree), /内容/, '退场中还显示关闭前的内容')
+  assert.equal(find(tree, (p) => 'data-prefill-test-panel' in p).length, 1, '面板属性也保留')
+  tree.props.onClick()
+  assert.equal(closes, 1, '退场中再点遮罩被忽略')
+  const exitPanel = els['data-prefill-test-panel'].calls[1]
+  assert.equal(els['data-prefill-test-panel'].calls[0].cancelled, 1, '入场被退场打断：先取消入场')
+  els['data-prefill-dialog-scrim'].calls[1].finish()
+  exitPanel.finish()
+  await tick()
+  assert.equal(m.rerender(), null, '退场落定后卸载')
+})
+
+test('[P1-7] Modal：退场中又打开 ⇒ 取消退场（不留透明）、重播入场、不卸载；off 档关闭当场卸载', async () => {
+  const els = {}
+  const m = mount('Modal', modalProps(true), { els })
+  m.render(modalProps(false))
+  const exit = els['data-prefill-test-panel'].calls.at(-1)
+  const tree = m.render(modalProps(true))
+  assert.equal(tree.props['data-prefill-dialog-layer'], 'open')
+  assert.equal(exit.cancelled, 1)
+  assert.equal(els['data-prefill-dialog-scrim'].calls.at(-2).cancelled, 1)
+  assert.deepEqual(els['data-prefill-test-panel'].calls.at(-1).frames, m.mod.DIALOG_ENTER)
+  await tick()
+  assert.notEqual(m.rerender(), null, '被取消的退场不能把它卸掉')
+  const offEls = {}
+  const o = mount('Modal', modalProps(true), { els: offEls })
+  o.made.setMotionPref('off')
+  assert.equal(o.render(modalProps(false)), null)
+})
+
+test('[P1-7] 接线：溯源 / 事后改写弹窗走 Modal；关掉时同一位置留 open: false 的 Modal 播退场；不再自己画 fixed 遮罩', () => {
+  assert.match(sandboxSrc, /h\(\s*Modal,\s*\{ open: true, onClose: \(\) => setTrace\(null\), label: title, panelProps: \{ 'data-prefill-sbx-trace-dialog'/)
+  assert.match(sandboxSrc, /h\(\s*Modal,\s*\{ open: true, onClose: \(\) => setSurface\(null\), label: title, panelProps: \{ 'data-prefill-sbx-surface-dialog'/)
+  assert.match(sandboxSrc, /trace !== null \? sbxTraceDialog\(\) : h\(Modal, \{ open: false \}\)/)
+  assert.match(sandboxSrc, /surface !== null \? sbxSurfaceDialog\(\) : h\(Modal, \{ open: false \}\)/)
+  assert.ok(!/position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba\(0,0,0,0\.28\)'/.test(sandboxSrc), '还有旧的遮罩')
+})

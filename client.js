@@ -778,6 +778,46 @@ window.__ModuleLoader__.load({
         return play(line, CONFIRM_COUNTDOWN, { duration: Math.max(0, ms), easing: 'linear', fill: 'forwards', kind: 'decor', cue: 'press' })
       },
     }
+    /**
+     * 弹窗（P1-7）：遮罩淡入 + 面板 opacity / translateY(8px) scale(.98) 入场（base / ease），退场反向（fast / easeOut，fill forwards）。
+     * 遮罩和面板是兄弟层，各动各的（不再一起被父层的透明度乘一遍）。减少动效 = 两层都只淡入淡出；off = 直接出现 / 消失。
+     */
+    const SCRIM_ENTER = [{ opacity: 0 }, { opacity: 1 }]
+    const SCRIM_EXIT = [{ opacity: 1 }, { opacity: 0 }]
+    const DIALOG_ENTER = [{ opacity: 0, transform: 'translateY(8px) scale(.98)' }, { opacity: 1, transform: 'none' }]
+    const DIALOG_EXIT = [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(8px) scale(.98)' }]
+    const DIALOG_FX = {
+      /** 入场：返回 [遮罩动画, 面板动画]（off 都是 null）。 */
+      enter(scrim, panel) {
+        return [play(scrim, SCRIM_ENTER, { duration: MOTION.base, easing: MOTION.ease }), play(panel, DIALOG_ENTER, { duration: MOTION.base, easing: MOTION.ease })]
+      },
+      /**
+       * 退场：两层一起淡出，**都**落定（或任一被 cancel、或兜底计时）后 unmount。返回 presence 的 { abort }：
+       * 退场中又要打开 ⇒ abort 取消两段动画（fill forwards 一并撤掉，不留透明的残影）、不卸载。
+       */
+      exit(scrim, panel, unmount) {
+        const live = [
+          play(scrim, SCRIM_EXIT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' }),
+          play(panel, DIALOG_EXIT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' }),
+        ].filter((animation) => animation !== null)
+        const both =
+          live.length === 0
+            ? null
+            : {
+                finished: Promise.all(live.map((animation) => animation.finished)),
+                cancel() {
+                  for (const animation of live) {
+                    try {
+                      animation.cancel()
+                    } catch {
+                      // 已经结束。
+                    }
+                  }
+                },
+              }
+        return presenceExit(both, unmount, MOTION.fast + 300)
+      },
+    }
     // </dialog>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -990,6 +1030,88 @@ window.__ModuleLoader__.load({
         on
           ? h('span', { ref: lineRef, 'aria-hidden': 'true', 'data-prefill-confirm-countdown': '', style: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: CONFIRM_TONE, opacity: 0.7, transformOrigin: 'left center', pointerEvents: 'none' } })
           : null,
+      )
+    }
+
+    /**
+     * 弹窗（P1-7）：open 为真就显示（遮罩 + 面板入场），变假就退场，退场动画结束（或被打断、或兜底计时）后才卸载。
+     *   - 退场期间：整层 pointer-events: none（下面照常可点，不留不可点的残影）、aria-hidden；点遮罩 / 按钮的重复关闭被忽略；
+     *   - 退场中又打开：取消退场（含 fill forwards）接着显示，重播入场；
+     *   - 退场时显示的是关闭前最后一份内容（调用方此时已经把状态清空）。
+     * 点遮罩 = onClose；点面板不冒泡。
+     */
+    function Modal(props) {
+      const { open, onClose, label, panelProps, children } = props
+      const isOpen = open === true
+      const [phase, setPhase] = React.useState(isOpen ? 'open' : 'closed')
+      const [seq, setSeq] = React.useState(isOpen ? 1 : 0)
+      const scrimRef = React.useRef(null)
+      const panelRef = React.useRef(null)
+      const exitCtl = React.useRef(null)
+      const enterAnims = React.useRef([])
+      // 退场时调用方已经把状态清空（open: false、没有内容）：显示关闭前最后一份内容 / 标签 / 面板属性。
+      const snap = React.useRef({ children, label, panelProps })
+      if (isOpen) snap.current = { children, label, panelProps }
+      React.useLayoutEffect(() => {
+        if (isOpen) {
+          if (phase === 'open') return
+          exitCtl.current?.abort()
+          exitCtl.current = null
+          setPhase('open')
+          setSeq((value) => value + 1)
+          return
+        }
+        if (phase !== 'open' || exitCtl.current !== null) return
+        for (const animation of enterAnims.current) animation?.cancel?.()
+        enterAnims.current = []
+        setPhase('closing')
+        exitCtl.current = DIALOG_FX.exit(scrimRef.current, panelRef.current, () => {
+          exitCtl.current = null
+          setPhase('closed')
+        })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [isOpen])
+      React.useLayoutEffect(() => {
+        if (seq === 0) return
+        enterAnims.current = DIALOG_FX.enter(scrimRef.current, panelRef.current)
+      }, [seq])
+      React.useEffect(
+        () => () => {
+          exitCtl.current?.abort()
+          for (const animation of enterAnims.current) animation?.cancel?.()
+        },
+        [],
+      )
+      if (phase === 'closed') return null
+      const closing = phase === 'closing'
+      const close = () => {
+        if (closing || !isOpen) return
+        onClose?.()
+      }
+      return h(
+        'div',
+        {
+          'data-prefill-dialog-layer': closing ? 'closing' : 'open',
+          'aria-hidden': closing ? 'true' : undefined,
+          onClick: close,
+          style: { position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '8vh 16px', pointerEvents: closing ? 'none' : 'auto' },
+        },
+        h('div', { ref: scrimRef, 'aria-hidden': 'true', 'data-prefill-dialog-scrim': '', style: { position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.28)' } }),
+        h(
+          'div',
+          {
+            ...snap.current.panelProps,
+            ref: panelRef,
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': snap.current.label,
+            'data-prefill-dialog-panel': '',
+            'data-closing': closing ? 'true' : undefined,
+            onClick: (event) => event.stopPropagation(),
+            style: { position: 'relative', ...snap.current.panelProps?.style },
+          },
+          snap.current.children,
+        ),
       )
     }
 
@@ -9666,6 +9788,8 @@ window.__ModuleLoader__.load({
     }
 
     const SBX_SURFACE_RISKS = ['log', 'conflict', 'cache', 'internal']
+    /** 溯源 / 事后改写弹窗的面板样式（遮罩和入退场在 Modal 里）。 */
+    const SBX_DIALOG_PANEL = (width) => ({ width: `min(${width}px, 100%)`, maxHeight: '80vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 14, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 16px 40px rgba(0,0,0,0.22)', boxSizing: 'border-box' })
     const SBX_RED = 'var(--dsw-alias-state-error-primary, #e5484d)'
     const SBX_GREEN = 'var(--pf-ai)'
     const SBX_PURPLE = 'var(--pf-system)'
@@ -10291,13 +10415,14 @@ window.__ModuleLoader__.load({
         const pack = result?.pack
         const single = result?.single
         const rejected = pack?.rejected?.length ?? 0
+        const title = (ai && ai !== 'busy' && ai.ok ? t('sbxTraceAiTitle') : t('sbxTraceTitle')).replace('{name}', trace.name)
         return h(
-          'div',
-          { style: { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.28)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '8vh 16px' }, onClick: () => setTrace(null) },
+          Modal,
+          { open: true, onClose: () => setTrace(null), label: title, panelProps: { 'data-prefill-sbx-trace-dialog': `${trace.group}:${trace.name}`, style: SBX_DIALOG_PANEL(620) } },
           h(
-            'div',
-            { role: 'dialog', 'data-prefill-sbx-trace-dialog': `${trace.group}:${trace.name}`, onClick: (event) => event.stopPropagation(), style: { width: 'min(620px, 100%)', maxHeight: '80vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 14, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 16px 40px rgba(0,0,0,0.22)' } },
-            h('b', { style: { fontSize: 15 } }, (ai && ai !== 'busy' && ai.ok ? t('sbxTraceAiTitle') : t('sbxTraceTitle')).replace('{name}', trace.name)),
+            React.Fragment,
+            null,
+            h('b', { style: { fontSize: 15 } }, title),
             h('div', { style: V.sectionMeta }, t('sbxTraceDesc')),
             trace.busy && result === null ? h('div', { style: V.hint }, t('sbxTraceBusy')) : null,
             result && !top ? h('div', { style: V.callout('warn') }, t('sbxTraceNone').replace('{p}', String(result.scanned?.packages ?? 0)).replace('{f}', String(result.scanned?.files ?? 0))) : null,
@@ -10346,13 +10471,14 @@ window.__ModuleLoader__.load({
         const canGo = !surface.busy && list?.ready === true && picked !== undefined && allRisks && !(userType && surface.text === '')
         const result = surface.result
         const toggleRisk = (risk) => setSurface((prev) => ({ ...prev, risks: (prev.risks ?? []).includes(risk) ? prev.risks.filter((entry) => entry !== risk) : [...(prev.risks ?? []), risk] }))
+        const title = surface.name ? t('sbxSurfaceTitle').replace('{name}', surface.name) : t('sbxSurfaceTitleAll')
         return h(
-          'div',
-          { style: { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.28)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '8vh 16px' }, onClick: () => setSurface(null) },
+          Modal,
+          { open: true, onClose: () => setSurface(null), label: title, panelProps: { 'data-prefill-sbx-surface-dialog': surface.name || '*', style: SBX_DIALOG_PANEL(660) } },
           h(
-            'div',
-            { role: 'dialog', 'data-prefill-sbx-surface-dialog': surface.name || '*', onClick: (event) => event.stopPropagation(), style: { width: 'min(660px, 100%)', maxHeight: '80vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 14, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 16px 40px rgba(0,0,0,0.22)' } },
-            h('b', { style: { fontSize: 15 } }, surface.name ? t('sbxSurfaceTitle').replace('{name}', surface.name) : t('sbxSurfaceTitleAll')),
+            React.Fragment,
+            null,
+            h('b', { style: { fontSize: 15 } }, title),
             h('div', { style: V.sectionMeta }, t('sbxSurfaceDesc')),
             surface.busy && list === null ? h('div', { style: V.hint }, t('sbxSurfaceBusy')) : null,
             list && list.ready === false ? h('div', { style: V.callout('warn'), 'data-prefill-sbx-surface-notready': list.reason ?? '' }, t('sbxSurfaceNotReady').replace('{r}', surfaceReason(list.reason))) : null,
@@ -10438,8 +10564,9 @@ window.__ModuleLoader__.load({
         auditMore,
         surfaceLine,
         attachFor !== null ? sbxAttachBox() : null,
-        trace !== null ? sbxTraceDialog() : null,
-        surface !== null ? sbxSurfaceDialog() : null,
+        // 弹窗关掉时仍留一个 open: false 的 Modal 在同一位置：同一实例接着播退场（内容用它最后一份快照）。
+        trace !== null ? sbxTraceDialog() : h(Modal, { open: false }),
+        surface !== null ? sbxSurfaceDialog() : h(Modal, { open: false }),
         extras?.dialogs ?? null,
         h(
           'div',
