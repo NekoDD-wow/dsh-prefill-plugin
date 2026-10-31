@@ -8,6 +8,7 @@
  * @module @local/dsh-prefill/sandbox-view
  */
 
+import { KNOWN_MESSAGE_KINDS } from './injection-audit.js'
 import { decide, resolveSandbox, sandboxOf } from './sandbox.js'
 import { PACK_ACTIONS, memberKey, packCatalog, packsOf } from './sandbox-packs.js'
 import { PROTOCOL_KINDS } from './sandbox.js'
@@ -77,7 +78,9 @@ function handlingOf(group, name, verdict, level, blockable) {
  * ```
  */
 export function sandboxView(state, sessionId, { injections, tools, audit } = {}) {
-  const known = { sections: strings(injections?.catalog?.sections), contexts: strings(injections?.catalog?.contexts), messages: [] }
+  // 三个已知清单必须和闸门（gate.js 的 knownInjectionNames → injection-audit）同源，
+  // 否则 DSH 自己按规矩产生的消息来源（model-notice 等）会被视图误判成「未归属 / 被拦」。
+  const known = { sections: strings(injections?.catalog?.sections), contexts: strings(injections?.catalog?.contexts), messages: [...KNOWN_MESSAGE_KINDS] }
   const options = { known }
   const resolved = resolveSandbox(state, sessionId)
   const table = sandboxOf(state)
@@ -143,7 +146,7 @@ export function sandboxView(state, sessionId, { injections, tools, audit } = {})
       if (packsOf(state, target).length > 0) continue
       if (group === 'messages' && PROTOCOL_KINDS.includes(name)) continue
       // 全局 prompt 层登记过的段 / 上下文是 DSH 内容（受控档放行），不算「未归属」；工具只有审计里出现过的才列。
-      if ((group === 'sections' || group === 'contexts') && known[group].includes(name)) continue
+      if (Array.isArray(known[group]) && known[group].includes(name)) continue
       if (group === 'tools') continue
       const row = auditIndex.get(`${group}:${name}`)
       const verdict = verdictOf(group, name)

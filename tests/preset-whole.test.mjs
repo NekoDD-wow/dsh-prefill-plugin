@@ -31,6 +31,24 @@ test('面板：挂在预设下的各项都在悬浮卡片里，保存不再有�
   assert.match(apply, /applyLayered\(\{ card: got\?\.layer \?\? null, pack,/)
 })
 
+test('保存为预设 / 导出带上工作台 bench / benchTowers（#24）', () => {
+  const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const start = src.indexOf('      const everyTurnStored =')
+  const end = src.indexOf('      // 约束承接', start)
+  assert.ok(start > 0 && end > start, '找不到 everyTurnStored 段')
+  const expr = src.slice(start + '      const everyTurnStored ='.length, end).trim()
+  const build = new Function('ownEveryTurn', 'return (' + expr + ')')
+  const bench = [{ key: 'k1', ref: 'zh', name: '中文思考', text: '提醒', checks: ['zh'] }]
+  const benchTowers = { t1: { ref: 't1', name: '塔', collapsed: false } }
+  const got = build({ text: '提醒', firstText: '', checks: ['zh'], mode: 'always', bench, benchTowers })
+  assert.deepEqual(got.bench, bench)
+  assert.deepEqual(got.benchTowers, benchTowers)
+  // 没有工作台（旧数据）时不写这两个字段。
+  const plain = build({ text: '提醒', firstText: '', checks: [], mode: 'always' })
+  assert.equal('bench' in plain, false)
+  assert.equal('benchTowers' in plain, false)
+})
+
 test('导出文件和「保存为预设」带同样的字段（角色卡 / 每轮注入 / 故事记忆摘要）', () => {
   const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   const from = src.indexOf('const exportFile = async')

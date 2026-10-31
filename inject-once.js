@@ -311,11 +311,18 @@ function legacyBlock(text) {
   return { key: 'legacy-inject', ref: LEGACY_BLOCK_REF, name: LEGACY_BLOCK_NAME, icon: '', first: '', text, checks: [], edited: false, priority: false, builtin: false }
 }
 
+/** 迁移工作台时的唯一 key：旧实现没传 makeKey，塔里展开出的多块会全叫 b1（改一块会同时改多块）。 */
+function migrationKeyFactory() {
+  let next = 0
+  return () => `migrated-${++next}`
+}
+
 /** 条目的工作台：有 bench 用 bench；只有旧 text/firstText ⇒ 按 blocks.js 的规则迁成工作台。 */
 function benchOf(entry, options) {
   if (entry === null || typeof entry !== 'object') return { bench: [], benchTowers: {} }
   if (Array.isArray(entry.bench) && entry.bench.length > 0) return { bench: entry.bench, benchTowers: entry.benchTowers ?? {} }
-  return migrateEveryTurn(entry, options)
+  const resolved = options !== null && typeof options === 'object' ? options : {}
+  return migrateEveryTurn(entry, { ...resolved, makeKey: typeof resolved.makeKey === 'function' ? resolved.makeKey : migrationKeyFactory() })
 }
 
 /**

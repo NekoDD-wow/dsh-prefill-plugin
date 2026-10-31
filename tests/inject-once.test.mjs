@@ -20,6 +20,8 @@ import {
 } from '../inject-once.js'
 import { historyToItems } from '../session-history.js'
 import { applyEnabled } from '../enabled.js'
+import { blockFromPreset, compileBench, flattenTower } from '../blocks.js'
+import { everyTurnBlocks, everyTurnTowers } from '../builtin-presets.js'
 
 const SID = 's1'
 
@@ -378,6 +380,22 @@ test('items 关着：旧 injects 先不迁（旧行为本来就不发），手�
   await h.runTurn('一')
   assert.equal(manualIn(h.requests[0].messages).length, 1)
   assert.deepEqual(applyEnabled(h.st).injectQueue, h.st.injectQueue)
+})
+
+test('迁移：旧 injects 追加到认得出的内置塔时，工作台每块 key 唯一（#28）', () => {
+  const blocks = everyTurnBlocks().map(blockFromPreset)
+  const towers = everyTurnTowers()
+  const flat = flattenTower(towers[0], towers, blocks)
+  const bench = flat.map((item, index) => ({ key: 't' + index, ref: item.id, name: item.name, icon: item.icon ?? '', first: item.first, text: item.text, checks: [...item.checks], edited: false, priority: false, builtin: true }))
+  const compiled = compileBench(bench)
+  const next = migrateLegacyInjects({
+    everyTurn: { [SID]: { enabled: true, text: compiled.text, firstText: compiled.firstText, checks: compiled.checks, mode: 'always' } },
+    injects: { [SID]: [{ role: 'user', text: '旧注入' }] },
+  }, { blocks, towers })
+  const got = next.everyTurn[SID].bench
+  assert.ok(got.length >= 3, '迁移出 ' + got.length + ' 块')
+  assert.equal(new Set(got.map((block) => block.key)).size, got.length, 'key 重复：' + JSON.stringify(got.map((block) => block.key)))
+  assert.equal(got.at(-1).ref, LEGACY_BLOCK_REF)
 })
 
 test('迁移：全是空行的旧条目直接删；空 injects 表也删掉', () => {

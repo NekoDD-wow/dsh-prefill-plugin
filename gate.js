@@ -824,7 +824,7 @@ function knownInjectionNames(rootCtx) {
 }
 
 /** 装配观察者里调用：审计作用域内注册的段 / 上下文，并按名阻断。返回过滤后的装配结果。 */
-function applyAssemblyBlocks(api, id, scope, result, latch) {
+export function applyAssemblyBlocks(api, id, scope, result, latch) {
   if (typeof id !== 'string') return result
   try {
     // 只记**真会进模型**的：段被本插件的 complete 段整份顶掉 / 上下文被 suppress 时，装配里列着也不算。
@@ -837,7 +837,8 @@ function applyAssemblyBlocks(api, id, scope, result, latch) {
   } catch {
     // 审计失败不影响装配。
   }
-  const blocks = blocksFor(api.readState?.(), id, knownInjectionNames(api.rootCtx))
+  // 读**折算过左栏开关**的视图：沙盒开关关掉后不能再按受控档 / 包开关 / 单条 deny 拦（与面板一致）。
+  const blocks = blocksFor(applyEnabled(api.readState?.()), id, knownInjectionNames(api.rootCtx))
   const signature = JSON.stringify([[...blocks.sections].sort(), [...blocks.contexts].sort()])
   // 会话沙盒第 2 步：受控档 / 来源包拦下的工具（Agent Teams 的工具注册在 agent 自己作用域，restrict 拦不住，只能在装配结果里滤掉）。
   const toolBlocks = blocks.tools
@@ -881,7 +882,8 @@ export function applyMessageBlocks(api, payload, incoming, decision) {
   const id = payload?.agent?.id
   if (typeof id !== 'string') return decision
   notePrestepKinds(id, incoming?.messages)
-  const blocks = blocksFor(api.readState?.(), id, knownInjectionNames(api.rootCtx))
+  // 同 applyAssemblyBlocks：左栏「会话沙盒」开关关掉后，阻断要按 applyEnabled 的视图算，不能读原始 state。
+  const blocks = blocksFor(applyEnabled(api.readState?.()), id, knownInjectionNames(api.rootCtx))
   if (!hasBlocks(blocks)) return decision
   const { decision: next, dropped } = dropBlockedMessages(decision, blocks)
   if (dropped.length > 0) api.note({ blocked: 'messages', id, dropped })
@@ -971,11 +973,13 @@ function ensureToolsBlocker(api) {
 
 /**
  * 用户文本里的 `{{…}}`：dsh 默认会做变量插值，遇到未知变量会让整份系统提示装配抛错。
- * 只有全部引用都是 loop 提供的 `model` / `cwd` 时才插值，否则原样保留（interpolate:false）。
+ * DSH 0.2.1 的 loop 只注册 `provider` / `model`（`dsh-agent-loop/lib/index.js`：ctx.systemPrompt.variable），
+ * `{{cwd}}` 不是合法变量。只有全部引用都是这两个真实变量时才插值，否则原样保留（interpolate:false）——
+ * 旧预设 / 旧改写文本里残留的 `{{cwd}}` 之类不会再把整轮请求打挂。
  */
-function interpolateOk(text) {
+export function interpolateOk(text) {
   const refs = String(text ?? '').match(/\{\{[^}]*\}\}/g) ?? []
-  return refs.every((ref) => /^\{\{\s*(model|cwd)\s*\}\}$/.test(ref))
+  return refs.every((ref) => /^\{\{\s*(provider|model)\s*\}\}$/.test(ref))
 }
 
 /** 把状态解析成该 agent 这一轮该挂的 lever 集合。 */

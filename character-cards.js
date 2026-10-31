@@ -57,6 +57,9 @@ export function parseCard(input) {
   data.name = data.name.trim()
   if (data.name === '') return undefined
   data.alternate_greetings = Array.isArray(source.alternate_greetings) ? source.alternate_greetings.filter((g) => typeof g === 'string' && g.trim() !== '') : []
+  // V3 的分组开场白：不保留的话，导入→导出 PNG 会静默丢（#30）；没有就不写字段，导出时也不硬写空数组。
+  const groupGreetings = Array.isArray(source.group_only_greetings) ? source.group_only_greetings.filter((g) => typeof g === 'string' && g.trim() !== '') : []
+  if (groupGreetings.length > 0) data.group_only_greetings = groupGreetings
   data.tags = Array.isArray(source.tags) ? source.tags.filter((tag) => typeof tag === 'string' && tag.trim() !== '').map((tag) => tag.trim()) : []
   data.character_book = source.character_book !== null && typeof source.character_book === 'object' ? source.character_book : null
   data.extensions = source.extensions !== null && typeof source.extensions === 'object' && !Array.isArray(source.extensions) ? source.extensions : {}
@@ -571,7 +574,10 @@ export function embedCardInPng(bytes, card) {
   }
   if (iend === undefined) return undefined
   const v2 = { spec: 'chara_card_v2', spec_version: '2.0', data: card.data }
-  const v3 = { spec: 'chara_card_v3', spec_version: '3.0', data: { ...card.data, group_only_greetings: card.data.group_only_greetings ?? [] } }
+  const v3data = { ...card.data }
+  // 只在卡里真有分组开场白时写；原来恒写 [] 会把「字段不存在」变成「字段为空」。
+  if (!Array.isArray(card.data.group_only_greetings) || card.data.group_only_greetings.length === 0) delete v3data.group_only_greetings
+  const v3 = { spec: 'chara_card_v3', spec_version: '3.0', data: v3data }
   parts.push(textChunk('chara', encodeBase64Utf8(JSON.stringify(v2))))
   parts.push(textChunk('ccv3', encodeBase64Utf8(JSON.stringify(v3))))
   parts.push(iend)

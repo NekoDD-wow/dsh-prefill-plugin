@@ -38,7 +38,9 @@ test('迁移：面板每次渲染用的 makeKey 是确定的，同一份旧条�
 test('打字去抖：patchBenchBlock 把 immediate 传给 setBench（文字框传 false）', () => {
   const setBench = cut('const setBench = (', '\n      }\n')
   assert.match(setBench, /immediate = true\)/)
-  assert.match(setBench, /editEveryTurn\(\{ bench: nextBench, benchTowers: keep \}, immediate\)/)
+  // #23 之后 setBench 先组 patch（删空时额外清 text/firstText），immediate 仍原样透传。
+  assert.match(setBench, /const patch = /)
+  assert.match(setBench, /editEveryTurn\(patch, immediate\)/)
   const patch = cut('const patchBenchBlock = ', '\n      const ')
   assert.match(patch, /immediate !== false\)/)
   assert.match(src, /patchBenchBlock\(block\.key, \{ text: event\.target\.value \}, false\)/)

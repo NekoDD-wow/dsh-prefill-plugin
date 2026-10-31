@@ -19,6 +19,555 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
 
+    // <motion>
+    /**
+     * 动效（docs/规划-动效.md）：一处常量 + 档位 + `play()` 包装 + presence（延迟卸载）。
+     * 原则：只动 transform / opacity；短（120–260ms，出场快于入场）；不引库（WAAPI）；流式时收敛；可关。
+     * 档位 full / lite / off：
+     *   full = 全部；
+     *   lite = 只留淡入淡出：spring 换成 ease，去掉 transform（位移 / 缩放 / 旋转），位移类（FLIP）和装饰类不播；
+     *   off  = 不调用 animate，状态直接切换。
+     * 档位 = 用户手选（state.ui.motion，全局设置，不进预设、不随导出）?? （系统「减少动态效果」? lite : full）；
+     * 系统设置变化会被监听（matchMedia change），各组件经 MOTION_EVENT 重渲染。
+     * 这一段只依赖 window，单测切出来直接跑（tests/motion.test.mjs）。
+     */
+    const MOTION = {
+      fast: 120,
+      base: 180,
+      slow: 260,
+      ease: 'cubic-bezier(.2,.7,.2,1)', // 入场 / 位移
+      easeOut: 'cubic-bezier(.4,0,1,1)', // 出场
+      spring: 'cubic-bezier(.34,1.56,.64,1)', // 落地、小点弹出（带轻微回弹）
+      stagger: 30,
+    }
+    const MOTION_LEVELS = ['full', 'lite', 'off']
+    const MOTION_EVENT = 'dsh-prefill:motion'
+    const REDUCE_QUERY = '(prefers-reduced-motion: reduce)'
+    /** 手选值规范化：只认三档，其余（缺 / 'auto' / 乱写）= 没手选。 */
+    function normalizeMotion(value) {
+      return MOTION_LEVELS.includes(value) ? value : null
+    }
+    /** 手选优先；没手选时系统「减少动态效果」⇒ lite，否则 full。 */
+    function resolveMotion(pref, reduce) {
+      return normalizeMotion(pref) ?? (reduce === true ? 'lite' : 'full')
+    }
+    const motionState = { pref: null, reduce: false, mql: null }
+    function emitMotion() {
+      try {
+        window.dispatchEvent(new CustomEvent(MOTION_EVENT))
+      } catch {
+        // 广播失败不该拖垮 UI。
+      }
+    }
+    /** 第一次用到时读系统设置并挂监听（之后系统里切「减少动态效果」，档位跟着变）。 */
+    function watchReduce() {
+      if (motionState.mql !== null || typeof window.matchMedia !== 'function') return
+      try {
+        const mql = window.matchMedia(REDUCE_QUERY)
+        motionState.mql = mql
+        motionState.reduce = mql.matches === true
+        const onChange = (event) => {
+          const next = event?.matches === true
+          if (next === motionState.reduce) return
+          motionState.reduce = next
+          emitMotion()
+        }
+        if (typeof mql.addEventListener === 'function') mql.addEventListener('change', onChange)
+        else if (typeof mql.addListener === 'function') mql.addListener(onChange)
+      } catch {
+        motionState.mql = false
+      }
+    }
+    function motionLevel() {
+      watchReduce()
+      return resolveMotion(motionState.pref, motionState.reduce)
+    }
+    /** 用户手选（来自 state.ui.motion）；null = 跟随系统。变了才广播。 */
+    function setMotionPref(value) {
+      const next = normalizeMotion(value)
+      if (next === motionState.pref) return
+      motionState.pref = next
+      emitMotion()
+    }
+    const MOVE_PROPS = ['transform', 'translate', 'scale', 'rotate']
+    /** lite：每帧去掉位移 / 缩放 / 旋转、spring 换 ease；去完一帧都没剩下可动的属性 ⇒ null（不播）。 */
+    function liteFrames(keyframes) {
+      if (!Array.isArray(keyframes)) return null
+      let live = false
+      const frames = keyframes.map((frame) => {
+        const next = {}
+        for (const [key, value] of Object.entries(frame ?? {})) {
+          if (MOVE_PROPS.includes(key)) continue
+          if (key === 'easing' && value === MOTION.spring) next.easing = MOTION.ease
+          else next[key] = value
+          if (!['offset', 'easing', 'composite', 'transformOrigin'].includes(key)) live = true
+        }
+        return next
+      })
+      return live ? frames : null
+    }
+    /**
+     * 所有动画都经过这里。opts = WAAPI 时间参数 + `kind`（'enter' 默认 | 'move' 位移类如 FLIP | 'decor' 装饰类如扫光）
+     * + `level`（测试 / 特殊场合指定档位）。off ⇒ 返回 null、不调 animate；lite 见 liteFrames。
+     * 动画期间加 will-change，结束或被 cancel 都摘掉（不残留）。
+     */
+    function play(el, keyframes, opts = {}) {
+      const { kind = 'enter', level: forced, ...timing } = opts ?? {}
+      const level = MOTION_LEVELS.includes(forced) ? forced : motionLevel()
+      if (level === 'off' || el === null || el === undefined || typeof el.animate !== 'function') return null
+      let frames = keyframes
+      if (level === 'lite') {
+        if (kind === 'move' || kind === 'decor') return null
+        frames = liteFrames(keyframes)
+        if (frames === null) return null
+        if (timing.easing === MOTION.spring) timing.easing = MOTION.ease
+      }
+      let animation
+      try {
+        animation = el.animate(frames, timing)
+      } catch {
+        return null
+      }
+      if (animation === null || animation === undefined) return null
+      const style = el.style
+      if (style !== undefined && style !== null) {
+        style.willChange = 'transform, opacity'
+        const clear = () => {
+          style.willChange = ''
+        }
+        const settled = animation.finished
+        if (settled !== undefined && settled !== null && typeof settled.then === 'function') settled.then(clear, clear)
+        else {
+          animation.onfinish = clear
+          animation.oncancel = clear
+        }
+      }
+      return animation
+    }
+    /**
+     * presence 的退场：等退场动画结束（finished resolve）或被 cancel（finished reject）后卸载；
+     * 没有动画（off / lite 去光了 / 元素不在）⇒ 当场卸载；兜底计时防止 finished 永远不落定。
+     * 返回 `{ abort }`：退场中又要显示 ⇒ abort（取消动画、不卸载）。
+     */
+    function presenceExit(animation, unmount, fallbackMs = 600) {
+      let live = true
+      let timer = 0
+      const done = () => {
+        if (!live) return
+        live = false
+        clearTimeout(timer)
+        unmount()
+      }
+      if (animation === null || animation === undefined) {
+        done()
+        return { abort() {} }
+      }
+      timer = setTimeout(done, fallbackMs)
+      const settled = animation.finished
+      if (settled !== undefined && settled !== null && typeof settled.then === 'function') settled.then(done, done)
+      else {
+        animation.onfinish = done
+        animation.oncancel = done
+      }
+      return {
+        abort() {
+          if (!live) return
+          live = false
+          clearTimeout(timer)
+          try {
+            animation.cancel()
+          } catch {
+            // 已经结束。
+          }
+        },
+      }
+    }
+    /**
+     * 卡片几何（纯函数）：宽 clamp(560px, 62vw, 920px) 但不超过视口；以输入框为中线、贴在输入框上方 10px；
+     * 高度 = min(70vh, 输入框上方剩余空间 − 20px)，至少 200。**高度固定**（P1-2）：不随小节内容变，
+     * 内容区自己滚动 ⇒ 底部锚定时切小节 / 套预设 / 撤销条出现，顶边都不动。窄屏（<820）同一套。
+     * box = 输入框外框 { top, left, width } 或 null；inputTop = 找不到外框时的输入框顶。
+     */
+    function cardGeometry(vw, vh, box, inputTop) {
+      const top = box?.top ?? (Number.isFinite(inputTop) ? inputTop : vh - 160)
+      const center = box ? box.left + box.width / 2 : vw / 2
+      const width = Math.round(Math.min(Math.max(560, vw * 0.62), 920, vw - 24))
+      const left = Math.round(Math.min(Math.max(12, center - width / 2), vw - 12 - width))
+      const bottom = Math.round(vh - top + 10)
+      const maxHeight = Math.round(Math.max(200, Math.min(vh * 0.7, top - 20)))
+      return { width, left, bottom, maxHeight, height: maxHeight, narrow: vw < 820, vw }
+    }
+    function sameGeometry(a, b) {
+      return a !== null && b !== null && ['width', 'left', 'bottom', 'maxHeight', 'height', 'narrow', 'vw'].every((key) => a[key] === b[key])
+    }
+    /** 入场 / 收起的 transform-origin：对准芯片中心（相对卡片左上角，x 夹在卡片宽度内）；没有芯片 ⇒ 底边中点。 */
+    function cardOrigin(chip, geo, vh) {
+      const cardTop = vh - geo.bottom - geo.height
+      if (!chip || !Number.isFinite(chip.left) || !Number.isFinite(chip.top)) return `50% 100%`
+      const x = Math.round(Math.min(Math.max(chip.left + chip.width / 2 - geo.left, 0), geo.width))
+      const y = Math.round(chip.top + chip.height / 2 - cardTop)
+      return `${x}px ${y}px`
+    }
+    const CARD_ENTER = (origin) => [
+      { opacity: 0, transform: 'translateY(6px) scale(.96)', transformOrigin: origin },
+      { opacity: 1, transform: 'none', transformOrigin: origin },
+    ]
+    const CARD_EXIT = (origin) => [
+      { opacity: 1, transform: 'none', transformOrigin: origin },
+      { opacity: 0, transform: 'translateY(6px) scale(.96)', transformOrigin: origin },
+    ]
+    // </motion>
+
+    // <feedback>
+    /**
+     * 可见性（docs/规划-动效.md 第 3 步：P0-1 错误 pill、P0-2 忙碌态、P0-3 新积木滚入视野、P1-8 toast）。
+     * 这一段只依赖 window / setTimeout 和上面的 <motion>，单测切出来直接跑（tests/motion-visibility.test.mjs）。
+     */
+    /** 快于这个时长的异步操作不显示「进行中」（不闪）；慢于它才转圈 / 变暗。 */
+    const BUSY_DELAY = 150
+    /**
+     * busy(key)：同一个 key 进行中时再点直接忽略（立即生效，不等 150ms）；过了 delay 还没结束才算「显示忙碌」。
+     * onChange 在「开始 / 显示 / 结束」时通知组件重渲染。
+     */
+    function createBusy({ delay = BUSY_DELAY, onChange = () => {}, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (id) => clearTimeout(id) } = {}) {
+      const pending = new Map()
+      const shown = new Set()
+      const notify = () => {
+        try {
+          onChange()
+        } catch {
+          // 重渲染失败不该拖垮操作。
+        }
+      }
+      const ctl = {
+        pending: (key) => pending.has(key),
+        shown: (key) => shown.has(key),
+        anyPending: (prefix) => [...pending.keys()].some((key) => key.startsWith(prefix)),
+        /** 开始；已在进行 ⇒ null（调用方应忽略这次点击）。返回 done()，只生效一次。 */
+        start(key) {
+          if (pending.has(key)) return null
+          const token = {}
+          token.timer = setTimer(() => {
+            if (pending.get(key) !== token) return
+            shown.add(key)
+            notify()
+          }, delay)
+          pending.set(key, token)
+          notify()
+          let live = true
+          return () => {
+            if (!live) return
+            live = false
+            clearTimer(token.timer)
+            if (pending.get(key) === token) pending.delete(key)
+            shown.delete(key)
+            notify()
+          }
+        },
+        /** 包一层异步操作：进行中重复调用 ⇒ 返回 null、不调用 fn；否则返回 fn 的 Promise（结束后自动 done）。 */
+        run(key, fn) {
+          const done = ctl.start(key)
+          if (done === null) return null
+          let result
+          try {
+            result = Promise.resolve(fn())
+          } catch (error) {
+            result = Promise.reject(error)
+          }
+          return result.then(
+            (value) => {
+              done()
+              return value
+            },
+            (error) => {
+              done()
+              throw error
+            },
+          )
+        },
+        reset() {
+          for (const token of pending.values()) clearTimer(token.timer)
+          pending.clear()
+          shown.clear()
+        },
+      }
+      return ctl
+    }
+    /** 错误详情：一行能看懂的原因（HTTP 状态 / 网络错误 / 服务端 reason）。 */
+    function errorDetail(error) {
+      if (error === null || error === undefined) return ''
+      if (typeof error === 'string') return error.slice(0, 300)
+      const message = typeof error.message === 'string' ? error.message : typeof error.reason === 'string' ? error.reason : String(error)
+      return message.slice(0, 300)
+    }
+    /**
+     * 头部错误 pill 的状态（纯函数）。state = null | { key, op, detail, at, count, open }。
+     *   fail    ：同一 key 再失败 ⇒ 计数 +1（展开状态保留）；别的 key ⇒ 换成新的。
+     *   ok      ：同一 key 后来成功了 ⇒ 收起（别的 key 成功不碰）。
+     *   toggle / close / dismiss：展开详情 / 收起详情 / 关掉。
+     */
+    function errorsReduce(current, action) {
+      switch (action?.type) {
+        case 'fail': {
+          const same = current !== null && current !== undefined && current.key === action.key
+          return { key: String(action.key ?? 'sync'), op: String(action.op ?? ''), detail: String(action.detail ?? ''), at: Number(action.at) || 0, count: same ? current.count + 1 : 1, open: same ? current.open : false }
+        }
+        case 'ok':
+          return current && current.key === action.key ? null : current ?? null
+        case 'toggle':
+          return current ? { ...current, open: !current.open } : null
+        case 'close':
+          return current ? { ...current, open: false } : null
+        case 'dismiss':
+          return null
+        default:
+          return current ?? null
+      }
+    }
+    const ERROR_EVENT = 'dsh-prefill:error'
+    /** 任何组件（卡片本身、会话沙盒页、芯片）报失败 / 成功都走这一条窗口事件；卡片头部的 pill 订阅它。 */
+    function reportError(sessionId, key, op, error) {
+      try {
+        window.dispatchEvent(new CustomEvent(ERROR_EVENT, { detail: { sessionId, type: 'fail', key, op, detail: errorDetail(error), at: Date.now() } }))
+      } catch {
+        // 广播失败不该拖垮 UI。
+      }
+    }
+    function reportOk(sessionId, key) {
+      try {
+        window.dispatchEvent(new CustomEvent(ERROR_EVENT, { detail: { sessionId, type: 'ok', key } }))
+      } catch {
+        // 同上。
+      }
+    }
+    /**
+     * 乐观更新：先 apply（界面立刻按新值显示），commit 成功 / 失败都 settle（撤掉乐观值，回到服务端返回的真实状态）；
+     * 失败时界面因此回弹到原状态，再交给 onError（错误 pill + 控件回弹动画）。commit 返回 null = 正在进行、这次忽略。
+     */
+    async function optimistic({ apply, commit, settle, onOk, onError }) {
+      apply()
+      let pending
+      try {
+        pending = commit()
+      } catch (error) {
+        pending = Promise.reject(error)
+      }
+      if (pending === null || pending === undefined) {
+        settle()
+        return null
+      }
+      try {
+        const value = await pending
+        settle()
+        onOk?.(value)
+        return true
+      } catch (error) {
+        settle()
+        onError?.(error)
+        return false
+      }
+    }
+    /** 「nearest」滚动（P0-3）：元素在可视区里 ⇒ null（不动）；在上面 ⇒ 顶对齐；在下面 ⇒ 底对齐（比可视区高时顶对齐）。只滚卡片自己的内容区，不碰宿主页面。 */
+    function nearestScrollTop(view, el, scrollTop, pad = 8) {
+      if (!view || !el) return null
+      const above = el.top - (view.top + pad)
+      const below = el.bottom - (view.bottom - pad)
+      if (above >= 0 && below <= 0) return null
+      if (above < 0 || el.height > view.height - pad * 2) return Math.max(0, Math.round(scrollTop + above))
+      return Math.max(0, Math.round(scrollTop + below))
+    }
+    /**
+     * toast 的位置（P1-8，相对卡片）：贴着触发它的控件（右边对齐），放在控件上方 6px；
+     * 上方放不下（离内容区顶不到一行）就放在控件下方。没有触发点 ⇒ null（卡片底部居中）。
+     */
+    const TOAST_H = 28
+    function toastPlace(card, trigger, area) {
+      if (!card || !trigger || !Number.isFinite(trigger.top)) return null
+      if (trigger.bottom < card.top || trigger.top > card.bottom) return null
+      const right = Math.round(Math.max(10, Math.min(card.right - trigger.right, card.width - 140)))
+      const topLimit = (area ?? card).top + 4
+      if (trigger.top - 6 - TOAST_H >= topLimit) return { right, bottom: Math.round(Math.min(card.bottom - trigger.top + 6, card.height - TOAST_H - 4)) }
+      return { right, top: Math.round(Math.min(Math.max(trigger.bottom - card.top + 6, 4), card.height - TOAST_H - 4)) }
+    }
+    // 关键帧（只动 transform / opacity；简洁档由 play() 去掉位移，只剩淡入淡出）
+    const PILL_ENTER = [{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }]
+    const PILL_EXIT = [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-4px)' }]
+    const TOAST_ENTER = [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }]
+    const TOAST_EXIT = [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(4px)' }]
+    const BLOCK_ENTER = [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }]
+    /** 新积木的高亮：描边层淡入、停一下、淡出（只动 opacity；off 档描边层静态显示到计时结束）。 */
+    const BLOCK_GLOW_MS = 1000
+    const BLOCK_GLOW = [{ opacity: 0 }, { opacity: 1, offset: 0.12 }, { opacity: 1, offset: 0.6 }, { opacity: 0 }]
+    /** 失败控件单次回弹（位移类：简洁 / off 不播，靠状态回到原样 + 错误 pill 说明）。 */
+    const SHAKE = [{ transform: 'none' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(3px)' }, { transform: 'none' }]
+    /** 转圈（装饰类：只在完整档转；简洁 / off 是静态的半圆环）。 */
+    const SPIN = [{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }]
+    /** 新积木：只滚卡片内容区到「刚好看得见」，然后入场（完整档平滑滚动，简洁 / off 直接跳到位）。 */
+    function revealBlock(view, node, onScroll) {
+      if (!node) return null
+      if (view && typeof view.getBoundingClientRect === 'function') {
+        const top = nearestScrollTop(view.getBoundingClientRect(), node.getBoundingClientRect(), view.scrollTop)
+        onScroll?.(top ?? view.scrollTop)
+        if (top !== null) {
+          if (motionLevel() === 'full' && typeof view.scrollTo === 'function') view.scrollTo({ top, behavior: 'smooth' })
+          else view.scrollTop = top
+        }
+      }
+      return play(node, BLOCK_ENTER, { duration: MOTION.base, easing: MOTION.ease })
+    }
+    // </feedback>
+
+    /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
+    function useMotionLevel() {
+      const [, setTick] = React.useState(0)
+      React.useEffect(() => {
+        const onMotion = () => setTick((value) => value + 1)
+        window.addEventListener(MOTION_EVENT, onMotion)
+        return () => window.removeEventListener(MOTION_EVENT, onMotion)
+      }, [])
+      return motionLevel()
+    }
+
+    /** busy(key) 的组件版：开始 / 显示 / 结束时重渲染；卸载时清掉计时。 */
+    function useBusy() {
+      const [, setTick] = React.useState(0)
+      const ref = React.useRef(null)
+      if (ref.current === null) ref.current = createBusy({ onChange: () => setTick((value) => value + 1) })
+      React.useEffect(() => () => ref.current?.reset(), [])
+      return ref.current
+    }
+    /** 忙碌按钮的属性：进行中就 aria-disabled（重复点击被 run() 忽略）；过了 150ms 才 aria-busy + 变暗 + 转圈。 */
+    function busyAttrs(ctl, key) {
+      const shown = ctl.shown(key)
+      return { 'aria-busy': shown ? 'true' : undefined, 'aria-disabled': ctl.pending(key) ? 'true' : undefined, 'data-prefill-busy': shown ? 'true' : undefined }
+    }
+    const BUSY_LOOK = { opacity: 0.6, cursor: 'progress' }
+    /** 转圈：静态是一个缺口圆环（简洁 / off 就停在这里），完整档才转；出现时淡入。 */
+    function Spinner({ size = 11 }) {
+      const ref = React.useRef(null)
+      React.useLayoutEffect(() => {
+        const el = ref.current
+        const fade = play(el, [{ opacity: 0 }, { opacity: 1 }], { duration: MOTION.fast, easing: MOTION.ease })
+        const spin = play(el, SPIN, { duration: 700, iterations: Infinity, easing: 'linear', kind: 'decor' })
+        return () => {
+          fade?.cancel?.()
+          spin?.cancel?.()
+        }
+      }, [])
+      return h('span', { ref, 'aria-hidden': 'true', 'data-prefill-spinner': '', style: { display: 'inline-block', flex: '0 0 auto', width: size, height: size, boxSizing: 'border-box', borderRadius: '50%', border: '1.5px solid currentColor', borderRightColor: 'transparent', verticalAlign: '-1px' } })
+    }
+    /**
+     * presence 的组件版：value 有值 ⇒ 显示（第一次出现播 enter）；变空 ⇒ 播 exit，结束后才卸载（presenceExit）；
+     * 退场中又有值 ⇒ abort 退场接着显示。返回 [正在显示的值, ref]。
+     */
+    function usePresence(value, enter, exit) {
+      const present = value !== null && value !== undefined && value !== ''
+      const [shown, setShown] = React.useState(present ? value : null)
+      const ref = React.useRef(null)
+      const exitCtl = React.useRef(null)
+      const wasShown = React.useRef(false)
+      React.useLayoutEffect(() => {
+        if (present) {
+          exitCtl.current?.abort()
+          exitCtl.current = null
+          setShown(value)
+          return
+        }
+        if (shown === null || exitCtl.current !== null) return
+        const animation = play(ref.current, exit, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' })
+        exitCtl.current = presenceExit(animation, () => {
+          exitCtl.current = null
+          setShown(null)
+        }, MOTION.fast + 240)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [value])
+      React.useLayoutEffect(() => {
+        const has = shown !== null
+        if (has && !wasShown.current) play(ref.current, enter, { duration: MOTION.base, easing: MOTION.ease })
+        wasShown.current = has
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [shown])
+      React.useEffect(() => () => exitCtl.current?.abort(), [])
+      return [shown, ref]
+    }
+    const SR_ONLY = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 }
+    const ERROR_TONE = 'var(--dsw-alias-state-error-primary, #e5484d)'
+    /**
+     * 头部错误 pill（P0-1）：「⚠ 哪个操作失败 ×N」，点开看详情、✕ 关掉；在头部，所以所有节都看得见。
+     * 外层 span 常驻、aria-live="assertive"（先挂好 live region，内容出现时读屏才会念）。
+     */
+    function ErrorPill(props) {
+      const { t, error, onToggle, onDismiss, fallback = null } = props
+      const [shown, ref] = usePresence(error, PILL_ENTER, PILL_EXIT)
+      const countRef = React.useRef(error?.count ?? 0)
+      React.useLayoutEffect(() => {
+        const count = error?.count ?? 0
+        // 同一操作又失败一次：再入场一次，让人知道「刚才又失败了」。
+        if (count > 1 && count !== countRef.current) play(ref.current, PILL_ENTER, { duration: MOTION.base, easing: MOTION.ease })
+        countRef.current = count
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [error?.count])
+      const view = error ?? shown
+      return h(
+        'span',
+        { 'aria-live': 'assertive', 'aria-atomic': 'true', 'data-prefill-error-live': '', style: { display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 } },
+        view === null
+          ? h('span', { 'aria-live': 'off', style: { display: 'contents' } }, fallback)
+          : h(
+              'span',
+              {
+                ref,
+                'data-prefill-error-pill': view.key,
+                style: { display: 'inline-flex', alignItems: 'center', gap: 2, maxWidth: 260, height: 24, borderRadius: 999, border: `1px solid ${tint(ERROR_TONE, 45)}`, background: tint(ERROR_TONE, 12), color: ERROR_TONE, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' },
+              },
+              h(
+                'button',
+                { type: 'button', 'data-prefill-error-open': '', 'aria-expanded': error?.open ? 'true' : 'false', 'aria-haspopup': 'dialog', title: view.detail || t('errDetailTitle'), onClick: onToggle, style: { display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, height: '100%', padding: '0 4px 0 9px', border: 'none', background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' } },
+                h('span', { 'aria-hidden': 'true' }, '⚠'),
+                h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 } }, t('errPill').replace('{op}', view.op)),
+                view.count > 1 ? h('span', { 'data-prefill-error-count': String(view.count), style: { fontWeight: 400 } }, `×${view.count}`) : null,
+              ),
+              h('button', { type: 'button', 'data-prefill-error-dismiss': '', 'aria-label': t('errDismiss'), title: t('errDismiss'), onClick: onDismiss, style: { height: '100%', padding: '0 8px 0 4px', border: 'none', background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer', fontSize: 14, lineHeight: 1 } }, '×'),
+            ),
+      )
+    }
+    /**
+     * toast（P1-8）：入场 / 退场（presence）；贴着触发它的控件（toastPlace），没有触发点时在卡片底部居中；
+     * 不接收点击（pointer-events: none），不挡下面的按钮。读屏走卡片里常驻的 aria-live="polite" 区域，这里 aria-hidden。
+     */
+    function Toast(props) {
+      const { text, place } = props
+      const [shown, ref] = usePresence(text, TOAST_ENTER, TOAST_EXIT)
+      const placeRef = React.useRef(place ?? null)
+      if (text) placeRef.current = place ?? null
+      const prev = React.useRef(text)
+      React.useLayoutEffect(() => {
+        // 显示中换了一条：轻轻淡一下（不再位移）。
+        if (text && prev.current && text !== prev.current) play(ref.current, [{ opacity: 0.35 }, { opacity: 1 }], { duration: MOTION.fast, easing: MOTION.ease })
+        prev.current = text
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [text])
+      if (shown === null) return null
+      const at = placeRef.current
+      const outer = at
+        ? { position: 'absolute', zIndex: 6, right: at.right, ...(at.top !== undefined ? { top: at.top } : { bottom: at.bottom }), pointerEvents: 'none', maxWidth: 'calc(100% - 20px)' }
+        : { position: 'absolute', zIndex: 6, left: 10, right: 10, bottom: 10, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
+      return h(
+        'div',
+        { 'data-prefill-toast-wrap': at ? (at.top !== undefined ? 'below' : 'above') : 'bottom', style: outer },
+        h('div', { ref, 'data-prefill-toast': '', 'aria-hidden': 'true', style: { padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)', boxShadow: '0 2px 8px rgba(0,0,0,.15)' } }, shown),
+      )
+    }
+    /** 新积木的高亮描边层（P0-3）：淡入、停一下、淡出；off 档静态显示，计时到了随状态卸载。 */
+    function BlockGlow() {
+      const ref = React.useRef(null)
+      React.useLayoutEffect(() => {
+        const animation = play(ref.current, BLOCK_GLOW, { duration: BLOCK_GLOW_MS, easing: 'linear', fill: 'forwards' })
+        return () => animation?.cancel?.()
+      }, [])
+      return h('span', { ref, 'aria-hidden': 'true', 'data-prefill-bench-glow': '', style: { position: 'absolute', inset: -1, borderRadius: 10, pointerEvents: 'none', boxShadow: '0 0 0 2px var(--pf-turn), 0 0 0 6px color-mix(in srgb, var(--pf-turn) 22%, transparent)' } })
+    }
+
     /**
      * 图标：Lucide（https://lucide.dev，ISC 许可，见 THIRD_PARTY_NOTICES.md）。
      * 只内联用到的几个，按名字取；没有对应图标时回落到 emoji 文本（兼容旧的文件预设）。
@@ -758,7 +1307,7 @@ window.__ModuleLoader__.load({
       presetContentHint: '下面这些都属于当前预设：保存时一起存，套用时整体替换（预设里没有的项恢复默认）。',
       memorySeedApplied: '已带入故事记忆摘要',
       everyTurnOffSaved: '每轮注入已关闭',
-      modeReplaceHint: '用下面这段替换 dsh 默认系统提示的正文，但工具、运行时上下文（工作区、权限）和审批全部照旧。适合换语言（如中文版官方提示）或整体重写规则。可以写 {{model}} 和 {{cwd}}，dsh 会自动填入。',
+      modeReplaceHint: '用下面这段替换 dsh 默认系统提示的正文，但工具、运行时上下文（工作区、权限）和审批全部照旧。适合换语言（如中文版官方提示）或整体重写规则。可以写 {{model}}，dsh 会自动填入。',
       noteReplace: '替换：系统提示只剩你写的那段（约 {n} tok），工具和运行时上下文照旧。',
       modeOffHint: '保持 dsh 默认系统提示（身份、工具说明、工作区规则等）。下面写的内容不会发送。',
       modeAppendHint: '在 dsh 默认系统提示里追加下面这段（排在靠后位置）：工具、工作区、审批都照旧，模型只是多了这些设定（适合人格、口吻、团队规范）。默认提示的前缀不变，缓存照样能命中。',
@@ -872,6 +1421,36 @@ window.__ModuleLoader__.load({
       noteSwitch: '切换预设 / 纯净 / 接管的那一轮，系统提示变了，缓存基本不命中，下一轮恢复。',
       noteMinCache: '很短的请求（例如纯净模式的头几轮）可能达不到服务商的最小缓存长度，命中 0% 属正常。',
       guideShow: '新手指南',
+      moreTitle: '更多设置',
+      errPill: '{op}失败',
+      errDismiss: '关掉这条错误提示',
+      errDetailTitle: '点开看详情',
+      errDetailWhat: '没有保存成功，界面已恢复成操作前的样子。',
+      errDetailHint: '可以再试一次；一直失败多半是 DSH 后台接口不通（看看 dsh web 还在不在跑）。',
+      errDetailAt: '时间',
+      errDetailReason: '原因',
+      errDetailUnknown: '没有更多信息',
+      errOpSync: '同步',
+      errOpLoad: '读取面板配置',
+      errOpSave: '保存预设',
+      errOpSaveAs: '另存为',
+      errOpApply: '套用预设',
+      errOpClear: '取消预设',
+      errOpUndo: '撤销取消预设',
+      errOpToggle: '「{name}」开关',
+      errOpLevel: '切换沙盒档位',
+      errOpSandbox: '会话沙盒设置',
+      errOpBench: '每轮注入工作台',
+      errOpMotion: '动效设置',
+      errOpChip: '开启预填装',
+      chipOpenFailed: '开启失败 · 再点一次重试',
+      motionTitle: '动效',
+      motionFull: '完整',
+      motionLite: '简洁',
+      motionOff: '关',
+      motionAuto: '改回跟随系统',
+      motionAutoNow: '现在跟随系统：开着「减少动态效果」时用简洁，否则完整。全局设置，不进预设、不随导出。',
+      motionManualNow: '已手动选择，不再跟随系统「减少动态效果」。全局设置，不进预设、不随导出。',
       guideTitle: '三步上手',
       guide1: '在「预设」里点一张卡片：想换人格选人格卡，想完全自己写系统提示选「自定义系统提示」，想什么都不发选「纯净模式」。',
       guide2: '「系统提示」里选模式：追加（保留 dsh 能力）/ 替换正文（工具照旧）/ 接管（像直接调 API）。框里的文字可以随时改，800 毫秒后自动保存；要停用就关掉这一项的开关，正文会保留。',
@@ -1092,7 +1671,7 @@ window.__ModuleLoader__.load({
       presetContentHint: 'Everything below belongs to the current preset: saving stores all of it, applying replaces all of it (anything the preset lacks goes back to default).',
       memorySeedApplied: 'Story memory summary carried over',
       everyTurnOffSaved: 'Every-turn reminder off',
-      modeReplaceHint: 'Replaces the body of the default dsh system prompt with the text below, while tools, runtime context (workspace, permissions) and approvals stay. {{model}} and {{cwd}} are filled in by dsh.',
+      modeReplaceHint: 'Replaces the body of the default dsh system prompt with the text below, while tools, runtime context (workspace, permissions) and approvals stay. {{model}} is filled in by dsh.',
       noteReplace: 'Replace: the system prompt is only your text (≈{n} tok); tools and runtime context stay.',
       modeOffHint: 'Keep the default dsh system prompt. The text below is not sent.',
       modeAppendHint: 'Appends the text below after the default dsh system prompt: tools, workspace and approvals stay; the model just gains these instructions. The default prefix is unchanged, so caching still works.',
@@ -1198,6 +1777,36 @@ window.__ModuleLoader__.load({
       noteSwitch: 'The turn where you switch preset / pure / take over changes the system prompt and mostly misses the cache; the next turn recovers.',
       noteMinCache: 'Very short requests may be below the provider minimum cache length; 0% is normal then.',
       guideShow: 'Guide',
+      moreTitle: 'More settings',
+      errPill: '{op} failed',
+      errDismiss: 'Dismiss this error',
+      errDetailTitle: 'Show details',
+      errDetailWhat: 'Nothing was saved; the panel is back to how it was before.',
+      errDetailHint: 'Try again; if it keeps failing, the DSH host route is probably unreachable (is dsh web still running?).',
+      errDetailAt: 'Time',
+      errDetailReason: 'Reason',
+      errDetailUnknown: 'No further details',
+      errOpSync: 'Sync',
+      errOpLoad: 'Loading the panel',
+      errOpSave: 'Saving the preset',
+      errOpSaveAs: 'Save as',
+      errOpApply: 'Applying the preset',
+      errOpClear: 'Clearing the preset',
+      errOpUndo: 'Undo',
+      errOpToggle: '“{name}” switch',
+      errOpLevel: 'Changing the sandbox level',
+      errOpSandbox: 'Sandbox settings',
+      errOpBench: 'Per-turn workbench',
+      errOpMotion: 'Motion setting',
+      errOpChip: 'Turning on prefill',
+      chipOpenFailed: 'Failed · click to retry',
+      motionTitle: 'Motion',
+      motionFull: 'Full',
+      motionLite: 'Lite',
+      motionOff: 'Off',
+      motionAuto: 'Follow system again',
+      motionAutoNow: 'Following the system: Lite when “reduce motion” is on, otherwise Full. Global; not saved in presets or exports.',
+      motionManualNow: 'Chosen manually; no longer follows the system “reduce motion” setting. Global; not saved in presets or exports.',
       guideTitle: 'Get started',
       guide1: 'Pick a preset card: personas change the voice, "Custom system prompt" lets you write it all, "Pure" sends nothing.',
       guide2: 'Choose the system-prompt mode: append (keeps dsh abilities) / replace body (tools stay) / take over (like a raw API call). Edits autosave; to stop sending it, turn this item’s switch off — the text is kept.',
@@ -1548,12 +2157,14 @@ window.__ModuleLoader__.load({
       knob: (on) => ({
         position: 'absolute',
         top: 2,
-        left: on ? 18 : 2,
+        left: 2,
         width: 16,
         height: 16,
         borderRadius: 8,
         background: on ? 'var(--dsw-alias-bg-base)' : 'var(--dsw-alias-state-idle-primary)',
-        transition: 'left 120ms ease',
+        // 只动 transform；档位非 full（简洁 = 不做位移 / 关）直接跳。
+        transform: on ? 'translateX(16px)' : 'none',
+        transition: motionLevel() === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none',
       }),
       label: { color: 'var(--dsw-alias-label-secondary)' },
       input: {
@@ -1972,6 +2583,7 @@ window.__ModuleLoader__.load({
       const adopt = React.useCallback((next) => {
         setEnvelope(next)
         setState(next?.state ?? null)
+        setMotionPref(next?.state?.ui?.motion)
         setArmedDraft((next?.state?.armed ?? []).join(' '))
         setAllowDraft((next?.state?.allowKinds ?? []).join(', '))
         const toolList = next?.state?.tools
@@ -2251,6 +2863,21 @@ window.__ModuleLoader__.load({
         }
       }, [call, sessionId])
 
+      // 动效档位：芯片箭头受它控制；顺手把 state.ui.motion 交给模块级档位（没开卡片时也认得用户手选）。
+      const motion = useMotionLevel()
+      React.useEffect(() => {
+        if (envelope !== null) setMotionPref(envelope?.state?.ui?.motion)
+      }, [envelope])
+
+      // P0-2：首次点芯片（先开预填装再弹卡片）是异步的：>150ms 显示进行中、重复点击忽略；失败在芯片上说清楚。
+      const chipBusy = useBusy()
+      const [chipError, setChipError] = React.useState('')
+      React.useEffect(() => {
+        if (chipError === '') return undefined
+        const timer = setTimeout(() => setChipError(''), 6000)
+        return () => clearTimeout(timer)
+      }, [chipError])
+      React.useEffect(() => setChipError(''), [sessionId])
       // 卡片开没开 / 卡片发来的摘要（预设名 + 彩点）：都走 CARD_EVENT。
       const [, setTick] = React.useState(0)
       React.useEffect(() => {
@@ -2274,14 +2901,20 @@ window.__ModuleLoader__.load({
       const fallback = injectMode ? (written ? t('prefillWritten') : t('injectOff')) : on ? t('prefillOn') : t('prefillOff')
       const title = on ? `${t('chipCardTip')}${summary?.tip ? `\n${summary.tip}` : ''}` : t('prefillTitleOff')
 
+      const opening = chipBusy.pending('open')
+      const openingShown = chipBusy.shown('open')
       return h(
         'button',
         {
           type: 'button',
-          'aria-pressed': on ? 'true' : 'false',
+          // 首次打开：一点下去就按「已开」显示按下态（乐观），失败再回来。
+          'aria-pressed': on || opening ? 'true' : 'false',
           'aria-expanded': cardOpen ? 'true' : 'false',
+          'aria-busy': openingShown ? 'true' : undefined,
           'data-prefill-chip': '1',
-          title,
+          'data-prefill-busy': openingShown ? 'true' : undefined,
+          'data-prefill-chip-error': chipError !== '' ? 'true' : undefined,
+          title: chipError !== '' ? `${t('errPill').replace('{op}', t('errOpChip'))}：${chipError}` : title,
           'data-open': cardOpen ? 'true' : 'false',
           style: {
             ...S.gatePill(on),
@@ -2289,6 +2922,8 @@ window.__ModuleLoader__.load({
             gap: 6,
             maxWidth: 320,
             ...(cardOpen ? { boxShadow: '0 0 0 2px color-mix(in srgb, var(--dsw-alias-label-primary) 22%, transparent)', background: 'color-mix(in srgb, var(--dsw-alias-label-primary) 8%, var(--dsw-alias-bg-base))' } : {}),
+            ...(openingShown ? BUSY_LOOK : {}),
+            ...(chipError !== '' ? { color: ERROR_TONE, boxShadow: `0 0 0 1px ${tint(ERROR_TONE, 50)}` } : {}),
           },
           // 纯开关：开着就收起（不看 on）；关着才打开，本会话还没用预填装时先打开它，再弹出卡片。
           onClick: () => {
@@ -2299,20 +2934,31 @@ window.__ModuleLoader__.load({
             // 同一下点击已经被「点外面」关过了（芯片没被认出来时的兜底）：保持关着。
             if (Date.now() - (autoClosedAt.get(sessionId) ?? 0) < 400) return
             if (!on) {
-              void call({ prefill: { ...map, [sessionId]: 'default' } })
+              setChipError('')
+              const running = chipBusy.run('open', () => call({ prefill: { ...map, [sessionId]: 'default' } }))
+              if (running === null) return
+              void running
                 .then((data) => {
                   setEnvelope(data)
                   notifyStateChanged()
                   setCardOpen(sessionId, true)
+                  reportOk(sessionId, 'chip')
                 })
-                .catch(() => {})
+                .catch((err) => {
+                  setChipError(errorDetail(err) || 'error')
+                  reportError(sessionId, 'chip', t('errOpChip'), err)
+                })
               return
             }
             setCardOpen(sessionId, !cardOpen)
           },
         },
         summary === undefined
-          ? [h('span', { key: 'dot', style: S.gateDot(on) }), h('span', { key: 'label' }, fallback)]
+          ? [
+              openingShown ? h(Spinner, { key: 'dot', size: 9 }) : h('span', { key: 'dot', style: S.gateDot(on) }),
+              // 失败说明放在常驻的 live 区域里（读屏会念），6 秒后回到原文案。
+              h('span', { key: 'label', role: 'status', 'aria-live': 'polite', 'data-prefill-chip-label': '' }, chipError !== '' ? t('chipOpenFailed') : fallback),
+            ]
           : [
               h('b', { key: 'name', style: { fontWeight: 700 } }, t('nav')),
               h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
@@ -2337,7 +2983,7 @@ window.__ModuleLoader__.load({
                   }),
                 ),
               ),
-              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: 'transform 150ms ease', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
+              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
             ],
       )
     }
@@ -2394,27 +3040,37 @@ window.__ModuleLoader__.load({
       const gate = state?.gate !== null && typeof state?.gate === 'object' ? state.gate : {}
       const on = gate[sessionId] === 'pure'
 
-      const write = (mode, markSeen) => {
-        const patch = { gate: { ...gate, [sessionId]: mode } }
+      const write = async (mode, markSeen) => {
+        // 先取最新 state 再组 patch：面板是 2.5s 轮询快照，刚在别的面板写过的 sessionTools /
+        // overrides 可能还没刷新；拿旧快照整表回写会把它们抹掉（#26）。
+        let base = state
+        try {
+          base = (await call(undefined))?.state ?? state
+        } catch {
+          base = state
+        }
+        const gateMap = base?.gate !== null && typeof base?.gate === 'object' ? base.gate : {}
+        const patch = { gate: { ...gateMap, [sessionId]: mode } }
         if (markSeen === true) patch.noticeSeen = true
         if (mode !== 'pure') {
           // 关闭时把旧版「纯净模式」留下的 armed / 工具清单一并撤掉，否则看着关了、实际仍纯净。
-          patch.armed = (state?.armed ?? []).filter((id) => id !== sessionId)
-          const tools = { ...(state?.sessionTools ?? {}) }
+          patch.armed = (base?.armed ?? []).filter((id) => id !== sessionId)
+          const tools = { ...(base?.sessionTools ?? {}) }
           delete tools[sessionId]
           patch.sessionTools = tools
-          if (state?.activePreset?.[sessionId] === 'builtin:pure') {
-            const active = { ...(state?.activePreset ?? {}) }
+          if (base?.activePreset?.[sessionId] === 'builtin:pure') {
+            const active = { ...(base?.activePreset ?? {}) }
             delete active[sessionId]
             patch.activePreset = active
           }
         }
-        void call(patch)
-          .then((data) => {
-            setEnvelope(data)
-            notifyStateChanged()
-          })
-          .catch(() => {})
+        try {
+          const data = await call(patch)
+          setEnvelope(data)
+          notifyStateChanged()
+        } catch {
+          // 写失败保持原样，下个轮询会刷新。
+        }
       }
 
       // Q9：只在**首次**开启时弹一次说明，之后直接生效（不做每次提交前确认）。
@@ -2913,7 +3569,7 @@ window.__ModuleLoader__.load({
         width: 10,
         color: 'var(--dsw-alias-label-tertiary)',
         transform: open ? 'rotate(90deg)' : 'none',
-        transition: 'transform 120ms ease',
+        transition: motionLevel() === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none',
       }),
       hint: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12.5, lineHeight: 1.6, maxWidth: '68ch' },
       popover: {
@@ -3364,7 +4020,7 @@ window.__ModuleLoader__.load({
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
       const [items, setItems] = React.useState(null)
       const [enabled, setEnabled] = React.useState(false)
-      const [status, setStatus] = React.useState('idle')
+      const [status, setStatusRaw] = React.useState('idle')
       const [revision, setRevision] = React.useState(0)
       const [packs, setPacks] = React.useState([])
       const [builtins, setBuiltins] = React.useState([])
@@ -3415,10 +4071,8 @@ window.__ModuleLoader__.load({
           if (reordered && before !== undefined) {
             const delta = before.top - top
             if (Math.abs(delta) > 1 && Math.abs(delta) < rect.height * 3) {
-              node.animate([{ transform: 'translateY(' + delta + 'px)' }, { transform: 'none' }], {
-                duration: 170,
-                easing: 'cubic-bezier(.2,.7,.2,1)',
-              })
+              // 位移类：off / 简洁（含系统「减少动态效果」默认）都不播。
+              play(node, [{ transform: 'translateY(' + delta + 'px)' }, { transform: 'none' }], { kind: 'move', duration: MOTION.base, easing: MOTION.ease })
             }
           }
         }
@@ -3517,9 +4171,77 @@ window.__ModuleLoader__.load({
       const listRef = React.useRef(null)
       const [bounds, setBounds] = React.useState(null)
 
+      // ── 可见性（动效第 3 步）：错误 pill、busy(key)、开关乐观值、toast 贴着触发点 ──
+      const busyCtl = useBusy()
+      const [error, setError] = React.useState(null)
+      const [optimisticOn, setOptimisticOn] = React.useState({})
+      const [toastAt, setToastAt] = React.useState(null)
+      const lastTrigger = React.useRef(null)
+      const errorOpenRef = React.useRef(false)
+      errorOpenRef.current = error?.open === true
+      React.useEffect(() => {
+        setError(null)
+        setOptimisticOn({})
+        const onError = (event) => {
+          const detail = event?.detail
+          if (detail === undefined || detail === null || (detail.sessionId !== undefined && detail.sessionId !== sessionId)) return
+          setError((current) => errorsReduce(current, detail))
+        }
+        window.addEventListener(ERROR_EVENT, onError)
+        return () => window.removeEventListener(ERROR_EVENT, onError)
+      }, [sessionId])
+      /** 失败：开场对话 meta 里的旧状态字照旧写，另外报给头部 pill（哪个操作 + 原因）。 */
+      const failed = React.useCallback(
+        (key = 'sync', op = undefined) =>
+          (err) => {
+            setStatusRaw('error')
+            reportError(sessionId, key, op ?? t('errOpSync'), err)
+          },
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [sessionId],
+      )
+      const setStatus = React.useCallback(
+        (value) => {
+          if (value === 'error') failed()(null)
+          else setStatusRaw(value)
+        },
+        [failed],
+      )
+      /** 带忙碌态的异步操作：进行中再点忽略；>150ms 显示进行中；成功收起同一操作的错误 pill，失败报错。 */
+      const act = (key, op, fn) => {
+        const running = busyCtl.run(key, fn)
+        if (running === null) return
+        void running.then(() => reportOk(sessionId, key), failed(key, op))
+      }
+      /** 套预设一次只跑一个（不管点的是哪张）。 */
+      const actApply = (key, fn) => {
+        if (busyCtl.anyPending('apply:')) return
+        act(`apply:${key}`, t('errOpApply'), fn)
+      }
       const flash = React.useCallback((text) => {
+        // 触发点：最近一次在卡片里按下 / 按键的控件（4 秒内、还在卡片里）。
+        const card = cardRef.current
+        const trigger = lastTrigger.current
+        let place = null
+        const revealed = revealedRef.current
+        if (card && revealed && revealed.node.isConnected && Date.now() - revealed.at < 2500 && (!trigger || revealed.at >= trigger.at)) {
+          // 刚加的积木（P0-3）：按内容区滚完之后的位置算（平滑滚动可能还在进行）。
+          const rect = revealed.node.getBoundingClientRect()
+          const shift = (revealed.view?.scrollTop ?? revealed.target) - revealed.target
+          const area = revealed.view ? revealed.view.getBoundingClientRect() : null
+          place = toastPlace(card.getBoundingClientRect(), { top: rect.top + shift, bottom: rect.bottom + shift, right: rect.right }, area)
+        } else if (card && trigger && trigger.el.isConnected && card.contains(trigger.el) && Date.now() - trigger.at < 4000) {
+          const area = card.querySelector('[data-prefill-main]')
+          const areaRect = area ? area.getBoundingClientRect() : null
+          const rect = trigger.el.getBoundingClientRect()
+          // 触发点在内容区里但已经滚出视野（例如加积木后内容区滚到了新块）：不贴它，退回底部居中。
+          const hidden = areaRect !== null && area.contains(trigger.el) && (rect.bottom < areaRect.top || rect.top > areaRect.bottom)
+          place = hidden ? null : toastPlace(card.getBoundingClientRect(), rect, areaRect)
+        }
+        setToastAt(place)
         setToast(text)
         setTimeout(() => setToast((current) => (current === text ? '' : current)), 3200)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [])
 
       // ── 悬浮卡片（v0.10）：开关、钉住、左栏选中项、下拉菜单 ──
@@ -3539,6 +4261,63 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener(CARD_EVENT, onCard)
       }, [sessionId])
       const closeCard = React.useCallback(() => setCardOpen(sessionId, false), [sessionId])
+      // P1-8：打开下拉菜单 / 弹层时，之前那条 toast 已经和眼前无关，先收掉（否则它叠在菜单上面挡住选项）。
+      React.useEffect(() => {
+        if (menu !== '') setToast('')
+      }, [menu])
+      // 动效（P1-10）：档位订阅；state.ui.motion 交给模块级档位。
+      const motion = useMotionLevel()
+      React.useEffect(() => {
+        if (envelope !== null) setMotionPref(envelope?.state?.ui?.motion)
+      }, [envelope])
+      // presence（P1-3）：收起时先播退场（fast / easeOut），结束（或被 cancel）后才卸载；退场中又打开 ⇒ 取消退场接着用。
+      const [cardMounted, setCardMounted] = React.useState(cardOpen)
+      const exitRef = React.useRef(null)
+      const enterPending = React.useRef(cardOpen)
+      const originRef = React.useRef('50% 100%')
+      React.useLayoutEffect(() => {
+        if (cardOpen) {
+          exitRef.current?.abort()
+          exitRef.current = null
+          enterPending.current = true
+          setCardMounted(true)
+          return
+        }
+        if (!cardMounted) return
+        const el = cardRef.current
+        const animation = el && el.getAttribute('data-shrunk') !== 'true' ? play(el, CARD_EXIT(originRef.current), { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' }) : null
+        exitRef.current = presenceExit(animation, () => {
+          exitRef.current = null
+          setCardMounted(false)
+        }, MOTION.fast + 240)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [cardOpen])
+      React.useEffect(() => () => exitRef.current?.abort(), [])
+      // P0-3：新积木挂上之后（绘制前）只滚卡片内容区到「刚好看得见」，再入场；高亮层 BLOCK_GLOW_MS 后撤掉。
+      const revealRef = React.useRef('')
+      const revealedRef = React.useRef(null)
+      const [justAdded, setJustAdded] = React.useState('')
+      React.useLayoutEffect(() => {
+        const key = revealRef.current
+        if (key === '') return
+        const node = cardRef.current?.querySelector(`[data-prefill-bench-block="${key}"]`)
+        if (!node) return
+        revealRef.current = ''
+        const view = node.closest('[data-prefill-main]')
+        // 记下新块和内容区要滚到的位置：随后的 toast（「已保存」之类）贴着新块的最终位置，而不是已经滚走的按钮。
+        revealBlock(view, node, (target) => {
+          revealedRef.current = { node, view, target, at: Date.now() }
+        })
+      })
+      React.useEffect(() => {
+        if (justAdded === '') return undefined
+        const timer = setTimeout(() => setJustAdded((current) => (current === justAdded ? '' : current)), BLOCK_GLOW_MS + 60)
+        return () => clearTimeout(timer)
+      }, [justAdded])
+      React.useEffect(() => {
+        revealRef.current = ''
+        setJustAdded('')
+      }, [sessionId])
       // 芯片的摘要：渲染时算好放进 ref，提交后再广播（不在渲染里改别的组件）。
       const summaryRef = React.useRef(null)
       React.useEffect(() => {
@@ -3564,6 +4343,10 @@ window.__ModuleLoader__.load({
             setMenu('')
             return
           }
+          if (errorOpenRef.current) {
+            setError((current) => errorsReduce(current, { type: 'close' }))
+            return
+          }
           if (fetchPending !== null) {
             setFetchPending(null)
             return
@@ -3585,7 +4368,7 @@ window.__ModuleLoader__.load({
       const [shrunk, setShrunk] = React.useState(false)
       const hoverRef = React.useRef(false)
       const shrinkTimer = React.useRef(0)
-      const holdOpen = menu !== '' || fetchPending !== null || confirming !== '' || presetUndo !== null
+      const holdOpen = menu !== '' || fetchPending !== null || confirming !== '' || presetUndo !== null || error?.open === true
       const holdRef = React.useRef(holdOpen)
       holdRef.current = holdOpen
       const scheduleShrink = React.useCallback(() => {
@@ -3619,9 +4402,9 @@ window.__ModuleLoader__.load({
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [holdOpen])
 
-      // 几何：宽 clamp(560px, 62vw, 920px) 但不超过视口；以输入框为中线、贴在输入框上方 10px；
-      // 高度上限 = min(70vh, 输入框上方剩余空间 − 20px)。只读几何。
-      React.useEffect(() => {
+      // 几何（cardGeometry）：宽 clamp(560px, 62vw, 920px)、贴在输入框上方 10px、**高度固定**（P1-2）。只读几何。
+      // P1-1：第一次测量放在 useLayoutEffect 里（绘制前同步），首帧就在正确位置；之后 resize / 500ms 轮询照旧。
+      React.useLayoutEffect(() => {
         if (!cardOpen) return undefined
         const measure = () => {
           const input = document.querySelector('[contenteditable="true"]')
@@ -3638,20 +4421,14 @@ window.__ModuleLoader__.load({
             }
             node = node.parentElement
           }
-          const top = box?.top ?? (input instanceof HTMLElement ? input.getBoundingClientRect().top : vh - 160)
-          const center = box ? box.left + box.width / 2 : vw / 2
-          const width = Math.round(Math.min(Math.max(560, vw * 0.62), 920, vw - 24))
-          const left = Math.round(Math.min(Math.max(12, center - width / 2), vw - 12 - width))
-          const bottom = Math.round(vh - top + 10)
-          const maxHeight = Math.round(Math.max(200, Math.min(vh * 0.7, top - 20)))
-          const narrow = vw < 820
-          setBounds((current) =>
-            current !== null && current.width === width && current.left === left && current.bottom === bottom && current.maxHeight === maxHeight && current.narrow === narrow && current.vw === vw
-              ? current
-              : { width, left, bottom, maxHeight, narrow, vw },
-          )
+          const geo = cardGeometry(vw, vh, box, input instanceof HTMLElement ? input.getBoundingClientRect().top : undefined)
+          setBounds((current) => (sameGeometry(current, geo) ? current : geo))
+          return geo
         }
-        measure()
+        const first = measure()
+        // 入场的 transform-origin 对准芯片（读芯片几何，不改它）。
+        const chip = document.querySelector('[data-prefill-chip]')
+        originRef.current = cardOrigin(chip instanceof Element ? chip.getBoundingClientRect() : null, first, window.innerHeight)
         window.addEventListener('resize', measure)
         const timer = setInterval(measure, 500)
         return () => {
@@ -3659,6 +4436,15 @@ window.__ModuleLoader__.load({
           clearInterval(timer)
         }
       }, [cardOpen])
+      // 入场（P1-3）：位置量好之后、绘制之前开始播（首帧就是动画第一帧，不会先闪一下实心卡片）。
+      // 钉住 / 取消钉住、缩成标记再恢复不走这里（不做动画）。卡片还没渲染（items 未到）就等下一次提交。
+      React.useLayoutEffect(() => {
+        if (!cardOpen || bounds === null || !enterPending.current) return
+        const el = cardRef.current
+        if (el === null) return
+        enterPending.current = false
+        play(el, CARD_ENTER(originRef.current), { duration: MOTION.base, easing: MOTION.ease })
+      })
 
       React.useEffect(() => {
         const onChanged = () => setRevision((value) => value + 1)
@@ -3697,8 +4483,8 @@ window.__ModuleLoader__.load({
               const text = snapshot?.state?.overrides?.[sessionId]?.sections?.[PERSONA_SECTION]
               setSystemDraft(typeof text === 'string' ? text : '')
             }
-          } catch {
-            if (alive) setStatus('error')
+          } catch (err) {
+            if (alive) failed('load', t('errOpLoad'))(err)
           }
         })()
         return () => {
@@ -3717,7 +4503,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (!enabled || items === null || staged.current || sessionId === '') return
         staged.current = true
-        if (items.length === 0) void postJson(DRAFT_ROUTE, { sessionId, items: [] }).catch(() => setStatus('error'))
+        if (items.length === 0) void postJson(DRAFT_ROUTE, { sessionId, items: [] }).catch(failed())
       }, [enabled, items, sessionId])
 
       const packsCall = React.useCallback((payload) => postJson(PACKS_ROUTE, { sessionId, ...payload }), [sessionId])
@@ -3729,7 +4515,7 @@ window.__ModuleLoader__.load({
         if (Array.isArray(data?.everyTurnTowers)) setEveryTurnTowerList(data.everyTurnTowers)
       }
       React.useEffect(() => {
-        if (enabled && sessionId !== '') void packsCall({ op: 'list' }).then(adoptPacks).catch(() => setStatus('error'))
+        if (enabled && sessionId !== '') void packsCall({ op: 'list' }).then(adoptPacks).catch(failed())
       }, [enabled, packsCall, sessionId])
       const cardsCall = React.useCallback((payload) => postJson(CARDS_ROUTE, { sessionId, ...payload }), [sessionId])
       // 故事记忆（三期）：本会话开着记忆时，每 15 秒取一次摘要状态（总结在后台跑，几轮才变一次）。
@@ -3807,7 +4593,7 @@ window.__ModuleLoader__.load({
           setStatus('saving')
           void postJson(DRAFT_ROUTE, { sessionId, items })
             .then(() => setStatus('saved'))
-            .catch(() => setStatus('error'))
+            .catch(failed())
         }, 700)
         return () => clearTimeout(timer)
       }, [items, enabled, sessionId])
@@ -3818,7 +4604,9 @@ window.__ModuleLoader__.load({
       const activePreset = state?.activePreset?.[sessionId] ?? ''
       // 左栏启用开关（缺 = 开）。
       const ownEnabled = state?.enabled?.[sessionId] ?? {}
-      const isOn = (key) => (key === 'everyTurn' ? everyTurnSwitchOn(state, sessionId) : ownEnabled[key] !== false)
+      const isOnStored = (key) => (key === 'everyTurn' ? everyTurnSwitchOn(state, sessionId) : ownEnabled[key] !== false)
+      // 开关乐观更新（P0-2）：点了先按新值显示，写入结束后撤掉乐观值回到服务端状态（失败 ⇒ 回弹到原状态）。
+      const isOn = (key) => (Object.hasOwn(optimisticOn, key) ? optimisticOn[key] === true : isOnStored(key))
       // 工作区说明进预设的那一份（只有模式 + 改写正文；原样 = 不存）。
       const wsPreset = presetWorkspace(state?.workspaceInstructions?.[sessionId])
       // 角色卡（已套用的那张）与它留下的指纹。
@@ -3851,7 +4639,7 @@ window.__ModuleLoader__.load({
         if (systemDraft === null || !systemDirty.current || sessionId === '') return undefined
         const timer = setTimeout(() => {
           systemDirty.current = false
-          void writeSystem(systemDraft, undefined).catch(() => setStatus('error'))
+          void writeSystem(systemDraft, undefined).catch(failed())
         }, 800)
         return () => clearTimeout(timer)
       }, [systemDraft, sessionId])
@@ -3959,7 +4747,7 @@ window.__ModuleLoader__.load({
             if (mode === 'takeover' && systemText.trim() === '') flash(t('takeoverEmpty'))
             else flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
           })
-          .catch(() => setStatus('error'))
+          .catch(failed())
       }
 
       // ── 预设（0.14：内置 / 我的预设 / 角色卡都走 applyLayered 这一条路径，整体替换）──────────
@@ -4167,7 +4955,9 @@ window.__ModuleLoader__.load({
         const ref = { id: parsed.ref.id, opts: { ...parsed.ref.opts } }
         if (userName.trim() !== '') ref.opts.userName = userName.trim()
         else delete ref.opts.userName
-        const got = await compileCardLayer(ref, null)
+        // 旧版预设迁移出来的卡片选项（mode / greeting / reinforce / thinkZh / firstPerson / tools）必须继续传给编译，
+        // 否则只是改个称呼就会把「纯角色扮演 / 中文思考 / 第一人称 / 自动」静默重置成默认值（#25）。
+        const got = await compileCardLayer(ref, parsed.legacy)
         if (got === null) return
         const fresh = await postJson(STATE_ROUTE, undefined)
         const st = fresh?.state ?? {}
@@ -4262,11 +5052,11 @@ window.__ModuleLoader__.load({
             const bytes = new Uint8Array(reader.result)
             let binary = ''
             for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
-            void cardsCall({ op: 'import', png: btoa(binary) }).then(done).catch(() => setStatus('error'))
+            void cardsCall({ op: 'import', png: btoa(binary) }).then(done).catch(failed())
           }
           reader.readAsArrayBuffer(file)
         } else {
-          reader.onload = () => void cardsCall({ op: 'import', json: String(reader.result) }).then(done).catch(() => setStatus('error'))
+          reader.onload = () => void cardsCall({ op: 'import', json: String(reader.result) }).then(done).catch(failed())
           reader.readAsText(file)
         }
         event.target.value = ''
@@ -4307,7 +5097,7 @@ window.__ModuleLoader__.load({
             setCardPick('')
             setCardPreview(null)
           })
-          .catch(() => setStatus('error'))
+          .catch(failed())
       }
 
       const currentOverrides = async () => {
@@ -4351,7 +5141,7 @@ window.__ModuleLoader__.load({
         // 保存 = 面板上挂在预设下的**全部**内容：角色卡（引用）、系统提示、每轮注入（只存配置）、开场对话、改写注入内容、工具权限。
         // 「基于角色卡」（0.14，套着卡时默认勾上）：只存和卡不一样的格，其余套用时从卡现编译（卡更新了也跟着变）。
         let layerFrom = null
-        void Promise.all([currentOverrides(), currentTools(), currentCardRef()])
+        return Promise.all([currentOverrides(), currentTools(), currentCardRef()])
           .then(async ([overrides, tools, rawCard]) => {
             const parsed = cardRefOf(rawCard)
             const card = parsed?.ref ?? null
@@ -4390,7 +5180,6 @@ window.__ModuleLoader__.load({
               }),
             )
           })
-          .catch(() => setStatus('error'))
       }
       // ── 「从当前会话取」→ 开场对话列表（只改预设的开场对话草稿，不动会话里已经发出的历史）──
       const cutTo = fetchCut !== null && fetchCut.toTurn > 0 ? fetchCut.toTurn : 0
@@ -4435,7 +5224,7 @@ window.__ModuleLoader__.load({
               setFetchPending(pending)
             }
           })
-          .catch(() => setStatus('error'))
+          .catch(failed())
           .finally(() => setFetchBusy(false))
       }
       const undoFetch = () => {
@@ -4462,7 +5251,7 @@ window.__ModuleLoader__.load({
             setSeedNote('')
             setSeedDraft({ text: memory.text.trim(), throughTurn: Number(memory.throughTurn) || 0 })
           })
-          .catch(() => setStatus('error'))
+          .catch(failed())
       }
       const deletePack = (name) => {
         if (!armConfirm(`del:${name}`)) return
@@ -4472,7 +5261,7 @@ window.__ModuleLoader__.load({
             adoptPacks(data)
             flash(`${t('deleted')}「${name}」`)
           })
-          .catch(() => setStatus('error'))
+          .catch(failed())
       }
       const exportFile = async () => {
         const name = packName.trim() === '' ? 'prefill' : packName.trim()
@@ -4530,7 +5319,7 @@ window.__ModuleLoader__.load({
                 if (data?.reason) flash(String(data.reason))
                 else flash(`${t('imported')}「${name}」`)
               })
-              .catch(() => setStatus('error'))
+              .catch(failed())
           } catch {
             flash(t('importBad'))
           }
@@ -4552,14 +5341,15 @@ window.__ModuleLoader__.load({
             key,
             type: 'button',
             title: tip,
-            style: V.pill(active),
+            style: { ...V.pill(active), ...(busyCtl.shown(`apply:${key}`) ? BUSY_LOOK : {}) },
             onClick,
             onMouseEnter: onHover,
             onFocus: onHover,
             'data-prefill-preset': key,
             'aria-pressed': active ? 'true' : 'false',
+            ...busyAttrs(busyCtl, `apply:${key}`),
           },
-          glyph({ icon, emoji }),
+          busyCtl.shown(`apply:${key}`) ? h(Spinner, { key: 'spin' }) : glyph({ icon, emoji }),
           name,
         )
       const hoveredKey = hovered !== '' ? hovered : activePreset
@@ -4583,7 +5373,7 @@ window.__ModuleLoader__.load({
       const ownEveryTurn = state?.everyTurn?.[sessionId]
       const everyTurnStored =
         (String(ownEveryTurn?.text ?? '').trim() !== '' || String(ownEveryTurn?.firstText ?? '').trim() !== '')
-          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(ownEveryTurn.seam === true ? { seam: true } : {}) }
+          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(Array.isArray(ownEveryTurn.bench) && ownEveryTurn.bench.length > 0 ? { bench: ownEveryTurn.bench, benchTowers: ownEveryTurn.benchTowers ?? {} } : {}), ...(ownEveryTurn.seam === true ? { seam: true } : {}) }
           : null
       // 约束承接：取过会话 ⇒ 预设标记 fromSession，带上勾选的约束（服务端编成每轮注入，模式沿用 everyTurn）；
       // 没取过但本会话本身就是从这种预设开的 ⇒ 标记照样带上。
@@ -4620,7 +5410,7 @@ window.__ModuleLoader__.load({
                         if (!armConfirm('restore-opening')) return
                         setConfirming('')
                         setMenu('')
-                        void restoreOpening().catch(() => setStatus('error'))
+                        void restoreOpening().catch(failed())
                       },
                     },
                     confirming === 'restore-opening' ? t('lockRestoreConfirm') : t('lockRestore'),
@@ -4640,7 +5430,7 @@ window.__ModuleLoader__.load({
               active: activePreset === `builtin:${preset.id}`,
               tip: preset.desc,
               onHover: () => setHovered(`builtin:${preset.id}`),
-              onClick: () => void applyBuiltin(preset).catch(() => setStatus('error')),
+              onClick: () => actApply(`builtin:${preset.id}`, () => applyBuiltin(preset)),
             }),
           ),
         ),
@@ -4656,7 +5446,7 @@ window.__ModuleLoader__.load({
                   tip: pack.card ? t('packOnCard').replace('{name}', cards.find((card) => card.id === pack.card)?.name ?? pack.card) : undefined,
                   active: activePreset === `pack:${pack.name}`,
                   onHover: () => setHovered(`pack:${pack.name}`),
-                  onClick: () => void applyPack(pack.name).catch(() => setStatus('error')),
+                  onClick: () => actApply(`pack:${pack.name}`, () => applyPack(pack.name)),
                 }),
               ),
             )
@@ -4674,14 +5464,17 @@ window.__ModuleLoader__.load({
                     key: `card:${card.id}`,
                     type: 'button',
                     title: card.notes || card.name,
-                    style: V.pill(activePreset === `card:${card.id}`),
-                    onClick: () => void applyCardPreset(card).catch(() => setStatus('error')),
+                    style: { ...V.pill(activePreset === `card:${card.id}`), ...(busyCtl.shown(`apply:card:${card.id}`) ? BUSY_LOOK : {}) },
+                    ...busyAttrs(busyCtl, `apply:card:${card.id}`),
+                    onClick: () => actApply(`card:${card.id}`, () => applyCardPreset(card)),
                     onMouseEnter: () => setHovered(`card:${card.id}`),
                     onFocus: () => setHovered(`card:${card.id}`),
                     'data-prefill-preset': `card:${card.id}`,
                     'aria-pressed': activePreset === `card:${card.id}` ? 'true' : 'false',
                   },
-                  avatars[card.id]
+                  busyCtl.shown(`apply:card:${card.id}`)
+                    ? h(Spinner, { key: 'spin' })
+                    : avatars[card.id]
                     ? h('img', { src: avatars[card.id], alt: '', style: { width: 16, height: 16, borderRadius: '50%', objectFit: 'cover', flex: '0 0 auto' } })
                     : glyph({ icon: card.icon }),
                   card.name,
@@ -4726,10 +5519,16 @@ window.__ModuleLoader__.load({
             'data-prefill-pack-name': '',
             onChange: (event) => setPackName(event.target.value),
             onKeyDown: (event) => {
-              if (event.key === 'Enter') savePack()
+              if (event.key === 'Enter') act('saveas', t('errOpSaveAs'), () => savePack())
             },
           }),
-          h('button', { type: 'button', style: V.btnPrimary, onClick: () => savePack() }, t('savePack')),
+          h(
+            'button',
+            { type: 'button', style: { ...V.btnPrimary, ...(busyCtl.shown('saveas') ? BUSY_LOOK : {}) }, 'data-prefill-save-as-submit': '', ...busyAttrs(busyCtl, 'saveas'), onClick: () => act('saveas', t('errOpSaveAs'), () => savePack()) },
+            busyCtl.shown('saveas') ? h(Spinner, { key: 'spin' }) : null,
+            busyCtl.shown('saveas') ? ' ' : null,
+            t('savePack'),
+          ),
         ),
         appliedRef
           ? h(
@@ -4814,7 +5613,7 @@ window.__ModuleLoader__.load({
                               setMemoryDraft(null)
                               flash(t('memorySaved'))
                             })
-                            .catch(() => setStatus('error')),
+                            .catch(failed()),
                       },
                       t('memorySave'),
                     ),
@@ -4832,7 +5631,7 @@ window.__ModuleLoader__.load({
                               setMemoryOpen(false)
                               flash(t('memoryCleared'))
                             })
-                            .catch(() => setStatus('error')),
+                            .catch(failed()),
                       },
                       withIcon('eraser', t('memoryClear'), 12),
                     ),
@@ -4883,7 +5682,7 @@ window.__ModuleLoader__.load({
             onBlur: () => {
               previewCard(cardPick, cardUser)
               const was = typeof appliedRef?.opts?.userName === 'string' ? appliedRef.opts.userName : ''
-              if (appliedRef && was.trim() !== cardUser.trim()) void refreshCardLayer(cardUser).catch(() => setStatus('error'))
+              if (appliedRef && was.trim() !== cardUser.trim()) void refreshCardLayer(cardUser).catch(failed())
             },
           }),
           h('span', { style: V.hint }, t('cardUserHint')),
@@ -4943,9 +5742,9 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { style: V.row },
-                h('button', { type: 'button', style: V.btnGhost, onClick: () => void exportCard().catch(() => setStatus('error')) }, withIcon('download', t('cardExport'), 12)),
+                h('button', { type: 'button', style: V.btnGhost, onClick: () => void exportCard().catch(failed()) }, withIcon('download', t('cardExport'), 12)),
                 pickedCard.hasAvatar === true
-                  ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-card-export-png': '', onClick: () => void exportCardPng().catch(() => setStatus('error')) }, withIcon('image', t('cardExportPng'), 12))
+                  ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-card-export-png': '', onClick: () => void exportCardPng().catch(failed()) }, withIcon('image', t('cardExportPng'), 12))
                   : null,
                 h(
                   'button',
@@ -5007,7 +5806,7 @@ window.__ModuleLoader__.load({
                 const on = (gateMode === 'pure' ? 'pure' : 'agent') === key
                 return h(
                   'button',
-                  { key, type: 'button', role: 'radio', title: tip, 'aria-checked': on ? 'true' : 'false', style: V.segBtn(on), 'data-prefill-card-mode': key, onClick: () => (on ? undefined : void setCardMode(key).catch(() => setStatus('error'))) },
+                  { key, type: 'button', role: 'radio', title: tip, 'aria-checked': on ? 'true' : 'false', style: V.segBtn(on), 'data-prefill-card-mode': key, onClick: () => (on ? undefined : void setCardMode(key).catch(failed())) },
                   withIcon(icon, label, 12),
                 )
               }),
@@ -5337,7 +6136,7 @@ window.__ModuleLoader__.load({
                       onClick: () => {
                         if (!armConfirm('restore-opening')) return
                         setConfirming('')
-                        void restoreOpening().catch(() => setStatus('error'))
+                        void restoreOpening().catch(failed())
                       },
                     },
                     confirming === 'restore-opening' ? t('lockRestoreConfirm') : t('lockRestore'),
@@ -5709,8 +6508,11 @@ window.__ModuleLoader__.load({
         clearTimeout(everyTurnTimer.current)
         const run = () =>
           void writeEveryTurn(nextValue)
-            .then(() => flash(isOn('everyTurn') && (String(nextValue.text).trim() !== '' || String(nextValue.firstText ?? '').trim() !== '') ? t('everyTurnSaved') : t('everyTurnOffSaved')))
-            .catch(() => setStatus('error'))
+            .then(() => {
+              reportOk(sessionId, 'bench')
+              flash(isOn('everyTurn') && (String(nextValue.text).trim() !== '' || String(nextValue.firstText ?? '').trim() !== '') ? t('everyTurnSaved') : t('everyTurnOffSaved'))
+            })
+            .catch(failed('bench', t('errOpBench')))
         if (immediate) run()
         else everyTurnTimer.current = setTimeout(run, 700)
       }
@@ -5728,30 +6530,79 @@ window.__ModuleLoader__.load({
       const setBench = (nextBench, nextTowers, immediate = true) => {
         const keep = { ...(nextTowers ?? benchTowers) }
         for (const key of Object.keys(keep)) if (!nextBench.some((block) => block.tower === key)) delete keep[key]
-        editEveryTurn({ bench: nextBench, benchTowers: keep }, immediate)
+        // 删空工作台（原来非空）时，同时把编译好的 text / firstText 清掉：否则 writeEveryTurn 的
+        // 「没有 bench 就回落旧 text」分支会把上一次的注入文本写回去，用户以为清空了、每轮还在发（#23）。
+        const patch = nextBench.length === 0 && bench.length > 0
+          ? { bench: nextBench, benchTowers: keep, text: '', firstText: '', checks: [] }
+          : { bench: nextBench, benchTowers: keep }
+        editEveryTurn(patch, immediate)
       }
-      const addBlockToBench = (block) => setBench([...bench, benchBlockOf(block, nextBenchKey())])
+      // P0-3：加进来的积木渲染后滚到看得见的地方 + 入场 + 短暂高亮（见 revealRef 的 layout effect）。
+      const addBlockToBench = (block) => {
+        const key = nextBenchKey()
+        revealRef.current = key
+        setJustAdded(key)
+        setBench([...bench, benchBlockOf(block, key)])
+      }
       const removeBlockFromBench = (key) => setBench(bench.filter((block) => block.key !== key))
       const patchBenchBlock = (key, patch, immediate) =>
         // 打字（immediate = false）走 700ms 去抖，别每个键都整份写两趟状态（并发写可能乱序、丢最后几个字）。
         setBench(bench.map((block) => (block.key === key ? { ...block, ...patch, edited: true } : block)), benchTowers, immediate !== false)
-      const moveBenchBlock = (key, delta) => {
-        const at = bench.findIndex((block) => block.key === key)
-        const to = at + delta
-        if (at < 0 || to < 0 || to >= bench.length) return
-        const next = [...bench]
-        const moved = next.splice(at, 1)[0]
-        next.splice(to, 0, moved)
-        setBench(next)
+      /**
+       * 显示行 = 工作台按「塔」分组后的行：塔成员合并成一行，普通块各自一行；行序 = bench 里第一次出现的顺序。
+       * 渲染（benchRows）、↑↓、拖动都按这个行序算；bench 数组顺序 = 注入顺序，两者必须一致（#22）。
+       */
+      /**
+       * 显示行 = 按 bench 顺序切的「连续段」：相邻同塔的块合并成一行，普通块各自一行；行序 = bench 顺序。
+       * 不按塔全局分组：否则塔后面的散块会被排到塔前，屏幕顺序 ≠ 注入顺序（#28）；同一个塔被散块隔开时画成两个框。
+       * 渲染（benchRows）、↑↓（moveBenchBlock）都按这个行序算 —— 行 = 渲染单位 = 注入顺序。
+       */
+      const benchDisplayRows = () => {
+        const rows = []
+        for (const block of bench) {
+          const last = rows[rows.length - 1]
+          if (last !== undefined && (last[0].tower ?? '') === (block.tower ?? '')) last.push(block)
+          else rows.push([block])
+        }
+        return rows
       }
-      /** 拖到第 index 个位置（0..bench.length），顺带决定它属不属于某个塔框。 */
-      const moveBlockTo = (key, index, tower) => {
+      const moveBenchBlock = (key, delta) => {
+        const rows = benchDisplayRows()
+        const rowAt = rows.findIndex((row) => row.some((block) => block.key === key))
+        if (rowAt < 0) return
+        const row = rows[rowAt]
+        if (row.length > 1) {
+          // 塔里的块：只在塔框内换位，不能一步跳出塔组。
+          const at = row.findIndex((block) => block.key === key)
+          const to = at + delta
+          if (to < 0 || to >= row.length) return
+          const nextRow = [...row]
+          const [moved] = nextRow.splice(at, 1)
+          nextRow.splice(to, 0, moved)
+          rows[rowAt] = nextRow
+        } else {
+          const target = rowAt + delta
+          if (target < 0 || target >= rows.length) return
+          const [moved] = rows.splice(rowAt, 1)
+          rows.splice(target, 0, moved)
+        }
+        // 归一化：显示顺序 = bench 顺序 = 注入顺序。
+        setBench(rows.flat())
+      }
+      /** 拖到显示顺序的第 index 个位置（0..块数），顺带决定它属不属于某个塔框。 */
+      /**
+       * 拖到 before 这块前面（before 为 null = 放到末尾），顺带决定它属不属于某个塔框。
+       * 落点按 key 记、在这里换算成 bench 下标：屏幕行号 ≠ bench 下标（收起的塔不画块），不能直接当下标用（#28）。
+       */
+      const moveBlockTo = (key, before, tower) => {
         const at = bench.findIndex((block) => block.key === key)
         if (at < 0) return
         const next = [...bench]
         const moved = { ...next.splice(at, 1)[0], tower: tower ?? null }
-        const target = at < index ? index - 1 : index
-        next.splice(Math.max(0, Math.min(next.length, target)), 0, moved)
+        const target = before === key ? at : before === null ? next.length : next.findIndex((block) => block.key === before)
+        if (target < 0) return // before 已经不在台上（拖动中被别处改了）：不落位
+        if (target === at && (bench[at].tower ?? null) === moved.tower) return // 原地松手：什么都没变
+        next.splice(target, 0, moved)
         setBench(next)
       }
       const addTowerToBenchNow = (tower) => {
@@ -5803,23 +6654,23 @@ window.__ModuleLoader__.load({
         })
         void benchCall({ op: 'block-save', block: { ...entry, updatedAt: new Date().toISOString() } })
           .then((data) => { afterBenchCall(data); flash(t('blockSaved')) })
-          .catch(() => setStatus('error'))
+          .catch(failed())
       }
       const deleteMyBlock = (id) => {
         void benchCall({ op: 'block-delete', id })
           .then((data) => { afterBenchCall(data); flash(t('blockDeleted')) })
-          .catch(() => setStatus('error'))
+          .catch(failed())
       }
       const saveTower = (tower) => {
         void benchCall({ op: 'tower-save', tower })
           .then((data) => { afterBenchCall(data); flash(t('towerSaved')) })
-          .catch(() => setStatus('error'))
+          .catch(failed())
       }
       const deleteTower = (id) => {
-        void benchCall({ op: 'tower-delete', id }).then((data) => afterBenchCall(data)).catch(() => setStatus('error'))
+        void benchCall({ op: 'tower-delete', id }).then((data) => afterBenchCall(data)).catch(failed())
       }
       const setHiddenBuiltins = (ids) => {
-        void benchCall({ op: 'hidden-set', ids }).then((data) => afterBenchCall(data)).catch(() => setStatus('error'))
+        void benchCall({ op: 'hidden-set', ids }).then((data) => afterBenchCall(data)).catch(failed())
       }
       const hideBuiltin = (id) => setHiddenBuiltins([...new Set([...hiddenBuiltins, id])])
       const unhideBuiltin = (id) => setHiddenBuiltins(hiddenBuiltins.filter((value) => value !== id))
@@ -5887,22 +6738,42 @@ window.__ModuleLoader__.load({
         if (event.button !== undefined && event.button !== 0) return
         const list = benchListRef.current
         if (list === null) return
+        /** 指针离列表矩形超过这么多 px 就算拖出列表：插入线隐藏，此时松手 = 放弃（#27）。 */
+        const DRAG_CANCEL_MARGIN = 24
         // 不拦默认行为的话，按住把手往下拖就是一次文字框选：沿途的块名 / 文字被选中（蓝条）。
         event.preventDefault()
         const prevSelect = document.body.style.userSelect
         document.body.style.userSelect = 'none'
         window.getSelection?.()?.removeAllRanges?.()
-        const rows = [...list.querySelectorAll('[data-prefill-bench-block]')]
-        const rects = rows.map((node) => {
-          const rect = node.getBoundingClientRect()
-          return { key: node.getAttribute('data-prefill-bench-block') ?? '', top: rect.top, height: rect.height }
+        // 每次都现量：拖动中列表 / 外层面板滚动后，按下时量的位置就错位了（#27）。
+        const measure = () => ({
+          box: list.getBoundingClientRect(),
+          rects: [...list.querySelectorAll('[data-prefill-bench-block]')].map((node) => {
+            const rect = node.getBoundingClientRect()
+            return { key: node.getAttribute('data-prefill-bench-block') ?? '', top: rect.top, height: rect.height }
+          }),
+          frames: [...list.querySelectorAll('[data-prefill-bench-tower]')].map((node) => {
+            const rect = node.getBoundingClientRect()
+            return { key: node.getAttribute('data-prefill-bench-tower') ?? '', top: rect.top, bottom: rect.bottom }
+          }),
         })
-        const frames = [...list.querySelectorAll('[data-prefill-bench-tower]')].map((node) => {
-          const rect = node.getBoundingClientRect()
-          return { key: node.getAttribute('data-prefill-bench-tower') ?? '', top: rect.top, bottom: rect.bottom }
-        })
+        const outside = (box, x, y) =>
+          x < box.left - DRAG_CANCEL_MARGIN || x > box.right + DRAG_CANCEL_MARGIN || y < box.top - DRAG_CANCEL_MARGIN || y > box.bottom + DRAG_CANCEL_MARGIN
+        /** 按指针位置算落点：插到哪块前面（key，null = 末尾）+ 归哪个塔；出了列表 ⇒ null。 */
+        const locate = (x, y) => {
+          const { box, rects, frames } = measure()
+          if (outside(box, x, y)) return null
+          let before = null
+          for (const item of rects) {
+            if (y < item.top + item.height / 2) { before = item.key; break }
+          }
+          const frame = frames.find((item) => y >= item.top && y <= item.bottom)
+          return { before, tower: frame ? frame.key : null }
+        }
         const startY = event.clientY
         let moved = false
+        let lastX = event.clientX
+        let lastY = event.clientY
         const ghost = document.createElement('div')
         ghost.textContent = block.name
         ghost.style.cssText =
@@ -5910,6 +6781,15 @@ window.__ModuleLoader__.load({
         ghost.style.left = event.clientX + 'px'
         ghost.style.top = event.clientY + 'px'
         dragInfo.current = { key: block.key }
+        const track = (x, y) => {
+          lastX = x
+          lastY = y
+          const at = locate(x, y)
+          dragInfo.current = at === null ? { key: block.key } : { key: block.key, ...at }
+          // 插入线画在 bench 下标 = dropIndex 的那块上；出了列表 ⇒ -1（不画）。
+          const index = at === null ? -1 : at.before === null ? bench.length : bench.findIndex((item) => item.key === at.before)
+          setDropIndex((current) => (current === index ? current : index))
+        }
         const move = (ev) => {
           if (!moved && Math.abs(ev.clientY - startY) < 4) return
           if (!moved) {
@@ -5919,35 +6799,44 @@ window.__ModuleLoader__.load({
           }
           ghost.style.left = ev.clientX + 'px'
           ghost.style.top = ev.clientY + 'px'
-          let index = rects.length
-          for (let i = 0; i < rects.length; i += 1) {
-            const mid = rects[i].top + rects[i].height / 2
-            if (ev.clientY < mid) { index = i; break }
-          }
-          const frame = frames.find((item) => ev.clientY >= item.top && ev.clientY <= item.bottom)
-          dragInfo.current = { key: block.key, index, tower: frame ? frame.key : null }
-          setDropIndex((current) => (current === index ? current : index))
+          track(ev.clientX, ev.clientY)
         }
-        const up = () => {
+        // 滚轮滚动不发 pointermove：滚动时按最后的指针位置重算插入线。
+        const scroll = () => {
+          if (moved) track(lastX, lastY)
+        }
+        const finish = (commit, ev) => {
           document.removeEventListener('pointermove', move)
           document.removeEventListener('pointerup', up)
           document.removeEventListener('pointercancel', cancel)
+          document.removeEventListener('scroll', scroll, true)
+          window.removeEventListener('keydown', key, true)
           document.body.style.userSelect = prevSelect
           ghost.remove()
-          const info = dragInfo.current
           dragInfo.current = null
           setDragKey('')
           setDropIndex(-1)
-          if (moved && info !== null && typeof info.index === 'number') moveBlockTo(block.key, info.index, info.tower ?? null)
+          if (!commit || !moved) return
+          // 以 pointerup 自己的坐标、按此刻的版面再算一次；在列表外 ⇒ 放弃，不落位。
+          const at = locate(ev?.clientX ?? lastX, ev?.clientY ?? lastY)
+          if (at !== null) moveBlockTo(block.key, at.before, at.tower)
+        }
+        const up = (ev) => finish(true, ev)
+        // 被系统打断（切窗口、触屏手势）：收尾但不落位。
+        const cancel = () => finish(false)
+        // 拖动中按 Esc = 放弃。挂在 window 捕获阶段，比面板挂在 document 捕获阶段的 Esc（关面板）更早，
+        // stopPropagation 之后面板不会被一起关掉。
+        const key = (ev) => {
+          if (ev.key !== 'Escape') return
+          ev.preventDefault?.()
+          ev.stopPropagation?.()
+          finish(false)
         }
         document.addEventListener('pointermove', move)
         document.addEventListener('pointerup', up)
-        // 被系统打断（切窗口、触屏手势）：收尾但不落位。
-        const cancel = () => {
-          moved = false
-          up()
-        }
         document.addEventListener('pointercancel', cancel)
+        document.addEventListener('scroll', scroll, true)
+        window.addEventListener('keydown', key, true)
       }
       // 长块默认收起（只渲染几行预览，降低渲染压力）；展开后输入框按内容增高。
       const benchLong = (block) => {
@@ -5986,6 +6875,7 @@ window.__ModuleLoader__.load({
           {
             key: block.key,
             'data-prefill-bench-block': block.key,
+            'data-prefill-just-added': justAdded === block.key ? 'true' : undefined,
             'data-ref': block.ref,
             'data-edited': block.edited ? '1' : '0',
             style: {
@@ -6000,6 +6890,7 @@ window.__ModuleLoader__.load({
               ...(benchFocus === block.key ? { boxShadow: '0 0 0 3px color-mix(in srgb, var(--pf-turn) 18%, transparent)' } : {}),
             },
           },
+          justAdded === block.key ? h(BlockGlow, { key: 'glow' }) : null,
           h(
             'div',
             { style: { ...V.row, gap: 6, alignItems: 'center', padding: '5px 8px 0 6px', fontSize: 12 } },
@@ -6087,13 +6978,10 @@ window.__ModuleLoader__.load({
       }
       const benchRows = () => {
         const rows = []
-        const groups = new Map()
-        for (const block of bench) {
-          const key = block.tower ?? ''
-          if (!groups.has(key)) groups.set(key, [])
-          groups.get(key).push(block)
-        }
-        for (const [towerKey, list] of groups) {
+        // 渲染行和 ↑↓ / 拖动共用同一套 benchDisplayRows（单一来源）：否则「显示顺序」和「注入顺序」
+        // 会各说各话 —— 比如把紧挨塔上方的块按 ↓，面板上什么都没变，注入顺序却已经变了（#22）。
+        for (const list of benchDisplayRows()) {
+          const towerKey = list[0]?.tower ?? ''
           const tower = towerKey === '' ? null : benchTowers[towerKey]
           if (tower === null || tower === undefined) {
             rows.push(...list.map((block) => benchCard(block)))
@@ -6105,7 +6993,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               {
-                key: 'tf-' + towerKey,
+                key: 'tf-' + towerKey + '-' + list[0].key,
                 'data-prefill-bench-tower': towerKey,
                 style: { border: '1.5px dashed color-mix(in srgb, ' + color + ' 55%, var(--dsw-alias-border-secondary))', borderRadius: 12, padding: '6px 8px 8px', background: 'color-mix(in srgb, ' + color + ' 4%, transparent)', display: 'flex', flexDirection: 'column', gap: 8 },
               },
@@ -6395,7 +7283,7 @@ window.__ModuleLoader__.load({
       const overrideNow = (action) =>
         void writeEveryTurn(everyTurn, action)
           .then(() => flash(t('everyTurnOverrideSaved')))
-          .catch(() => setStatus('error'))
+          .catch(failed())
       const radio = (mode, label) =>
         h(
           'label',
@@ -6451,7 +7339,7 @@ window.__ModuleLoader__.load({
                         flash(want ? t('lockFirstOnceOn') : t('lockFirstOnceOff'))
                         return postJson(PACKS_ROUTE, { sessionId, op: 'every-turn-status' }).then((data) => setEveryTurnStatus(data?.status ?? null))
                       })
-                      .catch(() => setStatus('error'))
+                      .catch(failed())
                       .finally(() => setFirstOnceWant(null))
                   },
                 }),
@@ -6766,7 +7654,7 @@ window.__ModuleLoader__.load({
               notifyStateChanged()
               flash(t('loreSaved'))
             })
-            .catch(() => setStatus('error'))
+            .catch(failed())
         }, 600)
       }
       const patchLoreEntry = (key, patch) => editLore(loreEntries.map((entry, index) => (loreKeyOf(entry, index) === key ? { ...entry, ...patch } : entry)))
@@ -6870,7 +7758,7 @@ window.__ModuleLoader__.load({
               'div',
               { style: { ...V.row, gap: 8, alignItems: 'center', fontSize: 12 }, 'data-prefill-lore-custom': '' },
               h('span', null, t('loreCustomBar')),
-              h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-revert': '', onClick: () => void revertLore().catch(() => setStatus('error')) }, t('loreRevert')),
+              h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-revert': '', onClick: () => void revertLore().catch(failed()) }, t('loreRevert')),
             )
           : null,
         // 全部条目都能看到：一次先显示 40 条，其余点「再显示」（收起的条目只渲染两行，压力不大）。
@@ -6944,7 +7832,7 @@ window.__ModuleLoader__.load({
               setWsDraft(null)
               flash(t('wsSaved'))
             })
-            .catch(() => setStatus('error'))
+            .catch(failed())
         if (immediate) run()
         else wsTimer.current = setTimeout(run, 700)
       }
@@ -7081,6 +7969,7 @@ window.__ModuleLoader__.load({
 
       const switchEl = (key, color) => {
         const on = isOn(key)
+        const busyKey = `enable:${key}`
         return h('button', {
           type: 'button',
           role: 'switch',
@@ -7088,9 +7977,26 @@ window.__ModuleLoader__.load({
           'aria-label': `${featureTitle[key]} ${on ? t('chipOn') : t('chipOff')}`,
           title: on ? t('switchOffTip') : t('switchOnTip'),
           'data-prefill-enable': key,
+          ...busyAttrs(busyCtl, busyKey),
           onClick: (event) => {
             event.stopPropagation()
-            void writeEnabled(key, !on).catch(() => setStatus('error'))
+            if (busyCtl.pending(busyKey)) return
+            const next = !on
+            void optimistic({
+              apply: () => setOptimisticOn((map) => ({ ...map, [key]: next })),
+              commit: () => busyCtl.run(busyKey, () => writeEnabled(key, next)),
+              settle: () =>
+                setOptimisticOn((map) => {
+                  const { [key]: _drop, ...rest } = map
+                  return rest
+                }),
+              onOk: () => reportOk(sessionId, busyKey),
+              onError: (err) => {
+                failed(busyKey, t('errOpToggle').replace('{name}', featureTitle[key]))(err)
+                // 回弹：开关已回到原状态（圆点在完整档滑回去），再左右晃一下（位移类，简洁 / off 不晃）。
+                for (const node of cardRef.current?.querySelectorAll(`[data-prefill-enable="${key}"]`) ?? []) play(node, SHAKE, { duration: MOTION.base, easing: MOTION.ease, kind: 'move' })
+              },
+            })
           },
           style: {
             marginLeft: 'auto',
@@ -7103,9 +8009,10 @@ window.__ModuleLoader__.load({
             cursor: 'pointer',
             position: 'relative',
             background: on ? color : 'var(--pf-off)',
-            transition: 'background 120ms ease',
+            transition: motion === 'off' ? 'none' : `background ${MOTION.fast}ms ease`,
+            ...(busyCtl.shown(busyKey) ? BUSY_LOOK : {}),
           },
-        }, h('span', { style: { position: 'absolute', top: 2, left: on ? 14 : 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transition: 'left 120ms ease' } }))
+        }, h('span', { style: { position: 'absolute', top: 2, left: 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transform: on ? 'translateX(12px)' : 'none', transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none' } }))
       }
       const navItem = (key, paneId, color, parent) => {
         const selected = shownPane === paneId
@@ -7197,9 +8104,30 @@ window.__ModuleLoader__.load({
           h('b', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, activeName || t('presetsNone')),
           h('small', { style: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, whiteSpace: 'nowrap' } }, `${activeKind || t('presetsTitle')} ▾`),
         ),
-        h('button', { type: 'button', style: V.btn, 'data-prefill-save': '', title: activePreset.startsWith('pack:') ? t('saveOverTip') : t('saveAsTip'), onClick: () => (activePreset.startsWith('pack:') ? savePack(activePreset.slice(5)) : setMenu('saveas')) }, t('saveShort')),
+        h(
+          'button',
+          {
+            type: 'button',
+            style: { ...V.btn, ...(busyCtl.shown('save') ? BUSY_LOOK : {}) },
+            'data-prefill-save': '',
+            ...busyAttrs(busyCtl, 'save'),
+            title: activePreset.startsWith('pack:') ? t('saveOverTip') : t('saveAsTip'),
+            onClick: () => (activePreset.startsWith('pack:') ? act('save', t('errOpSave'), () => savePack(activePreset.slice(5))) : setMenu('saveas')),
+          },
+          busyCtl.shown('save') ? h(Spinner, { key: 'spin' }) : null,
+          busyCtl.shown('save') ? ' ' : null,
+          t('saveShort'),
+        ),
         h('button', { type: 'button', style: V.btnGhost, 'data-prefill-save-as': '', 'aria-expanded': menu === 'saveas' ? 'true' : 'false', onClick: () => setMenu(menu === 'saveas' ? '' : 'saveas') }, t('saveAs')),
-        activePreset === '' || narrow ? null : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-preset-clear': '', onClick: () => void clearPreset().catch(() => setStatus('error')) }, t('presetClear')),
+        activePreset === '' || narrow
+          ? null
+          : h(
+              'button',
+              { type: 'button', style: { ...V.btnGhost, ...(busyCtl.shown('clear') ? BUSY_LOOK : {}) }, 'data-prefill-preset-clear': '', ...busyAttrs(busyCtl, 'clear'), onClick: () => act('clear', t('errOpClear'), clearPreset) },
+              busyCtl.shown('clear') ? h(Spinner, { key: 'spin' }) : null,
+              busyCtl.shown('clear') ? ' ' : null,
+              t('presetClear'),
+            ),
         // 首轮锁定徽章（issue #19 A）：首轮未发 / 已锁定，悬停说明原因。
         h(
           'span',
@@ -7233,10 +8161,21 @@ window.__ModuleLoader__.load({
                 `${t('sbxBadge')} · ${sbxLevelLabel(t, sbxSummary.level)}`,
                 sbxSummary.blocked > 0 ? h('span', { style: { color: 'var(--dsw-alias-state-error-primary, #e5484d)' } }, t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked))) : null,
               ),
-          badge('var(--pf-system)', t('badgeFirst'), `+${num(firstTok)}`, 'tok', 'first'),
-          narrow ? null : badge('var(--pf-turn)', t('badgeTurn'), `+${num(perTurnTok)}`, 'tok', 'turn'),
-          narrow ? null : badge('var(--pf-ai)', t('badgeCache'), cacheHit === null ? '—' : `${cacheHit}%`, '', 'cache'),
+          // P0-1：错误 pill 在头部（所有节都看得见）：哪个操作失败、点开看原因、✕ 关掉。
+          // 出现时临时占住 token 读数徽章的位置（头部本来就满，另加一项会折行、把内容整体往下挤）。
+          h(ErrorPill, {
+            t,
+            error,
+            onToggle: () => setError((current) => errorsReduce(current, { type: 'toggle' })),
+            onDismiss: () => setError(null),
+            fallback: [
+              badge('var(--pf-system)', t('badgeFirst'), `+${num(firstTok)}`, 'tok', 'first'),
+              narrow ? null : badge('var(--pf-turn)', t('badgeTurn'), `+${num(perTurnTok)}`, 'tok', 'turn'),
+              narrow ? null : badge('var(--pf-ai)', t('badgeCache'), cacheHit === null ? '—' : `${cacheHit}%`, '', 'cache'),
+            ],
+          }),
         ),
+        h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'data-prefill-more': '', 'aria-haspopup': 'menu', 'aria-expanded': menu === 'more' ? 'true' : 'false', title: t('moreTitle'), 'aria-label': t('moreTitle'), onClick: () => setMenu(menu === 'more' ? '' : 'more') }, '⋯'),
         h('button', { type: 'button', style: V.btnGhost, 'aria-expanded': open.guide ? 'true' : 'false', title: t('guideShow'), onClick: () => toggle('guide') }, '?'),
         h(
           'button',
@@ -7255,6 +8194,52 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'aria-label': t('collapseCard'), title: t('collapseCard'), 'data-prefill-collapse': '', onClick: closeCard }, h(Icon, { name: 'chevron-down', size: 15 })),
         h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 14, padding: '0 6px' }, 'aria-label': t('closeCard'), title: t('closeCard'), 'data-prefill-close': '', onClick: closeCard }, h(Icon, { name: 'x', size: 14 })),
         ),
+      )
+
+      // 错误详情（P0-1）：点 pill 展开；写清哪个操作、原因、时间，界面已回到操作前。
+      const errorPanel =
+        error === null
+          ? null
+          : h(
+              'div',
+              { 'data-prefill-error-detail': error.key, role: 'dialog', 'aria-label': t('errPill').replace('{op}', error.op), style: { ...V.popover, width: 'min(400px, calc(100% - 24px))', gap: 6, borderColor: tint(ERROR_TONE, 45) } },
+              h('div', { style: { fontWeight: 700, fontSize: 13, color: ERROR_TONE } }, `⚠ ${t('errPill').replace('{op}', error.op)}${error.count > 1 ? ` ×${error.count}` : ''}`),
+              h('div', { style: { ...V.hint, fontSize: 12.5 } }, t('errDetailWhat')),
+              h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, `${t('errDetailReason')}：`, h('code', { style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5 } }, error.detail || t('errDetailUnknown'))),
+              h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' } }, `${t('errDetailAt')}：${error.at ? new Date(error.at).toLocaleTimeString() : '—'}`),
+              h('div', { style: { ...V.hint, fontSize: 12 } }, t('errDetailHint')),
+              h('div', { style: V.row }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-error-detail-dismiss': '', onClick: () => setError(null) }, t('errDismiss'))),
+            )
+
+      // 「⋯」菜单：全局的面板偏好（目前只有动效档位）。写 state.ui.motion：全局，不进预设、不随导出。
+      const motionPref = normalizeMotion(envelope?.state?.ui?.motion)
+      const writeMotion = (value) => {
+        const before = motionPref
+        setMotionPref(value)
+        void postJson(STATE_ROUTE, { ui: { motion: value } })
+          .then((data) => setEnvelope(data))
+          .catch((err) => {
+            setMotionPref(before)
+            failed('motion', t('errOpMotion'))(err)
+          })
+      }
+      const moreMenu = h(
+        'div',
+        { 'data-prefill-menu': 'more', role: 'menu', style: { ...V.popover, left: 'auto', right: 12, width: 'min(320px, calc(100% - 24px))', gap: 8 } },
+        h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, t('motionTitle')),
+        h(
+          'div',
+          { style: { ...V.seg, alignSelf: 'flex-start' }, role: 'radiogroup', 'aria-label': t('motionTitle') },
+          ...MOTION_LEVELS.map((level) =>
+            h(
+              'button',
+              { key: level, type: 'button', role: 'radio', 'aria-checked': motion === level ? 'true' : 'false', style: V.segBtn(motion === level), 'data-prefill-motion-opt': level, onClick: () => writeMotion(level) },
+              t(level === 'full' ? 'motionFull' : level === 'lite' ? 'motionLite' : 'motionOff'),
+            ),
+          ),
+        ),
+        h('div', { style: { ...V.hint, fontSize: 11.5, whiteSpace: 'normal' } }, motionPref === null ? t('motionAutoNow') : t('motionManualNow')),
+        motionPref === null ? null : h('button', { type: 'button', style: { ...V.btnGhost, alignSelf: 'flex-start' }, 'data-prefill-motion-opt': 'auto', onClick: () => writeMotion(null) }, t('motionAuto')),
       )
 
       // 世界书 / 故事记忆是角色卡的子项（0.14）：只在套用的卡带了它们时出现在左栏，缩进挂在「角色卡」下面。
@@ -7277,7 +8262,7 @@ window.__ModuleLoader__.load({
 
       const main = h(
         'div',
-        { style: { flex: '1 1 auto', minWidth: 0, overflowY: 'auto', padding: narrow ? '12px 14px' : '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 } },
+        { 'data-prefill-main': '', style: { flex: '1 1 auto', minWidth: 0, minHeight: 0, overflowY: 'auto', padding: narrow ? '12px 14px' : '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 } },
         conflict
           ? h(
               'div',
@@ -7290,8 +8275,9 @@ window.__ModuleLoader__.load({
         sections[shownPane] ?? itemsSection,
       )
 
-      if (!cardOpen) return h('div', { 'data-prefill-anchor': '1', style: { height: 0, width: '100%' } })
-      const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      if (!cardOpen && !cardMounted) return h('div', { 'data-prefill-anchor': '1', style: { height: 0, width: '100%' } })
+      // 正在退场：不接收点击、对读屏隐藏，等 presence 卸载。
+      const closing = !cardOpen
 
       return h(
         'div',
@@ -7301,10 +8287,20 @@ window.__ModuleLoader__.load({
           {
             ref: cardRef,
             // 卡片里点下拉菜单以外的地方 = 收起菜单。
+            // toast 的触发点：最近一次在卡片里按下 / 按键的控件。
+            onPointerDownCapture: (event) => {
+              const el = event.target instanceof Element ? event.target.closest('button,[role=switch],[role=tab],[role=radio],input,textarea,select,label') : null
+              if (el) lastTrigger.current = { el, at: Date.now() }
+            },
+            onKeyDownCapture: (event) => {
+              const el = event.target instanceof Element ? event.target.closest('button,[role=switch],[role=tab],[role=radio],input,textarea,select,label') : null
+              if (el) lastTrigger.current = { el, at: Date.now() }
+            },
             onMouseDown: (event) => {
+              if (error?.open && !(event.target instanceof Element && event.target.closest('[data-prefill-error-pill],[data-prefill-error-detail]') !== null)) setError((current) => errorsReduce(current, { type: 'close' }))
               if (menu === '') return
               const target = event.target
-              if (target instanceof Element && target.closest('[data-prefill-menu],[data-prefill-preset-select],[data-prefill-save-as]') !== null) return
+              if (target instanceof Element && target.closest('[data-prefill-menu],[data-prefill-preset-select],[data-prefill-save-as],[data-prefill-more]') !== null) return
               setMenu('')
             },
             onMouseEnter: () => {
@@ -7322,23 +8318,32 @@ window.__ModuleLoader__.load({
             'data-prefill-dock': '1',
             'data-prefill-card-panel': '1',
             'data-shrunk': shrunk ? 'true' : 'false',
-            'aria-hidden': shrunk ? 'true' : undefined,
+            'data-prefill-motion': motion,
+            'data-closing': closing ? 'true' : undefined,
+            'aria-hidden': shrunk || closing ? 'true' : undefined,
             role: 'dialog',
             'aria-label': t('dockTitle'),
             style: {
               ...COLOR_VARS,
               // 钉住缩成标记时：淡出、不接收点击（下面的对话照常可点）。
+              // 档位：off 直接切；简洁只淡出不位移。
               opacity: shrunk ? 0 : 1,
-              transform: shrunk ? 'translateY(6px) scale(0.98)' : 'none',
+              transform: shrunk && motion === 'full' ? 'translateY(6px) scale(0.98)' : 'none',
               transformOrigin: 'bottom right',
-              pointerEvents: shrunk ? 'none' : 'auto',
-              visibility: shrunk ? 'hidden' : 'visible',
-              transition: reduceMotion ? 'none' : shrunk ? 'opacity 150ms ease, transform 150ms ease, visibility 0s linear 150ms' : 'opacity 150ms ease, transform 150ms ease',
+              pointerEvents: shrunk || closing ? 'none' : 'auto',
+              // 还没量到位置（理论上 useLayoutEffect 已在绘制前量好）：先藏着，绝不在默认位置闪一下（P1-1）。
+              visibility: shrunk || bounds === null ? 'hidden' : 'visible',
+              transition:
+                motion === 'off'
+                  ? 'none'
+                  : `opacity 150ms ease${motion === 'full' ? ', transform 150ms ease' : ''}${shrunk ? ', visibility 0s linear 150ms' : ''}`,
               position: 'fixed',
               zIndex: 60,
               left: bounds?.left ?? 12,
               bottom: bounds?.bottom ?? 160,
               width: bounds?.width ?? 'min(920px, calc(100vw - 24px))',
+              // P1-2：固定高度（不随小节内容变），内容区自己滚动 ⇒ 底部锚定时顶边不跳。
+              height: bounds?.height ?? '60vh',
               maxHeight: bounds?.maxHeight ?? '60vh',
               boxSizing: 'border-box',
               display: 'flex',
@@ -7360,11 +8365,20 @@ window.__ModuleLoader__.load({
                 'div',
                 { 'data-prefill-preset-undo-bar': '', style: { ...V.row, ...V.callout('brand'), margin: '8px 12px 0', flexWrap: 'wrap' } },
                 h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, t('presetUndoBar')),
-                h('button', { type: 'button', style: V.btn, 'data-prefill-preset-undo': '', onClick: () => void undoClearPreset().catch(() => setStatus('error')) }, t('undo')),
+                h(
+                  'button',
+                  { type: 'button', style: { ...V.btn, ...(busyCtl.shown('undo') ? BUSY_LOOK : {}) }, 'data-prefill-preset-undo': '', ...busyAttrs(busyCtl, 'undo'), onClick: () => act('undo', t('errOpUndo'), undoClearPreset) },
+                  busyCtl.shown('undo') ? h(Spinner, { key: 'spin' }) : null,
+                  busyCtl.shown('undo') ? ' ' : null,
+                  t('undo'),
+                ),
               ),
           h('div', { style: { display: 'flex', flexDirection: narrow ? 'column' : 'row', minHeight: 0, flex: '1 1 auto' } }, nav, main),
-          menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : null,
-          toast === '' ? null : h('div', { 'data-prefill-toast': '', style: { position: 'absolute', right: 14, bottom: 10, zIndex: 6, padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)', boxShadow: '0 2px 8px rgba(0,0,0,.15)' } }, toast),
+          menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : menu === 'more' ? moreMenu : null,
+          error?.open ? errorPanel : null,
+          // P1-8：toast 贴着触发点、不接收点击；读屏念的是下面常驻的 polite 区域。
+          h(Toast, { text: toast, place: toastAt }),
+          h('div', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true', 'data-prefill-toast-live': '', style: SR_ONLY }, toast),
         ),
         shrunk
           ? h(
@@ -7398,7 +8412,7 @@ window.__ModuleLoader__.load({
                   fontFamily: 'inherit',
                   fontSize: 12,
                   cursor: 'pointer',
-                  animation: reduceMotion ? 'none' : 'dsh-prefill-pop 150ms ease',
+                  animation: motion === 'off' ? 'none' : motion === 'lite' ? 'dsh-prefill-fade 150ms ease' : 'dsh-prefill-pop 150ms ease',
                 },
               },
               h('span', { style: { display: 'inline-flex', color: 'var(--pf-system)' } }, h(Icon, { name: 'pin', size: 12, fill: 'currentColor' })),
@@ -7413,7 +8427,7 @@ window.__ModuleLoader__.load({
                   }),
                 ),
               ),
-              reduceMotion ? null : h('style', null, '@keyframes dsh-prefill-pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}'),
+              motion === 'off' ? null : h('style', null, '@keyframes dsh-prefill-pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}@keyframes dsh-prefill-fade{from{opacity:0}to{opacity:1}}'),
             )
           : null,
       )
@@ -7812,10 +8826,10 @@ window.__ModuleLoader__.load({
     }
 
     function SbxSegment(props) {
-      const { options, value, onPick, size = 'normal' } = props
+      const { options, value, onPick, size = 'normal', busyValue = null, busyShown = false } = props
       return h(
         'span',
-        { style: { display: 'inline-flex', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8, overflow: 'hidden', flex: '0 0 auto' }, role: 'radiogroup' },
+        { style: { display: 'inline-flex', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8, overflow: 'hidden', flex: '0 0 auto', ...(busyShown ? BUSY_LOOK : {}) }, role: 'radiogroup', 'aria-busy': busyShown ? 'true' : undefined, 'aria-disabled': busyValue !== null ? 'true' : undefined },
         ...options.map((option) => {
           const active = option.value === value
           const tone = option.tone ?? SBX_PURPLE
@@ -7828,6 +8842,7 @@ window.__ModuleLoader__.load({
               'aria-checked': active ? 'true' : 'false',
               title: option.title ?? '',
               'data-prefill-sbx-option': option.value,
+              'data-prefill-busy': busyShown && busyValue === option.value ? 'true' : undefined,
               onClick: () => onPick(option.value),
               style: {
                 border: 'none',
@@ -7843,6 +8858,8 @@ window.__ModuleLoader__.load({
                 outline: active && !option.soft ? `1px solid ${tint(tone, 40)}` : 'none',
               },
             },
+            busyShown && busyValue === option.value ? h(Spinner, { key: 'spin', size: 10 }) : null,
+            busyShown && busyValue === option.value ? ' ' : null,
             option.label,
             option.sub ? h('small', { style: { marginLeft: 6, fontWeight: 400, color: 'var(--dsw-alias-label-tertiary)' } }, option.sub) : null,
           )
@@ -7874,11 +8891,18 @@ window.__ModuleLoader__.load({
       // 第 5 步：直写会话的事后改写弹窗 { name, busy, list, pick, text, risks, result }
       const [surface, setSurface] = React.useState(null)
       const extras = props.extras ?? null
+      // 可见性（动效第 3 步）：失败报给卡片头部的错误 pill；切档位有忙碌态。
+      const busy = useBusy()
+      const [levelTarget, setLevelTarget] = React.useState('')
+      const failed = (key = 'sandbox', op = undefined) => (err) => {
+        setStatus('error')
+        reportError(sessionId, key, op ?? t('errOpSandbox'), err)
+      }
 
       const refresh = React.useCallback(() => postJson(STATE_ROUTE, undefined).then((data) => setEnvelope(data)), [])
       React.useEffect(() => {
         if (sessionId === '') return undefined
-        void refresh().catch(() => setStatus('error'))
+        void refresh().catch(failed())
         const timer = setInterval(() => void refresh().catch(() => {}), 2500)
         const onChanged = () => void refresh().catch(() => {})
         window.addEventListener(STATE_EVENT, onChanged)
@@ -7890,7 +8914,7 @@ window.__ModuleLoader__.load({
 
       /** 改规则表：先取最新状态，改完整张写回 `sandbox`（必要时连带别的字段）。 */
       const writeSandbox = React.useCallback(
-        async (mutate) => {
+        async (mutate, key = 'sandbox', op = undefined) => {
           setStatus('saving')
           try {
             const fresh = await postJson(STATE_ROUTE, undefined)
@@ -7904,13 +8928,16 @@ window.__ModuleLoader__.load({
             setEnvelope(data)
             setStatus('saved')
             window.dispatchEvent(new CustomEvent(STATE_EVENT))
+            reportOk(sessionId, key)
             return data
           } catch (error) {
             setStatus('error')
+            reportError(sessionId, key, op ?? t('errOpSandbox'), error)
             throw error
           }
         },
-        [],
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [sessionId],
       )
 
       if (sessionId === '') return null
@@ -7921,8 +8948,13 @@ window.__ModuleLoader__.load({
       const sessionScope = state?.sandbox?.[sessionId] ?? {}
       const globalScope = state?.sandbox?.['*'] ?? {}
 
-      const pickLevel = (next) =>
-        void writeSandbox((table, fresh) => {
+      const pickLevel = (next) => {
+        if (busy.pending('level')) return
+        setLevelTarget(next)
+        const running = busy.run('level', () => writeSandbox(levelMutate(next), 'level', t('errOpLevel')))
+        if (running !== null) void running.catch(() => {})
+      }
+      const levelMutate = (next) => (table, fresh) => {
           const scope = scopeOf(table, sessionId)
           const was = scope.level
           scope.level = next
@@ -7944,7 +8976,7 @@ window.__ModuleLoader__.load({
             if (Array.isArray(fresh?.armed) && fresh.armed.includes(sessionId)) extra.armed = fresh.armed.filter((id) => id !== sessionId)
           }
           return extra
-        }).catch(() => {})
+        }
 
       const setGlobalLevel = (on) =>
         void writeSandbox((table) => {
@@ -7989,7 +9021,7 @@ window.__ModuleLoader__.load({
             setStatus('saved')
             window.dispatchEvent(new CustomEvent(STATE_EVENT))
           })
-          .catch(() => setStatus('error'))
+          .catch(failed())
       }
 
       const clearSession = () => {
@@ -8027,7 +9059,7 @@ window.__ModuleLoader__.load({
             window.dispatchEvent(new CustomEvent(STATE_EVENT))
             return refresh()
           })
-          .catch(() => setStatus('error'))
+          .catch(failed())
       const attachManual = () => {
         if (attachFor === null) return
         const member = { [SBX_TARGET[attachFor.group]]: attachFor.name, exact: true }
@@ -8097,6 +9129,9 @@ window.__ModuleLoader__.load({
           h(SbxSegment, {
             value: level,
             onPick: pickLevel,
+            // P0-2：切档位 >150ms 才在点的那一档上转圈、整组变暗；进行中再点忽略。
+            busyValue: busy.shown('level') ? levelTarget : busy.pending('level') ? '' : null,
+            busyShown: busy.shown('level'),
             options: [
               { value: 'observe', label: t('sbxLevelObserve'), sub: t('sbxLevelObserveSub') },
               { value: 'controlled', label: t('sbxLevelControlled'), sub: t('sbxLevelControlledSub') },
@@ -8622,7 +9657,10 @@ window.__ModuleLoader__.load({
               setEnvelope(data)
               setStatus('saved')
             })
-            .catch(() => setStatus('error'))
+            .catch((err) => {
+            setStatus('error')
+            reportError(sessionId, 'inject', t('errOpSandbox'), err)
+          })
         }, 800)
         return () => clearTimeout(timer)
       }, [call, draft, envelope, sessionId])
@@ -8691,8 +9729,14 @@ window.__ModuleLoader__.load({
         const current = sessionAllow.filter((entry) => entry !== 'user')
         const next = current.includes(kind) ? current.filter((entry) => entry !== kind) : [...current, kind]
         void call({ sessionAllowKinds: { ...(envelope?.state?.sessionAllowKinds ?? {}), [sessionId]: next } })
-          .then((data) => setEnvelope(data))
-          .catch(() => setStatus('error'))
+          .then((data) => {
+            setEnvelope(data)
+            notifyStateChanged()
+          })
+          .catch((err) => {
+            setStatus('error')
+            reportError(sessionId, 'inject', t('errOpSandbox'), err)
+          })
       }
 
       // ── 工具放行（只管能不能用，不改工具说明）──────────────────────────────
@@ -8701,8 +9745,14 @@ window.__ModuleLoader__.load({
       const toolsValue = Array.isArray(toolsRaw) ? toolsRaw : null // null = 全部放行
       const writeTools = (list) => {
         void call({ sessionTools: { ...(envelope?.state?.sessionTools ?? {}), [sessionId]: list } })
-          .then((data) => setEnvelope(data))
-          .catch(() => setStatus('error'))
+          .then((data) => {
+            setEnvelope(data)
+            notifyStateChanged()
+          })
+          .catch((err) => {
+            setStatus('error')
+            reportError(sessionId, 'inject', t('errOpSandbox'), err)
+          })
       }
       const toggleTool = (name) => {
         // 从"全部放行"点某一条 ⇒ 变成"除了它都放行"，直觉上更符合"取消这个工具"。
@@ -8721,8 +9771,14 @@ window.__ModuleLoader__.load({
         const nextList = list.includes(name) ? list.filter((entry) => entry !== name) : [...list, name]
         const nextEntry = { ...(blocksAll[key] ?? {}), [group]: nextList }
         void call({ injectionBlocks: { ...blocksAll, [key]: nextEntry } })
-          .then((data) => setEnvelope(data))
-          .catch(() => setStatus('error'))
+          .then((data) => {
+            setEnvelope(data)
+            notifyStateChanged()
+          })
+          .catch((err) => {
+            setStatus('error')
+            reportError(sessionId, 'inject', t('errOpSandbox'), err)
+          })
       }
 
       /** 清除本会话的注入配置（改写 / 每轮注入内容 / 独立白名单 / 工具放行）——删除功能之一。 */
@@ -8752,7 +9808,10 @@ window.__ModuleLoader__.load({
             injectionDrafts.delete(sessionId)
             setStatus('saved')
           })
-          .catch(() => setStatus('error'))
+          .catch((err) => {
+            setStatus('error')
+            reportError(sessionId, 'inject', t('errOpSandbox'), err)
+          })
       }
 
       // 后台若是旧壳（返回的形状里没有 catalog，或根本没有 tools 字段），明说一句，

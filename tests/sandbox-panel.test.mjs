@@ -190,6 +190,17 @@ test('面板：来源包 放行 / 拦截 / ⭐ 全局记住 写包开关；单�
   assert.ok(audit.includes('messages:developer:tool-registry') && audit.includes('messages:compact-checkpoint'))
 })
 
+test('审计与闸门同源：DSH 已知消息来源显示 allowed，不算「未归属 / 拦 N」（#29）', () => {
+  const input = sources()
+  input.audit[SID] = [{ group: 'messages', name: 'model-notice', count: 2, blockable: true, preview: '模型提示' }]
+  const view = sandboxView({ sandbox: { [SID]: { level: 'controlled', rules: [] } } }, SID, input)
+  const row = view.audit.find((entry) => entry.name === 'model-notice')
+  assert.equal(row.action, 'allow')
+  assert.equal(row.handling, 'allowed')
+  assert.equal(view.unassigned.some((entry) => entry.name === 'model-notice'), false, '已知来源不该出现在未归属')
+  assert.equal(view.blocked, 4, '原来的 4 条拦截不变，不把已知来源算进去')
+})
+
 test('头部徽章 / 左栏状态：「沙盒 · 受控 拦 N」；文案并进 zh / en；页名改成「会话沙盒」', () => {
   const ui = harness(envelopeFor({ sandbox: { [SID]: { level: 'controlled', rules: [] } } }))
   const summary = ui.mod.sandboxSummary(ui.t, sandboxView({ sandbox: { [SID]: { level: 'controlled', rules: [] } } }, SID, sources()))

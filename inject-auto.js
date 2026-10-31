@@ -243,6 +243,9 @@ export function replay(turns, entry, currentTurn) {
   let resumes = 0
   let window = []
   let overrideDone = false
+  // 退避翻倍的上限：用户显式配置的 K 比 maxStreak 大时，不能把 need 压到比配置值还小
+  // （否则「想更稳」反而让要求变松，见 #27）。
+  const growNeed = () => Math.min(need * 2, Math.max(params.maxStreak, params.streak))
   let reason = 'warmup'
   const history = []
   let seenInjected = list.filter((turn) => turn.turn < since && turn.injected).length
@@ -307,7 +310,7 @@ export function replay(turns, entry, currentTurn) {
             state = 'injecting'
             streak = 0
             trialFails += 1
-            if (trialFails % params.trialFailsForBackoff === 0) need = Math.min(need * 2, params.maxStreak)
+            if (trialFails % params.trialFailsForBackoff === 0) need = growNeed()
             reason = `trial ${verdict}`
           }
         } else if (state === 'paused') {
@@ -316,7 +319,7 @@ export function replay(turns, entry, currentTurn) {
           const weaks = window.filter((v) => v === 'weak').length
           if (fails >= 2 || (fails >= 1 && weaks >= 1)) {
             resumes += 1
-            need = Math.min(need * 2, params.maxStreak)
+            need = growNeed()
             streak = 0
             window = []
             state = resumes >= params.maxResumes ? 'always' : 'injecting'

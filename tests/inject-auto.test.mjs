@@ -149,6 +149,14 @@ test('试停期一轮不达标立刻恢复；第 2 次试停失败时 K 翻倍',
   assert.equal(last.resumes, 0)
 })
 
+test('退避上限不把用户配置的 K 压小：streak=20 翻倍后仍是 20（#27）', () => {
+  const entry = { mode: 'auto', checks: ['zh'], auto: { streak: 20, warmup: 0 } }
+  // 20 pass → 试停；trial fail #1（不翻倍）→ 再 20 pass → 试停；trial fail #2 ⇒ K 翻倍。
+  const script = 'p'.repeat(20) + 'w' + 'p'.repeat(20) + 'w' + 'pppp'
+  const { last } = simulate(script, entry)
+  assert.equal(last.need, 20, '旧实现 Math.min(need*2, 12) 会把用户配置的 20 压成 12')
+})
+
 test('已暂停：单轮 fail 不恢复，3 轮里 2 轮 fail 才恢复（K 翻倍）', () => {
   const { plan, last } = simulate('pppppfpfpp')
   // 1-3 注入，4-5 试停通过，6 fail（观察），7 pass，8 fail ⇒ 窗口 [f,p,f] 恢复，第 9 轮起注入
@@ -303,6 +311,16 @@ test('stampEveryTurn：重新开始盖 since；改参数沿用；覆盖按下一
   // 通配格原样
   const star = { enabled: true, text: 'x' }
   assert.equal(stampEveryTurn({}, { '*': star }, last)['*'], star)
+})
+
+test('stampEveryTurn：不知道轮数（不在册）的会话沿用旧 since，不被夹成 1（#44）', () => {
+  const entry = (text, since) => ({ enabled: true, text, firstText: '', mode: 'auto', checks: ['zh'], since })
+  const previous = { a: entry('A', 11), b: entry('B', 17) }
+  // 客户端发整张表：改的是 a，b 原样带回来；b 不在册 ⇒ lastTurnFor 返回 undefined。
+  const next = { a: entry('A2', 11), b: entry('B', 17) }
+  const out = stampEveryTurn(previous, next, (key) => (key === 'a' ? 11 : undefined))
+  assert.equal(out.a.since, 12, '改了的会话 = 下一轮')
+  assert.equal(out.b.since, 17, '没改且不在册的会话保留原 since（旧实现会夹成 1）')
 })
 
 test('内置每轮注入预设：除「简短思考」外都带 checks', () => {

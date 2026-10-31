@@ -151,6 +151,18 @@ test('PNG export round-trips through cardFromPng and replaces old chunks', () =>
   assert.equal(embedCardInPng(new Uint8Array([1, 2, 3]), other), undefined)
 })
 
+test('V3 group_only_greetings 导入 → 导出 PNG → 再导入不丢（#30）', () => {
+  const png = readFileSync(join(DIR, 'seraphina.png'))
+  const card = parseCard({ spec: 'chara_card_v3', spec_version: '3.0', data: { name: '分组开场', group_only_greetings: ['第一组', '第二组', '  '] } })
+  assert.deepEqual(card.data.group_only_greetings, ['第一组', '第二组'])
+  const back = cardFromPng(embedCardInPng(png, card))
+  assert.deepEqual(back.data.group_only_greetings, ['第一组', '第二组'])
+  // 没有这个字段的卡不硬写空数组。
+  const plain = parseCard({ name: '无分组' })
+  assert.equal('group_only_greetings' in plain.data, false)
+  assert.equal('group_only_greetings' in cardFromPng(embedCardInPng(png, plain)).data, false)
+})
+
 test('expandMacros: names containing $ are inserted literally', () => {
   assert.equal(expandMacros('{{char}} meets {{user}}', { char: 'Ca$$h', user: 'A$&B' }), 'Ca$$h meets A$&B')
   assert.equal(expandMacros('<USER>!', { char: 'x', user: "$'tail" }), "$'tail!")

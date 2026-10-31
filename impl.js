@@ -138,13 +138,25 @@ function note(entry) {
   }
 }
 
-function normalizeState(raw) {
+/**
+ * 面板的全局偏好 `state.ui`（不进预设、不随导出，只在 state.json 里）：
+ *   motion = 'full' | 'lite' | 'off'（动效档位；缺 = 跟随系统「减少动态效果」）。
+ * 认不出的键 / 值一律丢掉；什么都不剩 ⇒ undefined（state 里就没有 ui 这一键）。
+ */
+export function sanitizeUi(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out = {}
+  if (['full', 'lite', 'off'].includes(raw.motion)) out.motion = raw.motion
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+export function normalizeState(raw) {
   const source = raw !== null && typeof raw === 'object' ? raw : {}
   const levers = source.levers !== null && typeof source.levers === 'object' ? source.levers : {}
   // 会话沙盒第 1 步（issue #15）：overrides / sessionAllowKinds / sessionTools / injectionBlocks / gate 'pure'
   // 读取时迁进 state.sandbox（幂等），旧字段从内存结果里删掉；writeState 写盘时再补回镜像（防降级）。
   // 面板写回的旧字段（patchState 把它们摊在当前状态上）也在这里被整族吸收。
-  return migrateSandbox({
+  const out = migrateSandbox({
     // 先摊开原始对象：**保留未知字段**。M2 的按会话闸门映射 `gate`、
     // Q9 的 `noticeSeen` 都靠这一行才不至于被规范化抹掉（否则 UI 写进去就没了）。
     ...source,
@@ -154,7 +166,11 @@ function normalizeState(raw) {
     allowKinds: Array.isArray(source.allowKinds)
       ? source.allowKinds.filter((kind) => typeof kind === 'string')
       : [...DEFAULT_ALLOW_KINDS],
+    // 面板全局偏好：合法才留，否则连键一起去掉（`...source` 摊进来的脏值也盖掉）。
+    ui: sanitizeUi(source.ui),
   })
+  if (out.ui === undefined) delete out.ui
+  return out
 }
 
 let cache = { state: null, mtimeMs: -1 }
@@ -177,12 +193,14 @@ function readState() {
   }
   // 旧版「会话内注入」（state.injects，每轮发）读取时迁成每轮注入积木（issue #19「C」）。
   // 迁移幂等；迁了就顺手落盘一次，之后的读都是新形状。写不进去也不要紧：每次读都会再迁一遍。
+  // 落盘必须和 writeState 一样带「防降级」旧字段镜像（withLegacyMirror）：否则从 0.15.x 升级上来、
+  // 配过旧 injects 的用户第一次读状态就会把镜像抹掉，回退 0.15.2 读不到自己的逐会话配置（#21）。
   const migrated = migrateLegacyInjects(state, legacyMigrationOptions())
   if (migrated !== state) {
     state = normalizeState(migrated)
     try {
       mkdirSync(DATA_DIR, { recursive: true })
-      writeFileSync(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+      writeFileSync(STATE_FILE, `${JSON.stringify(withLegacyMirror(state), null, 2)}\n`, 'utf8')
       mtimeMs = statSync(STATE_FILE).mtimeMs
     } catch {
       // 只读环境：保持内存里的迁移结果。
@@ -232,6 +250,11 @@ function writeState(next) {
   return readState()
 }
 
+function mergeUi(current, patch) {
+  if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return current
+  return { ...(current ?? {}), ...patch }
+}
+
 function patchState(patch) {
   const current = readState()
   return writeState(
@@ -239,6 +262,8 @@ function patchState(patch) {
       ...current,
       ...patch,
       levers: { ...current.levers, ...(patch?.levers ?? {}) },
+      // ui 按键合并（以后多了别的偏好，写 motion 不抹掉它们）；`motion: null` = 改回跟随系统。
+      ...(patch?.ui !== undefined ? { ui: mergeUi(current.ui, patch.ui) } : {}),
     }),
   )
 }
@@ -552,21 +577,31 @@ export function stampEveryTurn(previous, next, lastTurnFor) {
       !sameChecks
     const auto = { ...(entry.auto ?? {}) }
     const last = lastOf(key)
+    // 不在册的会话：不知道实际轮数，沿用旧值而不是按 0 夹、也不是当成「下一轮」重盖（#44）。
+    const knownLast = Number.isFinite(last)
+    const fallbackSince = Math.max(0, Math.floor(Number(old?.since) || 0))
     let since
     if (restart) {
-      since = last + 1
+      since = knownLast ? last + 1 : fallbackSince
       delete auto.override
     } else {
       // issue #19：since 不能比实际轮数还大（否则之后实际跑的轮一直被当成「重新开始之前」、不计分）。
-      since = clampSince(old?.since, last)
+      since = knownLast ? clampSince(old?.since, last) : fallbackSince
       const wanted = entry.auto?.override
-      if (wanted?.action === 'resume' || wanted?.action === 'pause') {
+      if ((wanted?.action === 'resume' || wanted?.action === 'pause') && knownLast) {
         auto.override = Number.isFinite(Number(wanted.atTurn)) && wanted.atTurn !== null ? wanted : { action: wanted.action, atTurn: last + 1 }
       } else if (old?.auto?.override !== undefined) auto.override = old.auto.override
       else delete auto.override
     }
     // 「下一轮发一次」首轮段（issue #19 B）：true ⇒ 盖成 { atTurn: 下一轮 }；没带 ⇒ 首轮段没变就沿用。
-    const firstOnce = stampFirstOnce(entry, old, last)
+    // 不知道轮数时不能盖成第 1 轮，最多原样沿用。
+    const firstOnce = knownLast
+      ? stampFirstOnce(entry, old, last)
+      : entry?.firstOnce === false || entry?.firstOnce === null
+        ? undefined
+        : entry?.firstOnce !== null && typeof entry?.firstOnce === 'object'
+          ? entry.firstOnce
+          : old?.firstOnce
     const { firstOnce: _wanted, ...rest } = entry
     out[key] = { ...rest, since, auto, ...(firstOnce !== undefined ? { firstOnce } : {}) }
   }
@@ -1226,7 +1261,11 @@ export function apply(ctx) {
               if (patch.everyTurn !== null && typeof patch.everyTurn === 'object') {
                 const previous = readState()?.everyTurn ?? {}
                 // 只有要盖章的那格才去读会话（读落盘日志要解压，别对每个旧会话都读一遍）。
-                const lastTurnFor = (key) => lastTurnOf(sessionEvents(liveAgents.get(key), key))
+                // 不在册的会话返回 undefined（= 不知道轮数）：以前返回 0 会把别的会话的 since 夹成 1（#44）。
+                const lastTurnFor = (key) => {
+                  const live = liveAgents.get(key)
+                  return live === undefined ? undefined : lastTurnOf(sessionEvents(live, key))
+                }
                 patch = { ...patch, everyTurn: stampEveryTurn(previous, patch.everyTurn, lastTurnFor) }
               }
               patchState(patch)
@@ -1447,6 +1486,9 @@ export function apply(ctx) {
             const file = packFileFor(workspace)
             let packs = readPacks(workspace)
             let reason = ''
+            // 工作台 4 个 op 的返回附加值（id / affected）。以前只赋值没声明也没返回：ESM 严格模式下
+            // 给未声明变量赋值会抛 ReferenceError，而 patchState 已经执行 ⇒ 界面报错但状态已写。
+            let extra = {}
 
             const upsert = (name, items, overrides, tools, gate, extra = {}) => {
               // 预设 = 预填装内容 + 注入改写 + **工具放行**（§4-M5：换包=换权限）。
@@ -1634,6 +1676,7 @@ export function apply(ctx) {
                 hiddenBuiltins: Array.isArray(readState()?.hiddenBuiltins) ? readState().hiddenBuiltins : [],
                 file,
                 reason,
+                ...extra,
                 ...envelope(),
               },
               noStore,
