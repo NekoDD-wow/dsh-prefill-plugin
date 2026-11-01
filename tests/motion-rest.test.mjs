@@ -642,6 +642,24 @@ test('[P2-10] 接线：头部沙盒徽章走 SandboxBadge（tone 按档位：严
   assert.match(dockSrc, /blocked: sbxSummary\.blocked,\n\s+memo: sessionId,/)
 })
 
+test('[P2-10] v8 真流式实测修：最终拦截数和「回合结束」同一次提交到 ⇒「拦 N」pop 带 defer 进队列（不绕过 3 个上限）；徽章接 defer: turnEnded', () => {
+  const { SBX_FX, setMotionPref, pendingCues, flushCues } = load()
+  setMotionPref('full')
+  const el = fakeEl()
+  assert.equal(SBX_FX.count(el, true), null, '回合刚结束：不直接播')
+  assert.equal(el.calls.length, 0)
+  assert.equal(pendingCues(), 1)
+  assert.equal(flushCues().length, 1)
+  assert.equal(el.calls.length, 1, '跟着补播一起放')
+  const els = {}
+  const p = (blocked, defer) => ({ tone: 'red', blocked, defer, label: '沙盒', countText: blocked > 0 ? `拦 ${blocked}` : '', 'data-prefill-badge': 'sandbox', style: {} })
+  const m = mount('SandboxBadge', p(1, false), { els })
+  m.render(p(2, true))
+  assert.equal(els['data-prefill-sbx-blocked'].calls.length, 0, 'defer 时 SandboxBadge 不直接 pop')
+  assert.equal(m.tree.props.defer, undefined, 'defer 不漏到 button 上')
+  assert.match(dockSrc, /memo: sessionId,\n\s+defer: turnEnded,/)
+})
+
 test('[P2-10] 实测补：切档位时沙盒摘要短暂缺失、徽章被卸下再挂上 ⇒ 带 memo 时和上次画的比，照样从旧颜色淡过来、拦截数变多照样 pop；不带 memo 挂上不播', () => {
   const els = {}
   const p = (tone, blocked, memo) => ({ tone, blocked, memo, label: '沙盒', countText: blocked > 0 ? `拦 ${blocked}` : '', 'data-prefill-badge': 'sandbox', style: {} })

@@ -1107,8 +1107,9 @@ window.__ModuleLoader__.load({
       tone(layer) {
         return play(layer, TONE_FADE, { duration: MOTION.slow, easing: 'ease-in-out', fill: 'forwards' })
       },
-      count(el) {
-        return play(el, COUNT_POP, { duration: MOTION.base, easing: MOTION.spring, cue: 'auto', cueKey: 'sbx:blocked', prio: 1 })
+      // defer = 这次提交正好是「回合刚结束」（最终拦截数常和 running → 否同一包到）：直接进队列，和攒着的一起按 3 个上限放。
+      count(el, defer = false) {
+        return play(el, COUNT_POP, { duration: MOTION.base, easing: MOTION.spring, cue: 'auto', cueKey: 'sbx:blocked', prio: 1, ...(defer === true ? { defer: true } : {}) })
       },
     }
     /**
@@ -1697,7 +1698,7 @@ window.__ModuleLoader__.load({
      * blocked（拦截数）变多 ⇒「拦 N」pop。countText 为空不画「拦 N」。memo（会话 id）：卸下再挂上时和上次画的比（sbxSeen）。
      */
     function SandboxBadge(props) {
-      const { tone, blocked = 0, label, countText = '', countColor, memo, style, ...rest } = props
+      const { tone, blocked = 0, label, countText = '', countColor, memo, defer = false, style, ...rest } = props
       const toneRef = React.useRef(null)
       const countRef = React.useRef(null)
       const seen = React.useRef(undefined)
@@ -1719,7 +1720,7 @@ window.__ModuleLoader__.load({
       React.useLayoutEffect(() => {
         const before = blockedWas.current
         blockedWas.current = blocked
-        if (blocked > before) SBX_FX.count(countRef.current)
+        if (blocked > before) SBX_FX.count(countRef.current, defer)
       }, [blocked])
       React.useLayoutEffect(() => {
         if (memo !== undefined && memo !== null) sbxSeen.set(memo, { tone, blocked })
@@ -9855,6 +9856,7 @@ window.__ModuleLoader__.load({
                 tone: sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)',
                 blocked: sbxSummary.blocked,
                 memo: sessionId,
+                defer: turnEnded,
                 label: `${t('sbxBadge')} · ${sbxLevelLabel(t, sbxSummary.level)}`,
                 countText: sbxSummary.blocked > 0 ? t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked)) : '',
                 countColor: 'var(--dsw-alias-state-error-primary, #e5484d)',
