@@ -166,18 +166,18 @@ dsh plugin --profile web add /clone 下来的绝对路径/dsh-prefill-plugin
 | `enabled.js` | 左栏每项的启用开关：折算后的状态视图（纯函数，状态本身不落盘） |
 | `character-cards.js` | 角色卡：解析 JSON / PNG 卡、编译成人设段 + 开场白 + 每轮提醒（纯函数） |
 | `workspace-instructions.js` | 工作区说明（AGENTS.md / CLAUDE.md）：原样 / 关闭 / 改写（纯函数，状态里只存模式 + 改写正文） |
-| `client.js` | 浏览器端：输入框芯片、预填装面板、设置页、会话顶栏徽标 |
+| `client.js` | 浏览器端：输入框芯片、预填装面板、左侧栏设置页、会话顶栏徽标 |
 
 状态文件在 `<DSH_HOME>/prefill/state.json`；"我的预设"按工作区存在 `<工作区>/.dsh-prefill/packs.json`，角色卡存在 `<工作区>/.dsh-prefill/cards/`。
 
-## 设置页
+## 设置（左侧栏「预填装」）
 
-「设置 → 预填装」是开发 / 排查用的全局开关，日常使用不需要进去。如果你用过旧版「纯净模式」，后来发现套人格时工具也一起没了，点一次「把全局开关恢复默认」就好。
+DSH 左侧栏（新会话 / 插件 / 自动化任务那一列）里的「预填装」打开的是开发 / 排查用的全局开关页，日常使用不需要进去。如果你用过旧版「纯净模式」，后来发现套人格时工具也一起没了，点一次「把全局开关恢复默认」就好。
 
 ## 开发
 
 ```bash
-npm test        # node --test tests/*.test.mjs（89 项）
+npm test        # node --test tests/*.test.mjs
 ```
 
 单测覆盖：每轮注入的规则打分与状态机（`inject-auto`）、左栏启用开关（`enabled`）、角色卡编译（`character-cards`）、会话转开场条目（`session-history`）、故事记忆（`story-memory`）、工作区说明闸门（`workspace-instructions`）、预设整体保存 / 套用（`preset-whole`）。

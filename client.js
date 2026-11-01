@@ -2674,7 +2674,7 @@ window.__ModuleLoader__.load({
       guide4: '会话已经聊过了也能改：系统提示从下一轮生效；开场对话要点「注入」才会每轮带上。',
       guide5: '展开「用量与缓存」能看到每轮实际花了多少、缓存命中多少，跟底栏的数字同源。',
       chipPure: '纯净',
-      settingsWhere: '日常使用不需要来这里：在会话输入框上方点「预填装」打开面板，就能选预设、写系统提示和开场对话。这一页是开发 / 排查用的全局开关。',
+      settingsWhere: '日常使用不需要来这里：在会话输入框上方点「预填装」打开面板，就能选预设、写系统提示和开场对话。这一页（左侧栏「预填装」）是开发 / 排查用的全局开关。',
       resetGlobal: '把全局开关恢复默认',
       resetTip: '关掉所有全局开关、清空「生效会话」——旧版「纯净模式」会在这里留下全局开关，导致之后套人格时连工具一起被拦。',
       toolsZero: '无工具',
@@ -3032,7 +3032,7 @@ window.__ModuleLoader__.load({
       guide4: 'After the session has run: system prompt changes apply next turn; the opening dialogue needs Inject.',
       guide5: 'Open "Usage & cache" to see per-turn spend and cache hits, from the same data as the footer.',
       chipPure: 'Pure',
-      settingsWhere: 'Everyday use happens in the Prefill panel above the composer (presets, system prompt, opening dialogue). This page holds developer/diagnostic global switches.',
+      settingsWhere: 'Everyday use happens in the Prefill panel above the composer (presets, system prompt, opening dialogue). This page (left sidebar “Prefill”) holds developer/diagnostic global switches.',
       resetGlobal: 'Reset global switches',
       resetTip: 'Turn every global switch off and clear the affected-session list (older pure mode left them on).',
       toolsZero: 'no tools',
@@ -4046,6 +4046,40 @@ window.__ModuleLoader__.load({
         ),
 
         h('div', { style: S.note }, t('m1Note')),
+      )
+    }
+
+    /** DSH 左侧栏那一行 + 主区设置页共用的 panel id（官方通道 sidebar.panellist / main）。 */
+    const PREFILL_PANEL_ID = 'prefill'
+
+    /**
+     * 侧边栏图标（官方通道 sidebar.panellist 只收图标组件，宿主按 16 / 18 px 传 size）。
+     * 颜色跟随 currentColor；不引宿主图标包（插件红线 P1：不 require 任何 Harness Client 包）。
+     */
+    function PrefillPanelIcon(props) {
+      const size = Number(props?.size) || 16
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 24 24',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+        },
+        h('line', { x1: 21, y1: 4, x2: 14, y2: 4 }),
+        h('line', { x1: 10, y1: 4, x2: 3, y2: 4 }),
+        h('line', { x1: 21, y1: 12, x2: 16, y2: 12 }),
+        h('line', { x1: 12, y1: 12, x2: 3, y2: 12 }),
+        h('line', { x1: 21, y1: 20, x2: 18, y2: 20 }),
+        h('line', { x1: 14, y1: 20, x2: 3, y2: 20 }),
+        h('line', { x1: 14, y1: 2, x2: 14, y2: 6 }),
+        h('line', { x1: 16, y1: 10, x2: 16, y2: 14 }),
+        h('line', { x1: 18, y1: 18, x2: 18, y2: 22 }),
       )
     }
 
@@ -12048,17 +12082,11 @@ window.__ModuleLoader__.load({
 
         const t = ctx.locale.bind(NS)
 
-        ctx.slots.inject('settings.section', () =>
-          ctx.slots.register(
-            {
-              name: 'settings.section',
-              id: 'prefill',
-              order: 95,
-              label: () => t('nav'),
-              locale: NS,
-            },
-            PrefillSection,
-          ),
+        // 设置页 2026-11 起走 DSH 官方通道：左侧栏「预填装」一行（sidebar.panellist）+ 主区页面（main）。
+        // 点那一行 ⇒ 主区显示原来的全局设置页（PrefillSection）；不再注册 DSH 设置页那一节，也不放进面板卡片左栏。
+        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PREFILL_PANEL_ID, locale: NS }, PrefillSection))
+        ctx.slots.inject('sidebar.panellist', () =>
+          ctx.slots.register({ name: 'sidebar.panellist', id: PREFILL_PANEL_ID, order: 20, label: () => t('nav'), locale: NS }, PrefillPanelIcon),
         )
 
         // 两个独立开关（用户确认）：预填装 / 阻断注入。
