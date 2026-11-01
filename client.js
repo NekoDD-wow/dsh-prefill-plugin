@@ -703,12 +703,15 @@ window.__ModuleLoader__.load({
     /**
      * 扫一下（P0-4）：完整档 = 渐变带扫过（装饰类，slow，按 index 错开 stagger）；简洁档 = 同一项的底色层闪一下
      * （只动透明度）；off = 不动。host 里找 [data-prefill-sweep-band] / [data-prefill-flash]。流式中照规则排队。
+     * defer = 这次提交正好是「回合刚结束」：直接记进队列，和流式中攒着的一起按 3 个上限放（同一项去重），
+     * 不然输出中点的开关落在结束这一刻的那次扫光会绕过上限、和补播的同一项再扫一遍。
      */
-    function flashOrSweep(host, index = 0) {
+    function flashOrSweep(host, index = 0, defer = false) {
       if (!host || typeof host.querySelector !== 'function') return null
       const delay = Math.max(0, index) * MOTION.stagger
-      if (motionLevel() === 'lite') return play(host.querySelector('[data-prefill-flash]'), NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', delay, cue: 'auto' })
-      return play(host.querySelector('[data-prefill-sweep-band]'), SWEEP, { duration: MOTION.slow, easing: MOTION.ease, delay, kind: 'decor' })
+      const queue = defer === true ? { defer: true } : {}
+      if (motionLevel() === 'lite') return play(host.querySelector('[data-prefill-flash]'), NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', delay, cue: 'auto', ...queue })
+      return play(host.querySelector('[data-prefill-sweep-band]'), SWEEP, { duration: MOTION.slow, easing: MOTION.ease, delay, kind: 'decor', ...queue })
     }
     /** 芯片 / 标记上的小点闪（P1-9，卡片关着或缩成标记时）：完整档放大一下 + 变淡，简洁只变淡。 */
     const DOT_FLASH = [
@@ -5980,7 +5983,7 @@ window.__ModuleLoader__.load({
           const changed = info.navChanged.filter((key) => key !== info.directKey)
           if (card !== null && info.visible) {
             changed.forEach((key, index) => {
-              for (const host of card.querySelectorAll(`[data-prefill-sweep="${key}"]`)) flashOrSweep(host, index)
+              for (const host of card.querySelectorAll(`[data-prefill-sweep="${key}"]`)) flashOrSweep(host, index, defer)
             })
           }
           announceLinked(linkedText(info.linkedTemplate, changed.filter((key) => key !== info.paneKey).map((key) => info.titles[key])))

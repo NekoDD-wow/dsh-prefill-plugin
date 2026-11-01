@@ -244,12 +244,36 @@ test('扫光：完整 = 渐变带扫过（装饰类，slow，按序错开 stagge
   assert.equal(e.band.calls.length, 1)
 })
 
+test('扫光 defer（v8 真流式实测）：输出中点的开关落在「回合刚结束」那次提交 ⇒ 进队列和攒着的一起按 3 个上限放，同一项不扫两遍', () => {
+  const { M } = load()
+  for (const level of ['full', 'lite']) {
+    M.setMotionPref(level)
+    const root = fakeRoot('stream')
+    const hosts = Array.from({ length: 3 }, () => fakeNavHost(root))
+    hosts.forEach((host, index) => M.flashOrSweep(host, index))
+    const badge = fakeEl(root)
+    M.play(badge, [{ opacity: 0 }, { opacity: 1 }], { duration: 180, cue: 'auto', prio: 1 })
+    root.busy = undefined
+    // 结束这一刻的提交：根节点已不在输出，扫光本该直接播；带 defer 必须进队列
+    assert.equal(M.flashOrSweep(hosts[0], 0, true), null, `${level}：defer 时不直接播`)
+    const calls = () => hosts.reduce((n, host) => n + host.band.calls.length + host.layer.calls.length, 0)
+    assert.equal(calls(), 0)
+    const played = M.flushCues()
+    assert.equal(played.length, 3, `${level}：总共最多 3 个`)
+    assert.ok(hosts[0].band.calls.length + hosts[0].layer.calls.length <= 1, `${level}：同一项最多扫一遍（去重）`)
+    assert.equal(M.pendingCues(), 0)
+  }
+  M.setMotionPref('off')
+  assert.equal(M.flashOrSweep(fakeNavHost(), 0, true), null)
+  assert.equal(M.pendingCues(), 0, 'off：不排队')
+})
+
 test('面板接线（P0-4）：渲染时算签名、提交后按原因提示；每个左栏项 / 窄屏标签垫扫光层；黄色说明 grid-template-rows 展开', () => {
   assert.match(dockSrc, /navSignature\(FEATURE_NAV\.map\(\(\[key\]\) => key\), \(key\) => navStatus\[key\], isOn, offBy\)/)
   assert.match(dockSrc, /const cueCause = changeCause\(lastTrigger\.current, Date\.now\(\)\)/)
   assert.match(dockSrc, /cause: cueCause,/)
   assert.match(dockSrc, /if \(info\.cause === 'user'\)/)
-  assert.match(dockSrc, /flashOrSweep\(host, index\)/)
+  assert.match(dockSrc, /flashOrSweep\(host, index, defer\)/, '回合刚结束这次提交里的扫光也进队列（defer = info.turnEnded）')
   assert.match(dockSrc, /announceLinked\(linkedText\(/)
   assert.match(dockSrc, /key !== info\.directKey/, '刚点的开关自己不扫')
   assert.equal((dockSrc.match(/sweepLayer\(key, color, /g) ?? []).length, 2, '宽屏左栏 + 窄屏标签')
