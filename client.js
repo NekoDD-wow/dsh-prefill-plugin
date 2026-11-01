@@ -910,6 +910,22 @@ window.__ModuleLoader__.load({
       if (!inside || active === last) return stop(first)
       return false
     }
+    /**
+     * 面板开着时焦点掉到了 body（面板里聚焦的按钮这次渲染变成 disabled / 被卸载，例如改写成功后风险勾选被清空）⇒ 拉回面板，
+     * 免得 Tab / Esc 落到页面上。焦点在别处（用户点了外面的东西）不抢。返回是否拉回。
+     */
+    function refocusIfLost(panel) {
+      if (!panel || panel.isConnected === false || typeof panel.focus !== 'function') return false
+      const active = activeIn(panel)
+      const body = typeof document !== 'undefined' ? document.body : undefined
+      if (active !== null && active !== undefined && active !== body) return false
+      try {
+        panel.focus({ preventScroll: true })
+        return true
+      } catch {
+        return false
+      }
+    }
     /** 关闭后焦点回触发按钮（还在页面上、能聚焦）；按钮不在了 ⇒ 回 Modal 旁的锚点。返回落到的元素（都不行 ⇒ null）。 */
     function restoreFocus(trigger, anchor) {
       for (const el of [trigger, anchor]) {
@@ -1227,6 +1243,12 @@ window.__ModuleLoader__.load({
           // 聚焦失败不拦打开。
         }
       }, [seq])
+      // 每次渲染后（开着时）看一眼焦点有没有掉到 body：Chrome 让聚焦的按钮变 disabled 时焦点是稍后才掉的，所以等一拍。
+      React.useEffect(() => {
+        if (phase !== 'open') return undefined
+        const id = setTimeout(() => refocusIfLost(panelRef.current), 30)
+        return () => clearTimeout(id)
+      })
       React.useEffect(
         () => () => {
           popLayer.current?.()
@@ -1266,6 +1288,12 @@ window.__ModuleLoader__.load({
             onClick: (event) => event.stopPropagation(),
             onKeyDown: (event) => {
               if (!closing) trapTab(event, panelRef.current)
+            },
+            onBlur: (event) => {
+              if (closing || (event?.relatedTarget !== null && event?.relatedTarget !== undefined)) return
+              setTimeout(() => {
+                if (exitCtl.current === null) refocusIfLost(panelRef.current)
+              }, 30)
             },
             style: { position: 'relative', outline: 'none', ...snap.current.panelProps?.style },
           },

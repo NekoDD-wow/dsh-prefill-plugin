@@ -50,7 +50,7 @@ function fakeWindow(extra = {}) {
 const NAMES = [
   'MOTION', 'setMotionPref', 'play', 'CONFIRM_MS', 'CONFIRM_COUNTDOWN', 'CONFIRM_SWAP', 'CONFIRM_FX', 'confirmMinWidth',
   'DIALOG_FX', 'SCRIM_ENTER', 'SCRIM_EXIT', 'DIALOG_ENTER', 'DIALOG_EXIT', 'createLayerStack', 'dialogLayers', 'focusablesIn', 'trapTab', 'restoreFocus',
-  'surfaceBlocker', 'revealBlock',
+  'surfaceBlocker', 'revealBlock', 'refocusIfLost',
 ]
 function load(win = fakeWindow(), doc = undefined) {
   const body = `${motionSrc}\n${feedbackSrc}\n${dialogSrc}\nreturn { ${NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(', ')} }`
@@ -490,6 +490,22 @@ test('[P1-7] restoreFocus：触发按钮还在 ⇒ 回它；不在了（isConnec
   assert.equal(restoreFocus(btn, anchor), anchor)
   assert.equal(anchor.focused, 1)
   assert.equal(restoreFocus(null, null), null)
+})
+
+test('[P1-7] refocusIfLost：焦点掉到 body / 没有 ⇒ 拉回面板；在别的元素上不抢；面板已卸载不动', () => {
+  const doc = { activeElement: null, body: { isBody: true } }
+  const { refocusIfLost } = load(fakeWindow(), doc)
+  assert.equal(typeof refocusIfLost, 'function', '没有 refocusIfLost')
+  const panel = fakeEl()
+  assert.equal(refocusIfLost(panel), true)
+  doc.activeElement = doc.body
+  assert.equal(refocusIfLost(panel), true)
+  assert.equal(panel.focused, 2)
+  doc.activeElement = fakeEl()
+  assert.equal(refocusIfLost(panel), false, '焦点在别处不抢')
+  doc.activeElement = doc.body
+  panel.isConnected = false
+  assert.equal(refocusIfLost(panel), false)
 })
 
 test('[P1-7] Modal 焦点与 Esc：打开 ⇒ 进层栈、焦点给面板（tabIndex -1）、Tab 被 trapTab 接管；Esc ⇒ onClose；关闭 ⇒ 出栈、焦点回触发按钮；按钮不在了 ⇒ 回锚点', () => {
