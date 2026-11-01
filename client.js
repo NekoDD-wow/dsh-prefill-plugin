@@ -957,6 +957,49 @@ window.__ModuleLoader__.load({
     }
     // </dialog>
 
+    // <rest>
+    /**
+     * 其余 P2（docs/规划-动效.md 第 7 步）。这一段只依赖上面的 <motion>（play / presenceExit / motionLevel）和 <feedback>，
+     * 单测切出来直接跑（tests/motion-rest.test.mjs）。都经 play()、只动 transform / opacity：
+     * 完整 = 全部；减少动效 = 只动 opacity、无位移；关 = 不调 animate（状态直接切换）。
+     */
+    /**
+     * P2-1「当前」高亮层：换节时从上一项的位置 / 尺寸滑到这一项（FLIP：先摆回旧框，再回到 none）。
+     * from / to = 相对导航容器的框 { left, top, width, height }；量不到 / 没变 ⇒ null。
+     */
+    function glideFrames(from, to) {
+      const ok = (box) => box && ['left', 'top', 'width', 'height'].every((key) => Number.isFinite(box[key])) && box.width > 0 && box.height > 0
+      if (!ok(from) || !ok(to)) return null
+      const dx = Math.round(from.left - to.left)
+      const dy = Math.round(from.top - to.top)
+      const sx = Math.round((from.width / to.width) * 1000) / 1000
+      const sy = Math.round((from.height / to.height) * 1000) / 1000
+      if (dx === 0 && dy === 0 && sx === 1 && sy === 1) return null
+      return [
+        { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, transformOrigin: '0 0' },
+        { transform: 'none', transformOrigin: '0 0' },
+      ]
+    }
+    /** 元素相对容器内容区的框（加上容器的滚动量：两次量之间容器滚过也对得上）。 */
+    function boxIn(el, host) {
+      if (!el || !host || typeof el.getBoundingClientRect !== 'function' || typeof host.getBoundingClientRect !== 'function') return null
+      const a = el.getBoundingClientRect()
+      const b = host.getBoundingClientRect()
+      return { left: a.left - b.left + (host.scrollLeft || 0), top: a.top - b.top + (host.scrollTop || 0), width: a.width, height: a.height }
+    }
+    const NAV_HL_FADE = [{ opacity: 0 }, { opacity: 1 }]
+    const NAV_FX = {
+      /** 完整档：高亮层从旧框滑过来（位移类）；减少动效 / 量不到：新高亮淡入；关：直接切。 */
+      glide(layer, from, to) {
+        if (motionLevel() === 'full') {
+          const frames = glideFrames(from, to)
+          if (frames !== null) return play(layer, frames, { kind: 'move', duration: MOTION.base, easing: MOTION.ease })
+        }
+        return play(layer, NAV_HL_FADE, { duration: MOTION.fast, easing: MOTION.ease })
+      },
+    }
+    // </rest>
+
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
     function useMotionLevel() {
       const [, setTick] = React.useState(0)
@@ -5728,6 +5771,23 @@ window.__ModuleLoader__.load({
         }
       }, [sessionId])
 
+      // P2-1：左栏 / 窄屏标签的「当前」高亮层：换节时从上一项滑过来。渲染里记下这次的节（navNow），提交后和上次比；
+      // 起点 = 上一项本身的框（它还在，只是不再高亮），终点 = 新高亮层的框。
+      const navRef = React.useRef(null)
+      const navNow = React.useRef(null)
+      const navWas = React.useRef(null)
+      React.useLayoutEffect(() => {
+        const now = navNow.current
+        const host = navRef.current
+        const was = navWas.current
+        navWas.current = now
+        if (now === null || host === null || was === null || was.pane === now.pane || was.narrow !== now.narrow) return
+        const from = host.querySelector(`[data-prefill-nav-box="${was.pane}"]`)
+        const layer = host.querySelector('[data-prefill-nav-hl]')
+        if (from === null || layer === null) return
+        NAV_FX.glide(layer, boxIn(from, host), boxIn(layer, host))
+      })
+
       if (sessionId === '' || !enabled || items === null) return null
       // 「刷」：这次渲染里的变化是谁引起的（changeCause）；只有后台变化才滚动文字（P1-9），刚挂上的头几秒也不滚。
       const cueCause = changeCause(lastTrigger.current, Date.now())
@@ -9206,6 +9266,10 @@ window.__ModuleLoader__.load({
           h('span', { 'data-prefill-flash': key, style: { position: 'absolute', inset: 0, background: color, opacity: 0 } }),
           h('span', { 'data-prefill-sweep-band': key, style: { position: 'absolute', top: 0, bottom: 0, left: 0, width: '55%', opacity: 0, transform: 'translateX(-100%)', background: `linear-gradient(90deg, transparent, color-mix(in srgb, ${color} 32%, transparent), transparent)` } }),
         )
+      // P2-1：「当前」高亮是选中项里的一层（不再是项自己的底色）：z-index -1 + 导航容器 isolation ⇒ 画在所有项的文字下面，
+      // 换节时这一层从上一项滑过来（NAV_FX.glide），滑动途中也不会盖住别的项。
+      const navHighlight = (radius) =>
+        h('span', { key: 'hl', 'aria-hidden': 'true', 'data-prefill-nav-hl': '', style: { position: 'absolute', inset: 0, zIndex: -1, borderRadius: radius, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 1px 3px rgba(0,0,0,.08)', pointerEvents: 'none' } })
       const navItem = (key, paneId, color, parent) => {
         const selected = shownPane === paneId
         const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
@@ -9218,6 +9282,7 @@ window.__ModuleLoader__.load({
             tabIndex: 0,
             'aria-selected': selected ? 'true' : 'false',
             'data-prefill-nav': paneId,
+            'data-prefill-nav-box': paneId,
             ...(parent ? { 'data-prefill-nav-parent': parent } : {}),
             'data-off': off ? 'true' : 'false',
             onClick: () => setPane(paneId),
@@ -9233,10 +9298,9 @@ window.__ModuleLoader__.load({
               padding: parent ? '4px 10px 4px 26px' : '6px 10px 6px 14px',
               borderRadius: 8,
               cursor: 'pointer',
-              background: selected ? 'var(--dsw-alias-bg-base)' : 'transparent',
-              boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none',
             },
           },
+          selected ? navHighlight(8) : null,
           key === 'usage' ? null : sweepLayer(key, color, 8),
           h('span', { style: { position: 'absolute', left: parent ? 16 : 4, top: parent ? 7 : 9, bottom: parent ? 7 : 9, width: 3, borderRadius: 2, background: stripe } }),
           h(
@@ -9261,7 +9325,8 @@ window.__ModuleLoader__.load({
         const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
         return h(
           'span',
-          { key: paneId, style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '3px 6px 3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)', background: selected ? 'var(--dsw-alias-bg-base)' : 'transparent', boxShadow: selected ? '0 1px 3px rgba(0,0,0,.08)' : 'none' } },
+          { key: paneId, 'data-prefill-nav-box': paneId, style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '3px 6px 3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)' } },
+          selected ? navHighlight(999) : null,
           h('span', { role: 'tab', 'aria-selected': selected ? 'true' : 'false', 'data-prefill-nav': paneId, ...(parent ? { 'data-prefill-nav-parent': parent } : {}), 'data-off': off ? 'true' : 'false', onClick: () => setPane(paneId), style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
             key === 'usage' ? null : sweepLayer(key, color, 999),
             parent ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 } }, '└') : null,
@@ -9445,16 +9510,17 @@ window.__ModuleLoader__.load({
       // 世界书 / 故事记忆是角色卡的子项（0.14）：只在套用的卡带了它们时出现在左栏，缩进挂在「角色卡」下面。
       const navList = navEntries(FEATURE_NAV, { lore: appliedRef !== null && (loreEntries.length > 0 || loreCustom), memory: appliedRef !== null && memoryConfig !== null && typeof memoryConfig === 'object' })
       const shownPane = (pane === 'lore' || pane === 'memory') && !navList.some(([, paneId]) => paneId === pane) ? 'cards' : pane
+      navNow.current = { pane: shownPane, narrow }
       const nav = narrow
         ? h(
             'div',
-            { role: 'tablist', style: { display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 10px', borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)', flex: '0 0 auto' } },
+            { ref: navRef, role: 'tablist', style: { position: 'relative', isolation: 'isolate', display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 10px', borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)', flex: '0 0 auto' } },
             ...navList.map(([key, paneId, color, parent]) => tabItem(key, paneId, color, parent)),
             tabItem('usage', 'usage', 'var(--dsw-alias-label-tertiary)'),
           )
         : h(
             'div',
-            { role: 'tablist', 'aria-orientation': 'vertical', style: { width: 214, flex: '0 0 214px', boxSizing: 'border-box', overflowY: 'auto', borderRight: '1px solid var(--dsw-alias-border-l1)', padding: 8, display: 'flex', flexDirection: 'column', gap: 2, background: 'var(--dsw-alias-bg-layer-1)' } },
+            { ref: navRef, role: 'tablist', 'aria-orientation': 'vertical', style: { position: 'relative', isolation: 'isolate', width: 214, flex: '0 0 214px', boxSizing: 'border-box', overflowY: 'auto', borderRight: '1px solid var(--dsw-alias-border-l1)', padding: 8, display: 'flex', flexDirection: 'column', gap: 2, background: 'var(--dsw-alias-bg-layer-1)' } },
             ...navList.map(([key, paneId, color, parent]) => navItem(key, paneId, color, parent)),
             h('div', { key: 'sep', style: { height: 1, background: 'var(--dsw-alias-border-l1)', margin: '6px 4px' } }),
             navItem('usage', 'usage', 'var(--dsw-alias-label-tertiary)'),
