@@ -1117,6 +1117,41 @@ window.__ModuleLoader__.load({
         return revealBlock(root.querySelector?.('[data-prefill-main]') ?? null, node)
       },
     }
+    /**
+     * P2-12 手动注入「待发」列表：新加的一行滚进视野并入场（revealBlock）；一行被领走（写进会话）或撤回后，
+     * 先在原位置淡出 + 上移 4px（fast / easeOut，presence 落定才拿掉），而不是一下消失。减少动效只淡入淡出；关直接切。
+     * 被领走通常正赶上模型开始输出：这一下淡出是这一行自己的去向（推迟到回合结束就等于不播），所以流式中照常播。
+     */
+    const ROW_EXIT = [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-4px)' }]
+    /** 和上一份比：拿掉了哪些（带原位置）、新加了哪些 id。prev = null（第一次拿到列表 / 换会话）⇒ 什么都不算。 */
+    function rowChanges(prev, next, keyOf = (entry) => String(entry?.id)) {
+      if (prev === null || prev === undefined || !Array.isArray(next)) return { removed: [], added: [] }
+      const nextIds = new Set(next.map(keyOf))
+      const prevIds = new Set(prev.map(keyOf))
+      return {
+        removed: prev.map((entry, index) => ({ entry, index })).filter(({ entry }) => !nextIds.has(keyOf(entry))),
+        added: next.filter((entry) => !prevIds.has(keyOf(entry))).map(keyOf),
+      }
+    }
+    /** 正在退场的行（ghosts = [{ entry, index, why }]）按原位置插回列表：返回 [{ entry, leaving, why }]。又回到列表里的不插。 */
+    function withGhosts(rows, ghosts, keyOf = (entry) => String(entry?.id)) {
+      const out = (rows ?? []).map((entry) => ({ entry, leaving: false }))
+      const live = new Set((rows ?? []).map(keyOf))
+      for (const ghost of [...(ghosts ?? [])].sort((a, b) => a.index - b.index)) {
+        if (live.has(keyOf(ghost.entry))) continue
+        out.splice(Math.min(Math.max(0, ghost.index), out.length), 0, { entry: ghost.entry, leaving: true, why: ghost.why })
+      }
+      return out
+    }
+    const ROW_FX = {
+      enter(view, node) {
+        return revealBlock(view, node)
+      },
+      /** 淡出后 unmount（off / 找不到行 ⇒ 当场）。返回 { abort }。 */
+      exit(node, unmount) {
+        return presenceExit(play(node, ROW_EXIT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' }), unmount, MOTION.fast + 240)
+      },
+    }
     // </rest>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -5061,6 +5096,11 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState(null)
       const [editing, setEditing] = React.useState(null)
       const seenPending = React.useRef(new Set())
+      // P2-12：正在退场的「待发」行（被领走 / 撤回）；上一份待发列表（null = 还没拿到 / 刚换会话）。
+      const [ghosts, setGhosts] = React.useState([])
+      const pendingWas = React.useRef(null)
+      const pendingBox = React.useRef(null)
+      const exiting = React.useRef(new Map())
 
       const absorb = React.useCallback(
         (result) => {
@@ -5084,6 +5124,10 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         seenPending.current = new Set()
         recentSeen.current = null
+        pendingWas.current = null
+        for (const ctl of exiting.current.values()) ctl.abort()
+        exiting.current.clear()
+        setGhosts([])
         setData(null)
         setEditing(null)
         setNotice(null)
@@ -5108,6 +5152,40 @@ window.__ModuleLoader__.load({
           if (fresh.includes(row.getAttribute('data-prefill-manual-delivered'))) play(row.querySelector('[data-prefill-flash-bg]'), NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', prio: 1 })
         }
       })
+      // P2-12：待发列表变了 ⇒ 拿掉的行变成 ghost 留在原位置淡出；新加的行滚进视野并入场。第一次拿到列表只记下。
+      React.useLayoutEffect(() => {
+        if (data === null) return
+        const { removed, added } = rowChanges(pendingWas.current, pending)
+        pendingWas.current = pending
+        if (removed.length > 0) {
+          const gone = new Set(removed.map(({ entry }) => String(entry.id)))
+          setGhosts((list) => [...list.filter((ghost) => !gone.has(String(ghost.entry.id))), ...removed])
+        }
+        const box = pendingBox.current
+        for (const id of added) {
+          const node = [...(box?.querySelectorAll('[data-prefill-manual-row]') ?? [])].find((row) => row.getAttribute('data-prefill-manual-row') === id) ?? null
+          if (node !== null) ROW_FX.enter(typeof node.closest === 'function' ? node.closest('[data-prefill-main]') : null, node)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [data])
+      React.useLayoutEffect(() => {
+        const box = pendingBox.current
+        for (const ghost of ghosts) {
+          const key = String(ghost.entry.id)
+          if (exiting.current.has(key)) continue
+          const node = [...(box?.querySelectorAll('[data-prefill-manual-leaving]') ?? [])].find((row) => row.getAttribute('data-prefill-manual-leaving') === key) ?? null
+          exiting.current.set(
+            key,
+            ROW_FX.exit(node, () => {
+              exiting.current.delete(key)
+              setGhosts((list) => list.filter((item) => item !== ghost))
+            }),
+          )
+        }
+      }, [ghosts])
+      React.useEffect(() => () => {
+        for (const ctl of exiting.current.values()) ctl.abort()
+      }, [])
       // 有待发的就轮询，等它被领取（领取后从列表消失，提示写进了第几轮）。
       React.useEffect(() => {
         if (sessionId === '' || pending.length === 0) return undefined
@@ -5202,14 +5280,22 @@ window.__ModuleLoader__.load({
             t('manualSend'),
           ),
         ),
-        pending.length === 0
+        pending.length === 0 && ghosts.length === 0
           ? null
           : h(
               'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-manual-pending': String(pending.length) },
-              h('span', { style: V.sectionMeta }, t('manualPending').replace('{n}', String(pending.length))),
-              ...pending.map((entry) =>
-                editing !== null && editing.id === entry.id
+              { ref: pendingBox, style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-manual-pending': String(pending.length) },
+              pending.length === 0 ? null : h('span', { key: 'head', style: V.sectionMeta }, t('manualPending').replace('{n}', String(pending.length))),
+              // P2-12：退场中的行（ghost）插回原位置，只读、不接收点击，淡出后拿掉。
+              ...withGhosts(pending, ghosts).map(({ entry, leaving }) =>
+                leaving
+                  ? h(
+                      'div',
+                      { key: `leaving-${entry.id}`, 'aria-hidden': 'true', 'data-prefill-manual-leaving': String(entry.id), style: { ...V.row, ...V.callout('brand'), maxWidth: '80ch', pointerEvents: 'none' } },
+                      h('b', { style: { fontSize: 12, whiteSpace: 'nowrap' } }, entry.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
+                      h('span', { style: { flex: '1 1 auto', minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, entry.text),
+                    )
+                  : editing !== null && editing.id === entry.id
                   ? h(
                       'div',
                       { key: entry.id, style: { ...V.row, alignItems: 'flex-start' }, 'data-prefill-manual-row': entry.id },

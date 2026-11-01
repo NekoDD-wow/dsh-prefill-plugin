@@ -53,6 +53,7 @@ const NAMES = [
   'CHIP_SWAP', 'chipCompact',
   'TONE_FADE', 'COUNT_POP', 'SBX_FX', 'flushCues', 'pendingCues',
   'cardArrival', 'ARRIVE_FX', 'BLOCK_GLOW_MS',
+  'ROW_EXIT', 'rowChanges', 'withGhosts', 'ROW_FX',
 ]
 function load(win = fakeWindow(), doc = undefined) {
   const body = `${motionSrc}\n${feedbackSrc}\n${restSrc}\nreturn { ${NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(', ')} }`
@@ -681,4 +682,73 @@ test('[P2-11] 接线：导入前记下已有的卡，导入成功后 setCardArri
   assert.match(dockSrc, /cardArrive !== null && cardArrive\.id === card\.id \? h\(BlockGlow, \{ key: 'glow', radius: 14 \}\) : null/)
   assert.ok(dockSrc.indexOf('ARRIVE_FX.card(') < dockSrc.indexOf("if (sessionId === '' || !enabled || items === null) return null"), 'hook 在提前返回之前')
   assert.match(src, /function BlockGlow\(props\) \{\n\s+const radius = props\?\.radius \?\? 10/)
+})
+
+// ── P2-12 手动注入新行入场、发出后淡出 ─────────────────────────────
+
+test('[P2-12] rowChanges：第一次拿到列表什么都不算；拿掉的带原位置、新加的给 id（数字 id 也按字符串比）', () => {
+  const { rowChanges } = load()
+  assert.equal(typeof rowChanges, 'function', '没有 rowChanges')
+  const a = { id: 1, text: 'a' }
+  const b = { id: 2, text: 'b' }
+  const c = { id: 3, text: 'c' }
+  assert.deepEqual(rowChanges(null, [a, b]), { removed: [], added: [] })
+  assert.deepEqual(rowChanges([a, b, c], [a, c]), { removed: [{ entry: b, index: 1 }], added: [] })
+  assert.deepEqual(rowChanges([a], [a, b]), { removed: [], added: ['2'] })
+  assert.deepEqual(rowChanges([a, b], [{ id: '1' }, { id: '2' }]), { removed: [], added: [] })
+})
+
+test('[P2-12] withGhosts：退场中的行插回原位置（标 leaving）；又回到列表的不插；位置超出夹到末尾', () => {
+  const { withGhosts } = load()
+  assert.equal(typeof withGhosts, 'function', '没有 withGhosts')
+  const a = { id: 1 }
+  const b = { id: 2 }
+  const c = { id: 3 }
+  const out = withGhosts([a, c], [{ entry: b, index: 1 }])
+  assert.deepEqual(out.map((row) => [row.entry.id, row.leaving]), [[1, false], [2, true], [3, false]])
+  assert.deepEqual(withGhosts([a, b], [{ entry: b, index: 0 }]).map((row) => row.entry.id), [1, 2], '回来了：不重复')
+  assert.deepEqual(withGhosts([], [{ entry: c, index: 5 }]).map((row) => [row.entry.id, row.leaving]), [[3, true]], '最后一行被领走：列表空了也照样画出来淡出')
+})
+
+test('[P2-12] ROW_FX：新行入场（revealBlock，完整档带位移）；拿掉的行淡出 + 上移（fast / easeOut / forwards，流式中照常），落定才卸载；减少动效只淡；off 当场卸载', async () => {
+  const { ROW_FX, MOTION, setMotionPref } = load()
+  assert.equal(typeof ROW_FX?.exit, 'function', '没有 ROW_FX')
+  const row = fakeEl()
+  ROW_FX.enter(null, row)
+  assert.ok(props(row.calls[0].frames).has('transform'))
+  const leaving = fakeEl(streamRoot)
+  let gone = 0
+  ROW_FX.exit(leaving, () => (gone += 1))
+  assert.equal(leaving.calls.length, 1, '流式中照常')
+  assert.deepEqual(leaving.calls[0].frames[1], { opacity: 0, transform: 'translateY(-4px)' })
+  assert.equal(leaving.calls[0].timing.duration, MOTION.fast)
+  assert.equal(leaving.calls[0].timing.fill, 'forwards')
+  assert.equal(gone, 0)
+  leaving.calls[0].finish()
+  await tick()
+  assert.equal(gone, 1)
+  let missing = 0
+  ROW_FX.exit(null, () => (missing += 1))
+  assert.equal(missing, 1, '找不到行：当场拿掉')
+  setMotionPref('lite')
+  const lite = fakeEl()
+  ROW_FX.exit(lite, () => {})
+  assert.deepEqual([...props(lite.calls[0].frames)], ['opacity'])
+  setMotionPref('off')
+  const off = fakeEl()
+  let offGone = 0
+  ROW_FX.exit(off, () => (offGone += 1))
+  assert.equal(off.calls.length, 0)
+  assert.equal(offGone, 1)
+})
+
+test('[P2-12] 接线：待发列表变了 ⇒ 拿掉的成 ghost（data-prefill-manual-leaving，aria-hidden、不接收点击）淡出后拿掉、新加的入场；列表空了但还有 ghost 时整块照样画；换会话清掉', () => {
+  assert.match(manualSrc, /const \{ removed, added \} = rowChanges\(pendingWas\.current, pending\)/)
+  assert.match(manualSrc, /ROW_FX\.enter\(typeof node\.closest === 'function' \? node\.closest\('\[data-prefill-main\]'\) : null, node\)/)
+  assert.match(manualSrc, /ROW_FX\.exit\(node, \(\) => \{\n\s+exiting\.current\.delete\(key\)\n\s+setGhosts\(\(list\) => list\.filter\(\(item\) => item !== ghost\)\)/)
+  assert.match(manualSrc, /pending\.length === 0 && ghosts\.length === 0\n\s+\? null/)
+  assert.match(manualSrc, /\.\.\.withGhosts\(pending, ghosts\)\.map\(\(\{ entry, leaving \}\) =>/)
+  assert.match(manualSrc, /'aria-hidden': 'true', 'data-prefill-manual-leaving': String\(entry\.id\), style: \{ [^}]*pointerEvents: 'none' \}/)
+  assert.match(manualSrc, /pendingWas\.current = null\n\s+for \(const ctl of exiting\.current\.values\(\)\) ctl\.abort\(\)\n\s+exiting\.current\.clear\(\)\n\s+setGhosts\(\[\]\)/)
+  assert.ok(manualSrc.indexOf('rowChanges(') < manualSrc.indexOf("if (sessionId === '') return null"), 'hook 在提前返回之前')
 })
