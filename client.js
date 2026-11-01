@@ -925,6 +925,20 @@ window.__ModuleLoader__.load({
       }
       return null
     }
+    /**
+     * 事后改写「改写这一条」为什么点不了（P1-7 禁用原因）：按界面从上到下第一个没满足的，写明还差什么；能点 ⇒ null。
+     * reason：loading 还在读会话 | not-ready 现在改不了（原因在上面的提示里）| no-pick 没选消息 | empty-user user 消息不能留空 | risks 风险没勾全（left = 还差几条）。
+     */
+    function surfaceBlocker({ loading = false, list = null, picked, text = '', risks = [], required = [] } = {}) {
+      if (loading || list === null || list === undefined) return { reason: 'loading' }
+      if (list.ready !== true) return { reason: 'not-ready' }
+      if (picked === null || picked === undefined) return { reason: 'no-pick' }
+      if (picked.type === 'user/message' && text === '') return { reason: 'empty-user' }
+      const ticked = Array.isArray(risks) ? risks : []
+      const left = required.filter((risk) => !ticked.includes(risk)).length
+      if (left > 0) return { reason: 'risks', left }
+      return null
+    }
     // </dialog>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -1258,6 +1272,23 @@ window.__ModuleLoader__.load({
           snap.current.children,
         ),
       )
+    }
+
+    /**
+     * 弹窗里的结果条 / 结论（P1-7 结果入场）：reveal 有值（且变了）⇒ 只滚面板自己的内容区到刚好看得见，再入场（revealBlock：
+     * 完整档 translateY + 淡入、平滑滚动；减少动效只淡入、直接跳到位；off 不动画）。reveal 用结果对象本身：同一份结果重渲染不重播。
+     */
+    function DialogResult(props) {
+      const { reveal, children, ...rest } = props
+      const ref = React.useRef(null)
+      React.useLayoutEffect(() => {
+        if (reveal === null || reveal === undefined || reveal === false) return undefined
+        const el = ref.current
+        const view = typeof el?.closest === 'function' ? el.closest('[data-prefill-dialog-panel]') : null
+        const animation = revealBlock(view, el)
+        return () => animation?.cancel?.()
+      }, [reveal])
+      return h('div', { ...rest, ref, 'data-prefill-dialog-result': '' }, children)
     }
 
     /**
@@ -9791,6 +9822,12 @@ window.__ModuleLoader__.load({
         sbxSurfacePending: '已登记：这一类（developer 消息）只能在一步之内落盘，下一轮开头生效。',
         sbxSurfacePendingTag: '待生效',
         sbxSurfaceFailed: '没改成：{r}',
+        sbxSurfaceBlocked_loading: '还在读会话…',
+        'sbxSurfaceBlocked_not-ready': '现在改不了（原因见上）',
+        'sbxSurfaceBlocked_no-pick': '还差：选一条要改写的消息',
+        'sbxSurfaceBlocked_empty-user': '还差：这是 user 消息，不能留空，写一句占位',
+        sbxSurfaceBlocked_risks: '还差：勾选剩下 {n} 条风险',
+        sbxSurfaceGoing: '正在改写…',
       },
       en: {
         injectTitle: 'Session sandbox',
@@ -9929,6 +9966,12 @@ window.__ModuleLoader__.load({
         sbxSurfacePending: 'Queued: this kind (developer message) can only be written inside a step, so it takes effect at the start of the next turn.',
         sbxSurfacePendingTag: 'pending',
         sbxSurfaceFailed: 'Not rewritten: {r}',
+        sbxSurfaceBlocked_loading: 'Still reading the session…',
+        'sbxSurfaceBlocked_not-ready': 'Cannot rewrite now (see above)',
+        'sbxSurfaceBlocked_no-pick': 'Still needed: pick a message to rewrite',
+        'sbxSurfaceBlocked_empty-user': 'Still needed: this is a user message and cannot be empty; write a placeholder',
+        sbxSurfaceBlocked_risks: 'Still needed: tick the remaining {n} risk(s)',
+        sbxSurfaceGoing: 'Rewriting…',
       },
     }
 
@@ -10233,23 +10276,32 @@ window.__ModuleLoader__.load({
         setSurface({ name, busy: true, list: null, pick: null, text: '', risks: [], result: null })
         void loadSurface(name)
       }
+      // 改写 / 还原走 busy.run（动效第 6 步 P1-7）：进行中重复点击被忽略、过了 150ms 才转圈；两者互斥（同一前缀）。
+      // 按钮不用 disabled 表示「进行中」（disabled 会把焦点丢到 body），只 aria-disabled。
+      const surfaceFailed = (error) => setSurface((prev) => (prev === null ? prev : { ...prev, busy: false, result: { ok: false, reason: String(error?.message ?? error) } }))
       const submitSurface = () => {
-        if (surface === null || surface.pick === null) return
+        if (surface === null || surface.pick === null || busy.anyPending('surface:')) return
         const { name, pick, text, risks } = surface
-        setSurface((prev) => ({ ...prev, busy: true, result: null }))
-        void postJson(SANDBOX_ROUTE, { op: 'surface-edit', sessionId, seq: pick, text, risks })
-          .then((result) => loadSurface(name, { result, ...(result?.ok ? { risks: [] } : {}) }))
-          .then(() => refresh())
-          .catch((error) => setSurface((prev) => ({ ...prev, busy: false, result: { ok: false, reason: String(error?.message ?? error) } })))
+        setSurface((prev) => ({ ...prev, result: null }))
+        busy
+          .run('surface:go', () =>
+            postJson(SANDBOX_ROUTE, { op: 'surface-edit', sessionId, seq: pick, text, risks })
+              .then((result) => loadSurface(name, { result, ...(result?.ok ? { risks: [] } : {}) }))
+              .then(() => refresh()),
+          )
+          ?.catch(surfaceFailed)
       }
       const restoreSurface = (id) => {
-        if (surface === null) return
+        if (surface === null || busy.anyPending('surface:')) return
         const { name } = surface
-        setSurface((prev) => ({ ...prev, busy: true, result: null }))
-        void postJson(SANDBOX_ROUTE, { op: 'surface-restore', sessionId, id })
-          .then((result) => loadSurface(name, { result: { ...result, restored: result?.ok === true } }))
-          .then(() => refresh())
-          .catch((error) => setSurface((prev) => ({ ...prev, busy: false, result: { ok: false, reason: String(error?.message ?? error) } })))
+        setSurface((prev) => ({ ...prev, result: null }))
+        busy
+          .run(`surface:restore:${id}`, () =>
+            postJson(SANDBOX_ROUTE, { op: 'surface-restore', sessionId, id })
+              .then((result) => loadSurface(name, { result: { ...result, restored: result?.ok === true } }))
+              .then(() => refresh()),
+          )
+          ?.catch(surfaceFailed)
       }
       const activeSurfaceEdits = (Array.isArray(state?.surfaceEdits?.[sessionId]) ? state.surfaceEdits[sessionId] : []).filter((edit) => edit?.status === 'active' || edit?.status === 'pending')
 
@@ -10571,7 +10623,7 @@ window.__ModuleLoader__.load({
             h('b', { style: { fontSize: 15 } }, title),
             h('div', { style: V.sectionMeta }, t('sbxTraceDesc')),
             trace.busy && result === null ? h('div', { style: V.hint }, t('sbxTraceBusy')) : null,
-            result && !top ? h('div', { style: V.callout('warn') }, t('sbxTraceNone').replace('{p}', String(result.scanned?.packages ?? 0)).replace('{f}', String(result.scanned?.files ?? 0))) : null,
+            result && !top ? h(DialogResult, { reveal: result, style: V.callout('warn') }, t('sbxTraceNone').replace('{p}', String(result.scanned?.packages ?? 0)).replace('{f}', String(result.scanned?.files ?? 0))) : null,
             top
               ? h(
                   'pre',
@@ -10581,16 +10633,16 @@ window.__ModuleLoader__.load({
               : null,
             top
               ? h(
-                  'div',
-                  { style: { ...V.callout(), maxWidth: 'none', fontSize: 12.5 } },
+                  DialogResult,
+                  { reveal: result, style: { ...V.callout(), maxWidth: 'none', fontSize: 12.5 }, 'data-prefill-sbx-trace-conclusion': '' },
                   t('sbxTraceConclusion').replace('{pkg}', top.package).replace('{how}', top.how).replace('{c}', confidence),
                   top.siblings?.length > 0 ? h('div', null, t('sbxTraceSiblings'), top.siblings.slice(0, 10).map((entry) => `${sbxGroupLabel(t, entry.group)} ${entry.name}`).join('、')) : null,
                   others.length > 0 ? h('div', { style: V.sectionMeta }, t('sbxTraceOthers'), others.map((entry) => `${entry.package} ${entry.file}:${entry.line}`).join('；')) : null,
                 )
               : null,
             ai === 'busy' ? h('div', { style: V.hint }, t('sbxTraceAiBusy')) : null,
-            ai && ai !== 'busy' && ai.ok ? h('div', { style: { ...V.callout('brand'), maxWidth: 'none', fontSize: 12.5, whiteSpace: 'pre-wrap' }, 'data-prefill-sbx-trace-ai': '' }, h('b', null, t('sbxTraceAiBy').replace('{m}', ai.model ?? '')), ai.text) : null,
-            ai && ai !== 'busy' && !ai.ok ? h('div', { style: V.callout('warn') }, t('sbxTraceAiFailed').replace('{r}', ai.reason ?? '')) : null,
+            ai && ai !== 'busy' && ai.ok ? h(DialogResult, { reveal: ai, style: { ...V.callout('brand'), maxWidth: 'none', fontSize: 12.5, whiteSpace: 'pre-wrap' }, 'data-prefill-sbx-trace-ai': '' }, h('b', null, t('sbxTraceAiBy').replace('{m}', ai.model ?? '')), ai.text) : null,
+            ai && ai !== 'busy' && !ai.ok ? h(DialogResult, { reveal: ai, style: V.callout('warn') }, t('sbxTraceAiFailed').replace('{r}', ai.reason ?? '')) : null,
             (result?.claims ?? []).length > 0 ? h('div', { style: V.sectionMeta }, t('sbxTraceClaims'), result.claims.map((claim) => `${claim.plugin}（${claim.members.length}）`).join('、')) : null,
             h('div', { style: V.sectionMeta }, t('sbxTraceNotice'), rejected > 0 ? ` ${t('sbxTraceRejected').replace('{n}', String(rejected))}` : ''),
             h(
@@ -10613,8 +10665,11 @@ window.__ModuleLoader__.load({
         const picked = candidates.find((entry) => entry.seq === surface.pick)
         const userType = picked?.type === 'user/message'
         const risks = Array.isArray(surface.risks) ? surface.risks : []
-        const allRisks = SBX_SURFACE_RISKS.every((risk) => risks.includes(risk))
-        const canGo = !surface.busy && list?.ready === true && picked !== undefined && allRisks && !(userType && surface.text === '')
+        const blocker = surfaceBlocker({ loading: surface.busy === true, list, picked, text: surface.text, risks, required: SBX_SURFACE_RISKS })
+        const blockerText = blocker === null ? '' : t(`sbxSurfaceBlocked_${blocker.reason}`).replace('{n}', String(blocker.left ?? ''))
+        const working = busy.anyPending('surface:')
+        const going = busy.shown('surface:go')
+        const canGo = blocker === null && !working
         const result = surface.result
         const toggleRisk = (risk) => setSurface((prev) => ({ ...prev, risks: (prev.risks ?? []).includes(risk) ? prev.risks.filter((entry) => entry !== risk) : [...(prev.risks ?? []), risk] }))
         const title = surface.name ? t('sbxSurfaceTitle').replace('{name}', surface.name) : t('sbxSurfaceTitleAll')
@@ -10644,7 +10699,24 @@ window.__ModuleLoader__.load({
                     h('span', { style: V.sectionMeta }, `${entry.turn !== null && entry.turn !== undefined ? t('sbxSurfaceTurn').replace('{n}', String(entry.turn)) : ''} · seq ${entry.seq}`),
                     entry.edit ? sbxChip(entry.edit.pending ? t('sbxSurfacePendingTag') : t('sbxSurfaceEdited'), SBX_PURPLE) : null,
                     h('span', { style: { flex: '1 1 auto' } }),
-                    entry.edit ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12 }, 'data-prefill-sbx-surface-restore': entry.edit.id, onClick: (event) => { event.preventDefault?.(); restoreSurface(entry.edit.id) } }, t('sbxSurfaceRestore')) : null,
+                    entry.edit
+                      ? h(
+                          'button',
+                          {
+                            type: 'button',
+                            style: { ...V.btnGhost, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5, ...(busy.shown(`surface:restore:${entry.edit.id}`) ? BUSY_LOOK : {}) },
+                            'data-prefill-sbx-surface-restore': entry.edit.id,
+                            ...busyAttrs(busy, `surface:restore:${entry.edit.id}`),
+                            ...(working && !busy.pending(`surface:restore:${entry.edit.id}`) ? { 'aria-disabled': 'true' } : {}),
+                            onClick: (event) => {
+                              event.preventDefault?.()
+                              restoreSurface(entry.edit.id)
+                            },
+                          },
+                          busy.shown(`surface:restore:${entry.edit.id}`) ? h(Spinner, { size: 10 }) : null,
+                          t('sbxSurfaceRestore'),
+                        )
+                      : null,
                   ),
                   h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 90, overflow: 'hidden' } }, entry.edit ? `→ ${entry.edit.text === '' ? '∅' : entry.edit.text}\n（${entry.preview}）` : entry.preview),
                 ),
@@ -10667,15 +10739,32 @@ window.__ModuleLoader__.load({
                 h('span', null, t(`sbxSurfaceRisk_${risk}`)),
               ),
             ),
-            result && result.ok && result.restored ? h('div', { style: V.callout(), 'data-prefill-sbx-surface-result': 'restored' }, t('sbxSurfaceRestored')) : null,
-            result && result.ok && result.pending ? h('div', { style: V.callout(), 'data-prefill-sbx-surface-result': 'pending' }, t('sbxSurfacePending')) : null,
-            result && result.ok && !result.restored && !result.pending ? h('div', { style: V.callout(), 'data-prefill-sbx-surface-result': 'ok' }, t('sbxSurfaceDone').replace('{seq}', String(result.edit?.currentSeq ?? ''))) : null,
-            result && !result.ok ? h('div', { style: V.callout('warn'), 'data-prefill-sbx-surface-result': 'failed' }, t('sbxSurfaceFailed').replace('{r}', surfaceReason(result.reason))) : null,
+            // 结果条挂上时滚进视野并入场（DialogResult；reveal = 这份结果）。
+            result && result.ok && result.restored ? h(DialogResult, { reveal: result, style: V.callout(), role: 'status', 'data-prefill-sbx-surface-result': 'restored' }, t('sbxSurfaceRestored')) : null,
+            result && result.ok && result.pending ? h(DialogResult, { reveal: result, style: V.callout(), role: 'status', 'data-prefill-sbx-surface-result': 'pending' }, t('sbxSurfacePending')) : null,
+            result && result.ok && !result.restored && !result.pending ? h(DialogResult, { reveal: result, style: V.callout(), role: 'status', 'data-prefill-sbx-surface-result': 'ok' }, t('sbxSurfaceDone').replace('{seq}', String(result.edit?.currentSeq ?? ''))) : null,
+            result && !result.ok ? h(DialogResult, { reveal: result, style: V.callout('warn'), role: 'alert', 'data-prefill-sbx-surface-result': 'failed' }, t('sbxSurfaceFailed').replace('{r}', surfaceReason(result.reason))) : null,
             h(
               'div',
               { style: { ...V.row, justifyContent: 'flex-end', gap: 8 } },
+              // 禁用原因：写明还差什么（读会话中已有「正在读会话…」提示，不重复）。
+              blocker !== null && blocker.reason !== 'loading' ? h('span', { 'data-prefill-sbx-surface-blocker': blocker.reason, 'aria-live': 'polite', style: { ...V.sectionMeta, flex: '1 1 auto', minWidth: 0, color: 'var(--dsw-alias-state-warn-primary)' } }, blockerText) : null,
               h('button', { type: 'button', style: V.btn, onClick: () => setSurface(null) }, t('sbxCancel')),
-              h('button', { type: 'button', disabled: !canGo, 'data-prefill-sbx-surface-go': '', style: { ...V.btn, background: canGo ? SBX_RED : undefined, color: canGo ? '#fff' : undefined, borderColor: SBX_RED, opacity: canGo ? 1 : 0.55 }, onClick: () => canGo && submitSurface() }, t('sbxSurfaceGo')),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  disabled: blocker !== null,
+                  title: blockerText || undefined,
+                  'data-prefill-sbx-surface-go': '',
+                  ...busyAttrs(busy, 'surface:go'),
+                  ...(working && !busy.pending('surface:go') ? { 'aria-disabled': 'true' } : {}),
+                  style: { ...V.btn, display: 'inline-flex', alignItems: 'center', gap: 6, background: blocker === null ? SBX_RED : undefined, color: blocker === null ? '#fff' : undefined, borderColor: SBX_RED, opacity: blocker === null ? 1 : 0.55, ...(going ? BUSY_LOOK : {}) },
+                  onClick: () => canGo && submitSurface(),
+                },
+                going ? h(Spinner, { size: 11 }) : null,
+                going ? t('sbxSurfaceGoing') : t('sbxSurfaceGo'),
+              ),
             ),
           ),
         )

@@ -5,6 +5,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { SURFACE_RISKS } from '../sandbox-surface.js'
+import { sandboxView } from '../sandbox-view.js'
+import { makeHarness } from './sandbox-harness.mjs'
 
 const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 // 找不到就给空串：改前（没有 <dialog> 段）每一项各自失败，而不是整个文件加载失败。
@@ -535,4 +538,106 @@ test('[P1-7] 接线：沙盒页给两个弹窗同一个锚点（Modal 旁、tabI
   assert.match(sandboxSrc, /'data-prefill-sbx-trace-dialog'[^\n]*anchor: dialogAnchor/)
   assert.match(sandboxSrc, /'data-prefill-sbx-surface-dialog'[^\n]*anchor: dialogAnchor/)
   assert.match(sandboxSrc, /h\('span', \{ ref: dialogAnchor, tabIndex: -1, 'data-prefill-dialog-anchor'/)
+})
+
+// ── P1-7 禁用原因 / 提交忙碌态 / 结果入场 ─────────────────────────────
+
+test('[P1-7] surfaceBlocker：按界面从上到下第一个没满足的写明还差什么；都满足 ⇒ null', () => {
+  const { surfaceBlocker } = load()
+  assert.equal(typeof surfaceBlocker, 'function', '没有 surfaceBlocker')
+  const required = ['log', 'conflict', 'cache', 'internal']
+  const list = { ready: true }
+  const picked = { type: 'developer/message' }
+  assert.deepEqual(surfaceBlocker({ loading: true, list, picked, required }), { reason: 'loading' })
+  assert.deepEqual(surfaceBlocker({ list: null, required }), { reason: 'loading' })
+  assert.deepEqual(surfaceBlocker({ list: { ready: false, reason: 'busy' }, picked, required }), { reason: 'not-ready' })
+  assert.deepEqual(surfaceBlocker({ list, picked: undefined, required }), { reason: 'no-pick' })
+  assert.deepEqual(surfaceBlocker({ list, picked: { type: 'user/message' }, text: '', risks: required, required }), { reason: 'empty-user' })
+  assert.deepEqual(surfaceBlocker({ list, picked, risks: ['log'], required }), { reason: 'risks', left: 3 })
+  assert.equal(surfaceBlocker({ list, picked, text: '', risks: required, required }), null, '非 user 消息可以留空')
+  assert.equal(surfaceBlocker({ list, picked: { type: 'user/message' }, text: '占位', risks: required, required }), null)
+})
+
+test('[P1-7] 禁用原因文案：每个 reason 中英文都有，风险数带 {n}', () => {
+  for (const reason of ['loading', 'not-ready', 'no-pick', 'empty-user', 'risks']) {
+    const key = `sbxSurfaceBlocked_${reason}`
+    const hits = src.split(new RegExp(`'?${key}'?: '`)).length - 1
+    assert.equal(hits, 2, `${key} 中英文各一条`)
+  }
+  assert.match(src, /sbxSurfaceBlocked_risks: '还差：勾选剩下 \{n\} 条风险'/)
+  assert.match(src, /sbxSurfaceBlocked_risks: 'Still needed: tick the remaining \{n\} risk\(s\)'/)
+})
+
+test('[P1-7] DialogResult：挂上 ⇒ revealBlock 入场（完整档带位移）；同一份结果重渲染不重播；换一份再播；减少动效只淡入；off 不动画', () => {
+  const els = {}
+  const p = (reveal) => ({ reveal, 'data-prefill-test-result': '', children: ['好了'] })
+  const m = mount('DialogResult', p(null), { els })
+  assert.equal(typeof m.made.DialogResult, 'function', '没有 DialogResult')
+  const el = els['data-prefill-test-result']
+  assert.equal(m.tree.type, 'div')
+  assert.equal(m.tree.props['data-prefill-dialog-result'], '')
+  assert.equal(el.calls.length, 0, '没有结果不播')
+  const first = { ok: true }
+  m.render(p(first))
+  assert.equal(el.calls.length, 1)
+  assert.ok(props(el.calls[0].frames).has('transform'))
+  m.render(p(first))
+  assert.equal(el.calls.length, 1, '同一份结果不重播')
+  m.made.setMotionPref('lite')
+  m.render(p({ ok: false }))
+  assert.equal(el.calls.length, 2)
+  assert.equal(el.calls[0].cancelled, 1, '上一段被换掉')
+  assert.deepEqual([...props(el.calls[1].frames)], ['opacity'])
+  m.made.setMotionPref('off')
+  m.render(p({ ok: true, again: 1 }))
+  assert.equal(el.calls.length, 2, 'off 不调 animate')
+})
+
+test('[P1-7] 接线：改写 / 还原走 busy.run + busyAttrs + Spinner；结果条和溯源 / AI 结论走 DialogResult；禁用原因挂在按钮旁', () => {
+  assert.match(sandboxSrc, /busy\s*\.run\('surface:go',/)
+  assert.match(sandboxSrc, /busy\s*\.run\(`surface:restore:\$\{id\}`,/)
+  assert.match(sandboxSrc, /\.\.\.busyAttrs\(busy, 'surface:go'\)/)
+  assert.match(sandboxSrc, /\.\.\.busyAttrs\(busy, `surface:restore:\$\{entry\.edit\.id\}`\)/)
+  assert.match(sandboxSrc, /going \? h\(Spinner/)
+  for (const kind of ['restored', 'pending', 'ok', 'failed']) assert.match(sandboxSrc, new RegExp(`h\\(DialogResult, \\{ reveal: result,[^\\n]*'data-prefill-sbx-surface-result': '${kind}'`))
+  assert.match(sandboxSrc, /DialogResult,\s*\{ reveal: result,[^\n]*'data-prefill-sbx-trace-conclusion'/)
+  assert.match(sandboxSrc, /h\(DialogResult, \{ reveal: ai,[^\n]*'data-prefill-sbx-trace-ai'/)
+  assert.match(sandboxSrc, /surfaceBlocker\(\{ loading: surface\.busy === true, list, picked, text: surface\.text, risks, required: SBX_SURFACE_RISKS \}\)/)
+  assert.match(sandboxSrc, /'data-prefill-sbx-surface-blocker': blocker\.reason/)
+})
+
+test('[P1-7] 沙盒面板（替身跑）：按钮旁写明还差什么；提交中再点被忽略（只发一次）、按钮不 disabled（焦点不丢）只 aria-disabled', async () => {
+  const SID = 'session-d'
+  const RISKS = [...SURFACE_RISKS]
+  const audit = { [SID]: [{ group: 'messages', name: 'developer:tool-registry', preview: 'tool-addition:x', blockable: false, count: 1 }] }
+  const sources = () => ({ injections: { catalog: {}, sessions: {} }, tools: { catalog: [], sessions: {} }, audit })
+  const state = { sandbox: { [SID]: { level: 'controlled', rules: [] } } }
+  const candidate = { seq: 6, currentSeq: 6, type: 'developer/message', name: 'developer:tool-registry', turn: 1, preview: 'tool-addition:x' }
+  const routes = {
+    'surface-list': { ok: true, ready: true, risks: RISKS, candidates: [candidate], edits: [] },
+    'surface-edit': (body) => ({ ok: true, changed: true, edit: { id: 'e1', seq: body.seq, currentSeq: 12, text: body.text } }),
+  }
+  const ui = makeHarness({ state, sandboxView: { [SID]: sandboxView(state, SID, sources()) } }, { sid: SID, sources, routes })
+  ui.find(ui.render(), (q) => q['data-prefill-sbx-surface-open'] === 'developer:tool-registry')[0].props.onClick()
+  await ui.settle()
+  const blocker = () => ui.find(ui.render(), (q) => q['data-prefill-sbx-surface-blocker'] !== undefined)[0]
+  assert.equal(blocker().props['data-prefill-sbx-surface-blocker'], 'risks')
+  assert.match(JSON.stringify(blocker()), /还差：勾选剩下 4 条风险/)
+  for (const risk of RISKS.slice(0, 3)) ui.find(ui.render(), (q) => q['data-prefill-sbx-surface-risk'] === risk)[0].props.onChange()
+  assert.match(JSON.stringify(blocker()), /剩下 1 条/)
+  ui.find(ui.render(), (q) => q['data-prefill-sbx-surface-risk'] === 'internal')[0].props.onChange()
+  assert.equal(blocker(), undefined, '都满足了不再显示')
+  const go = () => ui.find(ui.render(), (q) => q['data-prefill-sbx-surface-go'] !== undefined)[0]
+  go().props.onClick()
+  // 请求还没回来（同一个 tick 里）：进行中
+  assert.equal(go().props.disabled, false, '进行中不用 disabled')
+  assert.equal(go().props['aria-disabled'], 'true')
+  go().props.onClick()
+  await ui.settle()
+  assert.equal(ui.posts.filter((post) => post.op === 'surface-edit').length, 1, '进行中再点被忽略')
+  await ui.settle()
+  await ui.settle()
+  await ui.settle()
+  assert.equal(go().props['aria-disabled'], undefined)
+  assert.equal(ui.find(ui.render(), (q) => q['data-prefill-sbx-surface-result'] === 'ok').length, 1)
 })
