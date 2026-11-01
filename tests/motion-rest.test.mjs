@@ -52,6 +52,7 @@ const NAMES = [
   'REVEAL_ENTER', 'REVEAL_EXIT', 'STRIKE_DRAW', 'STRIKE_DIM', 'REVEAL_FX',
   'CHIP_SWAP', 'chipCompact',
   'TONE_FADE', 'COUNT_POP', 'SBX_FX', 'flushCues', 'pendingCues',
+  'cardArrival', 'ARRIVE_FX', 'BLOCK_GLOW_MS',
 ]
 function load(win = fakeWindow(), doc = undefined) {
   const body = `${motionSrc}\n${feedbackSrc}\n${restSrc}\nreturn { ${NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(', ')} }`
@@ -630,4 +631,54 @@ test('[P2-10] 接线：头部沙盒徽章走 SandboxBadge（tone 按档位：严
   assert.match(dockSrc, /h\(SandboxBadge, \{\n\s+key: 'sandbox',\n\s+'data-prefill-badge': 'sandbox',/)
   assert.match(dockSrc, /tone: sbxSummary\.level === 'strict' \? 'var\(--dsw-alias-state-error-primary, #e5484d\)' : 'var\(--pf-system\)',\n\s+blocked: sbxSummary\.blocked,/)
   assert.match(dockSrc, /countText: sbxSummary\.blocked > 0 \? t\('sbxBlockedN'\)/)
+})
+
+// ── P2-11 角色卡导入后新卡入场 ───────────────────────────────────
+
+test('[P2-11] cardArrival：导入前没有这张 ⇒ fresh；已有（同 id 重新导入）⇒ 不 fresh；没有 id ⇒ null', () => {
+  const { cardArrival } = load()
+  assert.equal(typeof cardArrival, 'function', '没有 cardArrival')
+  assert.deepEqual(cardArrival(['a', 'b'], 'c'), { id: 'c', fresh: true })
+  assert.deepEqual(cardArrival(['a', 'b'], 'a'), { id: 'a', fresh: false })
+  assert.deepEqual(cardArrival(undefined, 'a'), { id: 'a', fresh: true })
+  assert.equal(cardArrival(['a'], ''), null)
+})
+
+test('[P2-11] ARRIVE_FX.card：找到那张卡 ⇒ 只滚内容区到看得见并入场（完整档带位移，减少动效只淡入，off 不动画但照样滚到位）；不是新卡 / 找不到 ⇒ null', () => {
+  const { ARRIVE_FX, setMotionPref } = load()
+  assert.equal(typeof ARRIVE_FX?.card, 'function', '没有 ARRIVE_FX')
+  const make = () => {
+    const pill = { ...rectEl({ left: 0, top: 900, width: 80, height: 28 }), getAttribute: () => 'new-card' }
+    const other = { ...fakeEl(), getAttribute: () => 'old' }
+    const main = { ...rectEl({ left: 0, top: 100, width: 600, height: 400 }), scrollTop: 0, scrollTo() {} }
+    const root = { querySelectorAll: () => [other, pill], querySelector: (sel) => (sel === '[data-prefill-main]' ? main : null) }
+    return { pill, other, main, root }
+  }
+  const a = make()
+  ARRIVE_FX.card(a.root, { id: 'new-card', fresh: true })
+  assert.equal(a.pill.calls.length, 1)
+  assert.ok(props(a.pill.calls[0].frames).has('transform'))
+  assert.equal(a.other.calls.length, 0)
+  const b = make()
+  assert.equal(ARRIVE_FX.card(b.root, { id: 'new-card', fresh: false }), null, '已有的卡：不入场（只高亮）')
+  assert.equal(ARRIVE_FX.card(b.root, { id: 'missing', fresh: true }), null)
+  setMotionPref('lite')
+  const c = make()
+  ARRIVE_FX.card(c.root, { id: 'new-card', fresh: true })
+  assert.deepEqual([...props(c.pill.calls[0].frames)], ['opacity'])
+  setMotionPref('off')
+  const d = make()
+  assert.equal(ARRIVE_FX.card(d.root, { id: 'new-card', fresh: true }), null)
+  assert.equal(d.pill.calls.length, 0)
+  assert.ok(d.main.scrollTop > 0, 'off：照样滚到位')
+})
+
+test('[P2-11] 接线：导入前记下已有的卡，导入成功后 setCardArrive(cardArrival(...))；layout effect 走 ARRIVE_FX.card，BLOCK_GLOW_MS 后清掉；那张卡挂 BlockGlow（radius 14）', () => {
+  assert.match(dockSrc, /const beforeIds = cards\.map\(\(card\) => card\.id\)/)
+  assert.match(dockSrc, /pickCard\(added\)\n\s+setCardArrive\(cardArrival\(beforeIds, added\.id\)\)/)
+  assert.match(dockSrc, /const animation = ARRIVE_FX\.card\(cardRef\.current, cardArrive\)/)
+  assert.match(dockSrc, /setTimeout\(\(\) => setCardArrive\(\(current\) => \(current === cardArrive \? null : current\)\), BLOCK_GLOW_MS\)/)
+  assert.match(dockSrc, /cardArrive !== null && cardArrive\.id === card\.id \? h\(BlockGlow, \{ key: 'glow', radius: 14 \}\) : null/)
+  assert.ok(dockSrc.indexOf('ARRIVE_FX.card(') < dockSrc.indexOf("if (sessionId === '' || !enabled || items === null) return null"), 'hook 在提前返回之前')
+  assert.match(src, /function BlockGlow\(props\) \{\n\s+const radius = props\?\.radius \?\? 10/)
 })

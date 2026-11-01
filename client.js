@@ -1100,6 +1100,23 @@ window.__ModuleLoader__.load({
         return play(el, COUNT_POP, { duration: MOTION.base, easing: MOTION.spring, cue: 'auto', cueKey: 'sbx:blocked', prio: 1 })
       },
     }
+    /**
+     * P2-11 角色卡导入后新卡入场：导入成功后，列表里那张卡（新导入的）滚进内容区视野并入场（revealBlock：完整档 translateY + 淡入），
+     * 再套一圈描边高亮淡入—停—淡出（BlockGlow，只动 opacity）；同 id 重新导入（卡已在列表里）只高亮不入场。
+     * arrival = { id, fresh }（fresh = 导入前列表里没有这张）。返回入场动画（没找到 / 不是新卡 / off ⇒ null）。
+     */
+    function cardArrival(beforeIds, id) {
+      if (typeof id !== 'string' || id === '') return null
+      return { id, fresh: !(beforeIds ?? []).includes(id) }
+    }
+    const ARRIVE_FX = {
+      card(root, arrival) {
+        if (!root || !arrival || typeof root.querySelectorAll !== 'function') return null
+        const node = [...root.querySelectorAll('[data-prefill-card]')].find((item) => item.getAttribute('data-prefill-card') === arrival.id) ?? null
+        if (node === null || arrival.fresh !== true) return null
+        return revealBlock(root.querySelector?.('[data-prefill-main]') ?? null, node)
+      },
+    }
     // </rest>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -1258,13 +1275,14 @@ window.__ModuleLoader__.load({
       return h('span', { ...rest, ref }, children)
     }
     /** 新积木的高亮描边层（P0-3）：淡入、停一下、淡出；off 档静态显示，计时到了随状态卸载。 */
-    function BlockGlow() {
+    function BlockGlow(props) {
+      const radius = props?.radius ?? 10
       const ref = React.useRef(null)
       React.useLayoutEffect(() => {
         const animation = play(ref.current, BLOCK_GLOW, { duration: BLOCK_GLOW_MS, easing: 'linear', fill: 'forwards' })
         return () => animation?.cancel?.()
       }, [])
-      return h('span', { ref, 'aria-hidden': 'true', 'data-prefill-bench-glow': '', style: { position: 'absolute', inset: -1, borderRadius: 10, pointerEvents: 'none', boxShadow: '0 0 0 2px var(--pf-turn), 0 0 0 6px color-mix(in srgb, var(--pf-turn) 22%, transparent)' } })
+      return h('span', { ref, 'aria-hidden': 'true', 'data-prefill-bench-glow': '', style: { position: 'absolute', inset: -1, borderRadius: radius, pointerEvents: 'none', boxShadow: '0 0 0 2px var(--pf-turn), 0 0 0 6px color-mix(in srgb, var(--pf-turn) 22%, transparent)' } })
     }
 
     /**
@@ -5547,6 +5565,8 @@ window.__ModuleLoader__.load({
       const [menu, setMenu] = React.useState('')
       // P2-6：保存 / 另存为成功一次 +1（「保存」按钮角上的 ✓ 看它）。
       const [savedTick, setSavedTick] = React.useState(0)
+      // P2-11：刚导入的角色卡（{ id, fresh }）：列表里那张入场 + 描边高亮，BLOCK_GLOW_MS 后清掉。
+      const [cardArrive, setCardArrive] = React.useState(null)
       const cardRef = React.useRef(null)
       React.useEffect(() => {
         setCardOpenLocal(cardOpenMap.get(sessionId) === true)
@@ -6055,6 +6075,16 @@ window.__ModuleLoader__.load({
         }
       }, [sessionId])
 
+      // P2-11：导入的卡挂上后（同一次提交）滚进视野并入场；高亮随 cardArrive 清掉。
+      React.useLayoutEffect(() => {
+        if (cardArrive === null) return undefined
+        const animation = ARRIVE_FX.card(cardRef.current, cardArrive)
+        const timer = setTimeout(() => setCardArrive((current) => (current === cardArrive ? null : current)), BLOCK_GLOW_MS)
+        return () => {
+          clearTimeout(timer)
+          animation?.cancel?.()
+        }
+      }, [cardArrive])
       // P2-1：左栏 / 窄屏标签的「当前」高亮层：换节时从上一项滑过来。渲染里记下这次的节（navNow），提交后和上次比；
       // 起点 = 上一项本身的框（它还在，只是不再高亮），终点 = 新高亮层的框。
       const navRef = React.useRef(null)
@@ -6433,13 +6463,17 @@ window.__ModuleLoader__.load({
         const file = event?.target?.files?.[0]
         if (file === undefined) return
         const reader = new FileReader()
+        const beforeIds = cards.map((card) => card.id)
         const done = (data) => {
           setCards(Array.isArray(data?.cards) ? data.cards : [])
           if (data?.ok === false) flash(`${t('cardImportBad')}${data?.reason ?? ''}`)
           else {
             flash(t('cardImported').replace('{name}', data?.name ?? file.name))
             const added = (data?.cards ?? []).find((card) => card.id === data?.id)
-            if (added !== undefined) pickCard(added)
+            if (added !== undefined) {
+              pickCard(added)
+              setCardArrive(cardArrival(beforeIds, added.id))
+            }
           }
         }
         if (/\.png$/i.test(file.name) || file.type === 'image/png') {
@@ -7095,11 +7129,12 @@ window.__ModuleLoader__.load({
                     key: card.id,
                     type: 'button',
                     title: card.notes || card.name,
-                    style: V.pill(cardPick === card.id || activePreset === `card:${card.id}`),
+                    style: { ...V.pill(cardPick === card.id || activePreset === `card:${card.id}`), position: 'relative' },
                     'data-prefill-card': card.id,
                     'aria-pressed': cardPick === card.id ? 'true' : 'false',
                     onClick: () => pickCard(card),
                   },
+                  cardArrive !== null && cardArrive.id === card.id ? h(BlockGlow, { key: 'glow', radius: 14 }) : null,
                   avatars[card.id]
                     ? h('img', { src: avatars[card.id], alt: '', style: { width: 16, height: 16, borderRadius: '50%', objectFit: 'cover', flex: '0 0 auto' } })
                     : glyph({ icon: card.icon }),
