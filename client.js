@@ -818,6 +818,113 @@ window.__ModuleLoader__.load({
         return presenceExit(both, unmount, MOTION.fast + 300)
       },
     }
+    /**
+     * 弹窗层栈（P1-7 Esc）：模块级，一个 window 捕获阶段的 keydown 监听（有层才挂，空了就摘）。
+     * Esc 只关最上层，并 preventDefault + stopPropagation：卡片挂在 document 捕获阶段的 Esc（关卡片）收不到，
+     * 不会连卡片一起关。push(onEscape) 返回 pop()（只生效一次，按身份删，不怕乱序）。
+     */
+    function createLayerStack(win = window) {
+      const layers = []
+      let listening = false
+      const onEscapeKey = (event) => {
+        if (event?.key !== 'Escape' || layers.length === 0) return
+        if (event.isComposing === true) return
+        event.preventDefault?.()
+        event.stopPropagation?.()
+        event.stopImmediatePropagation?.()
+        const top = layers[layers.length - 1]
+        try {
+          top.onEscape?.(event)
+        } catch {
+          // 关不掉也不该让键盘事件抛错。
+        }
+      }
+      const sync = () => {
+        if (layers.length > 0 && !listening) {
+          win?.addEventListener?.('keydown', onEscapeKey, true)
+          listening = true
+        } else if (layers.length === 0 && listening) {
+          win?.removeEventListener?.('keydown', onEscapeKey, true)
+          listening = false
+        }
+      }
+      return {
+        push(onEscape) {
+          const layer = { onEscape }
+          layers.push(layer)
+          sync()
+          let live = true
+          return () => {
+            if (!live) return
+            live = false
+            const index = layers.indexOf(layer)
+            if (index >= 0) layers.splice(index, 1)
+            sync()
+          }
+        },
+        size: () => layers.length,
+        isTop: (onEscape) => layers.length > 0 && layers[layers.length - 1].onEscape === onEscape,
+      }
+    }
+    const dialogLayers = createLayerStack()
+    /** 面板里能 Tab 到的元素（DOM 顺序）：去掉 disabled、tabindex="-1"、hidden / 不占版面的、在 aria-hidden 子树里的。 */
+    const FOCUSABLE = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex], [contenteditable="true"]'
+    function focusablesIn(root) {
+      if (!root || typeof root.querySelectorAll !== 'function') return []
+      return [...root.querySelectorAll(FOCUSABLE)].filter((el) => {
+        if (el.disabled === true || el.hidden === true) return false
+        const tab = el.getAttribute?.('tabindex')
+        if (tab !== null && tab !== undefined && Number(tab) < 0) return false
+        if (typeof el.closest === 'function' && el.closest('[aria-hidden="true"]') !== null) return false
+        if (typeof el.getClientRects === 'function' && el.getClientRects().length === 0) return false
+        return true
+      })
+    }
+    /** 当前焦点（在 shadow DOM 里也认得：看 root 所在的那棵树）。 */
+    function activeIn(root) {
+      const tree = typeof root?.getRootNode === 'function' ? root.getRootNode() : null
+      if (tree && 'activeElement' in tree) return tree.activeElement ?? null
+      return typeof document !== 'undefined' ? document.activeElement ?? null : null
+    }
+    const contains = (root, el) => el !== null && el !== undefined && (el === root || (typeof root?.contains === 'function' && root.contains(el)))
+    /**
+     * Tab 在面板里循环：最后一个再 Tab ⇒ 第一个；第一个（或面板本身）Shift+Tab ⇒ 最后一个；焦点不在面板里 ⇒ 拉回来。
+     * 面板里没有能 Tab 的 ⇒ 焦点留在面板上。处理了返回 true（已 preventDefault）。
+     */
+    function trapTab(event, root, active = activeIn(root)) {
+      if (event?.key !== 'Tab' || !root) return false
+      const list = focusablesIn(root)
+      const stop = (el) => {
+        event.preventDefault?.()
+        el?.focus?.({ preventScroll: true })
+        return true
+      }
+      if (list.length === 0) return stop(root)
+      const first = list[0]
+      const last = list[list.length - 1]
+      const inside = contains(root, active)
+      if (event.shiftKey) {
+        if (!inside || active === root || active === first) return stop(last)
+        return false
+      }
+      if (!inside || active === last) return stop(first)
+      return false
+    }
+    /** 关闭后焦点回触发按钮（还在页面上、能聚焦）；按钮不在了 ⇒ 回 Modal 旁的锚点。返回落到的元素（都不行 ⇒ null）。 */
+    function restoreFocus(trigger, anchor) {
+      for (const el of [trigger, anchor]) {
+        if (!el || el.isConnected === false || typeof el.focus !== 'function') continue
+        if (el.disabled === true) continue
+        if (typeof document !== 'undefined' && (el === document.body || el === document.documentElement)) continue
+        try {
+          el.focus({ preventScroll: true })
+          return el
+        } catch {
+          // 换下一个。
+        }
+      }
+      return null
+    }
     // </dialog>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -1039,9 +1146,11 @@ window.__ModuleLoader__.load({
      *   - 退场中又打开：取消退场（含 fill forwards）接着显示，重播入场；
      *   - 退场时显示的是关闭前最后一份内容（调用方此时已经把状态清空）。
      * 点遮罩 = onClose；点面板不冒泡。
+     * Esc / 焦点：打开时进模块级层栈（Esc 只关最上层、不连卡片一起关）、记下触发按钮、焦点给面板（tabIndex -1），
+     * Tab 在面板里循环（trapTab）；开始关闭时出栈，焦点回触发按钮，按钮不在了回 anchor（调用方放在 Modal 旁的锚点，ref 或元素）。
      */
     function Modal(props) {
-      const { open, onClose, label, panelProps, children } = props
+      const { open, onClose, label, panelProps, anchor, children } = props
       const isOpen = open === true
       const [phase, setPhase] = React.useState(isOpen ? 'open' : 'closed')
       const [seq, setSeq] = React.useState(isOpen ? 1 : 0)
@@ -1049,6 +1158,14 @@ window.__ModuleLoader__.load({
       const panelRef = React.useRef(null)
       const exitCtl = React.useRef(null)
       const enterAnims = React.useRef([])
+      const layerRef = React.useRef(null)
+      const trigger = React.useRef(null)
+      const popLayer = React.useRef(null)
+      const onCloseRef = React.useRef(onClose)
+      onCloseRef.current = onClose
+      const anchorRef = React.useRef(anchor)
+      // 关掉时调用方给的是不带 anchor 的 open: false 的 Modal：沿用打开时的。
+      if (anchor !== undefined) anchorRef.current = anchor
       // 退场时调用方已经把状态清空（open: false、没有内容）：显示关闭前最后一份内容 / 标签 / 面板属性。
       const snap = React.useRef({ children, label, panelProps })
       if (isOpen) snap.current = { children, label, panelProps }
@@ -1064,6 +1181,16 @@ window.__ModuleLoader__.load({
         if (phase !== 'open' || exitCtl.current !== null) return
         for (const animation of enterAnims.current) animation?.cancel?.()
         enterAnims.current = []
+        // 出栈（Esc 不再归它管）；焦点在面板里（或掉到了 body）⇒ 还给触发按钮 / 锚点；用户已经把焦点放到别处就不抢。
+        popLayer.current?.()
+        popLayer.current = null
+        const active = activeIn(panelRef.current)
+        const body = typeof document !== 'undefined' ? document.body : undefined
+        if (active === null || active === body || contains(layerRef.current, active) || contains(panelRef.current, active)) {
+          const at = anchorRef.current
+          restoreFocus(trigger.current, at !== null && typeof at === 'object' && 'current' in at ? at.current : at)
+        }
+        trigger.current = null
         setPhase('closing')
         exitCtl.current = DIALOG_FX.exit(scrimRef.current, panelRef.current, () => {
           exitCtl.current = null
@@ -1074,9 +1201,22 @@ window.__ModuleLoader__.load({
       React.useLayoutEffect(() => {
         if (seq === 0) return
         enterAnims.current = DIALOG_FX.enter(scrimRef.current, panelRef.current)
+        // 进层栈 + 记下触发按钮（焦点此刻还在它上面）+ 焦点给面板。
+        const panel = panelRef.current
+        const active = activeIn(panel)
+        if (!contains(panel, active)) trigger.current = active
+        popLayer.current?.()
+        popLayer.current = dialogLayers.push(() => onCloseRef.current?.())
+        try {
+          panel?.focus?.({ preventScroll: true })
+        } catch {
+          // 聚焦失败不拦打开。
+        }
       }, [seq])
       React.useEffect(
         () => () => {
+          popLayer.current?.()
+          popLayer.current = null
           exitCtl.current?.abort()
           for (const animation of enterAnims.current) animation?.cancel?.()
         },
@@ -1091,6 +1231,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         {
+          ref: layerRef,
           'data-prefill-dialog-layer': closing ? 'closing' : 'open',
           'aria-hidden': closing ? 'true' : undefined,
           onClick: close,
@@ -1107,8 +1248,12 @@ window.__ModuleLoader__.load({
             'aria-label': snap.current.label,
             'data-prefill-dialog-panel': '',
             'data-closing': closing ? 'true' : undefined,
+            tabIndex: -1,
             onClick: (event) => event.stopPropagation(),
-            style: { position: 'relative', ...snap.current.panelProps?.style },
+            onKeyDown: (event) => {
+              if (!closing) trapTab(event, panelRef.current)
+            },
+            style: { position: 'relative', outline: 'none', ...snap.current.panelProps?.style },
           },
           snap.current.children,
         ),
@@ -9888,6 +10033,7 @@ window.__ModuleLoader__.load({
       const [attachName, setAttachName] = React.useState('')
       // 第 5 步：直写会话的事后改写弹窗 { name, busy, list, pick, text, risks, result }
       const [surface, setSurface] = React.useState(null)
+      const dialogAnchor = React.useRef(null)
       const extras = props.extras ?? null
       // 可见性（动效第 3 步）：失败报给卡片头部的错误 pill；切档位有忙碌态。
       const busy = useBusy()
@@ -10418,7 +10564,7 @@ window.__ModuleLoader__.load({
         const title = (ai && ai !== 'busy' && ai.ok ? t('sbxTraceAiTitle') : t('sbxTraceTitle')).replace('{name}', trace.name)
         return h(
           Modal,
-          { open: true, onClose: () => setTrace(null), label: title, panelProps: { 'data-prefill-sbx-trace-dialog': `${trace.group}:${trace.name}`, style: SBX_DIALOG_PANEL(620) } },
+          { open: true, onClose: () => setTrace(null), label: title, panelProps: { 'data-prefill-sbx-trace-dialog': `${trace.group}:${trace.name}`, style: SBX_DIALOG_PANEL(620) }, anchor: dialogAnchor },
           h(
             React.Fragment,
             null,
@@ -10474,7 +10620,7 @@ window.__ModuleLoader__.load({
         const title = surface.name ? t('sbxSurfaceTitle').replace('{name}', surface.name) : t('sbxSurfaceTitleAll')
         return h(
           Modal,
-          { open: true, onClose: () => setSurface(null), label: title, panelProps: { 'data-prefill-sbx-surface-dialog': surface.name || '*', style: SBX_DIALOG_PANEL(660) } },
+          { open: true, onClose: () => setSurface(null), label: title, panelProps: { 'data-prefill-sbx-surface-dialog': surface.name || '*', style: SBX_DIALOG_PANEL(660) }, anchor: dialogAnchor },
           h(
             React.Fragment,
             null,
@@ -10567,6 +10713,8 @@ window.__ModuleLoader__.load({
         // 弹窗关掉时仍留一个 open: false 的 Modal 在同一位置：同一实例接着播退场（内容用它最后一份快照）。
         trace !== null ? sbxTraceDialog() : h(Modal, { open: false }),
         surface !== null ? sbxSurfaceDialog() : h(Modal, { open: false }),
+        // 弹窗关掉时触发按钮已经不在了（例如挂上来源包后那一行换了样子）⇒ 焦点回这里，不掉到 body。
+        h('span', { ref: dialogAnchor, tabIndex: -1, 'data-prefill-dialog-anchor': '', style: { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', outline: 'none' } }),
         extras?.dialogs ?? null,
         h(
           'div',

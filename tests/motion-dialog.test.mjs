@@ -392,3 +392,147 @@ test('[P1-7] 接线：溯源 / 事后改写弹窗走 Modal；关掉时同一位�
   assert.match(sandboxSrc, /surface !== null \? sbxSurfaceDialog\(\) : h\(Modal, \{ open: false \}\)/)
   assert.ok(!/position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba\(0,0,0,0\.28\)'/.test(sandboxSrc), '还有旧的遮罩')
 })
+
+// ── P1-7 Esc 与焦点 ─────────────────────────────────────────────
+
+const keyEvent = (key, extra = {}) => {
+  const ev = { key, prevented: 0, stopped: 0, preventDefault() { ev.prevented += 1 }, stopPropagation() { ev.stopped += 1 }, ...extra }
+  return ev
+}
+
+test('[P1-7] createLayerStack：window 捕获阶段一个监听；Esc 只关最上层并 stopPropagation（卡片 document 上的 Esc 收不到）；空了就摘监听', () => {
+  const win = fakeWindow()
+  const { createLayerStack, dialogLayers } = load(win)
+  assert.equal(typeof createLayerStack, 'function', '没有 createLayerStack')
+  assert.equal(typeof dialogLayers?.push, 'function', '没有模块级 dialogLayers')
+  const stack = createLayerStack(win)
+  assert.equal((win.handlers.keydown ?? []).length, 0, '没层不挂监听')
+  const closed = []
+  const popA = stack.push(() => closed.push('a'))
+  const popB = stack.push(() => closed.push('b'))
+  assert.equal(win.handlers.keydown.length, 1, '只挂一个')
+  assert.equal(win.handlers.keydown[0].capture, true, '捕获阶段')
+  const fire = (ev) => win.handlers.keydown[0].fn(ev)
+  const other = keyEvent('a')
+  fire(other)
+  assert.equal(other.stopped + other.prevented, 0, '别的键不碰')
+  const esc = keyEvent('Escape')
+  fire(esc)
+  assert.deepEqual(closed, ['b'], '只关最上层')
+  assert.equal(esc.stopped, 1)
+  assert.equal(esc.prevented, 1)
+  const ime = keyEvent('Escape', { isComposing: true })
+  fire(ime)
+  assert.deepEqual(closed, ['b'], '输入法组字中的 Esc 不关')
+  popA() // 乱序出栈：按身份删
+  fire(keyEvent('Escape'))
+  assert.deepEqual(closed, ['b', 'b'])
+  popB()
+  popB()
+  assert.equal(stack.size(), 0)
+  assert.equal((win.handlers.keydown ?? []).length, 0, '空了就摘')
+})
+
+/** 假的面板根：querySelectorAll 返回 items；contains 认 items 和自己。 */
+function fakeRoot(items) {
+  const root = fakeEl()
+  root.querySelectorAll = () => items
+  root.contains = (el) => el === root || items.includes(el)
+  return root
+}
+const item = (extra = {}) => fakeEl(null, { getAttribute: () => null, getClientRects: () => [1], ...extra })
+
+test('[P1-7] focusablesIn / trapTab：去掉 disabled / tabindex=-1 / 不占版面的；Tab 在面板里循环，焦点在外面拉回来，空面板留在面板上', () => {
+  const { focusablesIn, trapTab } = load()
+  assert.equal(typeof focusablesIn, 'function', '没有 focusablesIn')
+  assert.equal(typeof trapTab, 'function', '没有 trapTab')
+  const a = item()
+  const off = item({ disabled: true })
+  const neg = item({ getAttribute: (n) => (n === 'tabindex' ? '-1' : null) })
+  const gone = item({ getClientRects: () => [] })
+  const b = item()
+  const root = fakeRoot([a, off, neg, gone, b])
+  assert.deepEqual(focusablesIn(root), [a, b])
+  // 最后一个 Tab ⇒ 第一个
+  let ev = keyEvent('Tab')
+  assert.equal(trapTab(ev, root, b), true)
+  assert.equal(ev.prevented, 1)
+  assert.equal(a.focused, 1)
+  // 中间的 Tab 照常（不拦）
+  ev = keyEvent('Tab')
+  assert.equal(trapTab(ev, root, a), false)
+  assert.equal(ev.prevented, 0)
+  // 第一个 / 面板本身 Shift+Tab ⇒ 最后一个
+  assert.equal(trapTab(keyEvent('Tab', { shiftKey: true }), root, a), true)
+  assert.equal(trapTab(keyEvent('Tab', { shiftKey: true }), root, root), true)
+  assert.equal(b.focused, 2)
+  // 焦点在面板外 ⇒ 拉回第一个
+  assert.equal(trapTab(keyEvent('Tab'), root, fakeEl()), true)
+  assert.equal(a.focused, 2)
+  // 别的键不管；空面板 ⇒ 焦点留在面板
+  assert.equal(trapTab(keyEvent('Enter'), root, a), false)
+  const empty = fakeRoot([])
+  assert.equal(trapTab(keyEvent('Tab'), empty, empty), true)
+  assert.equal(empty.focused, 1)
+})
+
+test('[P1-7] restoreFocus：触发按钮还在 ⇒ 回它；不在了（isConnected false）⇒ 回锚点；都不行 ⇒ null', () => {
+  const { restoreFocus } = load()
+  assert.equal(typeof restoreFocus, 'function', '没有 restoreFocus')
+  const btn = fakeEl()
+  const anchor = fakeEl()
+  assert.equal(restoreFocus(btn, anchor), btn)
+  assert.equal(btn.focused, 1)
+  btn.isConnected = false
+  assert.equal(restoreFocus(btn, anchor), anchor)
+  assert.equal(anchor.focused, 1)
+  assert.equal(restoreFocus(null, null), null)
+})
+
+test('[P1-7] Modal 焦点与 Esc：打开 ⇒ 进层栈、焦点给面板（tabIndex -1）、Tab 被 trapTab 接管；Esc ⇒ onClose；关闭 ⇒ 出栈、焦点回触发按钮；按钮不在了 ⇒ 回锚点', () => {
+  const win = fakeWindow()
+  const doc = { activeElement: null, body: { isBody: true } }
+  const trigger = fakeEl(null, { focus() { trigger.focused += 1; doc.activeElement = trigger } })
+  doc.activeElement = trigger
+  const els = {}
+  const panel = fakeEl(null, { focus() { panel.focused += 1; doc.activeElement = panel } })
+  els['data-prefill-test-panel'] = panel
+  const anchorEl = fakeEl()
+  let closes = 0
+  const p = (open) => modalProps(open, { onClose: () => (closes += 1), anchor: { current: anchorEl } })
+  const m = mount('Modal', p(false), { els, win, doc })
+  let tree = m.render(p(true))
+  const node = find(tree, (q) => q.role === 'dialog')[0]
+  assert.equal(node.props.tabIndex, -1)
+  assert.equal(panel.focused, 1, '焦点给面板')
+  assert.equal(m.mod.dialogLayers.size(), 1, '进层栈')
+  assert.equal(win.handlers.keydown.length, 1)
+  win.handlers.keydown[0].fn(keyEvent('Escape'))
+  assert.equal(closes, 1, 'Esc ⇒ onClose')
+  // 关闭 ⇒ 出栈、焦点回触发按钮
+  m.render(modalProps(false))
+  assert.equal(m.mod.dialogLayers.size(), 0, '出栈')
+  assert.equal((win.handlers.keydown ?? []).length, 0)
+  assert.equal(trigger.focused, 1, '焦点回触发按钮')
+  // 再开一次（触发按钮仍是焦点），这回按钮在关闭前被移走 ⇒ 回锚点
+  tree = m.render(p(true))
+  assert.equal(panel.focused, 2)
+  trigger.isConnected = false
+  m.render(modalProps(false))
+  assert.equal(anchorEl.focused, 1, '按钮不在了回锚点（关闭时没带 anchor 也沿用打开时的）')
+})
+
+test('[P1-7] Modal：退场中按 Esc 不再归它管（开始关闭就出栈，Esc 落回卡片）', () => {
+  const win = fakeWindow()
+  const m = mount('Modal', modalProps(true), { win })
+  assert.equal(m.mod.dialogLayers.size(), 1)
+  m.render(modalProps(false))
+  assert.equal(m.mod.dialogLayers.size(), 0)
+  assert.equal(m.rerender().props['data-prefill-dialog-layer'], 'closing')
+})
+
+test('[P1-7] 接线：沙盒页给两个弹窗同一个锚点（Modal 旁、tabIndex -1）', () => {
+  assert.match(sandboxSrc, /'data-prefill-sbx-trace-dialog'[^\n]*anchor: dialogAnchor/)
+  assert.match(sandboxSrc, /'data-prefill-sbx-surface-dialog'[^\n]*anchor: dialogAnchor/)
+  assert.match(sandboxSrc, /h\('span', \{ ref: dialogAnchor, tabIndex: -1, 'data-prefill-dialog-anchor'/)
+})
