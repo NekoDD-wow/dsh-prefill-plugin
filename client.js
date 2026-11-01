@@ -1039,6 +1039,42 @@ window.__ModuleLoader__.load({
         return play(el, MENU_GROW.map((frame) => ({ ...frame, transformOrigin: origin })), { duration: MOTION.fast, easing: MOTION.ease, cue: 'press' })
       },
     }
+    /**
+     * P2-8 实际发送预览：展开 = 预览淡入 + 下移 4px 回位（base），工作台列表从原位滑下去让位；收起 = 预览淡出（fast，presence 落定才卸载），
+     * 列表从原位滑上来收拢（都是位移类：减少动效只淡入淡出、列表直接到位；关全都直接切）。
+     * 「第 2 轮起不再发」的段（只在首轮发的）出现时删除线从左划到右（装饰类，减少动效没有这条线），同时整段从 1 淡到 0.35；
+     * 划完线淡掉，留下原来的 line-through。预览刚展开时等预览入场（delay base）再划。
+     */
+    const REVEAL_ENTER = [{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }]
+    const REVEAL_EXIT = [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-4px)' }]
+    const followFrames = (dy) => [{ transform: `translateY(${Math.round(dy)}px)` }, { transform: 'none' }]
+    const STRIKE_DRAW = [
+      { opacity: 1, transform: 'scaleX(0)' },
+      { opacity: 1, transform: 'scaleX(1)', offset: 0.7 },
+      { opacity: 0, transform: 'scaleX(1)' },
+    ]
+    const STRIKE_DIM = [{ opacity: 1 }, { opacity: 0.35 }]
+    const REVEAL_FX = {
+      enter(el) {
+        return play(el, REVEAL_ENTER, { duration: MOTION.base, easing: MOTION.ease })
+      },
+      /** 淡出后 unmount（presence；off ⇒ 当场）。返回 { abort }。 */
+      exit(el, unmount) {
+        return presenceExit(play(el, REVEAL_EXIT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' }), unmount, MOTION.fast + 240)
+      },
+      /** 下方内容（工作台列表）从 dy 滑回原位：展开时 dy < 0（从上面滑下来），收起时 dy > 0。不到 1px 不动。 */
+      follow(el, dy) {
+        if (!Number.isFinite(dy) || Math.abs(dy) < 1) return null
+        return play(el, followFrames(dy), { kind: 'move', duration: MOTION.base, easing: MOTION.ease })
+      },
+      /** 删除线划过：返回 [整段变淡, 线]（线是装饰类，用户点出来的 ⇒ cue: 'press' 流式中也走）。 */
+      strike(seg, line, delay = 0) {
+        return [
+          play(seg, STRIKE_DIM, { duration: MOTION.slow, easing: MOTION.ease, delay, fill: 'backwards' }),
+          play(line, STRIKE_DRAW, { duration: MOTION.slow, easing: MOTION.ease, delay, fill: 'backwards', kind: 'decor', cue: 'press' }),
+        ]
+      },
+    }
     // </rest>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -1489,6 +1525,84 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 展开 / 收起的一块（P2-8 实际发送预览）：open 变真 ⇒ 挂上并入场，follow()（紧跟在后面的元素）从上面滑下来让位；
+     * open 变假 ⇒ 淡出，落定后卸载，follow() 从原位滑上来收拢。退场中又打开 ⇒ 取消退场、重播入场。挂上时就开着的不播。
+     * gap = 这块和后面元素之间多出的间距（这块的 marginTop），收拢距离 = 高度 + gap。
+     */
+    function Reveal(props) {
+      const { open, follow, gap = 0, children, ...rest } = props
+      const isOpen = open === true
+      const [shown, setShown] = React.useState(isOpen)
+      const ref = React.useRef(null)
+      const exitCtl = React.useRef(null)
+      const was = React.useRef(isOpen)
+      const wasShown = React.useRef(isOpen)
+      const collapse = React.useRef(0)
+      const target = () => (typeof follow === 'function' ? follow() : null)
+      React.useLayoutEffect(() => {
+        if (was.current === isOpen) return
+        was.current = isOpen
+        if (isOpen) {
+          const exiting = exitCtl.current !== null
+          exitCtl.current?.abort()
+          exitCtl.current = null
+          if (exiting) REVEAL_FX.enter(ref.current)
+          else setShown(true)
+          return
+        }
+        exitCtl.current = REVEAL_FX.exit(ref.current, () => {
+          exitCtl.current = null
+          const el = ref.current
+          collapse.current = typeof el?.getBoundingClientRect === 'function' ? el.getBoundingClientRect().height + gap : 0
+          setShown(false)
+        })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [isOpen])
+      React.useLayoutEffect(() => {
+        if (wasShown.current === shown) return
+        wasShown.current = shown
+        if (shown) {
+          REVEAL_FX.enter(ref.current)
+          const el = ref.current
+          REVEAL_FX.follow(target(), typeof el?.getBoundingClientRect === 'function' ? -(el.getBoundingClientRect().height + gap) : 0)
+        } else {
+          REVEAL_FX.follow(target(), collapse.current)
+          collapse.current = 0
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [shown])
+      React.useEffect(() => () => exitCtl.current?.abort(), [])
+      if (!shown) return null
+      return h('div', { ...rest, ref }, children)
+    }
+    /**
+     * 预览里的一段（P2-8）：gone（第 2 轮起不再发）变真 / 挂上时就是 gone ⇒ 删除线从左划到右 + 整段变淡（REVEAL_FX.strike）；
+     * 挂上时的那次等 delay（预览入场）。静止样子同原来：opacity .35 + line-through。
+     */
+    function StrikeSeg(props) {
+      const { gone, delay = 0, style, children, ...rest } = props
+      const isGone = gone === true
+      const ref = React.useRef(null)
+      const lineRef = React.useRef(null)
+      const was = React.useRef(null)
+      React.useLayoutEffect(() => {
+        const before = was.current
+        was.current = isGone
+        if (!isGone || before === true) return undefined
+        const animations = REVEAL_FX.strike(ref.current, lineRef.current, before === null ? delay : 0)
+        return () => {
+          for (const animation of animations) animation?.cancel?.()
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [isGone])
+      return h(
+        'div',
+        { ...rest, ref, style: { ...style, position: 'relative', ...(isGone ? { opacity: 0.35, textDecoration: 'line-through' } : {}) } },
+        children,
+        isGone ? h('span', { key: 'strike', ref: lineRef, 'aria-hidden': 'true', 'data-prefill-strike': '', style: { position: 'absolute', left: 8, right: 8, top: '50%', height: 1.5, marginTop: -0.75, background: 'currentColor', opacity: 0, transformOrigin: 'left center', pointerEvents: 'none' } }) : null,
+      )
+    }
     /**
      * 右键菜单（P2-7）：at 变了（每次打开是一份新的菜单状态）⇒ 从 pointer 处长出来（MENU_FX.grow）；同一份菜单重渲染不重播。
      */
@@ -8735,10 +8849,10 @@ window.__ModuleLoader__.load({
             (benchPreview ? '▴ ' : '▾ ') + (benchPreview ? t('benchPreviewHide') : t('benchPreview')),
           ),
         ),
-        benchPreview
-          ? h(
-              'div',
-              { style: { display: 'grid', gridTemplateColumns: benchNarrow ? '1fr' : '1fr 1fr', gap: 10, marginTop: 10 }, 'data-prefill-everyturn-preview': '' },
+        // P2-8：预览展开 / 收起走 Reveal（入场 / 退场，下面的工作台列表跟着滑）；只在首轮发的段划删除线（StrikeSeg）。
+        h(
+          Reveal,
+          { key: 'preview', open: benchPreview, follow: () => benchListRef.current, gap: 10, style: { display: 'grid', gridTemplateColumns: benchNarrow ? '1fr' : '1fr 1fr', gap: 10, marginTop: 10 }, 'data-prefill-everyturn-preview': '' },
               ...[1, 2].map((round) =>
                 h(
                   'div',
@@ -8752,9 +8866,11 @@ window.__ModuleLoader__.load({
                   h('div', { style: { margin: '8px 10px', paddingLeft: 8, borderLeft: '3px solid var(--dsw-alias-border-secondary)', color: 'var(--dsw-alias-label-tertiary)', fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 11.5, whiteSpace: 'pre-wrap' } }, '<background> ' + t('benchPreviewShell')),
                   ...previewSegments(round).map((seg) =>
                     h(
-                      'div',
+                      StrikeSeg,
                       {
                         key: seg.key,
+                        gone: seg.gone,
+                        delay: MOTION.base,
                         'data-prefill-preview-seg': seg.key,
                         style: {
                           margin: '8px 10px',
@@ -8763,7 +8879,6 @@ window.__ModuleLoader__.load({
                           fontFamily: 'ui-monospace,Menlo,monospace',
                           fontSize: 11.5,
                           whiteSpace: 'pre-wrap',
-                          ...(seg.gone ? { opacity: 0.35, textDecoration: 'line-through' } : {}),
                         },
                       },
                       seg.text,
@@ -8772,8 +8887,7 @@ window.__ModuleLoader__.load({
                   h('div', { style: { margin: '8px 10px', paddingLeft: 8, borderLeft: '3px solid var(--dsw-alias-border-secondary)', color: 'var(--dsw-alias-label-tertiary)', fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 11.5 } }, '</background>'),
                 ),
               ),
-            )
-          : null,
+            ),
         h(
           'div',
           { ref: benchListRef, style: { position: 'relative', marginTop: 10, paddingLeft: benchNarrow ? 0 : 34, display: 'flex', flexDirection: 'column', gap: 8 }, 'data-prefill-bench': '' },

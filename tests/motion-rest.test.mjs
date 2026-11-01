@@ -18,7 +18,7 @@ const motionSrc = cut('// <motion>', '// </motion>')
 const feedbackSrc = cut('// <feedback>', '// </feedback>')
 const restSrc = cut('// <rest>', '// </rest>')
 const compSrc = (name) => cut(`    function ${name}(props) {`, '\n    }\n')
-const COMPONENTS = ['SaveCheck', 'GrowMenu']
+const COMPONENTS = ['SaveCheck', 'GrowMenu', 'Reveal', 'StrikeSeg']
 const dockSrc = cut('    function PrefillDock(props) {', '    function UsagePanel(props) {')
 const chipSrc = cut('    function PrefillToggle(props) {', '    function GateToggle(props) {')
 const manualSrc = cut('    function ManualInject(props) {', '    function PrefillDock(props) {')
@@ -49,6 +49,7 @@ const NAMES = [
   'glideFrames', 'boxIn', 'NAV_FX', 'NAV_HL_FADE',
   'SAVED_MS', 'CHECK_POP', 'CHECK_OUT', 'SAVE_FX',
   'MENU_GROW', 'menuOrigin', 'MENU_FX',
+  'REVEAL_ENTER', 'REVEAL_EXIT', 'STRIKE_DRAW', 'STRIKE_DIM', 'REVEAL_FX',
 ]
 function load(win = fakeWindow(), doc = undefined) {
   const body = `${motionSrc}\n${feedbackSrc}\n${restSrc}\nreturn { ${NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(', ')} }`
@@ -422,4 +423,107 @@ test('[P2-7] GrowMenu：at 变了（新打开一次）才长出来；同一份�
 test('[P2-7] 接线：右键 / ⋯ 打开菜单时记下指针（px / py）；积木菜单走 GrowMenu（at = 这份菜单状态，pointer = 指针）', () => {
   assert.equal((dockSrc.match(/px: Math\.round\(event\.clientX\),?\s*py: Math\.round\(event\.clientY\)/g) ?? []).length, 2, '积木菜单 / 塔菜单')
   assert.match(dockSrc, /h\(\n\s+GrowMenu,\n\s+\{\n\s+key: 'menu',\n\s+at: menu,\n\s+pointer: \{ x: menu\.px, y: menu\.py \},\n\s+'data-prefill-block-menu': ''/)
+})
+
+// ── P2-8 实际发送预览展开与删除线 ─────────────────────────────────
+
+test('[P2-8] REVEAL_FX：入场 opacity + translateY(-4px)（base）、退场更快且落定才卸载；follow 位移类（减少动效 / 关直接到位）；删除线装饰类 + 整段变淡', async () => {
+  const { REVEAL_FX, MOTION, setMotionPref } = load()
+  assert.equal(typeof REVEAL_FX?.enter, 'function', '没有 REVEAL_FX')
+  const el = fakeEl()
+  REVEAL_FX.enter(el)
+  assert.deepEqual(el.calls[0].frames[0], { opacity: 0, transform: 'translateY(-4px)' })
+  assert.equal(el.calls[0].timing.duration, MOTION.base)
+  let gone = 0
+  REVEAL_FX.exit(el, () => (gone += 1))
+  assert.equal(el.calls[1].timing.duration, MOTION.fast)
+  assert.equal(el.calls[1].timing.fill, 'forwards')
+  el.calls[1].finish()
+  await tick()
+  assert.equal(gone, 1)
+  const list = fakeEl()
+  REVEAL_FX.follow(list, -120.4)
+  assert.deepEqual(list.calls[0].frames, [{ transform: 'translateY(-120px)' }, { transform: 'none' }])
+  assert.equal(REVEAL_FX.follow(list, 0.5), null, '不到 1px 不动')
+  const seg = fakeEl()
+  const line = fakeEl(streamRoot)
+  REVEAL_FX.strike(seg, line, MOTION.base)
+  assert.deepEqual(seg.calls[0].frames, [{ opacity: 1 }, { opacity: 0.35 }])
+  assert.equal(seg.calls[0].timing.delay, MOTION.base)
+  assert.equal(seg.calls[0].timing.fill, 'backwards', '等待入场时保持不淡')
+  assert.deepEqual(line.calls[0].frames.map((f) => f.transform), ['scaleX(0)', 'scaleX(1)', 'scaleX(1)'])
+  assert.equal(line.calls.length, 1, '流式中照常（用户点出来的）')
+  setMotionPref('lite')
+  const l2 = fakeEl()
+  const s2 = fakeEl()
+  const line2 = fakeEl()
+  assert.equal(REVEAL_FX.follow(l2, -100), null, '减少动效：列表直接到位')
+  REVEAL_FX.strike(s2, line2)
+  assert.equal(line2.calls.length, 0, '减少动效：没有划线')
+  assert.equal(s2.calls.length, 1, '减少动效：仍然淡到 0.35')
+  const e2 = fakeEl()
+  REVEAL_FX.enter(e2)
+  assert.deepEqual([...props(e2.calls[0].frames)], ['opacity'])
+  setMotionPref('off')
+  const e3 = fakeEl()
+  let offGone = 0
+  assert.equal(REVEAL_FX.enter(e3), null)
+  REVEAL_FX.exit(e3, () => (offGone += 1))
+  assert.equal(offGone, 1)
+  assert.equal(e3.calls.length, 0)
+})
+
+test('[P2-8] Reveal：打开 ⇒ 挂上、入场、follow 从上面滑下来（-(高 + gap)）；关闭 ⇒ 淡出，落定才卸载、follow 从下面滑上来；退场中又打开 ⇒ 取消退场重播入场', async () => {
+  const els = {}
+  const list = fakeEl()
+  const p = (open) => ({ open, follow: () => list, gap: 10, 'data-prefill-everyturn-preview': '', children: ['预览'] })
+  const m = mount('Reveal', p(false), { els })
+  assert.equal(typeof m.made.Reveal, 'function', '没有 Reveal')
+  assert.equal(m.tree, null)
+  els['data-prefill-everyturn-preview'] = { ...fakeEl(), getBoundingClientRect: () => ({ height: 110 }) }
+  const el = els['data-prefill-everyturn-preview']
+  m.render(p(true))
+  assert.equal(m.tree?.props['data-prefill-everyturn-preview'], '')
+  assert.equal(el.calls.length, 1, '入场')
+  assert.deepEqual(list.calls[0].frames[0], { transform: 'translateY(-120px)' })
+  m.render(p(false))
+  assert.notEqual(m.tree, null, '退场中还在')
+  assert.equal(el.calls.length, 2)
+  m.render(p(true))
+  assert.equal(el.calls[1].cancelled, 1, '又打开：取消退场')
+  assert.equal(el.calls.length, 3, '重播入场')
+  m.render(p(false))
+  el.calls[3].finish()
+  await tick()
+  m.rerender()
+  assert.equal(m.tree, null, '落定后卸载')
+  assert.deepEqual(list.calls.at(-1).frames[0], { transform: 'translateY(120px)' }, '收拢：从下面滑上来')
+})
+
+test('[P2-8] StrikeSeg：挂上时就是 gone ⇒ 等 delay 划线 + 变淡；gone 变真再划（不等）；本来就 gone 的重渲染不重播；静止样子 opacity .35 + line-through', () => {
+  const els = {}
+  const p = (gone) => ({ gone, delay: 180, 'data-prefill-preview-seg': 'a', style: { margin: 1 }, children: ['文字'] })
+  const m = mount('StrikeSeg', p(true), { els })
+  assert.equal(typeof m.made.StrikeSeg, 'function', '没有 StrikeSeg')
+  assert.equal(m.tree.props.style.opacity, 0.35)
+  assert.equal(m.tree.props.style.textDecoration, 'line-through')
+  const seg = els['data-prefill-preview-seg']
+  const line = els['data-prefill-strike']
+  assert.equal(seg.calls.length, 1)
+  assert.equal(seg.calls[0].timing.delay, 180)
+  assert.equal(line.calls.length, 1)
+  m.render(p(true))
+  assert.equal(seg.calls.length, 1, '重渲染不重播')
+  m.render(p(false))
+  assert.equal(m.tree.props.style.opacity, undefined)
+  m.render(p(true))
+  assert.equal(seg.calls.length, 2)
+  assert.equal(seg.calls[1].timing.delay, 0, '中途变 gone 不等')
+})
+
+test('[P2-8] 接线：实际发送预览走 Reveal（follow = 工作台列表、gap 10）；每段走 StrikeSeg（delay base），不再自己写 line-through', () => {
+  assert.match(dockSrc, /Reveal,\n\s+\{ key: 'preview', open: benchPreview, follow: \(\) => benchListRef\.current, gap: 10,/)
+  assert.match(dockSrc, /StrikeSeg,\n\s+\{\n\s+key: seg\.key,\n\s+gone: seg\.gone,\n\s+delay: MOTION\.base,/)
+  assert.doesNotMatch(dockSrc, /seg\.gone \? \{ opacity: 0\.35, textDecoration: 'line-through' \}/)
+  assert.doesNotMatch(dockSrc, /benchPreview\n\s+\? h\(/, '不再是条件挂载（收起时要播退场）')
 })
