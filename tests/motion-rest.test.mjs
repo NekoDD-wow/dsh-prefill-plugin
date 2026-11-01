@@ -50,6 +50,7 @@ const NAMES = [
   'SAVED_MS', 'CHECK_POP', 'CHECK_OUT', 'SAVE_FX',
   'MENU_GROW', 'menuOrigin', 'MENU_FX',
   'REVEAL_ENTER', 'REVEAL_EXIT', 'STRIKE_DRAW', 'STRIKE_DIM', 'REVEAL_FX',
+  'CHIP_SWAP', 'chipCompact',
 ]
 function load(win = fakeWindow(), doc = undefined) {
   const body = `${motionSrc}\n${feedbackSrc}\n${restSrc}\nreturn { ${NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(', ')} }`
@@ -526,4 +527,35 @@ test('[P2-8] 接线：实际发送预览走 Reveal（follow = 工作台列表、
   assert.match(dockSrc, /StrikeSeg,\n\s+\{\n\s+key: seg\.key,\n\s+gone: seg\.gone,\n\s+delay: MOTION\.base,/)
   assert.doesNotMatch(dockSrc, /seg\.gone \? \{ opacity: 0\.35, textDecoration: 'line-through' \}/)
   assert.doesNotMatch(dockSrc, /benchPreview\n\s+\? h\(/, '不再是条件挂载（收起时要播退场）')
+})
+
+// ── P2-9 钉住标记与芯片信息重复 ───────────────────────────────────
+
+test('[P2-9] chipCompact：只有摘要里 marker = true（卡片开着且缩成标记）才紧凑；CHIP_SWAP 只动 opacity（减少动效也播，off 不播）', () => {
+  const { chipCompact, CHIP_SWAP, play, setMotionPref } = load()
+  assert.equal(typeof chipCompact, 'function', '没有 chipCompact')
+  assert.equal(chipCompact({ name: 'x', dots: [], marker: true }), true)
+  assert.equal(chipCompact({ name: 'x', dots: [], marker: false }), false)
+  assert.equal(chipCompact({ name: 'x', dots: [] }), false, '旧摘要（没有 marker）照旧')
+  assert.equal(chipCompact(undefined), false)
+  assert.deepEqual([...props(CHIP_SWAP)], ['opacity'])
+  setMotionPref('lite')
+  const el = fakeEl()
+  play(el, CHIP_SWAP, { duration: 120 })
+  assert.equal(el.calls.length, 1)
+  setMotionPref('off')
+  assert.equal(play(fakeEl(), CHIP_SWAP, { duration: 120 }), null)
+})
+
+test('[P2-9] 接线：卡片摘要带 marker（cardOpen && shrunk）；芯片紧凑时只写「预填装 · 📌 已钉住」，不画预设名和小点；切换时芯片淡入；中英文案', () => {
+  assert.match(dockSrc, /dots: summaryDots,\n[^\n]*\n\s+marker: cardOpen && shrunk,/)
+  assert.match(chipSrc, /const compact = chipCompact\(chipSummary\.get\(sessionId\)\)/)
+  assert.ok(chipSrc.indexOf('const compact = chipCompact(') < chipSrc.indexOf("if (sessionId === '') return null"), 'hook 在提前返回之前')
+  assert.match(chipSrc, /play\(chipRef\.current, CHIP_SWAP, \{ duration: MOTION\.fast, easing: MOTION\.ease, cue: 'press' \}\)/)
+  const compactBranch = chipSrc.slice(chipSrc.indexOf('summary !== undefined && compact'), chipSrc.indexOf(': summary === undefined'))
+  assert.match(compactBranch, /'data-prefill-chip-pinned': ''/)
+  assert.match(compactBranch, /t\('chipPinned'\)/)
+  assert.doesNotMatch(compactBranch, /data-prefill-chip-dot|summary\.name/, '紧凑时不画小点和预设名')
+  assert.match(src, /chipPinned: '已钉住'/)
+  assert.match(src, /chipPinned: 'pinned'/)
 })

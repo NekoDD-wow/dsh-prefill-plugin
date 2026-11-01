@@ -1075,6 +1075,16 @@ window.__ModuleLoader__.load({
         ]
       },
     }
+    /**
+     * P2-9 钉住标记与芯片信息重复：卡片钉住后缩成右下角标记时，标记上已经有「预设名 + 每项小点」，底下的芯片再画一遍就重复了。
+     * 这时芯片收成紧凑的「预填装 · 已钉住」（不画预设名和小点；后台变化的小点闪由标记来闪），标记收回卡片后芯片恢复。
+     * 两种样子切换时芯片内容淡入一下（只动 opacity，减少动效也播；关直接切）。
+     */
+    const CHIP_SWAP = [{ opacity: 0.25 }, { opacity: 1 }]
+    /** 卡片发给芯片的摘要里 marker = 卡片开着且缩成了标记。 */
+    function chipCompact(summary) {
+      return summary !== null && summary !== undefined && summary.marker === true
+    }
     // </rest>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -2987,6 +2997,7 @@ window.__ModuleLoader__.load({
       chipOff: '关',
       chipEmpty: '开（未配置）',
       chipOffByCard: '随角色卡停用',
+      chipPinned: '已钉住',
       wsTitle: '工作区说明',
       wsMeta: 'AGENTS.md / CLAUDE.md',
       wsHint: 'DSH 会把 ~/.dsh/AGENTS.md 和项目里从根目录到工作目录的 AGENTS.md / CLAUDE.md（含 .local）读进来，在第一条请求前发给模型；会话中途碰到子目录里的说明或文件改了，还会再补。这里决定它们怎么发。',
@@ -3082,6 +3093,7 @@ window.__ModuleLoader__.load({
       chipOff: 'off',
       chipEmpty: 'on (empty)',
       chipOffByCard: 'paused with card',
+      chipPinned: 'pinned',
       wsTitle: 'Workspace instructions',
       wsMeta: 'AGENTS.md / CLAUDE.md',
       wsHint: 'DSH reads ~/.dsh/AGENTS.md and the AGENTS.md / CLAUDE.md files (and .local) from the project root down to the working directory, and sends them before the first request; mid-session it adds more when a nested directory is touched or a file changes. This decides how they are sent.',
@@ -3996,6 +4008,15 @@ window.__ModuleLoader__.load({
         if (ended) flushCues()
       })
 
+      // P2-9：卡片缩成标记 ⇔ 芯片紧凑；两种样子切换时内容淡入一下（挂上时不播）。
+      const compact = chipCompact(chipSummary.get(sessionId))
+      const compactWas = React.useRef(compact)
+      React.useLayoutEffect(() => {
+        if (compactWas.current === compact) return
+        compactWas.current = compact
+        play(chipRef.current, CHIP_SWAP, { duration: MOTION.fast, easing: MOTION.ease, cue: 'press' })
+      }, [compact])
+
       if (sessionId === '') return null
       const state = envelope?.state ?? null
       const map = state?.prefill !== null && typeof state?.prefill === 'object' ? state.prefill : {}
@@ -4063,7 +4084,14 @@ window.__ModuleLoader__.load({
             setCardOpen(sessionId, !cardOpen)
           },
         },
-        summary === undefined
+        summary !== undefined && compact
+          ? [
+              h('b', { key: 'name', style: { fontWeight: 700 } }, t('nav')),
+              h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
+              h('span', { key: 'pinned', 'data-prefill-chip-pinned': '', style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, h('span', { style: { display: 'inline-flex', color: 'var(--pf-system)' } }, h(Icon, { name: 'pin', size: 11, fill: 'currentColor' })), t('chipPinned')),
+              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
+            ]
+          : summary === undefined
           ? [
               openingShown ? h(Spinner, { key: 'dot', size: 9 }) : h('span', { key: 'dot', style: S.gateDot(on) }),
               // 失败说明放在常驻的 live 区域里（读屏会念），6 秒后回到原文案。
@@ -9423,6 +9451,8 @@ window.__ModuleLoader__.load({
       summaryRef.current = {
         name: activeName,
         dots: summaryDots,
+        // P2-9：缩成标记时芯片收成紧凑样子（标记上已有名字和小点）。
+        marker: cardOpen && shrunk,
         tip: FEATURE_NAV.map(([key]) => `${featureTitle[key]}：${!isOn(key) ? t('chipOff') : offBy[key] ? t('chipOffByCard') : hasContent[key] ? t('chipOn') : t('chipEmpty')}`).join('\n'),
       }
 
