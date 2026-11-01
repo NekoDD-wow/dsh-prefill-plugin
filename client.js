@@ -1085,6 +1085,21 @@ window.__ModuleLoader__.load({
     function chipCompact(summary) {
       return summary !== null && summary !== undefined && summary.marker === true
     }
+    /**
+     * P2-10 头部沙盒徽章：档位换了（观察 / 受控 ⇄ 严格，紫 ⇄ 红）时底色和边框从旧颜色淡到新颜色——新颜色直接画好，
+     * 上面盖一层旧颜色从 1 淡到 0（只动 opacity，减少动效也播；关直接切）。「拦 N」变多（含 0 → 1 出现）时 pop 一下：
+     * scale 1.35→1 + 淡入（spring；减少动效只淡入）。拦截数是后台变化 ⇒ cue: 'auto'，流式中攒到回合结束。挂上时不播。
+     */
+    const TONE_FADE = [{ opacity: 1 }, { opacity: 0 }]
+    const COUNT_POP = [{ opacity: 0.4, transform: 'scale(1.35)' }, { opacity: 1, transform: 'none' }]
+    const SBX_FX = {
+      tone(layer) {
+        return play(layer, TONE_FADE, { duration: MOTION.slow, easing: 'ease-in-out', fill: 'forwards' })
+      },
+      count(el) {
+        return play(el, COUNT_POP, { duration: MOTION.base, easing: MOTION.spring, cue: 'auto', cueKey: 'sbx:blocked', prio: 1 })
+      },
+    }
     // </rest>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -1611,6 +1626,41 @@ window.__ModuleLoader__.load({
         { ...rest, ref, style: { ...style, position: 'relative', ...(isGone ? { opacity: 0.35, textDecoration: 'line-through' } : {}) } },
         children,
         isGone ? h('span', { key: 'strike', ref: lineRef, 'aria-hidden': 'true', 'data-prefill-strike': '', style: { position: 'absolute', left: 8, right: 8, top: '50%', height: 1.5, marginTop: -0.75, background: 'currentColor', opacity: 0, transformOrigin: 'left center', pointerEvents: 'none' } }) : null,
+      )
+    }
+    /**
+     * 头部沙盒徽章（P2-10）：tone = 当前档位的颜色；tone 变了 ⇒ 盖一层旧颜色（z-index -1，按钮 isolation，画在文字下面）淡掉；
+     * blocked（拦截数）变多 ⇒「拦 N」pop。countText 为空不画「拦 N」。
+     */
+    function SandboxBadge(props) {
+      const { tone, blocked = 0, label, countText = '', countColor, style, ...rest } = props
+      const toneRef = React.useRef(null)
+      const countRef = React.useRef(null)
+      const toneWas = React.useRef(tone)
+      const [oldTone, setOldTone] = React.useState(null)
+      React.useLayoutEffect(() => {
+        if (toneWas.current === tone) return
+        const before = toneWas.current
+        toneWas.current = tone
+        setOldTone({ tone: before })
+      }, [tone])
+      React.useLayoutEffect(() => {
+        if (oldTone === null) return undefined
+        const ctl = presenceExit(SBX_FX.tone(toneRef.current), () => setOldTone((current) => (current === oldTone ? null : current)), MOTION.slow + 240)
+        return () => ctl.abort()
+      }, [oldTone])
+      const blockedWas = React.useRef(blocked)
+      React.useLayoutEffect(() => {
+        const before = blockedWas.current
+        blockedWas.current = blocked
+        if (blocked > before) SBX_FX.count(countRef.current)
+      }, [blocked])
+      return h(
+        'button',
+        { type: 'button', ...rest, style: { ...style, position: 'relative', isolation: 'isolate', border: `1px solid ${tint(tone, 40)}`, background: tint(tone, 10), color: tone } },
+        oldTone === null ? null : h('span', { key: 'was', ref: toneRef, 'aria-hidden': 'true', 'data-prefill-sbx-tone-was': '', style: { position: 'absolute', inset: -1, zIndex: -1, borderRadius: 999, border: `1px solid ${tint(oldTone.tone, 40)}`, background: tint(oldTone.tone, 10), pointerEvents: 'none' } }),
+        label,
+        countText === '' ? null : h('span', { key: 'count', ref: countRef, 'data-prefill-sbx-blocked': String(blocked), style: { display: 'inline-block', color: countColor } }, countText),
       )
     }
     /**
@@ -9659,19 +9709,19 @@ window.__ModuleLoader__.load({
           { style: { display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
           sbxSummary === null
             ? null
-            : h(
-                'button',
-                {
-                  key: 'sandbox',
-                  type: 'button',
-                  'data-prefill-badge': 'sandbox',
-                  title: `${t('injectTitle')}：${sbxSummary.text}`,
-                  onClick: () => setPane('inject'),
-                  style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit', border: `1px solid ${tint(sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)', 40)}`, background: tint(sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)', 10), color: sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)', fontWeight: 700 },
-                },
-                `${t('sbxBadge')} · ${sbxLevelLabel(t, sbxSummary.level)}`,
-                sbxSummary.blocked > 0 ? h('span', { style: { color: 'var(--dsw-alias-state-error-primary, #e5484d)' } }, t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked))) : null,
-              ),
+            : // P2-10：档位换了底色 / 边框从旧颜色淡过去；「拦 N」变多时 pop（SandboxBadge）。
+              h(SandboxBadge, {
+                key: 'sandbox',
+                'data-prefill-badge': 'sandbox',
+                title: `${t('injectTitle')}：${sbxSummary.text}`,
+                onClick: () => setPane('inject'),
+                tone: sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)',
+                blocked: sbxSummary.blocked,
+                label: `${t('sbxBadge')} · ${sbxLevelLabel(t, sbxSummary.level)}`,
+                countText: sbxSummary.blocked > 0 ? t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked)) : '',
+                countColor: 'var(--dsw-alias-state-error-primary, #e5484d)',
+                style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 },
+              }),
           // P0-1：错误 pill 在头部（所有节都看得见）：哪个操作失败、点开看原因、✕ 关掉。
           // 出现时临时占住 token 读数徽章的位置（头部本来就满，另加一项会折行、把内容整体往下挤）。
           h(ErrorPill, {

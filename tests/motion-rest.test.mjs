@@ -18,7 +18,7 @@ const motionSrc = cut('// <motion>', '// </motion>')
 const feedbackSrc = cut('// <feedback>', '// </feedback>')
 const restSrc = cut('// <rest>', '// </rest>')
 const compSrc = (name) => cut(`    function ${name}(props) {`, '\n    }\n')
-const COMPONENTS = ['SaveCheck', 'GrowMenu', 'Reveal', 'StrikeSeg']
+const COMPONENTS = ['SaveCheck', 'GrowMenu', 'Reveal', 'StrikeSeg', 'SandboxBadge']
 const dockSrc = cut('    function PrefillDock(props) {', '    function UsagePanel(props) {')
 const chipSrc = cut('    function PrefillToggle(props) {', '    function GateToggle(props) {')
 const manualSrc = cut('    function ManualInject(props) {', '    function PrefillDock(props) {')
@@ -51,6 +51,7 @@ const NAMES = [
   'MENU_GROW', 'menuOrigin', 'MENU_FX',
   'REVEAL_ENTER', 'REVEAL_EXIT', 'STRIKE_DRAW', 'STRIKE_DIM', 'REVEAL_FX',
   'CHIP_SWAP', 'chipCompact',
+  'TONE_FADE', 'COUNT_POP', 'SBX_FX', 'flushCues', 'pendingCues',
 ]
 function load(win = fakeWindow(), doc = undefined) {
   const body = `${motionSrc}\n${feedbackSrc}\n${restSrc}\nreturn { ${NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(', ')} }`
@@ -558,4 +559,75 @@ test('[P2-9] 接线：卡片摘要带 marker（cardOpen && shrunk）；芯片紧
   assert.doesNotMatch(compactBranch, /data-prefill-chip-dot|summary\.name/, '紧凑时不画小点和预设名')
   assert.match(src, /chipPinned: '已钉住'/)
   assert.match(src, /chipPinned: 'pinned'/)
+})
+
+// ── P2-10 沙盒徽章颜色过渡、「拦 N」pop ───────────────────────────
+
+test('[P2-10] SBX_FX：旧颜色层 opacity 1→0（slow，减少动效也播）；「拦 N」pop scale 1.35→1（spring），减少动效只淡入；流式中 pop 攒到回合结束；off 都不播', () => {
+  const { SBX_FX, MOTION, setMotionPref, pendingCues } = load()
+  assert.equal(typeof SBX_FX?.tone, 'function', '没有 SBX_FX')
+  const layer = fakeEl()
+  SBX_FX.tone(layer)
+  assert.deepEqual(layer.calls[0].frames, [{ opacity: 1 }, { opacity: 0 }])
+  assert.equal(layer.calls[0].timing.duration, MOTION.slow)
+  const count = fakeEl()
+  SBX_FX.count(count)
+  assert.deepEqual(count.calls[0].frames.map((f) => f.transform), ['scale(1.35)', 'none'])
+  assert.equal(count.calls[0].timing.easing, MOTION.spring)
+  const streaming = fakeEl(streamRoot)
+  assert.equal(SBX_FX.count(streaming), null, '流式中排队')
+  assert.equal(streaming.calls.length, 0)
+  assert.equal(pendingCues(), 1)
+  setMotionPref('lite')
+  const lite = fakeEl()
+  SBX_FX.count(lite)
+  assert.deepEqual([...props(lite.calls[0].frames)], ['opacity'])
+  const liteTone = fakeEl()
+  SBX_FX.tone(liteTone)
+  assert.equal(liteTone.calls.length, 1)
+  setMotionPref('off')
+  const off = fakeEl()
+  assert.equal(SBX_FX.tone(off), null)
+  assert.equal(SBX_FX.count(off), null)
+  assert.equal(off.calls.length, 0)
+})
+
+test('[P2-10] SandboxBadge：挂上不播；tone 变了 ⇒ 盖一层旧颜色淡掉、落定后撤掉；拦截数变多（含 0→1）才 pop，变少不播', async () => {
+  const els = {}
+  const PURPLE = 'var(--pf-system)'
+  const RED = 'var(--red)'
+  const p = (tone, blocked) => ({ tone, blocked, label: '沙盒 · 受控', countText: blocked > 0 ? `拦 ${blocked}` : '', 'data-prefill-badge': 'sandbox', style: { padding: 1 } })
+  const m = mount('SandboxBadge', p(PURPLE, 2), { els })
+  assert.equal(typeof m.made.SandboxBadge, 'function', '没有 SandboxBadge')
+  assert.equal(m.tree.type, 'button')
+  assert.equal(m.tree.props.style.isolation, 'isolate')
+  assert.equal(m.tree.props.style.color, PURPLE)
+  assert.equal(els['data-prefill-sbx-blocked'].calls.length, 0, '挂上不 pop')
+  m.render(p(RED, 2))
+  assert.equal(m.tree.props.style.color, RED, '新颜色直接画好')
+  const was = find(m.tree, (q) => q['data-prefill-sbx-tone-was'] === '')
+  assert.equal(was.length, 1, '盖一层旧颜色')
+  assert.match(was[0].props.style.background, /tint/)
+  assert.equal(was[0].props.style.zIndex, -1)
+  const layer = els['data-prefill-sbx-tone-was']
+  assert.equal(layer.calls.length, 1)
+  layer.calls[0].finish()
+  await tick()
+  m.rerender()
+  assert.equal(find(m.tree, (q) => q['data-prefill-sbx-tone-was'] === '').length, 0, '淡完撤掉')
+  m.render(p(RED, 3))
+  const count = els['data-prefill-sbx-blocked']
+  assert.equal(count.calls.length, 1, '变多 pop')
+  m.render(p(RED, 1))
+  assert.equal(count.calls.length, 1, '变少不播')
+  m.render(p(RED, 0))
+  assert.equal(find(m.tree, (q) => q['data-prefill-sbx-blocked'] !== undefined).length, 0)
+  m.render(p(RED, 1))
+  assert.equal(count.calls.length, 2, '0 → 1 出现时 pop')
+})
+
+test('[P2-10] 接线：头部沙盒徽章走 SandboxBadge（tone 按档位：严格红、其余紫；blocked = 拦截数）', () => {
+  assert.match(dockSrc, /h\(SandboxBadge, \{\n\s+key: 'sandbox',\n\s+'data-prefill-badge': 'sandbox',/)
+  assert.match(dockSrc, /tone: sbxSummary\.level === 'strict' \? 'var\(--dsw-alias-state-error-primary, #e5484d\)' : 'var\(--pf-system\)',\n\s+blocked: sbxSummary\.blocked,/)
+  assert.match(dockSrc, /countText: sbxSummary\.blocked > 0 \? t\('sbxBlockedN'\)/)
 })
