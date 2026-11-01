@@ -261,3 +261,15 @@ test('[P2-2] KNOB_TRANSITION：transform、base、spring；卡片左栏开关和
   assert.match(src, /transform: on \? 'translateX\(16px\)' : 'none',\n\s+transition: motionLevel\(\) === 'full' \? KNOB_TRANSITION : 'none'/)
   assert.doesNotMatch(src, /translateX\(1[26]px\)' : 'none',?\s+transition: [^\n]*MOTION\.fast\}ms \$\{MOTION\.ease\}/, '圆点不再是 fast / ease')
 })
+
+// ── P2-5 「已改」小点 pop ─────────────────────────────────────────
+
+test('[P2-5] 接线：「已改」小点（塔按钮角标、积木按钮角标、工作台块头）都走 PopBadge，pop 用同一套 popIf（新出现才播）', () => {
+  const dots = dockSrc.match(/h\(PopBadge, \{ pop: popEdited\([^)]*\), 'data-prefill-edited-dot'/g) ?? []
+  assert.equal(dots.length, 3, '三处「已改」小点')
+  assert.match(dockSrc, /const popEdited = \(id\) => popIf\('edited:' \+ id\)/)
+  assert.match(dockSrc, /popEdited\('tower:' \+ tower\.id\)/)
+  assert.match(dockSrc, /popEdited\('block:' \+ block\.id\)/)
+  assert.match(dockSrc, /popEdited\(block\.key\)/)
+  assert.doesNotMatch(dockSrc, /h\('span', \{ style: \{ position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var\(--pf-turn\)' \} \}\)/, '不再是静态小点')
+})

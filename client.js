@@ -1147,7 +1147,7 @@ window.__ModuleLoader__.load({
       )
     }
     /**
-     * ⇄ 重叠徽章（P2-5）：第一次出现时 pop 一下（scale .4→1，spring；简洁只淡入，off 直接出现）。
+     * ⇄ 重叠徽章 / 「已改」小点（P2-5）：第一次出现时 pop 一下（scale .4→1，spring；简洁只淡入，off 直接出现）。
      * pop = 父组件判定「这枚徽章是这次新出现的」（打开面板 / 切到这节时已经在的不算）；只在挂上时看一次。
      */
     function PopBadge(props) {
@@ -8069,6 +8069,8 @@ window.__ModuleLoader__.load({
         overlapIds.add(id)
         return overlapSeen.current !== null && !overlapSeen.current.has(id)
       }
+      /** P2-5「已改」小点：同一套「这次新出现才 pop」（id 前缀 edited: 和 ⇄ 徽章分开）。 */
+      const popEdited = (id) => popIf('edited:' + id)
       const benchCard = (block) => {
         const index = bench.findIndex((item) => item.key === block.key)
         const long = benchLong(block)
@@ -8113,7 +8115,7 @@ window.__ModuleLoader__.load({
               ? null
               : h('span', { style: { ...V.sectionMeta, padding: '0 6px', borderRadius: 999, background: 'color-mix(in srgb, ' + color + ' 14%, transparent)' } }, kind === 'card' ? t('benchFromCard') : block.builtin === true ? t('benchFromBuiltin') : t('benchFromMine')),
             block.edited
-              ? h('span', { style: { ...V.sectionMeta, color: 'var(--pf-turn)', display: 'inline-flex', alignItems: 'center', gap: 4 } }, h('span', { style: { width: 7, height: 7, borderRadius: 4, background: 'var(--pf-turn)' } }), t('benchEdited'))
+              ? h('span', { style: { ...V.sectionMeta, color: 'var(--pf-turn)', display: 'inline-flex', alignItems: 'center', gap: 4 } }, h(PopBadge, { pop: popEdited(block.key), 'data-prefill-edited-dot': block.key, style: { width: 7, height: 7, borderRadius: 4, background: 'var(--pf-turn)' } }), t('benchEdited'))
               : null,
             benchNarrow || block.first.trim() === ''
               ? null
@@ -8287,7 +8289,8 @@ window.__ModuleLoader__.load({
           },
           stackIcon(color),
           tower.name,
-          towerEdited(tower) ? h('span', { style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
+          // P2-5：「已改」小点新出现时也 pop 一下（和 ⇄ 徽章同一套：打开面板 / 切到这节时已经在的不播）。
+          towerEdited(tower) ? h(PopBadge, { pop: popEdited('tower:' + tower.id), 'data-prefill-edited-dot': 'tower:' + tower.id, style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
           towerOverlaps(tower) ? h(PopBadge, { pop: popIf('tower:' + tower.id), 'data-prefill-overlap-badge': 'tower:' + tower.id, title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
         )
       }
@@ -8320,7 +8323,7 @@ window.__ModuleLoader__.load({
             onContextMenu: (event) => openBlockMenu(event, block),
           },
           block.name,
-          edited ? h('span', { style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
+          edited ? h(PopBadge, { pop: popEdited('block:' + block.id), 'data-prefill-edited-dot': 'block:' + block.id, style: { position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var(--pf-turn)' } }) : null,
           overlapOn && !on ? h(PopBadge, { pop: popIf('block:' + block.id), 'data-prefill-overlap-badge': 'block:' + block.id, title: t('benchOverlapIcon'), style: { position: 'absolute', top: -7, right: -7, fontSize: 10, background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '⇄') : null,
         )
       }
