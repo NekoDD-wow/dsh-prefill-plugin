@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto'
 import { checksOf, modeOf, replay, splitTurns } from './inject-auto.js'
 import { filledItems, insertBeforeLastUser, isManual, manualMessage, planQueued, queueOf, renderInjectBlock } from './inject-once.js'
 import { hasImportedHistory, seamApplies, withSeam } from './constraint-carry.js'
-import { firstPlan, firstRealTurn, lockOf, lockStatus } from './turn-lock.js'
+import { compactCheckpointCount, firstPlan, firstRealTurn, lockOf, lockStatus } from './turn-lock.js'
 import { applyEnabled, isEnabled } from './enabled.js'
 import { WORKSPACE_KIND, WORKSPACE_MARK, applyWorkspaceInstructions, lastWorkspaceInHistory, workspaceInstructionsFor } from './workspace-instructions.js'
 import {
@@ -485,6 +485,15 @@ const ASSEMBLIES = (globalThis[Symbol.for('dsh-prefill.assemblies')] ??= new Map
 
 /** 每会话**最近一轮**的闸门快照（Q9 角标）。挂 globalThis Symbol 以穿过内核热换。 */
 const SNAPSHOTS = (globalThis[Symbol.for('dsh-prefill.snapshots')] ??= new Map())
+
+/**
+ * 首轮注入保护：
+ *   COMPACT_SEEN   —— 本进程已经见到的压缩检查点条数（会话 → 条数；没有 patchState 时的兜底）；
+ *   COMPACT_REFIRST —— 发现了新压缩、还没把首轮段补发出去的会话（会话 → 补发到第几个检查点）。
+ * 补发到的数目持久化在 `state.compactSeen[会话]` 里 ⇒ DSH 重启后不会重复补，也没漏掉重启前的压缩。
+ */
+const COMPACT_SEEN = (globalThis[Symbol.for('dsh-prefill.compact-seen')] ??= new Map())
+const COMPACT_REFIRST = (globalThis[Symbol.for('dsh-prefill.compact-refirst')] ??= new Map())
 
 /**
  * 由**本轮冻结的** lever 集合推出三态（规划 §3.5）：
@@ -1476,12 +1485,43 @@ export async function step(api, payload, decision) {
     }
     const turns = splitTurns(events)
     plan = replay(turns, everyTurn, payload.turn)
+    // 首轮注入保护：/compact 或自动压缩会把发过首轮段的那几轮遮蔽掉，模型就再也看不到首轮要求。
+    // 看到新的压缩检查点 ⇒ 把首轮段补发一次（只补一次；消息带 source.first，和「下一轮发一次」同一条路径，不参与判定）。
+    const checkpoints = compactCheckpointCount(events)
+    // 「补发到第几个检查点」持久化在 state.compactSeen[会话] 里 ⇒ 跨 DSH 重启也认得。
+    // 第一次用到这个会话时先记一个基线（通常是 0）：否则分不清「新压缩」和「插件装上之前就有的压缩」。
+    const storedRaw = Number(api.readState?.()?.compactSeen?.[agent.id])
+    const stored = Number.isFinite(storedRaw) ? storedRaw : undefined
+    const memory = COMPACT_SEEN.get(agent.id)
+    let known
+    if (stored === undefined) {
+      known = memory ?? checkpoints
+      COMPACT_SEEN.set(agent.id, known)
+      if (memory === undefined) {
+        try {
+          const current = api.readState?.() ?? {}
+          const seen = current.compactSeen !== null && typeof current.compactSeen === 'object' ? current.compactSeen : {}
+          api.patchState?.({ compactSeen: { ...seen, [agent.id]: known } })
+        } catch {
+          // 写不进去就只靠进程内基线（这次启动里照样能检测新压缩）。
+        }
+      }
+    } else {
+      known = Math.max(stored, memory ?? 0)
+    }
+    if (checkpoints > known) {
+      if (!COMPACT_REFIRST.has(agent.id)) note({ compact: 'refirst-armed', id: agent.id, checkpoints, sent: known })
+      COMPACT_REFIRST.set(agent.id, checkpoints)
+      COMPACT_SEEN.set(agent.id, checkpoints)
+    }
+    // 用户自己设了「只注入前 N 轮」或在自动模式里手动暂停：不在这一轮强行补发（等它本来要发的那一轮再说）。
+    const refirst = COMPACT_REFIRST.has(agent.id) && plan.inject === true
     // 接缝提醒：从会话存下的预设开的新会话，开场历史里一句提醒都没有（存预设时注入被跳过），
     // 第一条真实消息那轮实测常常不听 ⇒ 这一轮发首轮段并附「以上历史均遵守这些要求，继续保持」。
     // 首轮段（issue #19 B）：只在会话第一条真实消息那轮发；开跑之后（锁住）默认跳过，
     // 除非用户点了「下一轮发一次」。以前按「本会话第一次注入」判，开跑后才打开 / 套用带首轮段的预设，
     // 第 N 轮会突然发出整段开场设定。
-    first = firstPlan(everyTurn, plan, { lock: lockOf(state, agent.id), turns, currentTurn: payload.turn })
+    first = firstPlan(everyTurn, plan, { lock: lockOf(state, agent.id), turns, currentTurn: payload.turn, refirst })
     if (first.force) plan = { ...plan, inject: true }
     // 接缝提醒只属于会话的第一条真实消息（开场导入历史之后那一轮）。
     seam = seamApplies(everyTurn, turns, plan.isFirst && !first.locked)
@@ -1494,6 +1534,14 @@ export async function step(api, payload, decision) {
   const baseEveryTurnText =
     everyTurn === undefined ? '' : isFirst && everyTurn.firstText !== '' ? everyTurn.firstText : everyTurn.text
   const everyTurnText = seam ? withSeam(baseEveryTurnText) : baseEveryTurnText
+  // 补发首轮段时加一句「历史被压缩过」：让模型知道这些要求仍然有效（按正文语言选中文 / 英文）。
+  const everyTurnFinal =
+    first?.reason === 'compacted' && everyTurnText.trim() !== ''
+      ? everyTurnText +
+        (/[\u4e00-\u9fff]/.test(everyTurnText)
+          ? '\n\n（注：此前有部分历史被压缩成摘要了，上面这些首轮要求继续有效。）'
+          : '\n\n(Note: part of the earlier history was compressed into a summary; the first-turn requirements above still apply.)')
+      : everyTurnText
   if (
     everyTurn !== undefined &&
     everyTurnText !== '' &&
@@ -1516,7 +1564,7 @@ export async function step(api, payload, decision) {
       source: { kind: 'prefill', prefill: 'every-turn', from: everyTurn.from, first: isFirst || seam, ...(seam ? { seam: true } : {}) },
       // 必须套"背景"外壳：裸发正文时 step-5 把它当成用户本轮的要求，四段直接写进了回答正文、
       // 思维链反而不守格式（实测 D1：注入的 5 轮四段只命中 1 轮）；套上外壳后与 B2b 一致（13/14）。
-      content: [{ type: 'text', text: renderInjectBlock([{ role: 'user', text: everyTurnText }]) }],
+      content: [{ type: 'text', text: renderInjectBlock([{ role: 'user', text: everyTurnFinal }]) }],
     }
     let at = -1
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -1528,7 +1576,23 @@ export async function step(api, payload, decision) {
     if (at >= 0) messages.splice(at, 0, injected)
     else messages.push(injected)
     next = { ...next, messages }
-    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: plan.nth, first: isFirst && everyTurn.firstText !== '', firstReason: first?.reason, seam, chars: everyTurnText.length, mode: everyTurn.mode, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
+    note({ everyTurn: 'done', id: agent.id, turn: payload.turn, nth: plan.nth, first: isFirst && everyTurn.firstText !== '', firstReason: first?.reason, seam, chars: everyTurnFinal.length, mode: everyTurn.mode, untilTurn: everyTurn.untilTurn, gate: state?.gate?.[agent.id] ?? 'pass' })
+    // 压缩后的首轮段补发完成 ⇒ 记下「补发到第几个检查点」并清标记（下一轮回正常段；再压缩会重新置上）。
+    if (first?.reason === 'compacted') {
+      const sent = COMPACT_REFIRST.get(agent.id)
+      COMPACT_REFIRST.delete(agent.id)
+      if (Number.isFinite(sent)) {
+        COMPACT_SEEN.set(agent.id, sent)
+        try {
+          const current = api.readState?.() ?? {}
+          const seen = current.compactSeen !== null && typeof current.compactSeen === 'object' ? current.compactSeen : {}
+          api.patchState?.({ compactSeen: { ...seen, [agent.id]: sent } })
+        } catch {
+          // 同上：写不进去只影响「重启后不重复补」，不影响这一轮。
+        }
+        note({ compact: 'refirst-sent', id: agent.id, turn: payload.turn, checkpoints: sent })
+      }
+    }
   }
 
   // ── 世界书关键词注入（v0.6 二期，只对套了角色卡的会话）────────────────────

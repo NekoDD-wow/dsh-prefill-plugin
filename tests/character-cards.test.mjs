@@ -92,10 +92,14 @@ test('stripHtml keeps text, drops markup', () => {
 
 const loreOf = (file, options) => compileCard(load(file), options).lore
 
-test('lore: keyword hit, miss, and the constant entry stays out of the keyword table', () => {
+test('lore: keyword hit / miss, and the constant entry is marked but never matches', () => {
   const lore = loreOf('songzhixia.v2.json')
   assert.equal(lore.scanDepth, 4)
-  assert.ok(lore.entries.every((entry) => entry.title !== '核心档案'))
+  // 常驻条目现在也进表（带 constant 标记、没有关键词），只给面板区分显示用；匹配时跳过。
+  const constant = lore.entries.filter((entry) => entry.constant === true)
+  assert.deepEqual(constant.map((entry) => entry.title).sort(), ['演绎指导与台词样本', '状态栏输出格式'].sort())
+  assert.ok(constant.every((entry) => entry.keys.length === 0))
+  assert.ok(matchLore(lore, ['状态栏输出格式 演绎指导']).every((entry) => entry.constant !== true))
   assert.deepEqual(matchLore(lore, ['学姐你的腿还疼吗？']).map((e) => e.title), ['腘绳肌拉伤'])
   assert.deepEqual(matchLore(lore, ['今天天气不错']), [])
   // 扫的是最近几条消息的合集：前一条提到钉鞋，这一条提到腿，两条都命中。

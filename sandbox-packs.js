@@ -10,11 +10,12 @@
  * 排在会话 / 全局显式规则之后、档位默认之前（见 sandbox.js decide）。
  *
  * ── 内置包的名字从哪来（不是猜的）────────────────────────────────────────────────
- * 全部取自 `@deepseek-ai/*@0.2.1-rc.3` 的发布包源码（npm 上的同版本包，路径为包内 `lib/index.js:行号`）：
+ * 全部取自 `@deepseek-ai/*@0.2.1-rc.5` 的发布包源码（npm 上的同版本包，路径为包内 `lib/index.js:行号`；
+ * rc.3 → rc.5 抽查过：包名 / 段名 / 上下文名 / 来源 kind / 工具名都没变，个别行号 ±1，已按 rc.5 调整）：
  *
  * Agent Teams（`dsh-experimental-agent-team-profile` 把下面两个包插进 profile，同时停用 tool-subagent*）：
- *   · dsh-experimental-tool-agent-team:234  段 `team:policy`（agent 自己作用域注册）
- *   · dsh-experimental-tool-agent-team:239  上下文 `team:identity`（required: true，agent 作用域）
+ *   · dsh-experimental-tool-agent-team:235  段 `team:policy`（agent 自己作用域注册）
+ *   · dsh-experimental-tool-agent-team:240  上下文 `team:identity`（required: true，agent 作用域）
  *   · dsh-experimental-tool-agent-team:251-457 工具 spawn_teammate / send_message / list_agents / wait_agent /
  *     interrupt_agent / team_task_create / team_task_list / team_task_get / team_task_update（agent 作用域注册 ⇒
  *     `tools.restrict` 拦不住，只能在装配结果里过滤）
@@ -23,7 +24,7 @@
  *     list_agents 也是 dsh-tool-subagent-control 的全局工具名。这几项标 `shared`：只有用户**显式**拦这个包时才跟着拦，
  *     档位默认（受控档默认拦第三方）不连带它们，免得没开 Agent Teams 的会话把子代理拦坏。
  *
- * DSH 核心 · 系统提示（段）：dsh-system-prompt:228 `harness:identity`、:59/:61 `deployment:persona-prefix|suffix`；
+ * DSH 核心 · 系统提示（段）：dsh-system-prompt:229 `harness:identity`、:59/:61 `deployment:persona-prefix|suffix`；
  *   各工具说明段 `tool:*`（dsh-tool-bash:376 `tool:bash`、dsh-tool-fs:245 `tool:read` …、dsh-tool-subagent:509
  *   `tool:${toolName}`）、dsh-tools:2825/2842 `tools:ptc-only` / `tools:sdk`、dsh-file-reference-local:343
  *   `context:file-reference`、dsh-client-ui-deliverables:264 `ui:deliverable-file-references`、dsh-plan-mode:170
@@ -31,10 +32,10 @@
  *   dsh-harness-dev-context:25/27 `harness:source` / `app:web-surface`、dsh-subagent:390 `deployment:persona-prefix`。
  *
  * DSH 核心 · 运行时上下文（上下文 + 消息来源）：
- *   上下文：dsh-working-directory:41 `working-directory:current`（required）、dsh-user-approval:80 `approval:policy`、
+ *   上下文：dsh-working-directory:42 `working-directory:current`（required）、dsh-user-approval:80 `approval:policy`、
  *   dsh-sandbox-policy:122 `sandbox:policy`、dsh-subagent:385 `subagent:delegation`、dsh-tool-subagent:519
  *   `tool:${toolName}:depth`、dsh-harness-dev-context:104/116 `harness:source` / `app:web-surface`。
- *   消息：dsh-agent-loop:218 `runtime-context`、dsh-agent-instructions:885 `agent-instructions`、dsh-time-context:102
+ *   消息：dsh-agent-loop:218 `runtime-context`、dsh-agent-instructions:886 `agent-instructions`、dsh-time-context:102
  *   `time-context`、dsh-tmux-context:2130 `tmux-context`、dsh-session-reference:34 `session-reference`、
  *   dsh-tool-skill:984 `skill-catalog`、dsh-working-directory:145 `working-directory`、dsh-goal-round-driver:147 `goal`、
  *   dsh-schedule:1594 `schedule`、dsh-plan-mode:410 `plan-mode`、dsh-user-approval:107 `user-approval`、

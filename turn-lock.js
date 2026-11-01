@@ -153,18 +153,30 @@ export function firstOnceDue(firstOnce, turns, currentTurn) {
 }
 
 /**
+ * 会话事件里有几个压缩检查点（compaction checkpoint）。
+ * `/compact` 和自动压缩都会写一条 `user/message`（`source.kind = compact-checkpoint`，带 surfaceOp 替换），
+ * 首轮注入保护拿它判断「首轮段是不是被压缩遮蔽了」。
+ */
+export function compactCheckpointCount(events) {
+  return (Array.isArray(events) ? events : []).filter((event) => event?.type === 'user/message' && event?.data?.source?.kind === 'compact-checkpoint').length
+}
+
+/**
  * 这一轮的首轮段怎么发。
  * @param entry everyTurnFor 的结果（firstText 已 trim；firstOnce 只认本会话那格）
  * @param plan replay 的结果（isFirst = 本会话还没注入过）
- * @returns { useFirst, force, locked, reason: 'first-turn' | 'once' | 'locked-skip' | 'none' }
- *   force = 自动模式暂停中也要发（用户点了「下一轮发一次」）。
+ * @param refirst 会话发生了新的压缩（首轮段被遮蔽）⇒ 再补发一次首轮段
+ * @returns { useFirst, force, locked, reason: 'first-turn' | 'once' | 'compacted' | 'locked-skip' | 'none' }
+ *   force = 自动模式暂停中也要发（用户点了「下一轮发一次」，或压缩后补发首轮段）。
  */
-export function firstPlan(entry, plan, { lock, turns, currentTurn } = {}) {
+export function firstPlan(entry, plan, { lock, turns, currentTurn, refirst } = {}) {
   const locked = lockedBefore(lock, turns, currentTurn)
   const hasFirst = typeof entry?.firstText === 'string' && entry.firstText !== ''
   if (!hasFirst) return { useFirst: false, force: false, locked, reason: 'none' }
   if (!locked) return { useFirst: plan?.isFirst === true, force: false, locked, reason: plan?.isFirst === true ? 'first-turn' : 'none' }
   if (firstOnceDue(entry.firstOnce, turns, currentTurn)) return { useFirst: true, force: true, locked, reason: 'once' }
+  // 压缩保护：历史里的首轮段被压缩遮蔽了 ⇒ 再补发一次（只这一次；带 source.first，不参与判定）。
+  if (refirst === true) return { useFirst: true, force: true, locked, reason: 'compacted' }
   return { useFirst: false, force: false, locked, reason: plan?.isFirst === true ? 'locked-skip' : 'none' }
 }
 

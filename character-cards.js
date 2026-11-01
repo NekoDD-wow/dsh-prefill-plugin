@@ -395,8 +395,15 @@ export function compileLore(card, macros) {
   const entries = Array.isArray(book?.entries) ? book.entries : []
   const out = []
   entries.forEach((entry, index) => {
-    if (entry === null || typeof entry !== 'object' || entry.enabled === false || entry.constant === true) return
+    if (entry === null || typeof entry !== 'object' || entry.enabled === false) return
     const content = expandMacros(str(entry.content), macros).trim()
+    // 常驻条目（constant）的内容已经拼进系统提示的「## 常驻设定」段（见 constantLore）；这里也只留一条带
+    // `constant: true` 标记的记录进表，供面板区分显示 —— 关键词为空、matchLore 也不参与匹配。
+    if (entry.constant === true) {
+      if (content === '') return
+      out.push({ id: entry.id ?? index, title: str(entry.comment) || str(entry.name), keys: [], secondary: [], logic: 0, caseSensitive: false, wholeWords: null, probability: 100, order: Number(entry.insertion_order) || 0, content, constant: true })
+      return
+    }
     const keys = (Array.isArray(entry.keys) ? entry.keys : []).filter((key) => typeof key === 'string' && key.trim() !== '').map((key) => key.trim())
     if (content === '' || keys.length === 0) return
     const ext = entry.extensions !== null && typeof entry.extensions === 'object' ? entry.extensions : {}
@@ -470,6 +477,8 @@ export function matchLore(lore, texts, seed = '') {
   if (haystack === '' || entries.length === 0) return []
   const hits = []
   for (const entry of entries) {
+    // 常驻条目只进面板显示，永不参与关键词匹配（内容已经在系统提示里）。
+    if (entry.constant === true) continue
     if (!entry.keys.some((key) => keyMatcher(key, entry)(haystack))) continue
     if (entry.secondary.length > 0) {
       const present = entry.secondary.map((key) => keyMatcher(key, entry)(haystack))

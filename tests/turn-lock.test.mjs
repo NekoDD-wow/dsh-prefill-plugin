@@ -406,7 +406,8 @@ test('面板：锁状态以 state.locked 为准，没有记录时看日志 / 闸
 })
 
 test('壳：闸门拿得到 lockSession；状态路由收 restoreOpening；turn-lock.js 在 files 白名单里', () => {
-  assert.match(impl, /pruneQueue, lockSession \}/)
+  // patchState 也交给闸门：首轮注入保护要把「补发到第几个压缩检查点」记进 state.compactSeen。
+  assert.match(impl, /pruneQueue, lockSession, patchState \}/)
   assert.match(impl, /patch\?\.restoreOpening/)
   assert.match(impl, /restorePatch\(withLegacyView\(current\), sid, lockOf\(current, sid\)/)
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))

@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { zstdDecompressSync } from 'node:zlib'
-import { builtinPreset, builtinSummaries, everyTurnBlocks, everyTurnPresets, everyTurnTowers } from './builtin-presets.js'
+import { builtinPreset, builtinSummaries, everyTurnBlocks, everyTurnPresets, everyTurnTowers, migrateLegacyCwdOverrides, migrateLegacyCwdPrompt } from './builtin-presets.js'
 import { blockFromPreset, compileBench, makeBlock, normalizeChecks } from './blocks.js'
 import {
   MAX_QUEUE,
@@ -147,6 +147,8 @@ export function sanitizeUi(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
   const out = {}
   if (['full', 'lite', 'off'].includes(raw.motion)) out.motion = raw.motion
+  // 「改常驻条目会重拼系统提示」的确认框勾了「不再提示」⇒ 记住（全局设置，不进预设）。
+  if (raw.loreConstWarn === true) out.loreConstWarn = true
   return Object.keys(out).length > 0 ? out : undefined
 }
 
@@ -170,7 +172,36 @@ export function normalizeState(raw) {
     ui: sanitizeUi(source.ui),
   })
   if (out.ui === undefined) delete out.ui
-  return out
+  return migrateLegacyCwdSandbox(out)
+}
+
+/**
+ * 旧版内置「中文版官方系统提示」残留的 `你的工作目录是 {{cwd}}。`（见 builtin-presets.js 的 migrateLegacyCwdPrompt）：
+ * 读取时把规则表里 section 改写规则的这一行换成新版文案，否则整段 interpolate:false、`{{model}}` 也不替换。
+ * 只动 `match.section` 的 rewrite 规则（系统提示段）；没变就返回原对象。旧字段镜像由 writeState 按迁移后的表重推。
+ */
+function migrateLegacyCwdSandbox(state) {
+  const table = state?.sandbox
+  if (table === null || typeof table !== 'object') return state
+  let changed = false
+  const nextTable = {}
+  for (const [key, scope] of Object.entries(table)) {
+    if (!Array.isArray(scope?.rules)) {
+      nextTable[key] = scope
+      continue
+    }
+    let scopeChanged = false
+    const rules = scope.rules.map((rule) => {
+      if (rule?.action !== 'rewrite' || typeof rule?.match?.section !== 'string' || typeof rule.text !== 'string') return rule
+      const text = migrateLegacyCwdPrompt(rule.text)
+      if (text === rule.text) return rule
+      scopeChanged = true
+      return { ...rule, text }
+    })
+    nextTable[key] = scopeChanged ? { ...scope, rules } : scope
+    if (scopeChanged) changed = true
+  }
+  return changed ? { ...state, sandbox: nextTable } : state
 }
 
 let cache = { state: null, mtimeMs: -1 }
@@ -302,7 +333,15 @@ function packFileFor(workspace) {
 function readPacks(workspace) {
   try {
     const raw = JSON.parse(readFileSync(packFileFor(workspace), 'utf8'))
-    return Array.isArray(raw?.packs) ? raw.packs.filter((pack) => typeof pack?.name === 'string') : []
+    // 旧预设里存着旧版内置「中文版官方系统提示」（含 `{{cwd}}` 那一行）：读出时换成新版文案，套用 / 导出拿到的都是新文本。
+    return Array.isArray(raw?.packs)
+      ? raw.packs
+          .filter((pack) => typeof pack?.name === 'string')
+          .map((pack) => {
+            const overrides = migrateLegacyCwdOverrides(pack.overrides)
+            return overrides === pack.overrides ? pack : { ...pack, overrides }
+          })
+      : []
   } catch {
     return []
   }
@@ -329,7 +368,8 @@ function sanitizeOverrides(raw) {
     }
     out[group] = table
   }
-  return out
+  // 导入旧版导出的 JSON / 旧面板直接存：同样把旧内置的 `{{cwd}}` 那一行换掉。
+  return migrateLegacyCwdOverrides(out)
 }
 
 /** 校验"工具放行清单"：`['read','edit']`（只放这些）或 `[]`（一个都不给）；`null`/缺省 = 全部放行。 */
@@ -491,6 +531,8 @@ export function sanitizeLore(raw) {
       wholeWords: typeof entry.wholeWords === 'boolean' ? entry.wholeWords : null,
       probability: Number.isFinite(probability) ? Math.max(0, Math.min(100, probability)) : 100,
       order: Number(entry.order) || 0,
+      // 常驻条目（拼进系统提示、面板只显示）：标记要留着，否则存成预设再套用时会被当成普通条目。
+      ...(entry.constant === true ? { constant: true } : {}),
       content: typeof entry.content === 'string' ? entry.content.slice(0, 20000) : '',
     })
   }
@@ -594,14 +636,10 @@ export function stampEveryTurn(previous, next, lastTurnFor) {
       else delete auto.override
     }
     // 「下一轮发一次」首轮段（issue #19 B）：true ⇒ 盖成 { atTurn: 下一轮 }；没带 ⇒ 首轮段没变就沿用。
-    // 不知道轮数时不能盖成第 1 轮，最多原样沿用。
+    // 「首轮段变了 ⇒ 旧 firstOnce 作废」不需要轮数，未知时也照做；只有 true（要盖下一轮）没法盖、按没带处理。
     const firstOnce = knownLast
       ? stampFirstOnce(entry, old, last)
-      : entry?.firstOnce === false || entry?.firstOnce === null
-        ? undefined
-        : entry?.firstOnce !== null && typeof entry?.firstOnce === 'object'
-          ? entry.firstOnce
-          : old?.firstOnce
+      : stampFirstOnce(entry?.firstOnce === true ? { ...entry, firstOnce: undefined } : entry, old, 0)
     const { firstOnce: _wanted, ...rest } = entry
     out[key] = { ...rest, since, auto, ...(firstOnce !== undefined ? { firstOnce } : {}) }
   }
@@ -762,6 +800,21 @@ function decodeSessionLog(buffer) {
   return text
 }
 
+/** 解码一份落盘会话日志成事件列表（读不了 / 解压失败会抛，调用方决定怎么兜底）。 */
+function readSessionLog(file) {
+  return decodeSessionLog(readFileSync(file))
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return undefined
+      }
+    })
+    .filter((event) => event !== undefined)
+}
+
 /** 取会话事件：在册 agent 直接读内存快照，否则解码落盘日志（只读）。 */
 function sessionEvents(agent, sessionId) {
   try {
@@ -773,19 +826,27 @@ function sessionEvents(agent, sessionId) {
   const file = sessionLogFile(sessionId)
   if (file === undefined) return []
   try {
-    return decodeSessionLog(readFileSync(file))
-      .split('\n')
-      .filter((line) => line.trim() !== '')
-      .map((line) => {
-        try {
-          return JSON.parse(line)
-        } catch {
-          return undefined
-        }
-      })
-      .filter((event) => event !== undefined)
+    return readSessionLog(file)
   } catch {
     return []
+  }
+}
+
+/**
+ * 每轮注入盖章用的「会话最后一轮」（state 路由的 lastTurnFor）：
+ * - 在册 ⇒ 读内存快照（快照拿不到时照旧落到日志）；
+ * - 不在册、有落盘日志且读得了 ⇒ 按日志算（会话没在跑，日志就是它的最终轮数）；
+ * - 不在册且**没有日志 / 日志读不了** ⇒ undefined = 轮数未知，stampEveryTurn 沿用旧值（#44：
+ *   以前这里得到 0，会把别的会话的 since 夹成 1）。区分不了「没跑过」和「日志不在本机」，按未知处理。
+ */
+export function stampLastTurn(agent, sessionId) {
+  if (agent !== undefined) return lastTurnOf(sessionEvents(agent, sessionId))
+  const file = sessionLogFile(sessionId)
+  if (file === undefined) return undefined
+  try {
+    return splitTurns(readSessionLog(file)).at(-1)?.turn ?? 0
+  } catch {
+    return undefined
   }
 }
 
@@ -926,7 +987,7 @@ async function handle(payload, decision, seat) {
     return decision
   }
   try {
-    const api = { readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore, pruneQueue, lockSession }
+    const api = { readState, note, latches, unlatch, rootCtx: rootCtxRef, memory: memoryStore, pruneQueue, lockSession, patchState }
     const next = (await gate.step(api, { ...payload, __seat: seat }, decision)) ?? decision
     // 用户点过「阻断」的消息来源（会话级 + 全局记住）：不论会话是否武装都生效。
     return typeof gate.applyMessageBlocks === 'function' ? gate.applyMessageBlocks(api, payload, decision, next) : next
@@ -959,7 +1020,7 @@ export function apply(ctx) {
   )
 
   /** 交给内核的能力包（每次现取，保证 rootCtx 指向最新一代）。 */
-  const api = () => ({ readState, note, latches, unlatch, rootCtx: rootCtxRef, pruneQueue, lockSession })
+  const api = () => ({ readState, note, latches, unlatch, rootCtx: rootCtxRef, pruneQueue, lockSession, patchState })
 
   // ── 座位 1（主）：根级 agent/pre-step，agent 直接来自 payload ──
   // 顺带维护"轮是否开着"，供轮次规则判断（见 reprimeAll）。
@@ -1209,6 +1270,10 @@ export function apply(ctx) {
         // 有"延后到下一轮"的重挂请求 ⇒ 客户端角标要明说"下一轮生效"，
         // 否则用户在**轮内**翻开关会以为没生效（它会一直跑到本轮结束 —— Q18 的轮次冻结）。
         pendingReprime: [...pendingReprime],
+        // 正在跑（流式输出中）的会话：面板据此在卡片根节点标 data-prefill-busy="stream"，自动提示攒到回合结束再播。
+        running: [...liveAgents].filter(([, agent]) => isRunning(agent)).map(([id]) => id),
+        // 每会话 inbox 里还挂着（没被领取）的手动注入条数：变少了 = 刚发出去（面板回合结束后提示一下，P1-9）。
+        manualInbox: Object.fromEntries([...liveAgents].map(([id, agent]) => [id, pendingInInbox(agent).length])),
         // 预填装已写成真实历史的会话（会话 → 条数）。
         materialized: typeof gateCache.module?.materialized === 'function' ? gateCache.module.materialized() : {},
         // 诊断（给脚本/排查用）。
@@ -1260,12 +1325,9 @@ export function apply(ctx) {
             if (patch !== null && typeof patch === 'object' && Object.keys(patch).length > 0) {
               if (patch.everyTurn !== null && typeof patch.everyTurn === 'object') {
                 const previous = readState()?.everyTurn ?? {}
-                // 只有要盖章的那格才去读会话（读落盘日志要解压，别对每个旧会话都读一遍）。
-                // 不在册的会话返回 undefined（= 不知道轮数）：以前返回 0 会把别的会话的 since 夹成 1（#44）。
-                const lastTurnFor = (key) => {
-                  const live = liveAgents.get(key)
-                  return live === undefined ? undefined : lastTurnOf(sessionEvents(live, key))
-                }
+                // 不在册的会话按落盘日志算；没有日志 / 读不了才返回 undefined（= 不知道轮数，#44）。
+                // 只在 0.17.0 那样一律返回 undefined 会让编辑历史会话时改正文 / 下一轮发一次 / 立即恢复暂停失效。
+                const lastTurnFor = (key) => stampLastTurn(liveAgents.get(key), key)
                 patch = { ...patch, everyTurn: stampEveryTurn(previous, patch.everyTurn, lastTurnFor) }
               }
               patchState(patch)

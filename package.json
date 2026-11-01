@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-prefill",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "type": "module",
   "description": "DSH Web 会话预填装 + 注入闸门（Prefill Pack + Gate）",
@@ -59,7 +59,8 @@
       "dshReleases": {
         "0.1.7-rc.2": "compatible",
         "0.2.0-rc.2": "compatible",
-        "0.2.1-rc.3": "compatible"
+        "0.2.1-rc.3": "compatible",
+        "0.2.1-rc.5": "compatible"
       }
     }
   }
