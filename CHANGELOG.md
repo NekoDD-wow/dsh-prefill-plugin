@@ -3,6 +3,9 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- 套用预设 / 取消预设 / 撤销取消 / 恢复开局时作废没落盘的每轮注入与工作区说明防抖编辑（issue #42）：之前这几条整体替换配置的路径只清世界书的定时器，在工作台改积木文字等输入后 700ms 内点套用，预设写进去后旧定时器会把旧的每轮注入（`state.everyTurn[会话]`）/ 工作区说明整格写回，盖掉预设。现在 `applyLayered`、`restoreOpening`、`undoClearPreset` 一开始就 `clearTimeout(everyTurnTimer)` / `clearTimeout(wsTimer)`。会话切换不清（旧定时器写的是旧会话，等于保存用户输入）。单测 `tests/preset-pending-edits.test.mjs`（5 项）。
+
 ## 0.18.0 — 2026-11-01
 - **世界书常驻条目：标记、面板区分、改完自动重拼系统提示**。
   - `constant: true` 的条目编译进 `entries`（keys 为空、带 `constant` 标记），关键词匹配时跳过（内容本来就在系统提示里）；旧存档 / 预设 / 导出保留标记。

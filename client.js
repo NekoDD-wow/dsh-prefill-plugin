@@ -6318,6 +6318,10 @@ window.__ModuleLoader__.load({
        * 分层：默认 ← 角色卡 ← 预设覆盖；之后本会话手改的部分由来源标签标出来。开场对话只改草稿。
        */
       const applyLayered = async ({ card = null, pack = null, key = '', compiled = null, extraPatch = {}, clearItems = false } = {}) => {
+        // 整体替换配置：先作废没落盘的每轮注入 / 工作区说明防抖编辑（放在最前面、任何请求之前），
+        // 否则 700ms 后旧定时器把旧值整格写回 state，盖掉刚换上的预设。
+        clearTimeout(everyTurnTimer.current)
+        clearTimeout(wsTimer.current)
         const { resolved, from } = resolveLayers(card, pack)
         if (compiled) resolved.applied = appliedPrints(compiled)
         // 故事记忆摘要：本会话开着故事记忆（预设带了角色卡）⇒ 写成初始记忆；否则作为一条背景放在开场对话最前面。
@@ -6366,6 +6370,10 @@ window.__ModuleLoader__.load({
 
       /** 恢复开局时的预设（issue #19 B）：服务端用锁里的快照换回配置，下一轮生效，历史不动。 */
       const restoreOpening = async () => {
+        // 整体替换配置：先作废没落盘的每轮注入 / 工作区说明防抖编辑（放在最前面、任何请求之前），
+        // 否则 700ms 后旧定时器把旧值整格写回 state，盖掉刚换上的预设。
+        clearTimeout(everyTurnTimer.current)
+        clearTimeout(wsTimer.current)
         const data = await postJson(STATE_ROUTE, { restoreOpening: sessionId })
         if (data?.ok === false) {
           flash(t('lockRestoreFailed'))
@@ -6432,6 +6440,10 @@ window.__ModuleLoader__.load({
       const undoClearPreset = async () => {
         const snap = presetUndo
         if (snap === null) return
+        // 整体替换配置：先作废没落盘的每轮注入 / 工作区说明防抖编辑（放在最前面、任何请求之前），
+        // 否则 700ms 后旧定时器把旧值整格写回 state，盖掉刚换上的预设。
+        clearTimeout(everyTurnTimer.current)
+        clearTimeout(wsTimer.current)
         setPresetUndo(null)
         const fresh = await postJson(STATE_ROUTE, undefined)
         const patch = presetRestorePatch(fresh?.state, sessionId, snap)
