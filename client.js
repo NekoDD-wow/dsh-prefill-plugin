@@ -998,6 +998,11 @@ window.__ModuleLoader__.load({
         return play(layer, NAV_HL_FADE, { duration: MOTION.fast, easing: MOTION.ease })
       },
     }
+    /**
+     * P2-2 开关圆点：完整档的 transform 过渡换成 spring（带一点回弹，时长 base 给回弹留出余地）；减少动效 / 关不过渡（位移类）。
+     * 乐观更新（点下去立刻按新值画）第 3 步已有（optimistic()）。卡片左栏开关和设置页开关共用。
+     */
+    const KNOB_TRANSITION = `transform ${MOTION.base}ms ${MOTION.spring}`
     // </rest>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -3048,7 +3053,7 @@ window.__ModuleLoader__.load({
         background: on ? 'var(--dsw-alias-bg-base)' : 'var(--dsw-alias-state-idle-primary)',
         // 只动 transform；档位非 full（简洁 = 不做位移 / 关）直接跳。
         transform: on ? 'translateX(16px)' : 'none',
-        transition: motionLevel() === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none',
+        transition: motionLevel() === 'full' ? KNOB_TRANSITION : 'none',
       }),
       label: { color: 'var(--dsw-alias-label-secondary)' },
       input: {
@@ -9256,7 +9261,7 @@ window.__ModuleLoader__.load({
             transition: motion === 'off' ? 'none' : `background ${MOTION.fast}ms ease`,
             ...(busyCtl.shown(busyKey) ? BUSY_LOOK : {}),
           },
-        }, h('span', { style: { position: 'absolute', top: 2, left: 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transform: on ? 'translateX(12px)' : 'none', transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none' } }))
+        }, h('span', { style: { position: 'absolute', top: 2, left: 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transform: on ? 'translateX(12px)' : 'none', transition: motion === 'full' ? KNOB_TRANSITION : 'none' } }))
       }
       // P0-4 / P1-9：每个左栏项（窄屏标签）底下垫一层：扫光带 + 底色闪层，平时完全透明、不接收点击。
       const sweepLayer = (key, color, radius) =>

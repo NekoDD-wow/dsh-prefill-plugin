@@ -53,6 +53,11 @@ function load(win = fakeWindow(), doc = undefined) {
   // eslint-disable-next-line no-new-func
   return new Function('window', 'CustomEvent', 'document', body)(win, FakeEvent, doc)
 }
+/** 只取 <rest> 里的一个常量（不是函数 / 对象时 NAMES 里放不下）。 */
+load.knob = () => {
+  // eslint-disable-next-line no-new-func
+  return new Function('window', 'CustomEvent', 'document', `${motionSrc}\n${restSrc}\nreturn typeof KNOB_TRANSITION === 'undefined' ? undefined : KNOB_TRANSITION`)(fakeWindow(), FakeEvent, undefined)
+}
 /** 假元素：记下每次 animate；finish() 让最近一次动画落定。root = 流式中的卡片根节点（可选）。 */
 function fakeEl(root = null, extra = {}) {
   const calls = []
@@ -244,4 +249,15 @@ test('[P2-1] 接线：选中项的底色挪进一层 data-prefill-nav-hl（z-ind
   assert.match(dockSrc, /host\.querySelector\(`\[data-prefill-nav-box="\$\{was\.pane\}"\]`\)/)
   assert.match(dockSrc, /NAV_FX\.glide\(layer, boxIn\(from, host\), boxIn\(layer, host\)\)/)
   assert.match(dockSrc, /was\.narrow !== now\.narrow\) return/, '宽窄屏切换时不滑')
+})
+
+// ── P2-2 开关圆点 spring ─────────────────────────────────────────
+
+test('[P2-2] KNOB_TRANSITION：transform、base、spring；卡片左栏开关和设置页开关都只在完整档用它，其余档不过渡', () => {
+  const { MOTION } = load()
+  const knob = load.knob()
+  assert.equal(knob, `transform ${MOTION.base}ms ${MOTION.spring}`)
+  assert.match(dockSrc, /transform: on \? 'translateX\(12px\)' : 'none', transition: motion === 'full' \? KNOB_TRANSITION : 'none'/)
+  assert.match(src, /transform: on \? 'translateX\(16px\)' : 'none',\n\s+transition: motionLevel\(\) === 'full' \? KNOB_TRANSITION : 'none'/)
+  assert.doesNotMatch(src, /translateX\(1[26]px\)' : 'none',?\s+transition: [^\n]*MOTION\.fast\}ms \$\{MOTION\.ease\}/, '圆点不再是 fast / ease')
 })
