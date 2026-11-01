@@ -3,6 +3,9 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- 会话沙盒受控档不再把 DSH 核心消息来源当「未归属」拦掉（issue #40）：`skill-invocation`（dsh-tool-skill，用户 `/技能名` 调用技能时追加的技能正文）、`ptc-mode`（dsh-tools / dsh-spill-policy，PTC 模式下带图片的工具结果）、`cordis-host-runner`（Cordis 插件激活 / 运行失败回报）、`webhook`（webhook 会话的开场指令）加进「DSH 核心 · 运行时上下文」包，`sandbox-packs.js` 头注释补上 0.2.1-rc.5 出处。之前受控档下调用技能时技能正文在 pre-step 被丢，模型只看到斜杠命令。显式拦这个包时照旧拦。单测 `tests/controlled-core-kinds.test.mjs`（3 项）。
+
 ## 0.18.0 — 2026-11-01
 - **世界书常驻条目：标记、面板区分、改完自动重拼系统提示**。
   - `constant: true` 的条目编译进 `entries`（keys 为空、带 `constant` 标记），关键词匹配时跳过（内容本来就在系统提示里）；旧存档 / 预设 / 导出保留标记。

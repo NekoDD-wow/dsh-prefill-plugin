@@ -41,7 +41,12 @@
  *   dsh-schedule:1594 `schedule`、dsh-plan-mode:410 `plan-mode`、dsh-user-approval:107 `user-approval`、
  *   dsh-user-questions:563 `user-question-reply`、dsh-tool-goal:368 `tool-goal`、dsh-tool-jobs:278 `tool-jobs`、
  *   dsh-subagent:446/534 `agent-message` / `subagent-settled`、dsh-agent:142 `model-selection`、
- *   dsh-agent-loop:1255 developer 消息 `tool-registry`（审计里记作 `developer:tool-registry`，直写会话，提前拦不了）。
+ *   dsh-agent-loop:1255 developer 消息 `tool-registry`（审计里记作 `developer:tool-registry`，直写会话，提前拦不了）、
+ *   dsh-tool-skill:913 `skill-invocation`（用户输入 /技能名 时在 agent/pre-step 里追加的技能正文）、
+ *   dsh-tools:1456 / dsh-spill-policy:248 `ptc-mode`（PTC 模式下带图片的工具结果，作为延后上下文追加）、
+ *   dsh-cordis-host-runner:2393/2402/2415/2428/2455 `cordis-host-runner`（Cordis 插件激活 / 运行失败的回报）、
+ *   dsh-webhook:190 `webhook`（webhook 触发新会话时的开场指令）。
+ *   `team-message` 只出现在类型声明和旧会话格式迁移里，0.2.1-rc.5 没有包发出，不算核心。
  *   协议消息（恒放行、规则管不到，见 sandbox.js PROTOCOL_KINDS）：dsh-llm:105 `tool`、dsh-compaction:109
  *   `compact-checkpoint`、墓碑；`model`（dsh-llm:75）/ `system-prompt`（dsh-llm:93）不是注入。
  *
@@ -93,7 +98,7 @@ export const BUILTIN_PACKS = Object.freeze([
     label: 'DSH 核心 · 运行时上下文',
     plugin: '@deepseek-ai/dsh-agent-loop',
     origin: 'core',
-    summary: '工作目录、审批 / 沙盒策略、时间、技能目录、目标 / 定时 …（工作目录为 required）',
+    summary: '工作目录、审批 / 沙盒策略、时间、技能目录与技能调用、目标 / 定时 …（工作目录为 required）',
     members: [
       { context: 'working-directory:*' },
       { context: 'approval:policy', exact: true },
@@ -121,6 +126,10 @@ export const BUILTIN_PACKS = Object.freeze([
         'subagent-settled',
         'model-selection',
         'developer:tool-registry',
+        'skill-invocation',
+        'ptc-mode',
+        'cordis-host-runner',
+        'webhook',
       ].map((kind) => ({ kind, exact: true })),
     ],
   },
