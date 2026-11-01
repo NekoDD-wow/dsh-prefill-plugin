@@ -1003,6 +1003,23 @@ window.__ModuleLoader__.load({
      * 乐观更新（点下去立刻按新值画）第 3 步已有（optimistic()）。卡片左栏开关和设置页开关共用。
      */
     const KNOB_TRANSITION = `transform ${MOTION.base}ms ${MOTION.spring}`
+    /**
+     * P2-6 保存按钮对勾：保存 / 另存为成功后，「保存」按钮右上角冒出一个 ✓（pop：scale .4→1、spring），停 SAVED_MS 再淡出卸载。
+     * 角标绝对定位，不改按钮宽度（旁边按钮不挪）；toast「已保存为…」照旧（读屏念那条）。减少动效：淡入淡出；关：直接出现 / 消失。
+     */
+    const SAVED_MS = 1400
+    const CHECK_POP = [{ opacity: 0, transform: 'scale(.4)' }, { opacity: 1, transform: 'scale(1)' }]
+    const CHECK_OUT = [{ opacity: 1 }, { opacity: 0 }]
+    const SAVE_FX = {
+      /** 用户点出来的直接反馈：流式输出中也照常。 */
+      pop(el) {
+        return play(el, CHECK_POP, { duration: MOTION.base, easing: MOTION.spring, cue: 'press' })
+      },
+      /** 淡出后 unmount（presence；off ⇒ 当场）。返回 { abort }。 */
+      out(el, unmount) {
+        return presenceExit(play(el, CHECK_OUT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' }), unmount, MOTION.fast + 240)
+      },
+    }
     // </rest>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -1450,6 +1467,41 @@ window.__ModuleLoader__.load({
         { [attr]: '', style: { position: 'relative', display: block ? 'block' : 'inline-block', verticalAlign: block ? undefined : 'bottom', overflow: 'hidden', maxWidth: '100%' } },
         h('span', { ref, style: { display: block ? 'block' : 'inline-block' } }, children),
         ghost === null ? null : h('span', { ref: ghostRef, 'aria-hidden': 'true', 'data-prefill-roll-ghost': '', style: { position: 'absolute', left: 0, top: 0, right: block ? 0 : undefined, whiteSpace: block ? undefined : 'nowrap', pointerEvents: 'none' } }, ghost.children),
+      )
+    }
+
+    /**
+     * 保存对勾（P2-6）：tick 变了（相对挂上时）⇒ 显示一个 ✓ 角标并 pop，SAVED_MS 后淡出卸载；显示中又保存 ⇒ 打断淡出、重新 pop。
+     * 挂上时已有的 tick 不播（卡片重开不会再冒一次）。父按钮要 position: relative。
+     */
+    function SaveCheck(props) {
+      const { tick = 0 } = props
+      const ref = React.useRef(null)
+      const seen = React.useRef(tick)
+      const [shown, setShown] = React.useState(0)
+      React.useLayoutEffect(() => {
+        if (tick === seen.current) return
+        seen.current = tick
+        setShown(tick)
+      }, [tick])
+      React.useLayoutEffect(() => {
+        if (shown === 0) return undefined
+        const pop = SAVE_FX.pop(ref.current)
+        let exit = null
+        const timer = setTimeout(() => {
+          exit = SAVE_FX.out(ref.current, () => setShown((current) => (current === shown ? 0 : current)))
+        }, SAVED_MS)
+        return () => {
+          clearTimeout(timer)
+          pop?.cancel?.()
+          exit?.abort()
+        }
+      }, [shown])
+      if (shown === 0) return null
+      return h(
+        'span',
+        { ref, 'aria-hidden': 'true', 'data-prefill-saved-check': String(shown), style: { position: 'absolute', top: -6, right: -6, width: 15, height: 15, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, lineHeight: 1, color: '#fff', background: 'var(--dsw-alias-state-success-primary, #30a46c)', boxShadow: '0 1px 3px rgba(0,0,0,.2)', pointerEvents: 'none' } },
+        '✓',
       )
     }
 
@@ -5268,6 +5320,8 @@ window.__ModuleLoader__.load({
       const [pinned, setPinned] = React.useState(false)
       const [pane, setPane] = React.useState('items')
       const [menu, setMenu] = React.useState('')
+      // P2-6：保存 / 另存为成功一次 +1（「保存」按钮角上的 ✓ 看它）。
+      const [savedTick, setSavedTick] = React.useState(0)
       const cardRef = React.useRef(null)
       React.useEffect(() => {
         setCardOpenLocal(cardOpenMap.get(sessionId) === true)
@@ -6293,6 +6347,7 @@ window.__ModuleLoader__.load({
                 setEnvelope(next)
                 setPackName(name)
                 setMenu('')
+                setSavedTick((value) => value + 1)
               }),
             )
           })
@@ -9379,7 +9434,7 @@ window.__ModuleLoader__.load({
           'button',
           {
             type: 'button',
-            style: { ...V.btn, ...(busyCtl.shown('save') ? BUSY_LOOK : {}) },
+            style: { ...V.btn, position: 'relative', ...(busyCtl.shown('save') ? BUSY_LOOK : {}) },
             'data-prefill-save': '',
             ...busyAttrs(busyCtl, 'save'),
             title: activePreset.startsWith('pack:') ? t('saveOverTip') : t('saveAsTip'),
@@ -9388,6 +9443,7 @@ window.__ModuleLoader__.load({
           busyCtl.shown('save') ? h(Spinner, { key: 'spin' }) : null,
           busyCtl.shown('save') ? ' ' : null,
           t('saveShort'),
+          h(SaveCheck, { key: 'saved', tick: savedTick }),
         ),
         h('button', { type: 'button', style: V.btnGhost, 'data-prefill-save-as': '', 'aria-expanded': menu === 'saveas' ? 'true' : 'false', onClick: () => setMenu(menu === 'saveas' ? '' : 'saveas') }, t('saveAs')),
         activePreset === '' || narrow

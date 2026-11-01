@@ -18,7 +18,7 @@ const motionSrc = cut('// <motion>', '// </motion>')
 const feedbackSrc = cut('// <feedback>', '// </feedback>')
 const restSrc = cut('// <rest>', '// </rest>')
 const compSrc = (name) => cut(`    function ${name}(props) {`, '\n    }\n')
-const COMPONENTS = []
+const COMPONENTS = ['SaveCheck']
 const dockSrc = cut('    function PrefillDock(props) {', '    function UsagePanel(props) {')
 const chipSrc = cut('    function PrefillToggle(props) {', '    function GateToggle(props) {')
 const manualSrc = cut('    function ManualInject(props) {', '    function PrefillDock(props) {')
@@ -47,6 +47,7 @@ function fakeWindow(extra = {}) {
 const NAMES = [
   'MOTION', 'setMotionPref', 'play', 'motionLevel', 'revealBlock', 'BLOCK_ENTER', 'BLOCK_GLOW', 'BADGE_POP',
   'glideFrames', 'boxIn', 'NAV_FX', 'NAV_HL_FADE',
+  'SAVED_MS', 'CHECK_POP', 'CHECK_OUT', 'SAVE_FX',
 ]
 function load(win = fakeWindow(), doc = undefined) {
   const body = `${motionSrc}\n${feedbackSrc}\n${restSrc}\nreturn { ${NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(', ')} }`
@@ -272,4 +273,97 @@ test('[P2-5] 接线：「已改」小点（塔按钮角标、积木按钮角标�
   assert.match(dockSrc, /popEdited\('block:' \+ block\.id\)/)
   assert.match(dockSrc, /popEdited\(block\.key\)/)
   assert.doesNotMatch(dockSrc, /h\('span', \{ style: \{ position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 4, background: 'var\(--pf-turn\)' \} \}\)/, '不再是静态小点')
+})
+
+// ── P2-6 保存按钮对勾 ─────────────────────────────────────────────
+
+/** 手动计时器：run() 跑掉到期的。 */
+function fakeTimers() {
+  let id = 0
+  const list = new Map()
+  return {
+    setTimeout: (fn, ms) => {
+      id += 1
+      list.set(id, { fn, ms })
+      return id
+    },
+    clearTimeout: (key) => list.delete(key),
+    run() {
+      const due = [...list.entries()]
+      list.clear()
+      for (const [, entry] of due) entry.fn()
+      return due.length
+    },
+    get size() {
+      return list.size
+    },
+    get delays() {
+      return [...list.values()].map((entry) => entry.ms)
+    },
+  }
+}
+
+test('[P2-6] SAVE_FX：完整档 ✓ pop（scale .4→1、spring、base）；淡出后卸载；减少动效只剩 opacity；off 当场卸载、不调 animate；流式中照常', async () => {
+  const { SAVE_FX, MOTION, SAVED_MS, setMotionPref } = load()
+  assert.equal(typeof SAVE_FX?.pop, 'function', '没有 SAVE_FX')
+  assert.ok(SAVED_MS >= 1000 && SAVED_MS <= 2000)
+  const el = fakeEl(streamRoot)
+  SAVE_FX.pop(el)
+  assert.equal(el.calls.length, 1, '流式中照常（直接反馈）')
+  assert.deepEqual(el.calls[0].frames.map((f) => f.transform), ['scale(.4)', 'scale(1)'])
+  assert.equal(el.calls[0].timing.easing, MOTION.spring)
+  let gone = 0
+  SAVE_FX.out(el, () => (gone += 1))
+  assert.deepEqual([...props(el.calls[1].frames)], ['opacity'])
+  assert.equal(el.calls[1].timing.duration, MOTION.fast, '出场比入场快')
+  assert.equal(gone, 0)
+  el.calls[1].finish()
+  await tick()
+  assert.equal(gone, 1)
+  setMotionPref('lite')
+  const lite = fakeEl()
+  SAVE_FX.pop(lite)
+  assert.deepEqual([...props(lite.calls[0].frames)], ['opacity'])
+  assert.equal(lite.calls[0].timing.easing, MOTION.ease, '减少动效：spring 换 ease')
+  setMotionPref('off')
+  const off = fakeEl()
+  let offGone = 0
+  assert.equal(SAVE_FX.pop(off), null)
+  SAVE_FX.out(off, () => (offGone += 1))
+  assert.equal(off.calls.length, 0)
+  assert.equal(offGone, 1, 'off：当场卸载')
+})
+
+test('[P2-6] SaveCheck：挂上时已有的 tick 不播；tick 变了 ⇒ ✓ 角标 pop，SAVED_MS 后淡出卸载；显示中又保存 ⇒ 打断淡出重新 pop', async () => {
+  const timers = fakeTimers()
+  const els = {}
+  const m = mount('SaveCheck', { tick: 3 }, { els, extraGlobals: { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } })
+  assert.equal(typeof m.made.SaveCheck, 'function', '没有 SaveCheck')
+  assert.equal(m.tree, null, '挂上时的 tick 不播')
+  m.render({ tick: 4 })
+  assert.equal(m.tree?.props['data-prefill-saved-check'], '4')
+  assert.equal(m.tree.props['aria-hidden'], 'true')
+  assert.equal(m.tree.props.style.position, 'absolute', '角标：不改按钮宽度')
+  assert.equal(m.tree.props.style.pointerEvents, 'none')
+  const el = els['data-prefill-saved-check']
+  assert.equal(el.calls.length, 1)
+  assert.deepEqual(timers.delays, [m.mod.SAVED_MS], '停 SAVED_MS')
+  timers.run()
+  assert.equal(el.calls.length, 2, '到时淡出')
+  m.render({ tick: 5 })
+  assert.equal(el.calls[1].cancelled, 1, '又保存：打断淡出')
+  assert.equal(el.calls.length, 3, '重新 pop')
+  assert.equal(m.tree?.props['data-prefill-saved-check'], '5')
+  timers.run()
+  el.calls[3].finish()
+  await tick()
+  m.rerender()
+  assert.equal(m.tree, null, '淡出后卸载')
+})
+
+test('[P2-6] 接线：保存 / 另存为成功（savePack 落定后）savedTick +1；「保存」按钮 position: relative 并挂 SaveCheck', () => {
+  assert.match(dockSrc, /const \[savedTick, setSavedTick\] = React\.useState\(0\)/)
+  assert.match(dockSrc, /setPackName\(name\)\n\s+setMenu\(''\)\n\s+setSavedTick\(\(value\) => value \+ 1\)/)
+  assert.match(dockSrc, /style: \{ \.\.\.V\.btn, position: 'relative', \.\.\.\(busyCtl\.shown\('save'\) \? BUSY_LOOK : \{\}\) \},\n\s+'data-prefill-save': ''/)
+  assert.match(dockSrc, /t\('saveShort'\),\n\s+h\(SaveCheck, \{ key: 'saved', tick: savedTick \}\)/)
 })
