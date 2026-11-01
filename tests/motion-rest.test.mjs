@@ -18,7 +18,7 @@ const motionSrc = cut('// <motion>', '// </motion>')
 const feedbackSrc = cut('// <feedback>', '// </feedback>')
 const restSrc = cut('// <rest>', '// </rest>')
 const compSrc = (name) => cut(`    function ${name}(props) {`, '\n    }\n')
-const COMPONENTS = ['SaveCheck']
+const COMPONENTS = ['SaveCheck', 'GrowMenu']
 const dockSrc = cut('    function PrefillDock(props) {', '    function UsagePanel(props) {')
 const chipSrc = cut('    function PrefillToggle(props) {', '    function GateToggle(props) {')
 const manualSrc = cut('    function ManualInject(props) {', '    function PrefillDock(props) {')
@@ -48,6 +48,7 @@ const NAMES = [
   'MOTION', 'setMotionPref', 'play', 'motionLevel', 'revealBlock', 'BLOCK_ENTER', 'BLOCK_GLOW', 'BADGE_POP',
   'glideFrames', 'boxIn', 'NAV_FX', 'NAV_HL_FADE',
   'SAVED_MS', 'CHECK_POP', 'CHECK_OUT', 'SAVE_FX',
+  'MENU_GROW', 'menuOrigin', 'MENU_FX',
 ]
 function load(win = fakeWindow(), doc = undefined) {
   const body = `${motionSrc}\n${feedbackSrc}\n${restSrc}\nreturn { ${NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? undefined : ${n}`).join(', ')} }`
@@ -366,4 +367,59 @@ test('[P2-6] 接线：保存 / 另存为成功（savePack 落定后）savedTick 
   assert.match(dockSrc, /setPackName\(name\)\n\s+setMenu\(''\)\n\s+setSavedTick\(\(value\) => value \+ 1\)/)
   assert.match(dockSrc, /style: \{ \.\.\.V\.btn, position: 'relative', \.\.\.\(busyCtl\.shown\('save'\) \? BUSY_LOOK : \{\}\) \},\n\s+'data-prefill-save': ''/)
   assert.match(dockSrc, /t\('saveShort'\),\n\s+h\(SaveCheck, \{ key: 'saved', tick: savedTick \}\)/)
+})
+
+// ── P2-7 右键菜单从指针处长出 ─────────────────────────────────────
+
+test('[P2-7] menuOrigin：指针相对菜单左上角，夹在菜单框里；没有指针 / 量不到 ⇒ 左上角', () => {
+  const { menuOrigin } = load()
+  assert.equal(typeof menuOrigin, 'function', '没有 menuOrigin')
+  const box = { left: 100, top: 200, width: 280, height: 150 }
+  assert.equal(menuOrigin(box, { x: 160, y: 190 }), '60px 0px', '指针在菜单上方（按钮上）⇒ 顶边')
+  assert.equal(menuOrigin(box, { x: 500, y: 260 }), '280px 60px', '夹到右边')
+  assert.equal(menuOrigin(box, { x: 40, y: 400 }), '0px 150px')
+  assert.equal(menuOrigin(box, { x: NaN, y: 1 }), '0px 0px')
+  assert.equal(menuOrigin(null, { x: 1, y: 1 }), '0px 0px')
+})
+
+test('[P2-7] MENU_FX.grow：完整档 opacity + scale(.92)→none，origin 对准指针（fast / ease）；减少动效只淡入；off 不调 animate；流式中照常', () => {
+  const { MENU_FX, MOTION, setMotionPref } = load()
+  assert.equal(typeof MENU_FX?.grow, 'function', '没有 MENU_FX')
+  const menu = rectEl({ left: 100, top: 200, width: 280, height: 150 }, { closest: (sel) => (/stream/.test(sel) ? streamRoot : null) })
+  MENU_FX.grow(menu, { x: 130, y: 190 })
+  assert.equal(menu.calls.length, 1, '流式中照常')
+  assert.deepEqual(menu.calls[0].frames, [
+    { opacity: 0, transform: 'scale(.92)', transformOrigin: '30px 0px' },
+    { opacity: 1, transform: 'none', transformOrigin: '30px 0px' },
+  ])
+  assert.equal(menu.calls[0].timing.duration, MOTION.fast)
+  setMotionPref('lite')
+  const lite = rectEl({ left: 0, top: 0, width: 10, height: 10 })
+  MENU_FX.grow(lite, { x: 1, y: 1 })
+  assert.deepEqual([...props(lite.calls[0].frames)], ['opacity'])
+  setMotionPref('off')
+  const off = rectEl({ left: 0, top: 0, width: 10, height: 10 })
+  assert.equal(MENU_FX.grow(off, { x: 1, y: 1 }), null)
+  assert.equal(off.calls.length, 0)
+})
+
+test('[P2-7] GrowMenu：at 变了（新打开一次）才长出来；同一份菜单重渲染不重播；换一份时上一段被取消', () => {
+  const els = {}
+  const at1 = { kind: 'block' }
+  const p = (at) => ({ at, pointer: { x: 0, y: 0 }, 'data-prefill-block-menu': '', children: ['行'] })
+  const m = mount('GrowMenu', p(at1), { els })
+  assert.equal(typeof m.made.GrowMenu, 'function', '没有 GrowMenu')
+  const el = els['data-prefill-block-menu']
+  assert.equal(m.tree.type, 'div')
+  assert.equal(el.calls.length, 1)
+  m.render(p(at1))
+  assert.equal(el.calls.length, 1, '同一份不重播')
+  m.render(p({ kind: 'tower' }))
+  assert.equal(el.calls.length, 2)
+  assert.equal(el.calls[0].cancelled, 1)
+})
+
+test('[P2-7] 接线：右键 / ⋯ 打开菜单时记下指针（px / py）；积木菜单走 GrowMenu（at = 这份菜单状态，pointer = 指针）', () => {
+  assert.equal((dockSrc.match(/px: Math\.round\(event\.clientX\),?\s*py: Math\.round\(event\.clientY\)/g) ?? []).length, 2, '积木菜单 / 塔菜单')
+  assert.match(dockSrc, /h\(\n\s+GrowMenu,\n\s+\{\n\s+key: 'menu',\n\s+at: menu,\n\s+pointer: \{ x: menu\.px, y: menu\.py \},\n\s+'data-prefill-block-menu': ''/)
 })

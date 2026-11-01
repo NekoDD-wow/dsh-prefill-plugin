@@ -1020,6 +1020,25 @@ window.__ModuleLoader__.load({
         return presenceExit(play(el, CHECK_OUT, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' }), unmount, MOTION.fast + 240)
       },
     }
+    /**
+     * P2-7 右键菜单从指针处长出：菜单仍摆在被点的按钮 / 块下方（位置不变），只是入场的 transform-origin 对准按下右键的那一点
+     * （相对菜单左上角，夹在菜单框内），opacity 0→1 + scale .92→1（fast / ease）。键盘唤出（没有指针坐标）⇒ 左上角。
+     * 减少动效：只淡入；关：直接出现。用户点出来的直接反馈，流式中照常。
+     */
+    const MENU_GROW = [{ opacity: 0, transform: 'scale(.92)' }, { opacity: 1, transform: 'none' }]
+    function menuOrigin(box, pointer) {
+      if (!box || !Number.isFinite(box.left) || !Number.isFinite(box.top) || !pointer || !Number.isFinite(pointer.x) || !Number.isFinite(pointer.y)) return '0px 0px'
+      const x = Math.round(Math.min(Math.max(pointer.x - box.left, 0), Math.max(0, box.width || 0)))
+      const y = Math.round(Math.min(Math.max(pointer.y - box.top, 0), Math.max(0, box.height || 0)))
+      return `${x}px ${y}px`
+    }
+    const MENU_FX = {
+      grow(el, pointer) {
+        const box = typeof el?.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null
+        const origin = menuOrigin(box, pointer)
+        return play(el, MENU_GROW.map((frame) => ({ ...frame, transformOrigin: origin })), { duration: MOTION.fast, easing: MOTION.ease, cue: 'press' })
+      },
+    }
     // </rest>
 
     /** 订阅档位（手选 / 系统设置变化都会重渲染）。 */
@@ -1470,6 +1489,20 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 右键菜单（P2-7）：at 变了（每次打开是一份新的菜单状态）⇒ 从 pointer 处长出来（MENU_FX.grow）；同一份菜单重渲染不重播。
+     */
+    function GrowMenu(props) {
+      const { at, pointer, children, ...rest } = props
+      const ref = React.useRef(null)
+      React.useLayoutEffect(() => {
+        if (at === null || at === undefined) return undefined
+        const animation = MENU_FX.grow(ref.current, pointer)
+        return () => animation?.cancel?.()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [at])
+      return h('div', { ...rest, ref }, children)
+    }
     /**
      * 保存对勾（P2-6）：tick 变了（相对挂上时）⇒ 显示一个 ✓ 角标并 pop，SAVED_MS 后淡出卸载；显示中又保存 ⇒ 打断淡出、重新 pop。
      * 挂上时已有的 tick 不播（卡片重开不会再冒一次）。父按钮要 position: relative。
@@ -8393,12 +8426,15 @@ window.__ModuleLoader__.load({
           builtin: target.builtin === true,
           x: Math.round(rect.left),
           y: Math.round(rect.bottom + 4),
+          // P2-7：按下右键的那一点（菜单从这里长出来）。
+          px: Math.round(event.clientX),
+          py: Math.round(event.clientY),
         })
       }
       const openTowerMenu = (event, tower) => {
         event.preventDefault()
         const rect = event.currentTarget.getBoundingClientRect()
-        setBenchMenu({ kind: 'tower', ref: tower.id, name: tower.name, builtin: tower.builtin === true, x: Math.round(rect.left), y: Math.round(rect.bottom + 4) })
+        setBenchMenu({ kind: 'tower', ref: tower.id, name: tower.name, builtin: tower.builtin === true, x: Math.round(rect.left), y: Math.round(rect.bottom + 4), px: Math.round(event.clientX), py: Math.round(event.clientY) })
       }
       const closeBenchMenu = () => setBenchMenu(null)
       const saveWholeBenchAsTower = () => {
@@ -8468,9 +8504,11 @@ window.__ModuleLoader__.load({
           if (menu.ref !== 'card') rows.push(row('removetower', t('benchMenuRemoveTower'), () => removeTowerFromBench(menu.ref)))
         }
         return h(
-          'div',
+          GrowMenu,
           {
             key: 'menu',
+            at: menu,
+            pointer: { x: menu.px, y: menu.py },
             'data-prefill-block-menu': '',
             style: {
               position: 'fixed',
