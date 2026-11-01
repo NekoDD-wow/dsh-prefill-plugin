@@ -51,7 +51,7 @@ const NAMES = [
   'MENU_GROW', 'menuOrigin', 'MENU_FX',
   'REVEAL_ENTER', 'REVEAL_EXIT', 'STRIKE_DRAW', 'STRIKE_DIM', 'REVEAL_FX',
   'CHIP_SWAP', 'chipCompact',
-  'TONE_FADE', 'COUNT_POP', 'SBX_FX', 'flushCues', 'pendingCues',
+  'TONE_FADE', 'COUNT_POP', 'SBX_FX', 'flushCues', 'pendingCues', 'sbxSeen',
   'cardArrival', 'ARRIVE_FX', 'BLOCK_GLOW_MS',
   'ROW_EXIT', 'rowChanges', 'withGhosts', 'ROW_FX',
 ]
@@ -185,7 +185,14 @@ function mount(Component, initialProps, { els = {}, extraGlobals = {}, win = fak
     return tree
   }
   render()
-  return { render, get tree() { return tree }, els, made, mod: made.mod, rerender: () => render() }
+  /** 卸下再挂上（同一份模块：模块级的表还在，组件自己的 hooks 状态清空）。 */
+  const remount = (nextProps) => {
+    for (const effect of effects) effect?.cleanup?.()
+    slots.length = 0
+    effects.length = 0
+    return render(nextProps)
+  }
+  return { render, remount, get tree() { return tree }, els, made, mod: made.mod, rerender: () => render() }
 }
 const find = (tree, pred) => {
   const out = []
@@ -632,6 +639,26 @@ test('[P2-10] 接线：头部沙盒徽章走 SandboxBadge（tone 按档位：严
   assert.match(dockSrc, /h\(SandboxBadge, \{\n\s+key: 'sandbox',\n\s+'data-prefill-badge': 'sandbox',/)
   assert.match(dockSrc, /tone: sbxSummary\.level === 'strict' \? 'var\(--dsw-alias-state-error-primary, #e5484d\)' : 'var\(--pf-system\)',\n\s+blocked: sbxSummary\.blocked,/)
   assert.match(dockSrc, /countText: sbxSummary\.blocked > 0 \? t\('sbxBlockedN'\)/)
+  assert.match(dockSrc, /blocked: sbxSummary\.blocked,\n\s+memo: sessionId,/)
+})
+
+test('[P2-10] 实测补：切档位时沙盒摘要短暂缺失、徽章被卸下再挂上 ⇒ 带 memo 时和上次画的比，照样从旧颜色淡过来、拦截数变多照样 pop；不带 memo 挂上不播', () => {
+  const els = {}
+  const p = (tone, blocked, memo) => ({ tone, blocked, memo, label: '沙盒', countText: blocked > 0 ? `拦 ${blocked}` : '', 'data-prefill-badge': 'sandbox', style: {} })
+  const first = mount('SandboxBadge', p('purple', 1, 's1'), { els })
+  assert.equal(typeof first.made.SandboxBadge, 'function', '没有 SandboxBadge')
+  assert.ok(first.mod.sbxSeen instanceof Map, '没有 sbxSeen')
+  // 同一个模块里再挂一次（卸下再挂上）：用 first.made 的组件，共享 sbxSeen。
+  const again = mount('SandboxBadge', p('red', 3, 's1'), { els: {} })
+  assert.equal(find(again.tree, (q) => q['data-prefill-sbx-tone-was'] === '').length, 0, '另一份模块：没有共享表，挂上不播')
+  first.remount(p('red', 3, 's1'))
+  assert.equal(find(first.tree, (q) => q['data-prefill-sbx-tone-was'] === '').length, 1, '挂上时从旧颜色淡过来')
+  assert.equal(els['data-prefill-sbx-tone-was'].calls.length, 1)
+  assert.equal(els['data-prefill-sbx-blocked'].calls.length, 1, '拦截数比上次多：pop')
+  first.remount(p('red', 3, 's2'))
+  assert.equal(find(first.tree, (q) => q['data-prefill-sbx-tone-was'] === '').length, 0, '别的会话：不比')
+  first.remount(p('red', 3, undefined))
+  assert.equal(find(first.tree, (q) => q['data-prefill-sbx-tone-was'] === '').length, 0, '不带 memo：不比')
 })
 
 // ── P2-11 角色卡导入后新卡入场 ───────────────────────────────────

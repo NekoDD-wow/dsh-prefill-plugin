@@ -1092,6 +1092,14 @@ window.__ModuleLoader__.load({
      */
     const TONE_FADE = [{ opacity: 1 }, { opacity: 0 }]
     const COUNT_POP = [{ opacity: 0.4, transform: 'scale(1.35)' }, { opacity: 1, transform: 'none' }]
+    /**
+     * 徽章上一次画的样子（按 memo 键 = 会话 id）：切档位时宿主状态会短暂没有沙盒摘要，徽章被卸下再挂上（实测），
+     * 挂上时拿这里的旧颜色 / 旧拦截数比，照样从旧颜色淡过来、拦截数变多照样 pop。没有 memo ⇒ 挂上时不比。
+     */
+    const sbxSeen = new Map()
+    function sbxSeenOf(memo) {
+      return memo === undefined || memo === null ? null : sbxSeen.get(memo) ?? null
+    }
     const SBX_FX = {
       tone(layer) {
         return play(layer, TONE_FADE, { duration: MOTION.slow, easing: 'ease-in-out', fill: 'forwards' })
@@ -1683,13 +1691,15 @@ window.__ModuleLoader__.load({
     }
     /**
      * 头部沙盒徽章（P2-10）：tone = 当前档位的颜色；tone 变了 ⇒ 盖一层旧颜色（z-index -1，按钮 isolation，画在文字下面）淡掉；
-     * blocked（拦截数）变多 ⇒「拦 N」pop。countText 为空不画「拦 N」。
+     * blocked（拦截数）变多 ⇒「拦 N」pop。countText 为空不画「拦 N」。memo（会话 id）：卸下再挂上时和上次画的比（sbxSeen）。
      */
     function SandboxBadge(props) {
-      const { tone, blocked = 0, label, countText = '', countColor, style, ...rest } = props
+      const { tone, blocked = 0, label, countText = '', countColor, memo, style, ...rest } = props
       const toneRef = React.useRef(null)
       const countRef = React.useRef(null)
-      const toneWas = React.useRef(tone)
+      const seen = React.useRef(undefined)
+      if (seen.current === undefined) seen.current = sbxSeenOf(memo)
+      const toneWas = React.useRef(seen.current?.tone ?? tone)
       const [oldTone, setOldTone] = React.useState(null)
       React.useLayoutEffect(() => {
         if (toneWas.current === tone) return
@@ -1702,12 +1712,15 @@ window.__ModuleLoader__.load({
         const ctl = presenceExit(SBX_FX.tone(toneRef.current), () => setOldTone((current) => (current === oldTone ? null : current)), MOTION.slow + 240)
         return () => ctl.abort()
       }, [oldTone])
-      const blockedWas = React.useRef(blocked)
+      const blockedWas = React.useRef(seen.current?.blocked ?? blocked)
       React.useLayoutEffect(() => {
         const before = blockedWas.current
         blockedWas.current = blocked
         if (blocked > before) SBX_FX.count(countRef.current)
       }, [blocked])
+      React.useLayoutEffect(() => {
+        if (memo !== undefined && memo !== null) sbxSeen.set(memo, { tone, blocked })
+      }, [memo, tone, blocked])
       return h(
         'button',
         { type: 'button', ...rest, style: { ...style, position: 'relative', isolation: 'isolate', border: `1px solid ${tint(tone, 40)}`, background: tint(tone, 10), color: tone } },
@@ -9838,6 +9851,7 @@ window.__ModuleLoader__.load({
                 onClick: () => setPane('inject'),
                 tone: sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)',
                 blocked: sbxSummary.blocked,
+                memo: sessionId,
                 label: `${t('sbxBadge')} · ${sbxLevelLabel(t, sbxSummary.level)}`,
                 countText: sbxSummary.blocked > 0 ? t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked)) : '',
                 countColor: 'var(--dsw-alias-state-error-primary, #e5484d)',
