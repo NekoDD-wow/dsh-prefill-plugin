@@ -312,10 +312,12 @@ test('面板接线：绘制前测量、固定高度、presence、档位属性、
   assert.match(src, /animation: motion === 'off' \? 'none' : motion === 'lite' \? 'dsh-prefill-fade 150ms ease' : 'dsh-prefill-pop 150ms ease'/)
   // 不再在渲染里读一次 matchMedia
   assert.doesNotMatch(src, /reduceMotion/)
-  // 「⋯」菜单：三档 + 改回跟随系统，写 state.ui.motion
+  // PR2：动效偏好搬到左侧栏「偏好」；卡片「⋯」菜单只留指路。
   assert.match(src, /'data-prefill-more': ''/)
-  assert.match(src, /'data-prefill-motion-opt': level/)
-  assert.match(src, /postJson\(STATE_ROUTE, \{ ui: \{ motion: value \} \}\)/)
+  assert.match(src, /'data-prefill-pref-motion': 'auto'/)
+  assert.match(src, /'data-prefill-pref-motion': level/)
+  assert.match(src, /mutate\(\{ ui: \{ motion: value \} \}, 'motion'/)
+  assert.match(src, /motionMovedHint/)
   for (const key of ['moreTitle', 'motionTitle', 'motionFull', 'motionLite', 'motionOff', 'motionAuto']) assert.equal(src.match(new RegExp(`\\b${key}:`, 'g'))?.length, 2, key)
 })
 

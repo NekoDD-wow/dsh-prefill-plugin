@@ -56,6 +56,7 @@ import { surfaceOnRequest, surfaceRoute } from './sandbox-surface.js'
 import { claims as sandboxClaims, installClaimApi } from './sandbox-trace.js'
 import { sanitizeWorkspaceInstructions } from './workspace-instructions.js'
 import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
+import { buildToolCatalog, createReasoningPrefixProxy } from './reasoning-prefix.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
 const STAGE = 'M6-shell'
@@ -149,6 +150,19 @@ export function sanitizeUi(raw) {
   if (['full', 'lite', 'off'].includes(raw.motion)) out.motion = raw.motion
   // 「改常驻条目会重拼系统提示」的确认框勾了「不再提示」⇒ 记住（全局设置，不进预设）。
   if (raw.loreConstWarn === true) out.loreConstWarn = true
+  // 思考前缀实验（DeepSeek beta）：开关 / 前缀 / 端口 / 路由名 / 触发标记；未知字段丢掉。
+  const reasoning = raw.reasoningPrefix
+  if (reasoning !== null && typeof reasoning === 'object' && !Array.isArray(reasoning)) {
+    const next = {}
+    if (reasoning.enabled === true) next.enabled = true
+    if (typeof reasoning.prefix === 'string') next.prefix = reasoning.prefix.slice(0, 2000)
+    if (Number.isInteger(reasoning.port) && reasoning.port > 0 && reasoning.port < 65536) next.port = reasoning.port
+    if (typeof reasoning.providerId === 'string' && /^[a-z0-9-]+$/.test(reasoning.providerId)) next.providerId = reasoning.providerId
+    if (typeof reasoning.modelId === 'string' && reasoning.modelId !== '') next.modelId = reasoning.modelId.slice(0, 200)
+    if (typeof reasoning.match === 'string') next.match = reasoning.match
+    if (reasoning.catalogRole === 'user' || reasoning.catalogRole === 'system') next.catalogRole = reasoning.catalogRole
+    out.reasoningPrefix = next
+  }
   return Object.keys(out).length > 0 ? out : undefined
 }
 
@@ -979,6 +993,9 @@ const memoryStore = {
 /** 插件根 ctx 的引用：内核的服务解析第三级回退要用它。 */
 let rootCtxRef = null
 
+/** PR5 spike：思考前缀代理（仅 DSH_PREFILL_SPIKE_PORT 打开时存在）。 */
+let reasoningSpike = null
+
 /** 两个座位共用的处理：先拿内核，再委托；任何异常都不许打断这一轮。 */
 async function handle(payload, decision, seat) {
   const gate = await loadGate()
@@ -1021,6 +1038,208 @@ export function apply(ctx) {
 
   /** 交给内核的能力包（每次现取，保证 rootCtx 指向最新一代）。 */
   const api = () => ({ readState, note, latches, unlatch, rootCtx: rootCtxRef, pruneQueue, lockSession, patchState })
+
+  // ── 思考前缀实验（DeepSeek 官方 beta 专用）：状态在 state.ui.reasoningPrefix，启用时起代理并确保 pi-ai 路由 ──
+  const REASONING_DEFAULT = { enabled: false, prefix: '', port: 46321, providerId: 'prefill-think', modelId: 'deepseek-flash' }
+  /** 当前活动代理：{ proxy, port }；未启用为 null。 */
+  let reasoningActive = null
+  const reasoningConfigOf = () => {
+    let raw
+    try {
+      raw = readState()?.ui?.reasoningPrefix
+    } catch {
+      raw = undefined
+    }
+    const config = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+    const envPort = Number(process.env.DSH_PREFILL_SPIKE_PORT || 0)
+    return {
+      enabled: config.enabled === true || envPort > 0,
+      prefix: typeof config.prefix === 'string' ? config.prefix : process.env.DSH_PREFILL_SPIKE_PREFIX || '',
+      port: Number.isInteger(config.port) && config.port > 0 ? config.port : envPort > 0 ? envPort : REASONING_DEFAULT.port,
+      providerId: typeof config.providerId === 'string' && config.providerId !== '' ? config.providerId : REASONING_DEFAULT.providerId,
+      modelId: typeof config.modelId === 'string' && config.modelId !== '' ? config.modelId : REASONING_DEFAULT.modelId,
+      match: typeof config.match === 'string' ? config.match : '',
+      shim: config.shim !== false,
+      textualize: config.textualize !== false,
+      catalogRole: config.catalogRole === 'user' ? 'user' : 'system',
+    }
+  }
+  /** 由工具 registry 现拼的文本清单（每请求一次；tools 服务不在时退回内置清单）。 */
+  const toolCatalogOf = () => {
+    try {
+      const tools = ctx.get('tools')
+      if (typeof tools?.schemas !== 'function') return ''
+      return buildToolCatalog(tools.schemas())
+    } catch (error) {
+      note({ seat: 'reasoning-prefix', catalog: String(error?.message ?? error) })
+      return ''
+    }
+  }
+  const reasoningProviderProfile = (config) => ({
+    displayName: 'DeepSeek（思考前缀）',
+    apiKeyEnv: 'DEEPSEEK_API_KEY',
+    api: 'openai-completions',
+    baseURL: 'http://127.0.0.1:' + String(config.port) + '/beta/v1',
+    compat: { supportsDeveloperRole: false },
+    models: [{
+      id: config.modelId,
+      name: 'DeepSeek Flash（思考前缀）',
+      contextWindow: 1000000,
+      maxTokens: 384000,
+      input: ['text', 'image'],
+      reasoningEfforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', max: 'max' },
+    }],
+  })
+  const settingsOf = () => {
+    try {
+      return ctx.get('settings')
+    } catch {
+      return undefined
+    }
+  }
+  const credentialsOf = () => {
+    try {
+      return ctx.get('credentials')
+    } catch {
+      return undefined
+    }
+  }
+  /** 官方 key 是否就绪（只看有没有解析结果，绝不读取值）。 */
+  const reasoningKeyReady = async () => {
+    const credentials = credentialsOf()
+    if (credentials === undefined || typeof credentials.resolve !== 'function') return undefined
+    try {
+      return (await credentials.resolve('DEEPSEEK_API_KEY')) !== undefined
+    } catch {
+      return false
+    }
+  }
+  const reasoningFormOf = (settings) => {
+    try {
+      const forms = settings.describe() ?? {}
+      const list = Array.isArray(forms) ? forms : Object.values(forms)
+      const nameOf = (entry) => entry?.ns ?? entry?.id ?? entry?.entryId ?? entry?.key ?? ''
+      const entry = list.find((item) => nameOf(item) === 'llm-pi-ai') ?? list.find((item) => String(nameOf(item)).includes('pi-ai'))
+      if (entry === undefined) return { keys: list.map((item) => nameOf(item)) }
+      const providers = entry.value?.providers ?? entry.form?.providers ?? entry.values?.providers ?? entry.config?.providers
+      return {
+        key: nameOf(entry),
+        revision: entry.revision,
+        providerIds: providers !== null && typeof providers === 'object' ? Object.keys(providers) : null,
+      }
+    } catch (error) {
+      return { error: String(error?.message ?? error) }
+    }
+  }
+  const upsertReasoningRoute = async () => {
+    const settings = settingsOf()
+    if (settings === undefined) return { ok: false, error: 'settings 服务不可用' }
+    const config = reasoningConfigOf()
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const form = reasoningFormOf(settings)
+      if (form.key === undefined) return { ok: false, error: '没有找到 llm-pi-ai 设置命名空间', keys: form.keys }
+      try {
+        await settings.update(form.key, { providers: { [config.providerId]: reasoningProviderProfile(config) } }, form.revision)
+        return { ok: true, providerId: config.providerId, providerIds: reasoningFormOf(settings).providerIds }
+      } catch (error) {
+        if (attempt === 1) return { ok: false, error: String(error?.message ?? error) }
+      }
+    }
+    return { ok: false, error: '路由写入重试后仍失败' }
+  }
+  const removeReasoningRoute = async () => {
+    const settings = settingsOf()
+    if (settings === undefined) return { ok: false, error: 'settings 服务不可用' }
+    const config = reasoningConfigOf()
+    const form = reasoningFormOf(settings)
+    if (form.key === undefined) return { ok: false, error: '没有找到 llm-pi-ai 设置命名空间' }
+    try {
+      await settings.mutate(form.key, [{ op: 'unset', path: ['providers', config.providerId] }], form.revision)
+      return { ok: true, providerIds: reasoningFormOf(settings).providerIds }
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) }
+    }
+  }
+  /** 连续失败计数：前缀轮被上游拒绝 / 回退透传达到 3 次 ⇒ 自动关实验并记审计。 */
+  let reasoningFailures = 0
+  const onReasoningOutcome = (outcome) => {
+    const failed = outcome?.ok !== true || outcome.variant === 'passthrough'
+    if (!failed) {
+      reasoningFailures = 0
+      return
+    }
+    reasoningFailures += 1
+    if (reasoningFailures < 3) return
+    reasoningFailures = 0
+    note({ seat: 'reasoning-prefix', autoDisable: true, last: outcome })
+    try {
+      patchState({ ui: { reasoningPrefix: { ...reasoningConfigOf(), enabled: false } } })
+    } catch (error) {
+      note({ seat: 'reasoning-prefix', autoDisablePatch: String(error?.message ?? error) })
+    }
+    void applyReasoningState().catch((error) => note({ seat: 'reasoning-prefix', autoDisable: String(error?.message ?? error) }))
+  }
+  const ensureReasoningProxy = async () => {
+    const config = reasoningConfigOf()
+    if (!config.enabled) return null
+    if (reasoningActive !== null) return reasoningActive
+    const proxy = createReasoningPrefixProxy({
+      getConfig: () => {
+        const current = reasoningConfigOf()
+        return {
+          enabled: current.enabled,
+          stripTools: true,
+          textualize: current.textualize,
+          shim: current.shim,
+          match: current.match,
+          catalogRole: current.catalogRole,
+          reasoningPrefix: current.prefix,
+          catalog: toolCatalogOf(),
+        }
+      },
+      logger: {
+        info: (message) => ctx.logger?.info?.(message),
+        warn: (message) => ctx.logger?.warn?.(message),
+      },
+      onOutcome: onReasoningOutcome,
+    })
+    const active = { proxy, port: config.port }
+    try {
+      active.port = await proxy.listen(config.port)
+      reasoningActive = active
+      note({ seat: 'reasoning-prefix', listening: active.port })
+    } catch (error) {
+      note({ seat: 'reasoning-prefix', listen: String(error?.message ?? error) })
+      return null
+    }
+    return active
+  }
+  const stopReasoningProxy = async () => {
+    if (reasoningActive === null) return
+    const active = reasoningActive
+    reasoningActive = null
+    try {
+      await active.proxy.close()
+    } catch (error) {
+      note({ seat: 'reasoning-prefix', close: String(error?.message ?? error) })
+    }
+  }
+  const applyReasoningState = async () => {
+    const config = reasoningConfigOf()
+    if (!config.enabled) {
+      await removeReasoningRoute()
+      await stopReasoningProxy()
+      return { enabled: false }
+    }
+    await ensureReasoningProxy()
+    const route = await upsertReasoningRoute()
+    return { enabled: true, ...route }
+  }
+
+  // 启动时按已保存的实验状态自启（settings/credentials 尚未就绪也没关系，enable 路由会再试一次）。
+  setTimeout(() => {
+    void applyReasoningState().catch((error) => note({ seat: 'reasoning-prefix', apply: String(error?.message ?? error) }))
+  }, 1000)
 
   // ── 座位 1（主）：根级 agent/pre-step，agent 直接来自 payload ──
   // 顺带维护"轮是否开着"，供轮次规则判断（见 reprimeAll）。
@@ -1216,6 +1435,59 @@ export function apply(ctx) {
     }
 
     const noStore = { headers: { 'cache-control': 'no-store' } }
+
+    // ── 思考前缀实验路由：status / enable / disable（旧 spike 路径保留为别名）──
+    const reasoningStatus = async () => {
+      const config = reasoningConfigOf()
+      const catalog = toolCatalogOf()
+      const settings = settingsOf()
+      return {
+        ok: true,
+        enabled: config.enabled,
+        proxyRunning: reasoningActive !== null,
+        port: reasoningActive !== null ? reasoningActive.port : config.port,
+        config: { prefix: config.prefix, providerId: config.providerId, modelId: config.modelId, shim: config.shim, textualize: config.textualize, catalogRole: config.catalogRole },
+        catalog: { bytes: catalog.length, tools: (catalog.match(/^- /gm) ?? []).length },
+        hasSettings: settings !== undefined,
+        hasApiKey: await reasoningKeyReady(),
+        failures: reasoningFailures,
+        audit: reasoningActive !== null ? (reasoningActive.proxy.audit?.() ?? []).slice(-10) : [],
+        ...(settings === undefined ? {} : { form: reasoningFormOf(settings) }),
+      }
+    }
+    const reasoningEnable = async (request) => {
+      let body = {}
+      try {
+        body = (await request?.json?.()) ?? {}
+      } catch {
+        body = {}
+      }
+      const current = reasoningConfigOf()
+      const next = {
+        enabled: true,
+        prefix: typeof body.prefix === 'string' ? body.prefix : current.prefix,
+        port: Number.isInteger(body.port) && body.port > 0 ? body.port : current.port,
+        providerId: typeof body.providerId === 'string' && body.providerId !== '' ? body.providerId : current.providerId,
+        modelId: typeof body.modelId === 'string' && body.modelId !== '' ? body.modelId : current.modelId,
+        shim: current.shim,
+        textualize: current.textualize,
+        catalogRole: typeof body.catalogRole === 'string' && body.catalogRole === 'user' ? 'user' : current.catalogRole,
+      }
+      patchState({ ui: { reasoningPrefix: next } })
+      const applied = await applyReasoningState()
+      return Response.json({ ...await reasoningStatus(), applied }, noStore)
+    }
+    const reasoningDisable = async () => {
+      patchState({ ui: { reasoningPrefix: { ...reasoningConfigOf(), enabled: false } } })
+      const applied = await applyReasoningState()
+      return Response.json({ ...reasoningStatus(), applied }, noStore)
+    }
+    register({ path: '/api/dsh-prefill/reasoning/status', methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(await reasoningStatus(), noStore) }, 'dsh-prefill: reasoning status')
+    register({ path: '/api/dsh-prefill/reasoning/enable', methods: ['POST'], requestBody: 'buffered', fetch: reasoningEnable }, 'dsh-prefill: reasoning enable')
+    register({ path: '/api/dsh-prefill/reasoning/disable', methods: ['POST'], requestBody: 'buffered', fetch: reasoningDisable }, 'dsh-prefill: reasoning disable')
+    register({ path: '/api/dsh-prefill/reasoning-spike/status', methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(reasoningStatus(), noStore) }, 'dsh-prefill: reasoning status (spike alias)')
+    register({ path: '/api/dsh-prefill/reasoning-spike/upsert', methods: ['POST'], requestBody: 'buffered', fetch: reasoningEnable }, 'dsh-prefill: reasoning enable (spike alias)')
+    register({ path: '/api/dsh-prefill/reasoning-spike/remove', methods: ['POST'], requestBody: 'buffered', fetch: reasoningDisable }, 'dsh-prefill: reasoning disable (spike alias)')
     const sandboxViewsFor = (state) => {
       try {
         const gate = gateCache.module

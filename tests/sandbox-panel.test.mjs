@@ -156,17 +156,17 @@ test('面板：点档位 = 写 sandbox[会话].level（严格档不再写 gate p
   assert.equal(disk.gate[SID], 'pure')
 })
 
-test('面板：来源包 放行 / 拦截 / ⭐ 全局记住 写包开关；单条另设写精确规则；未归属可本会话放行', async () => {
+test('面板：来源包 放行 / 拦截 写本会话开关（全局记住已搬到左侧栏，卡片只读）；单条另设写精确规则；未归属可本会话放行', async () => {
   const ui = harness(envelopeFor({ sandbox: { [SID]: { level: 'controlled', rules: [] } } }))
   let tree = ui.render()
   const [teams] = ui.find(tree, (props) => props['data-prefill-sbx-pack'] === 'agent-teams')
   ui.find(teams, (props) => props['data-prefill-sbx-option'] === 'allow')[0].props.onClick()
   await ui.settle()
   assert.deepEqual(ui.posts.at(-1).sandbox[SID].packs, { 'agent-teams': 'allow' })
+  // PR2：⭐全局记住搬到左侧栏「新会话默认」（一个字段只有一处可编辑），卡片里只读显示。
   tree = ui.render()
-  ui.find(tree, (props) => props['data-prefill-sbx-remember'] === 'agent-teams')[0].props.onClick()
-  await ui.settle()
-  assert.deepEqual(ui.posts.at(-1).sandbox['*'], { rules: [], packs: { 'agent-teams': 'allow' } })
+  assert.equal(ui.find(tree, (props) => props['data-prefill-sbx-remember'] === 'agent-teams').length, 0)
+  assert.equal(ui.find(tree, (props) => props['data-prefill-sbx-remember-readonly'] === 'agent-teams').length, 1)
   // 未归属：本会话放行 = 一条精确 allow（硬放行，盖得过全局 deny）。
   tree = ui.render()
   const [button] = ui.find(tree, (props) => props['data-prefill-sbx-here'] === 'contexts:mem:recall')

@@ -1836,6 +1836,10 @@ window.__ModuleLoader__.load({
     /** 角色卡路由（v0.6 角色扮演扩展）。 */
     const CARDS_ROUTE = '/api/dsh-prefill/cards'
     const MEMORY_ROUTE = '/api/dsh-prefill/memory'
+    /** 思考前缀实验（DeepSeek Beta）：状态 / 启用 / 停用。 */
+    const REASONING_STATUS_ROUTE = '/api/dsh-prefill/reasoning/status'
+    const REASONING_ENABLE_ROUTE = '/api/dsh-prefill/reasoning/enable'
+    const REASONING_DISABLE_ROUTE = '/api/dsh-prefill/reasoning/disable'
     /** 手动注入路由（一次性，issue #19「C」）：op = list | add | edit | remove。 */
     const INJECT_ROUTE = '/api/dsh-prefill/inject'
 
@@ -1887,6 +1891,39 @@ window.__ModuleLoader__.load({
       } catch {
         // 忽略。
       }
+    }
+
+    /**
+     * PR3：左侧页 ↔ 卡片的官方导航。
+     *   · 卡片 → 左侧页：宿主 layout 服务的 selectPanel(PREFILL_PANEL_ID)（侧栏那行点击走的同一条路）。
+     *   · 左侧页 → 会话 + 卡片：uiWorkspace.openSession(会话) 一次完成「切会话 + 回会话界面」，再发 CARD_EVENT 开卡片。
+     * 拿不到服务（老版本 / 非 Web）时静默降级，不影响其它功能。
+     */
+    let panelCtx = null
+    let panelAnchor = ''
+    const ANCHOR_EVENT = 'dsh-prefill:anchor'
+    function openPrefillPanel(anchor = '') {
+      panelAnchor = anchor
+      try {
+        panelCtx?.get?.('layout')?.selectPanel?.(PREFILL_PANEL_ID)
+      } catch {
+        // 宿主没有 layout 服务：左侧栏那行照旧可以点。
+      }
+      try {
+        window.dispatchEvent(new CustomEvent(ANCHOR_EVENT, { detail: { anchor } }))
+      } catch {
+        // 广播失败不影响导航。
+      }
+    }
+    function openSessionAndCard(sessionId) {
+      if (typeof sessionId !== 'string' || sessionId === '') return
+      try {
+        panelCtx?.get?.('uiWorkspace')?.openSession?.(sessionId)
+      } catch {
+        // 同上。
+      }
+      // 顺序：先 openSession 再开卡片（selectPanel 会 abort 进行中的 openWorkspace，别再反向调）。
+      setCardOpen(sessionId, true)
     }
 
     /** 左栏各项的颜色（CSS 变量；深浅色主题里 warn / success / tertiary 跟随 DSH）。 */
@@ -2041,9 +2078,9 @@ window.__ModuleLoader__.load({
       injectOff: '预填装 · 已开跑',
       prefillTitleOff: '本会话还没用预填装——点一下开启，编辑区会出现在输入框上方',
       prefillTitleOn: '本会话已用预填装——你发第一条消息时，这些内容会变成真实对话历史。点一下关掉',
-      title: '预填装 · 注入控制',
+      title: '预填装 · 设置',
       intro:
-        '开发 / 排查用的开关：系统提示(sections) / 运行时上下文(contexts) / 工具(tools) / 注入消息，各自「能写」与「能拦」。默认不碰任何会话——只有在「生效会话」里填了会话 id 才起作用。',
+        '日常用这页管：总览各会话的预填装状态、设置新会话默认、管理库与偏好。开发者选项在页底折叠。',
       cardTitle: '开关',
       writeGroup: '写入测试内容（开发用）',
       blockGroup: '拦掉（开发用）',
@@ -2091,6 +2128,92 @@ window.__ModuleLoader__.load({
       busy: '检测中…',
       idle: '未检测',
       m1Note: '排查用：状态文件可以直接改，不必污染当前会话。',
+      // ── PR1（公开 issue #44）：左侧页的开发者区 / 生效会话 / 错误文案 ──
+      devShow: '开发者选项（排查用）',
+      devHide: '收起开发者选项',
+      armedTitle: '生效会话',
+      armedHint: '勾选＝让插件干预这个会话；一个都不勾＝不干预任何会话（安全默认）。',
+      armedEmpty: '当前没有在册会话。',
+      armedNotLive: '不在册',
+      armedAll: '全部会话（*）',
+      armedAllTip: '探针用：匹配任意会话 id。',
+      armedNoneNote: 'armed 为空 ⇒ 本插件此刻不干预任何会话（安全默认）。',
+      errOpSettings: '全局设置',
+      // ── PR2（公开 issue #44）：新会话默认 / 偏好搬到左侧页；卡片只读 ──
+      defaultTurnTitle: '新会话默认 · 每轮注入',
+      defaultTurnHint: '新会话开跑时默认套用这条提醒；这里有且只有这一处能改（卡片里只读）。',
+      defaultTurnEnable: '新会话默认开启每轮注入',
+      defaultTurnBenchWarn: '当前默认来自工作台（积木）；保存这里的文本会改成纯文本默认。',
+      saveDefault: '保存为默认',
+      defaultSbxTitle: '新会话默认 · 会话沙盒',
+      defaultSbxHint: '新会话默认用哪一档、各来源包默认放行还是拦截。',
+      defaultNone: '不设',
+      prefsTitle: '偏好',
+      resetNoAsk: '重置所有「不再提示」',
+      resetNoAskHint: '让「改常驻条目」等确认提示重新出现。',
+      defaultOn: '已设',
+      defaultOff: '未设',
+      movedToSidebar: '在左侧栏「预填装」页改',
+      sbxGlobalLabel: '全局',
+      motionMovedHint: '动效偏好已移到左侧栏「预填装」页的「偏好」。',
+      // ── 实验：思考前缀（DeepSeek Beta）──
+      reasoningTitle: '实验 · 思考前缀（DeepSeek Beta）',
+      reasoningHint: '用官方 Chat Prefix Completion 让每轮以指定前缀开头；启用后会创建模型路由「DeepSeek Flash（思考前缀）」，需到模型选择器里切换。',
+      reasoningLoading: '正在读状态…',
+      reasoningOn: '已启用',
+      reasoningOff: '未启用',
+      reasoningProxy: '代理',
+      reasoningProxyRunning: '运行中 :{port}',
+      reasoningProxyStopped: '未运行',
+      reasoningCatalog: '清单',
+      reasoningCatalogValue: '{n} 个工具 · {kb} KB',
+      reasoningFailures: '连续失败',
+      reasoningKeyReady: '密钥就绪',
+      reasoningKeyMissing: '密钥未配置',
+      reasoningNoKey: '缺少 DEEPSEEK_API_KEY：先在设置里配好密钥，再启用。',
+      reasoningPrefixLabel: '前缀（助手首句开头）',
+      reasoningPrefixPlaceholder: '例如：他喵，我最喜欢的喵，怎么回他的喵',
+      reasoningEnable: '保存并启用',
+      reasoningDisable: '停用',
+      reasoningRefresh: '刷新状态',
+      reasoningRouteHint: '已启用：到输入框下方模型选择器切到「DeepSeek Flash（思考前缀）」，再正常发消息即可。',
+      reasoningAudit: '最近审计',
+      reasoningAuditEmpty: '暂无失败记录',
+      reasoningFailed: '操作失败：{reason}',
+      reasoningUnavailable: '后台没有响应：重启一次 DSH 再试。',
+      // ── PR3（公开 issue #44）：跨会话总览 + 双向跳转 ──
+      overviewTitle: '总览',
+      overviewHint: '在册会话与它们的当前配置；「打开」= 切到那个会话并弹出预填装卡片。',
+      overviewEmpty: '当前没有在册会话。',
+      overviewOpen: '打开',
+      overviewCopy: '复制 id',
+      overviewPreset: '预设',
+      overviewNone: '未套用',
+      overviewSandbox: '沙盒',
+      overviewEveryTurn: '每轮注入',
+      overviewManual: '待发注入',
+      overviewLive: '在册',
+      overviewNotLive: '不在册',
+      openDefault: '改默认 ↗',
+      copied: '已复制',
+      // ── PR4（公开 issue #44）：库管理搬到左侧页 ──
+      libraryTitle: '库',
+      libraryHint: '预设 / 角色卡 / 自定义积木·塔 的管理都在这里；卡片里只保留「套用」和「存为」。库按工作区存，先用上面的会话定位工作区。',
+      librarySession: '工作区（用会话定位）',
+      libraryNoSession: '当前没有在册会话：先在会话里用一次预填装，库才有工作区可定位。',
+      libraryPacks: '预设',
+      libraryCards: '角色卡',
+      libraryBlocks: '我的积木',
+      libraryTowers: '我的塔',
+      libraryHidden: '已隐藏的内置',
+      libraryEmpty: '空',
+      libraryDelete: '删除',
+      libraryExport: '导出',
+      libraryExportPng: '导出 PNG',
+      libraryImport: '导入…',
+      libraryUnhide: '找回',
+      manageLibrary: '管理库 ↗',
+      // ── PR2 end ──
       // ── 预填装内容（输入框上方的编辑区）──
       dockTitle: '预填装内容',
       dockHint:
@@ -2236,6 +2359,92 @@ window.__ModuleLoader__.load({
       busy: 'checking…',
       idle: 'not checked',
       m1Note: 'Diagnostics: the state file can be edited directly, so verification need not pollute a session.',
+      // ── PR1 (public issue #44): dev section / affected sessions / error copy ──
+      devShow: 'Developer options',
+      devHide: 'Hide developer options',
+      armedTitle: 'Affected sessions',
+      armedHint: 'Checked = the plugin may act on this session; none checked = it touches nothing (safe default).',
+      armedEmpty: 'No live sessions right now.',
+      armedNotLive: 'not live',
+      armedAll: 'All sessions (*)',
+      armedAllTip: 'For probes: matches any session id.',
+      armedNoneNote: 'armed is empty ⇒ the plugin currently touches no session (safe default).',
+      errOpSettings: 'Global settings',
+      // ── PR2 (public issue #44): new-session defaults / preferences moved to the left page ──
+      defaultTurnTitle: 'New-session default · every-turn reminder',
+      defaultTurnHint: 'The reminder new sessions start with. This is the only place to edit it (the card is read-only).',
+      defaultTurnEnable: 'On by default for new sessions',
+      defaultTurnBenchWarn: 'The current default came from a workbench; saving text here replaces it with a plain-text default.',
+      saveDefault: 'Save as default',
+      defaultSbxTitle: 'New-session default · session sandbox',
+      defaultSbxHint: 'Default level for new sessions and per-pack allow / deny defaults.',
+      defaultNone: 'None',
+      prefsTitle: 'Preferences',
+      resetNoAsk: 'Reset all “don’t ask again”',
+      resetNoAskHint: 'Brings back confirmations such as the constant-lore warning.',
+      defaultOn: 'set',
+      defaultOff: 'not set',
+      movedToSidebar: 'Edit in the left sidebar (Prefill)',
+      sbxGlobalLabel: 'Global',
+      motionMovedHint: 'Motion preference moved to the left sidebar (Prefill) → Preferences.',
+      // Experimental: reasoning prefix (DeepSeek Beta)
+      reasoningTitle: 'Experiment · reasoning prefix (DeepSeek Beta)',
+      reasoningHint: 'Use the official Chat Prefix Completion so every turn starts with a fixed prefix. Enabling creates a model route "DeepSeek Flash (reasoning prefix)"; switch to it in the model picker.',
+      reasoningLoading: 'Reading status…',
+      reasoningOn: 'Enabled',
+      reasoningOff: 'Disabled',
+      reasoningProxy: 'Proxy',
+      reasoningProxyRunning: 'listening :{port}',
+      reasoningProxyStopped: 'stopped',
+      reasoningCatalog: 'Catalog',
+      reasoningCatalogValue: '{n} tools · {kb} KB',
+      reasoningFailures: 'Consecutive failures',
+      reasoningKeyReady: 'Key ready',
+      reasoningKeyMissing: 'Key missing',
+      reasoningNoKey: 'DEEPSEEK_API_KEY is missing: configure it in Settings before enabling.',
+      reasoningPrefixLabel: 'Prefix (start of the assistant reply)',
+      reasoningPrefixPlaceholder: 'e.g. Sure, here is what you asked:',
+      reasoningEnable: 'Save & enable',
+      reasoningDisable: 'Disable',
+      reasoningRefresh: 'Refresh',
+      reasoningRouteHint: 'Enabled: switch to "DeepSeek Flash (reasoning prefix)" in the model picker, then send messages normally.',
+      reasoningAudit: 'Recent audit',
+      reasoningAuditEmpty: 'no failures',
+      reasoningFailed: 'Failed: {reason}',
+      reasoningUnavailable: 'Host did not respond: restart DSH and retry.',
+      // ── PR3 (public issue #44): cross-session overview + two-way navigation ──
+      overviewTitle: 'Overview',
+      overviewHint: 'Live sessions and their current setup; “Open” switches to that session and opens the Prefill card.',
+      overviewEmpty: 'No live sessions right now.',
+      overviewOpen: 'Open',
+      overviewCopy: 'Copy id',
+      overviewPreset: 'Preset',
+      overviewNone: 'none',
+      overviewSandbox: 'Sandbox',
+      overviewEveryTurn: 'Every-turn',
+      overviewManual: 'Queued',
+      overviewLive: 'live',
+      overviewNotLive: 'not live',
+      openDefault: 'Edit default ↗',
+      copied: 'Copied',
+      // ── PR4 (public issue #44): library management moved to the left page ──
+      libraryTitle: 'Library',
+      libraryHint: 'Presets / character cards / custom blocks & towers are managed here; the card keeps only “Apply” and “Save”. The library is per workspace — pick a session above to locate it.',
+      librarySession: 'Workspace (via session)',
+      libraryNoSession: 'No live session: use prefill once in a session so the library has a workspace.',
+      libraryPacks: 'Presets',
+      libraryCards: 'Character cards',
+      libraryBlocks: 'My blocks',
+      libraryTowers: 'My towers',
+      libraryHidden: 'Hidden built-ins',
+      libraryEmpty: 'empty',
+      libraryDelete: 'Delete',
+      libraryExport: 'Export',
+      libraryExportPng: 'Export PNG',
+      libraryImport: 'Import…',
+      libraryUnhide: 'Restore',
+      manageLibrary: 'Manage library ↗',
+      // ── PR2 end ──
       // ── prefill content (editor above the composer) ──
       dockTitle: 'Prefill content',
       dockHint:
@@ -2674,7 +2883,7 @@ window.__ModuleLoader__.load({
       guide4: '会话已经聊过了也能改：系统提示从下一轮生效；开场对话要点「注入」才会每轮带上。',
       guide5: '展开「用量与缓存」能看到每轮实际花了多少、缓存命中多少，跟底栏的数字同源。',
       chipPure: '纯净',
-      settingsWhere: '日常使用不需要来这里：在会话输入框上方点「预填装」打开面板，就能选预设、写系统提示和开场对话。这一页（左侧栏「预填装」）是开发 / 排查用的全局开关。',
+      settingsWhere: '这里管全局：会话总览、新会话默认、库和偏好。会话里的「预填装」面板仍用来选预设、写系统提示和开场对话；开发者选项在页底折叠。',
       resetGlobal: '把全局开关恢复默认',
       resetTip: '关掉所有全局开关、清空「生效会话」——旧版「纯净模式」会在这里留下全局开关，导致之后套人格时连工具一起被拦。',
       toolsZero: '无工具',
@@ -3357,6 +3566,15 @@ window.__ModuleLoader__.load({
         color: 'var(--dsw-alias-label-primary)',
         fontSize: 13,
         lineHeight: 1.6,
+        // 宿主主区（pI_x6G_centerCol）是 overflow:hidden 的定高容器：页面得自己滚，
+        // 否则内容一长（总览几十条会话）就整块被裁掉、滚不动也看不到滚动条。
+        flex: '1 1 auto',
+        minHeight: 0,
+        height: '100%',
+        boxSizing: 'border-box',
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
+        scrollbarGutter: 'stable',
       },
       title: { fontSize: 15, fontWeight: 600 },
       intro: { color: 'var(--dsw-alias-label-secondary)' },
@@ -3376,6 +3594,36 @@ window.__ModuleLoader__.load({
         alignItems: 'center',
         gap: 10,
         justifyContent: 'space-between',
+      },
+      sessionRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '8px 0',
+        borderTop: '1px solid var(--dsw-alias-border-l1)',
+      },
+      sessionLabel: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 },
+      sessionTitle: { fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      sessionId: {
+        fontSize: 11,
+        lineHeight: 1.3,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        color: 'var(--dsw-alias-label-secondary)',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      },
+      sessionMeta: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 },
+      pill: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '1px 7px',
+        borderRadius: 10,
+        fontSize: 11,
+        lineHeight: '18px',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        color: 'var(--dsw-alias-label-secondary)',
       },
       track: (on) => ({
         width: 38,
@@ -3802,24 +4050,105 @@ window.__ModuleLoader__.load({
     }
 
     /** 设置页主体；`t` 由 slot 的 `locale: NS` 席位合成。 */
+    /**
+     * 左侧栏「预填装 · 注入控制」页（DSH 官方通道：sidebar.panellist 一行 + main 主区页面）。
+     *
+     * PR1（公开 issue #44）：先把这一页接回全局状态总线 —— 监听 STATE_EVENT、写完广播；
+     * 写入共用 busy(key) 与错误 pill（和卡片同一套 errorsReduce / ErrorPill / reportError）；
+     * M1 开发者区默认折叠；「生效会话」从手打 id 改成勾选在册会话。
+     */
     function PrefillSection(props) {
       const t = props.t ?? ((key) => key)
       const [state, setState] = React.useState(null)
-      // envelope（整封信）也留一份：清单（`injections.catalog`）在它上面，不在 `state` 上。
+      // envelope（整封信）也留一份：清单（injections.catalog）在它上面，不在 state 上。
       const [envelope, setEnvelope] = React.useState(null)
       const [ping, setPing] = React.useState({ phase: 'idle' })
       const [note, setNote] = React.useState('')
-      const [armedDraft, setArmedDraft] = React.useState('')
       const [allowDraft, setAllowDraft] = React.useState('')
-      // 工具放行的草稿：`''` = 全部放行（null），`' '` = 一个都不给（[]）。
+      // 工具放行的草稿：空串 = 全部放行（null），一个空格 = 一个都不给（[]）。
       const [toolsDraft, setToolsDraft] = React.useState('')
+      // PR1：开发者区（M1 探针）默认折叠 —— 日常使用不需要它。
+      const [devOpen, setDevOpen] = React.useState(false)
+      // 思考前缀实验（DeepSeek Beta）：状态 + 前缀草稿 + 操作中标记。
+      const [reasoning, setReasoning] = React.useState(null)
+      const [reasoningDraft, setReasoningDraft] = React.useState('')
+      const [reasoningBusy, setReasoningBusy] = React.useState(false)
+      const [reasoningError, setReasoningError] = React.useState('')
+      const refreshReasoning = React.useCallback(async () => {
+        try {
+          const data = await postJson(REASONING_STATUS_ROUTE)
+          if (data !== null && typeof data === 'object') setReasoning(data)
+          if (typeof data?.config?.prefix === 'string') {
+            setReasoningDraft((current) => (current === '' ? data.config.prefix : current))
+          }
+          setReasoningError('')
+        } catch {
+          setReasoningError(t('reasoningUnavailable'))
+        }
+      }, [])
+      React.useEffect(() => {
+        void refreshReasoning()
+      }, [refreshReasoning])
+      const mutateReasoning = async (path, body) => {
+        setReasoningBusy(true)
+        try {
+          const data = await postJson(path, body)
+          if (data !== null && typeof data === 'object') setReasoning(data)
+          setReasoningError('')
+          notifyStateChanged()
+        } catch (error) {
+          setReasoningError(t('reasoningFailed').replace('{reason}', String(error?.message ?? error)))
+        } finally {
+          setReasoningBusy(false)
+        }
+      }
+      // 会话标题：uiWorkspace.sessions 快照（DSH 生成，随会话变化刷新）。
+      const [sessionsTick, setSessionsTick] = React.useState(0)
+      React.useEffect(() => {
+        try {
+          const list = panelCtx?.get?.('uiWorkspace')?.sessions?.list
+          if (typeof list?.subscribe !== 'function') return undefined
+          return list.subscribe(() => setSessionsTick((value) => value + 1))
+        } catch {
+          return undefined
+        }
+      }, [])
+      const sessionTitleOf = (id) => {
+        void sessionsTick
+        if (typeof props.titleOf === 'function') {
+          try {
+            const given = props.titleOf(id)
+            if (typeof given === 'string') return given.trim()
+          } catch {
+            // 注入的标题解析失败就退回宿主快照。
+          }
+        }
+        try {
+          const byId = panelCtx?.get?.('uiWorkspace')?.sessions?.list?.getSnapshot?.()?.byId
+          const summary = byId !== null && typeof byId === 'object' ? byId[id] : undefined
+          const title = typeof summary?.title === 'string' ? summary.title.trim() : ''
+          return title
+        } catch {
+          return ''
+        }
+      }
+      const [resetArmed, setResetArmed] = React.useState(false)
+      // 与卡片共用同一套可见性：busy(key) 防连点、错误 pill 说清哪个操作失败。
+      const busy = useBusy()
+      const [error, setError] = React.useState(null)
+      // PR2：新会话默认（每轮注入）的草稿；null = 跟随服务端，编辑后才有值。
+      const [defTurnDraft, setDefTurnDraft] = React.useState(null)
+      // PR4：库（预设 / 角色卡 / 积木塔）—— 按工作区存，先用一个在册会话定位工作区。
+      const [libSid, setLibSid] = React.useState('')
+      const [lib, setLib] = React.useState({ packs: [], cards: [], blocks: [], towers: [], hidden: [] })
+      const [libArmed, setLibArmed] = React.useState('')
 
       const adopt = React.useCallback((next) => {
         setEnvelope(next)
         setState(next?.state ?? null)
         setMotionPref(next?.state?.ui?.motion)
-        setArmedDraft((next?.state?.armed ?? []).join(' '))
         setAllowDraft((next?.state?.allowKinds ?? []).join(', '))
+        setDefTurnDraft(null)
         const toolList = next?.state?.tools
         setToolsDraft(Array.isArray(toolList) ? (toolList.length === 0 ? ' ' : toolList.join(',')) : '')
       }, [])
@@ -3830,11 +4159,11 @@ window.__ModuleLoader__.load({
           headers: body === undefined ? {} : { 'content-type': 'application/json' },
           body: body === undefined ? undefined : JSON.stringify(body),
         })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        if (!response.ok) throw new Error('HTTP ' + response.status)
         return await response.json()
       }, [])
 
-      React.useEffect(() => {
+      const refresh = React.useCallback(() => {
         void call(undefined)
           .then((data) => {
             adopt(data)
@@ -3843,18 +4172,56 @@ window.__ModuleLoader__.load({
           .catch((error) => setPing({ phase: 'error', message: String(error) }))
       }, [call, adopt])
 
-      const mutate = React.useCallback(
-        async (body) => {
-          try {
+      // PR1：不再只在挂载时拉一次 —— 监听全局广播（卡片 / 沙盒页写完都会发），
+      // 自己写完也广播，两边不会各说各话。
+      React.useEffect(() => {
+        refresh()
+        window.addEventListener(STATE_EVENT, refresh)
+        return () => window.removeEventListener(STATE_EVENT, refresh)
+      }, [refresh])
+
+      // PR3：卡片点「改默认 ↗」时把左侧页滚到对应小节（没有 URL 路由 / 面板事件，用一条窗口事件带锚点）。
+      React.useEffect(() => {
+        const onAnchor = (event) => {
+          const anchor = event?.detail?.anchor
+          if (typeof anchor !== 'string' || anchor === '') return
+          const node = typeof document !== 'undefined' ? document.querySelector('[data-prefill-anchor="' + anchor + '"]') : null
+          if (node !== null && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'start' })
+        }
+        window.addEventListener(ANCHOR_EVENT, onAnchor)
+        return () => window.removeEventListener(ANCHOR_EVENT, onAnchor)
+      }, [])
+
+      /** 失败：错误 pill（与卡片同一套）+ 一行状态字；sessionId 用空串（全局页，不进会话卡片的 pill）。 */
+      const fail = React.useCallback(
+        (key, op, err) => {
+          setNote(t('saveFailed') + ': ' + String(err))
+          setError((current) => errorsReduce(current, { type: 'fail', key, op: op ?? t('errOpSettings'), detail: errorDetail(err), at: Date.now() }))
+          reportError('', key, op ?? t('errOpSettings'), err)
+        },
+        [t],
+      )
+
+      /** 带忙碌态与错误 pill 的写入：同一 key 进行中再点忽略；成功收起同一操作的错误；写完广播。 */
+      const act = React.useCallback(
+        (key, op, body) => {
+          const running = busy.run(key, async () => {
             const data = await call(body)
             adopt(data)
             setNote(t('saved'))
-          } catch (error) {
-            setNote(`${t('saveFailed')}: ${String(error)}`)
-          }
+            // 同一操作后来成功了 ⇒ 收起它的错误 pill（与卡片 errorsReduce 同一套语义）。
+            setError((current) => errorsReduce(current, { type: 'ok', key }))
+            reportOk('', key)
+            notifyStateChanged()
+            return data
+          })
+          if (running === null) return null
+          return running.catch((err) => fail(key, op, err))
         },
-        [call, adopt, t],
+        [busy, call, adopt, t, fail],
       )
+
+      const mutate = (body, key = 'settings', op = undefined) => act(key, op, body)
 
       const splitList = (text) =>
         text
@@ -3862,34 +4229,245 @@ window.__ModuleLoader__.load({
           .map((part) => part.trim())
           .filter((part) => part !== '')
 
+      // ── 生效会话（PR1）：勾选在册会话，不再手打 id；已生效但不在册的照旧列出来（灰标记） ──
+      const armed = Array.isArray(state?.armed) ? state.armed : []
+      const sessionIds = [...new Set([
+        ...Object.keys(envelope?.tools?.sessions ?? {}),
+        ...Object.keys(envelope?.sandboxView ?? {}),
+        ...Object.keys(envelope?.snapshots ?? {}),
+        ...Object.keys(envelope?.turns ?? {}),
+        ...armed.filter((id) => id !== '*'),
+      ])].filter((id) => typeof id === 'string' && id !== '').sort()
+      const liveSet = new Set([...Object.keys(envelope?.tools?.sessions ?? {}), ...Object.keys(envelope?.turns ?? {})])
+      const setArmed = (id, on) => {
+        const next = on ? [...new Set([...armed, id])] : armed.filter((entry) => entry !== id)
+        void mutate({ armed: next }, 'armed:' + id, t('errOpSettings'))
+      }
+
+      // ── PR3：跨会话总览（在册会话 + 当前配置）─────────────────────────────────
+      const overviewIds = [...new Set([
+        ...Object.keys(envelope?.tools?.sessions ?? {}),
+        ...Object.keys(envelope?.turns ?? {}),
+        ...Object.keys(envelope?.snapshots ?? {}),
+        ...Object.keys(envelope?.sandboxView ?? {}),
+        ...Object.keys(state?.activePreset ?? {}),
+        ...Object.keys(state?.everyTurn ?? {}).filter((id) => id !== '*'),
+      ])].filter((id) => typeof id === 'string' && id !== '' && id !== '*').sort()
+      const overviewRows = overviewIds.map((id) => {
+        const view = envelope?.sandboxView?.[id]
+        const own = state?.everyTurn?.[id]
+        const fallback = state?.everyTurn?.['*']
+        return {
+          id,
+          preset: state?.activePreset?.[id] ?? '',
+          level: typeof view?.level === 'string' ? view.level : '',
+          blocked: Number(view?.blocked) || 0,
+          everyTurn: own !== undefined ? own?.enabled === true : fallback?.enabled === true,
+          manual: Number(envelope?.manualQueued?.[id]) || 0,
+          live: Object.prototype.hasOwnProperty.call(envelope?.tools?.sessions ?? {}, id),
+        }
+      }).sort((a, b) => Number(b.live) - Number(a.live))
+      const copySessionId = (id) => {
+        try {
+          void navigator?.clipboard?.writeText?.(id)
+          setNote(t('copied'))
+        } catch {
+          setNote(id)
+        }
+      }
+
+      // ── PR4：库（预设 / 角色卡 / 自定义积木·塔）─────────────────────────────
+      const liveIds = overviewIds.filter((id) => Object.prototype.hasOwnProperty.call(envelope?.tools?.sessions ?? {}, id))
+      const libSession = libSid !== '' ? libSid : liveIds[0] ?? ''
+      const postRoute = React.useCallback(async (path, body) => {
+        const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) })
+        if (!response.ok) throw new Error('HTTP ' + response.status)
+        return await response.json()
+      }, [])
+      const loadLibrary = React.useCallback(() => {
+        if (libSession === '') {
+          setLib({ packs: [], cards: [], blocks: [], towers: [], hidden: [] })
+          return
+        }
+        void Promise.all([
+          postRoute(PACKS_ROUTE, { sessionId: libSession, op: 'list' }),
+          postRoute(CARDS_ROUTE, { sessionId: libSession, op: 'list' }),
+        ])
+          .then(([packsData, cardsData]) => {
+            setLib({
+              packs: Array.isArray(packsData?.packs) ? packsData.packs : [],
+              cards: Array.isArray(cardsData?.cards) ? cardsData.cards : [],
+              blocks: Array.isArray(packsData?.blocks) ? packsData.blocks : [],
+              towers: Array.isArray(packsData?.towers) ? packsData.towers : [],
+              hidden: Array.isArray(packsData?.hiddenBuiltins) ? packsData.hiddenBuiltins : [],
+            })
+          })
+          .catch(() => {})
+      }, [libSession, postRoute])
+      React.useEffect(() => {
+        loadLibrary()
+        window.addEventListener(STATE_EVENT, loadLibrary)
+        return () => window.removeEventListener(STATE_EVENT, loadLibrary)
+      }, [loadLibrary])
+      const libAct = (key, body, path) => {
+        const running = busy.run(key, async () => {
+          const data = await postRoute(path, body)
+          setNote(t('saved'))
+          setError((current) => errorsReduce(current, { type: 'ok', key }))
+          reportOk('', key)
+          loadLibrary()
+          return data
+        })
+        if (running === null) return null
+        return running.catch((err) => fail(key, t('errOpSettings'), err))
+      }
+      const downloadFile = (name, blob) => {
+        try {
+          const url = URL.createObjectURL(blob)
+          const anchor = document.createElement('a')
+          anchor.href = url
+          anchor.download = name
+          anchor.click()
+          setTimeout(() => URL.revokeObjectURL(url), 4000)
+        } catch {
+          // 非浏览器环境（测试 / 无头）：忽略下载本身。
+        }
+      }
+      const exportLibPack = async (name) => {
+        try {
+          const data = await postRoute(PACKS_ROUTE, { sessionId: libSession, op: 'get', name })
+          if (data?.pack === undefined || data?.pack === null) return
+          downloadFile(name + '.prefill.json', new Blob([JSON.stringify(data.pack, null, 2) + '\n'], { type: 'application/json' }))
+        } catch (err) {
+          fail('lib:pack-export:' + name, t('errOpSettings'), err)
+        }
+      }
+      const importLibPack = (event) => {
+        const file = event?.target?.files?.[0]
+        if (file === undefined) return
+        const reader = new FileReader()
+        reader.onload = () => void libAct('lib:pack-import', { sessionId: libSession, op: 'import', name: file.name.replace(/\.(prefill\.)?json$/i, ''), json: String(reader.result) }, PACKS_ROUTE)
+        reader.readAsText(file)
+        event.target.value = ''
+      }
+      const exportLibCardPng = async (id) => {
+        try {
+          const data = await postRoute(CARDS_ROUTE, { sessionId: libSession, op: 'export-png', id })
+          if (typeof data?.png !== 'string') return
+          const binary = atob(data.png)
+          const bytes = new Uint8Array(binary.length)
+          for (let at = 0; at < binary.length; at += 1) bytes[at] = binary.charCodeAt(at)
+          downloadFile((data.name ?? id) + '.png', new Blob([bytes], { type: 'image/png' }))
+        } catch (err) {
+          fail('lib:card-export:' + id, t('errOpSettings'), err)
+        }
+      }
+      const importLibCard = (event) => {
+        const file = event?.target?.files?.[0]
+        if (file === undefined) return
+        const reader = new FileReader()
+        if (/\.png$/i.test(file.name) || file.type === 'image/png') {
+          reader.onload = () => {
+            const bytes = new Uint8Array(reader.result)
+            let binary = ''
+            for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
+            void libAct('lib:card-import', { sessionId: libSession, op: 'import', png: btoa(binary) }, CARDS_ROUTE)
+          }
+          reader.readAsArrayBuffer(file)
+        } else {
+          reader.onload = () => void libAct('lib:card-import', { sessionId: libSession, op: 'import', json: String(reader.result) }, CARDS_ROUTE)
+          reader.readAsText(file)
+        }
+        event.target.value = ''
+      }
+      const armLib = (key) => {
+        if (libArmed !== key) {
+          setLibArmed(key)
+          setTimeout(() => setLibArmed(''), CONFIRM_MS)
+          return false
+        }
+        setLibArmed('')
+        return true
+      }
+      const deleteLibPack = (name) => { if (armLib('pack:' + name)) void libAct('lib:pack:' + name, { sessionId: libSession, op: 'delete', name }, PACKS_ROUTE) }
+      const deleteLibCard = (id) => { if (armLib('card:' + id)) void libAct('lib:card:' + id, { sessionId: libSession, op: 'delete', id }, CARDS_ROUTE) }
+      const deleteLibBlock = (id) => { if (armLib('block:' + id)) void libAct('lib:block:' + id, { sessionId: libSession, op: 'block-delete', id }, PACKS_ROUTE) }
+      const deleteLibTower = (id) => { if (armLib('tower:' + id)) void libAct('lib:tower:' + id, { sessionId: libSession, op: 'tower-delete', id }, PACKS_ROUTE) }
+      const unhideLib = (id) => void libAct('lib:unhide:' + id, { sessionId: libSession, op: 'hidden-set', ids: lib.hidden.filter((entry) => entry !== id) }, PACKS_ROUTE)
+
+      // ── PR2：新会话默认 / 偏好（唯一编辑处；卡片里只读）─────────────────────
+      const everyTurnDefault = state?.everyTurn?.['*']
+      const defTurn = defTurnDraft ?? {
+        enabled: everyTurnDefault?.enabled === true,
+        mode: everyTurnDefault?.mode === 'until' ? 'until' : 'always',
+        untilTurn: Number(everyTurnDefault?.untilTurn) || 0,
+        text: typeof everyTurnDefault?.text === 'string' ? everyTurnDefault.text : '',
+        firstText: typeof everyTurnDefault?.firstText === 'string' ? everyTurnDefault.firstText : '',
+        bench: Array.isArray(everyTurnDefault?.bench) && everyTurnDefault.bench.length > 0,
+      }
+      const setDefTurn = (patch) => setDefTurnDraft({ ...defTurn, ...patch })
+      const saveDefaultTurn = () => {
+        const entry = {
+          enabled: defTurn.enabled,
+          text: defTurn.text,
+          firstText: defTurn.firstText,
+          untilTurn: defTurn.mode === 'until' ? Math.max(0, Math.floor(Number(defTurn.untilTurn) || 0)) : 0,
+          mode: defTurn.mode,
+          checks: Array.isArray(everyTurnDefault?.checks) ? everyTurnDefault.checks : [],
+          auto: everyTurnDefault?.auto ?? { warmup: 3, streak: 3, probation: 2 },
+        }
+        const map = { ...(state?.everyTurn ?? {}), '*': entry }
+        void mutate({ everyTurn: map }, 'default-turn', t('errOpSettings'))
+      }
+      const globalScope = state?.sandbox?.['*'] ?? {}
+      const globalView = envelope?.sandboxView?.['*']
+      const globalLevel = typeof globalScope.level === 'string' ? globalScope.level : ''
+      const writeGlobalLevel = (level) => {
+        const scope = { ...globalScope }
+        if (level === '') delete scope.level
+        else scope.level = level
+        void mutate({ sandbox: { ...(state?.sandbox ?? {}), '*': scope } }, 'default-sbx-level', t('errOpSettings'))
+      }
+      const writeGlobalPack = (id, action) => {
+        const packs = { ...(globalScope.packs ?? {}) }
+        if (action === undefined) delete packs[id]
+        else packs[id] = action
+        const scope = { ...globalScope }
+        if (Object.keys(packs).length === 0) delete scope.packs
+        else scope.packs = packs
+        void mutate({ sandbox: { ...(state?.sandbox ?? {}), '*': scope } }, 'default-sbx-pack:' + id, t('errOpSettings'))
+      }
+      const motionNow = normalizeMotion(envelope?.state?.ui?.motion)
+      const writeMotion = (value) => {
+        const before = motionNow
+        setMotionPref(value)
+        void mutate({ ui: { motion: value } }, 'motion', t('errOpSettings')).then((data) => {
+          if (data === undefined) setMotionPref(before)
+        })
+      }
+
       const hostTone = ping.phase === 'ok' ? 'ok' : ping.phase === 'error' ? 'fail' : undefined
 
-      return h(
-        'div',
-        { style: S.page },
-        h('div', { style: S.title }, t('title')),
-        h('div', { style: { ...S.intro, padding: '8px 10px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2)', borderLeft: '3px solid var(--dsw-alias-brand-primary)' } }, t('settingsWhere')),
-        h('div', { style: S.intro }, t('intro')),
-        h(
-          'button',
-          {
-            type: 'button',
-            style: S.button,
-            title: t('resetTip'),
-            onClick: () =>
-              void mutate({
-                armed: [],
-                levers: { probeSection: false, probeContext: false, blockSections: false, blockContexts: false, blockTools: false, blockMessages: false },
-                allowKinds: ['user'],
-                tools: null,
-              }),
-          },
-          t('resetGlobal'),
-        ),
+      // 错误详情（与卡片同一套）：点 pill 展开原因 / 时间。
+      const errorPanel =
+        error === null
+          ? null
+          : h(
+              'div',
+              { 'data-prefill-error-detail': error.key, role: 'dialog', 'aria-label': t('errPill').replace('{op}', error.op), style: { ...S.card, gap: 6, borderColor: tint(ERROR_TONE, 45) } },
+              h('div', { style: { fontWeight: 700, fontSize: 13, color: ERROR_TONE } }, '⚠ ' + t('errPill').replace('{op}', error.op) + (error.count > 1 ? ' ×' + error.count : '')),
+              h('div', { style: S.note }, t('errDetailWhat')),
+              h('div', { style: S.note }, t('errDetailReason') + '：', h('code', null, error.detail || t('errDetailUnknown'))),
+              h('div', { style: S.note }, t('errDetailAt') + '：' + (error.at ? new Date(error.at).toLocaleTimeString() : '—')),
+              h('div', { style: S.note }, t('errDetailHint')),
+              h('div', { style: S.chipRow }, h('button', { type: 'button', style: S.button, 'data-prefill-error-detail-dismiss': '', onClick: () => setError(null) }, t('errDismiss'))),
+            )
 
+      // ── 开发者区（M1 探针，默认折叠）────────────────────────────────────────
+      const devCards = [
         h(
           'div',
-          { style: S.card },
+          { key: 'levers', style: S.card },
           h('div', { style: S.cardTitle }, t('cardTitle')),
           h('div', { style: S.group }, t('writeGroup')),
           ...LEVERS.filter((lever) => lever.tone === 'write').map((lever) =>
@@ -3900,7 +4478,7 @@ window.__ModuleLoader__.load({
               h(Toggle, {
                 on: state?.levers?.[lever.key] === true,
                 label: t(lever.key),
-                onToggle: () => void mutate({ levers: { [lever.key]: !(state?.levers?.[lever.key] === true) } }),
+                onToggle: () => void mutate({ levers: { [lever.key]: !(state?.levers?.[lever.key] === true) } }, 'lever:' + lever.key, t('errOpSettings')),
               }),
             ),
           ),
@@ -3913,31 +4491,14 @@ window.__ModuleLoader__.load({
               h(Toggle, {
                 on: state?.levers?.[lever.key] === true,
                 label: t(lever.key),
-                onToggle: () => void mutate({ levers: { [lever.key]: !(state?.levers?.[lever.key] === true) } }),
+                onToggle: () => void mutate({ levers: { [lever.key]: !(state?.levers?.[lever.key] === true) } }, 'lever:' + lever.key, t('errOpSettings')),
               }),
             ),
           ),
         ),
-
         h(
           'div',
-          { style: S.card },
-          h(Field, {
-            label: t('armedLabel'),
-            value: armedDraft,
-            onChange: setArmedDraft,
-          }),
-          h(
-            'button',
-            {
-              type: 'button',
-              style: S.button,
-              onClick: () => void mutate({ armed: splitList(armedDraft) }),
-            },
-            t('applyArmed'),
-          ),
-          // 放行来源：**标签式**。来源 id（source.kind）本来就能从注入清单里直接扫出来，
-          // 让人凭记忆手打一串逗号既容易错、也不知道有哪些可选。点标签 = 加入白名单，再点 = 移除。
+          { key: 'allow-tools', style: S.card },
           h('div', { style: S.note }, t('allowLabel')),
           h(
             'div',
@@ -3950,13 +4511,12 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   style: S.chip(splitList(allowDraft).includes(kind)),
                   title: kind,
+                  'data-prefill-allow': kind,
                   onClick: () => {
                     const current = splitList(allowDraft)
-                    const next = current.includes(kind)
-                      ? current.filter((entry) => entry !== kind)
-                      : [...current, kind]
+                    const next = current.includes(kind) ? current.filter((entry) => entry !== kind) : [...current, kind]
                     setAllowDraft(next.join(', '))
-                    void mutate({ allowKinds: next })
+                    void mutate({ allowKinds: next }, 'allow:' + kind, t('errOpSettings'))
                   },
                 },
                 kind,
@@ -3964,7 +4524,6 @@ window.__ModuleLoader__.load({
             ),
             h('span', { style: S.chipStatic }, t('allowLocked')),
           ),
-          // 工具放行（全局）：同样只管"能不能用"。
           h('div', { style: S.note }, t('toolsLabel')),
           envelope !== null && envelope !== undefined && envelope.tools === undefined
             ? h('div', { style: S.injectStale ?? S.note }, t('injectStaleHost'))
@@ -3976,17 +4535,16 @@ window.__ModuleLoader__.load({
               h(
                 'button',
                 {
-                  key: `gtool-${name}`,
+                  key: 'gtool-' + name,
                   type: 'button',
                   style: S.chip(splitList(toolsDraft).includes(name)),
                   title: name,
+                  'data-prefill-tool': name,
                   onClick: () => {
                     const current = splitList(toolsDraft)
-                    const next = current.includes(name)
-                      ? current.filter((entry) => entry !== name)
-                      : [...current, name]
+                    const next = current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name]
                     setToolsDraft(next.join(','))
-                    void mutate({ tools: next })
+                    void mutate({ tools: next }, 'tool:' + name, t('errOpSettings'))
                   },
                 },
                 name,
@@ -3994,57 +4552,515 @@ window.__ModuleLoader__.load({
             ),
             h(
               'button',
-              {
-                type: 'button',
-                style: S.chip(toolsDraft === ''),
-                onClick: () => {
-                  setToolsDraft('')
-                  void mutate({ tools: null })
-                },
-              },
+              { type: 'button', style: S.chip(toolsDraft === ''), onClick: () => { setToolsDraft(''); void mutate({ tools: null }, 'tools:all', t('errOpSettings')) } },
               t('toolsAll'),
             ),
             h(
               'button',
-              {
-                type: 'button',
-                style: S.chip(toolsDraft === ' '),
-                onClick: () => {
-                  setToolsDraft(' ')
-                  void mutate({ tools: [] })
-                },
-              },
+              { type: 'button', style: S.chip(toolsDraft === ' '), onClick: () => { setToolsDraft(' '); void mutate({ tools: [] }, 'tools:none', t('errOpSettings')) } },
               t('toolsNone'),
             ),
           ),
-          note === '' ? null : h('div', { style: S.note }, note),
         ),
-
         h(
           'div',
-          { style: S.card },
+          { key: 'runtime', style: S.card },
           h('div', { style: S.cardTitle }, t('stateTitle')),
-          h(
-            'div',
-            { style: S.switchRow },
-            h('span', { style: S.label }, t('hostLabel')),
-            h('span', null, hostTone === 'ok' ? t('reachable') : hostTone === 'fail' ? t('unreachable') : t('busy')),
-          ),
-          h(
-            'div',
-            { style: S.switchRow },
-            h('span', { style: S.label }, t('routeLabel')),
-            h('span', { style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 } }, STATE_ROUTE),
-          ),
-          ping.data?.stateFile === undefined
-            ? null
-            : h('div', { style: S.label }, `${t('stateFileLabel')}: ${ping.data.stateFile}`),
+          h('div', { style: S.switchRow }, h('span', { style: S.label }, t('hostLabel')), h('span', null, hostTone === 'ok' ? t('reachable') : hostTone === 'fail' ? t('unreachable') : t('busy'))),
+          h('div', { style: S.switchRow }, h('span', { style: S.label }, t('routeLabel')), h('span', { style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 } }, STATE_ROUTE)),
+          ping.data?.stateFile === undefined ? null : h('div', { style: S.label }, t('stateFileLabel') + ': ' + ping.data.stateFile),
           h('pre', { style: S.pre }, JSON.stringify(state ?? ping.data?.state ?? null, null, 2)),
-          (state?.armed?.length ?? 0) === 0
-            ? h('div', { style: S.warn }, 'armed 为空 ⇒ 本插件此刻不干预任何会话（安全默认）。')
-            : null,
+          (state?.armed?.length ?? 0) === 0 ? h('div', { style: S.warn }, t('armedNoneNote')) : null,
+        ),        // ── 生效会话（PR1）：勾选在册会话；收进开发者折叠 ─────────────────────
+        h(
+          'div',
+          { key: 'armed', style: S.card, 'data-prefill-armed-card': '' },
+          h('div', { style: S.cardTitle }, t('armedTitle')),
+          h('div', { style: S.note }, t('armedHint')),
+          sessionIds.length === 0 ? h('div', { style: S.note }, t('armedEmpty')) : null,
+          ...sessionIds.map((id) => {
+            const title = sessionTitleOf(id)
+            const label = title !== '' ? title : id
+            return h(
+              'label',
+              { key: id, style: { ...S.sessionRow, cursor: 'pointer' }, 'data-prefill-armed-row': id, title: label + ' · ' + id },
+              h('input', {
+                type: 'checkbox',
+                checked: armed.includes(id),
+                'data-prefill-armed-session': id,
+                onChange: (event) => setArmed(id, event.target.checked),
+              }),
+              h(
+                'div',
+                { style: S.sessionLabel },
+                h('span', { style: S.sessionTitle }, label),
+                title === '' ? null : h('span', { style: S.sessionId }, id),
+              ),
+              liveSet.has(id) ? null : h('span', { style: S.warn }, t('armedNotLive')),
+              state?.activePreset?.[id] === undefined
+                ? null
+                : h('span', { style: S.pill }, state.activePreset[id]),
+            )
+          }),
+          h(
+            'label',
+            { style: { ...S.sessionRow, cursor: 'pointer' }, 'data-prefill-armed-row': '*', title: t('armedAllTip') },
+            h('input', { type: 'checkbox', checked: armed.includes('*'), 'data-prefill-armed-session': '*', onChange: (event) => setArmed('*', event.target.checked) }),
+            h('span', null, t('armedAll')),
+            h('span', { style: { ...S.note, marginLeft: 'auto' } }, t('armedAllTip')),
+          ),
         ),
 
+      ]
+
+      return h(
+        'div',
+        { style: S.page, 'data-prefill-page': 'prefill' },
+        h('div', { style: S.title }, t('title')),
+        h('div', { style: { ...S.intro, padding: '8px 10px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2)', borderLeft: '3px solid var(--dsw-alias-brand-primary)' } }, t('settingsWhere')),
+        h('div', { style: S.intro }, t('intro')),
+
+        // 头部一行：错误 pill（左）+ 恢复默认（右，两步确认，与沙盒页同一套 ConfirmButton）。
+        h(
+          'div',
+          { style: { ...S.chipRow, justifyContent: 'space-between' } },
+          h(ErrorPill, {
+            t,
+            error,
+            onToggle: () => setError((current) => errorsReduce(current, { type: 'toggle' })),
+            onDismiss: () => setError(null),
+            fallback: note === '' ? null : h('span', { style: S.note }, note),
+          }),
+          h(
+            ConfirmButton,
+            {
+              armed: resetArmed,
+              style: { ...S.button, alignSelf: 'center' },
+              title: t('resetTip'),
+              'data-prefill-reset': '',
+              onClick: () => {
+                if (!resetArmed) {
+                  setResetArmed(true)
+                  setTimeout(() => setResetArmed(false), CONFIRM_MS)
+                  return
+                }
+                setResetArmed(false)
+                void mutate(
+                  {
+                    armed: [],
+                    levers: { probeSection: false, probeContext: false, blockSections: false, blockContexts: false, blockTools: false, blockMessages: false },
+                    allowKinds: ['user'],
+                    tools: null,
+                  },
+                  'reset',
+                  t('errOpSettings'),
+                )
+              },
+            },
+            resetArmed ? t('confirmYes') : t('resetGlobal'),
+          ),
+        ),
+        errorPanel,
+
+        // ── 总览（PR3）：在册会话 + 当前配置；每行「打开」= 切会话 + 弹卡片 ──────
+        h(
+          'div',
+          { style: S.card, 'data-prefill-anchor': 'overview' },
+          h('div', { style: S.cardTitle }, t('overviewTitle')),
+          h('div', { style: S.note }, t('overviewHint')),
+          overviewRows.length === 0 ? h('div', { style: S.note }, t('overviewEmpty')) : null,
+          ...overviewRows.map((row) => {
+            const title = sessionTitleOf(row.id)
+            const label = title !== '' ? title : row.id
+            return h(
+              'div',
+              { key: row.id, style: S.sessionRow, 'data-prefill-overview-row': row.id, title: label + ' · ' + row.id },
+              h(
+                'div',
+                { style: S.sessionLabel },
+                h('span', { style: S.sessionTitle }, label),
+                title === '' ? null : h('span', { style: S.sessionId }, row.id),
+                h(
+                  'div',
+                  { style: S.sessionMeta },
+                  h('span', { style: S.pill }, t('overviewPreset') + '：' + (row.preset === '' ? t('overviewNone') : row.preset)),
+                  h(
+                    'span',
+                    { style: S.pill },
+                    t('overviewSandbox') + '：' +
+                      (row.level === '' ? t('overviewNone') : t(row.level === 'controlled' ? 'sbxLevelControlled' : row.level === 'strict' ? 'sbxLevelStrict' : 'sbxLevelObserve')) +
+                      (row.blocked > 0 ? ' · ' + t('sbxBlockedN').replace('{n}', String(row.blocked)) : ''),
+                  ),
+                  h('span', { style: S.pill }, t('overviewEveryTurn') + '：' + (row.everyTurn ? t('defaultOn') : t('defaultOff'))),
+                  row.manual > 0 ? h('span', { style: S.pill }, t('overviewManual') + ' ' + row.manual) : null,
+                  h('span', { style: row.live ? { ...S.pill, color: 'var(--dsw-alias-brand-primary)' } : S.pill }, row.live ? t('overviewLive') : t('overviewNotLive')),
+                ),
+              ),
+              h(
+                'div',
+                { style: S.chipRow },
+                h('button', { type: 'button', style: S.button, 'data-prefill-overview-open': row.id, onClick: () => openSessionAndCard(row.id) }, t('overviewOpen')),
+                h('button', { type: 'button', style: S.button, 'data-prefill-overview-copy': row.id, onClick: () => copySessionId(row.id) }, t('overviewCopy')),
+              ),
+            )
+          }),
+        ),
+        // ── 新会话默认 · 每轮注入（PR2：从卡片搬来，唯一编辑处）────────────────
+        h(
+          'div',
+          { style: S.card, 'data-prefill-default-everyturn': '', 'data-prefill-anchor': 'default-everyturn' },
+          h('div', { style: S.cardTitle }, t('defaultTurnTitle')),
+          h('div', { style: S.note }, t('defaultTurnHint')),
+          h(
+            'label',
+            { style: { ...S.switchRow, cursor: 'pointer' } },
+            h('input', {
+              type: 'checkbox',
+              checked: defTurn.enabled,
+              'data-prefill-default-turn-enabled': '',
+              onChange: (event) => setDefTurn({ enabled: event.target.checked }),
+            }),
+            h('span', null, t('defaultTurnEnable')),
+          ),
+          defTurn.bench ? h('div', { style: S.warn }, t('defaultTurnBenchWarn')) : null,
+          h(
+            'div',
+            { style: S.chipRow },
+            ...['always', 'until'].map((mode) =>
+              h(
+                'button',
+                {
+                  key: mode,
+                  type: 'button',
+                  style: S.chip(defTurn.mode === mode),
+                  'data-prefill-default-turn-mode': mode,
+                  onClick: () => setDefTurn({ mode }),
+                },
+                t(mode === 'always' ? 'everyTurnModeAlways' : 'everyTurnModeUntil'),
+              ),
+            ),
+          ),
+          defTurn.mode === 'until'
+            ? h('input', {
+                type: 'number',
+                min: 1,
+                value: String(defTurn.untilTurn || ''),
+                style: S.input,
+                'data-prefill-default-turn-until': '',
+                onChange: (event) => setDefTurn({ untilTurn: Number(event.target.value) || 0 }),
+              })
+            : null,
+          h('textarea', {
+            style: { ...S.input, minHeight: 56, fontFamily: 'inherit' },
+            value: defTurn.text,
+            placeholder: t('everyTurnPlaceholder'),
+            'data-prefill-default-turn-text': '',
+            onChange: (event) => setDefTurn({ text: event.target.value }),
+          }),
+          h('textarea', {
+            style: { ...S.input, minHeight: 44, fontFamily: 'inherit' },
+            value: defTurn.firstText,
+            placeholder: t('everyTurnFirstPlaceholder'),
+            'data-prefill-default-turn-first': '',
+            onChange: (event) => setDefTurn({ firstText: event.target.value }),
+          }),
+          h(
+            'button',
+            {
+              type: 'button',
+              style: S.button,
+              'data-prefill-default-turn-save': '',
+              ...busyAttrs(busy, 'default-turn'),
+              onClick: saveDefaultTurn,
+            },
+            t('saveDefault'),
+          ),
+        ),
+
+        // ── 新会话默认 · 会话沙盒（PR2）────────────────────────────────────────
+        h(
+          'div',
+          { style: S.card, 'data-prefill-default-sandbox': '', 'data-prefill-anchor': 'default-sandbox' },
+          h('div', { style: S.cardTitle }, t('defaultSbxTitle')),
+          h('div', { style: S.note }, t('defaultSbxHint')),
+          h(
+            'div',
+            { style: S.chipRow },
+            h(
+              'button',
+              { type: 'button', style: S.chip(globalLevel === ''), 'data-prefill-default-sbx-level': 'none', onClick: () => writeGlobalLevel('') },
+              t('defaultNone'),
+            ),
+            h(
+              'button',
+              { type: 'button', style: S.chip(globalLevel === 'observe'), 'data-prefill-default-sbx-level': 'observe', onClick: () => writeGlobalLevel('observe') },
+              t('sbxLevelObserve'),
+            ),
+            h(
+              'button',
+              { type: 'button', style: S.chip(globalLevel === 'controlled'), 'data-prefill-default-sbx-level': 'controlled', onClick: () => writeGlobalLevel('controlled') },
+              t('sbxLevelControlled'),
+            ),
+          ),
+          ...(globalView?.packs ?? []).filter((pack) => pack.locked !== true).map((pack) =>
+            h(
+              'div',
+              { key: pack.id, style: S.switchRow, 'data-prefill-default-pack': pack.id },
+              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, pack.label),
+              h(
+                'div',
+                { style: S.chipRow },
+                h('button', { type: 'button', style: S.chip(pack.setting?.global === 'allow'), 'data-prefill-default-pack-allow': pack.id, onClick: () => writeGlobalPack(pack.id, 'allow') }, t('sbxAllow')),
+                h('button', { type: 'button', style: S.chip(pack.setting?.global === 'deny'), 'data-prefill-default-pack-deny': pack.id, onClick: () => writeGlobalPack(pack.id, 'deny') }, t('sbxDeny')),
+                h('button', { type: 'button', style: S.chip(pack.setting?.global === undefined), 'data-prefill-default-pack-clear': pack.id, onClick: () => writeGlobalPack(pack.id, undefined) }, t('defaultNone')),
+              ),
+            ),
+          ),
+        ),
+
+        // ── 库（PR4）：预设 / 角色卡 / 自定义积木·塔 的管理；卡片只留「套用」「存为」 ──
+        h(
+          'div',
+          { style: S.card, 'data-prefill-anchor': 'library' },
+          h('div', { style: S.cardTitle }, t('libraryTitle')),
+          h('div', { style: S.note }, t('libraryHint')),
+          overviewIds.length === 0
+            ? h('div', { style: S.note }, t('libraryNoSession'))
+            : h(
+                'label',
+                { style: S.switchRow },
+                h('span', { style: S.label }, t('librarySession')),
+                h(
+                  'select',
+                  { style: S.input, value: libSession, 'data-prefill-lib-session': '', onChange: (event) => setLibSid(event.target.value) },
+                  ...overviewIds.map((id) => h('option', { key: id, value: id }, id)),
+                ),
+              ),
+          h('div', { style: S.group }, t('libraryPacks')),
+          lib.packs.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
+          ...lib.packs.map((pack) =>
+            h(
+              'div',
+              { key: 'pack:' + pack.name, style: S.switchRow, 'data-prefill-lib-pack': pack.name },
+              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, pack.name + ' · ' + String(pack.count ?? 0)),
+              h(
+                'div',
+                { style: S.chipRow },
+                h('button', { type: 'button', style: S.button, 'data-prefill-lib-pack-export': pack.name, onClick: () => void exportLibPack(pack.name) }, t('libraryExport')),
+                h(
+                  ConfirmButton,
+                  { armed: libArmed === 'pack:' + pack.name, style: S.button, 'data-prefill-lib-pack-delete': pack.name, onClick: () => deleteLibPack(pack.name) },
+                  libArmed === 'pack:' + pack.name ? t('confirmYes') : t('libraryDelete'),
+                ),
+              ),
+            ),
+          ),
+          h(
+            'label',
+            { style: S.button },
+            t('libraryImport'),
+            h('input', { type: 'file', accept: '.json', style: { display: 'none' }, 'data-prefill-lib-pack-import': '', onChange: importLibPack }),
+          ),
+          h('div', { style: S.group }, t('libraryCards')),
+          lib.cards.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
+          ...lib.cards.map((card) =>
+            h(
+              'div',
+              { key: 'card:' + card.id, style: S.switchRow, 'data-prefill-lib-card': card.id },
+              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, card.name ?? card.id),
+              h(
+                'div',
+                { style: S.chipRow },
+                card.hasAvatar === true
+                  ? h('button', { type: 'button', style: S.button, 'data-prefill-lib-card-export': card.id, onClick: () => void exportLibCardPng(card.id) }, t('libraryExportPng'))
+                  : null,
+                h(
+                  ConfirmButton,
+                  { armed: libArmed === 'card:' + card.id, style: S.button, 'data-prefill-lib-card-delete': card.id, onClick: () => deleteLibCard(card.id) },
+                  libArmed === 'card:' + card.id ? t('confirmYes') : t('libraryDelete'),
+                ),
+              ),
+            ),
+          ),
+          h(
+            'label',
+            { style: S.button },
+            t('libraryImport'),
+            h('input', { type: 'file', accept: '.json,.png,application/json,image/png', style: { display: 'none' }, 'data-prefill-lib-card-import': '', onChange: importLibCard }),
+          ),
+          h('div', { style: S.group }, t('libraryBlocks')),
+          lib.blocks.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
+          ...lib.blocks.map((block) =>
+            h(
+              'div',
+              { key: 'block:' + block.id, style: S.switchRow, 'data-prefill-lib-block': block.id },
+              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, block.name ?? block.id),
+              h(
+                ConfirmButton,
+                { armed: libArmed === 'block:' + block.id, style: S.button, 'data-prefill-lib-block-delete': block.id, onClick: () => deleteLibBlock(block.id) },
+                libArmed === 'block:' + block.id ? t('confirmYes') : t('libraryDelete'),
+              ),
+            ),
+          ),
+          h('div', { style: S.group }, t('libraryTowers')),
+          lib.towers.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
+          ...lib.towers.map((tower) =>
+            h(
+              'div',
+              { key: 'tower:' + tower.id, style: S.switchRow, 'data-prefill-lib-tower': tower.id },
+              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, tower.name ?? tower.id),
+              h(
+                ConfirmButton,
+                { armed: libArmed === 'tower:' + tower.id, style: S.button, 'data-prefill-lib-tower-delete': tower.id, onClick: () => deleteLibTower(tower.id) },
+                libArmed === 'tower:' + tower.id ? t('confirmYes') : t('libraryDelete'),
+              ),
+            ),
+          ),
+          lib.hidden.length === 0 ? null : h('div', { style: S.group }, t('libraryHidden')),
+          ...lib.hidden.map((id) =>
+            h(
+              'div',
+              { key: 'hidden:' + id, style: S.switchRow, 'data-prefill-lib-hidden': id },
+              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, id),
+              h('button', { type: 'button', style: S.button, 'data-prefill-lib-unhide': id, onClick: () => unhideLib(id) }, t('libraryUnhide')),
+            ),
+          ),
+        ),
+
+        // ── 偏好（PR2：动效 + 重置「不再提示」）──────────────────────────────
+        h(
+          'div',
+          { style: S.card, 'data-prefill-prefs': '', 'data-prefill-anchor': 'prefs' },
+          h('div', { style: S.cardTitle }, t('prefsTitle')),
+          h('div', { style: S.note }, t('motionTitle')),
+          h(
+            'div',
+            { style: S.chipRow },
+            h(
+              'button',
+              { type: 'button', style: S.chip(motionNow === null), 'data-prefill-pref-motion': 'auto', onClick: () => writeMotion(null) },
+              t('motionAuto'),
+            ),
+            ...MOTION_LEVELS.map((level) =>
+              h(
+                'button',
+                { key: level, type: 'button', style: S.chip(motionNow === level), 'data-prefill-pref-motion': level, onClick: () => writeMotion(level) },
+                t(level === 'full' ? 'motionFull' : level === 'lite' ? 'motionLite' : 'motionOff'),
+              ),
+            ),
+          ),
+          h('div', { style: S.note }, motionNow === null ? t('motionAutoNow') : t('motionManualNow')),
+          h(
+            'button',
+            {
+              type: 'button',
+              style: S.button,
+              'data-prefill-pref-reset-noask': '',
+              ...busyAttrs(busy, 'noask'),
+              onClick: () => void mutate({ ui: { ...(envelope?.state?.ui ?? {}), loreConstWarn: false } }, 'noask', t('errOpSettings')),
+            },
+            t('resetNoAsk'),
+          ),
+          h('div', { style: S.note }, t('resetNoAskHint')),
+        ),
+
+        // ── 实验：思考前缀（DeepSeek Beta）────────────────────────────────────
+        h(
+          'div',
+          { style: S.card, 'data-prefill-reasoning': '' },
+          h('div', { style: S.cardTitle }, t('reasoningTitle')),
+          h('div', { style: S.note }, t('reasoningHint')),
+          reasoning === null
+            ? h('div', { style: S.note }, reasoningError === '' ? t('reasoningLoading') : reasoningError)
+            : h(
+                'div',
+                { style: S.sessionMeta },
+                h('span', { style: S.pill }, reasoning.enabled ? t('reasoningOn') : t('reasoningOff')),
+                h(
+                  'span',
+                  { style: S.pill },
+                  t('reasoningProxy') + '：' + (reasoning.proxyRunning ? t('reasoningProxyRunning').replace('{port}', String(reasoning.port)) : t('reasoningProxyStopped')),
+                ),
+                reasoning.catalog === undefined
+                  ? null
+                  : h(
+                      'span',
+                      { style: S.pill },
+                      t('reasoningCatalog') + '：' + t('reasoningCatalogValue').replace('{n}', String(reasoning.catalog.tools ?? 0)).replace('{kb}', (Number(reasoning.catalog.bytes ?? 0) / 1024).toFixed(1)),
+                    ),
+                reasoning.hasApiKey === true
+                  ? h('span', { style: S.pill }, t('reasoningKeyReady'))
+                  : reasoning.hasApiKey === false
+                    ? h('span', { style: S.pill }, t('reasoningKeyMissing'))
+                    : null,
+                reasoning.failures > 0 ? h('span', { style: S.pill }, t('reasoningFailures') + '：' + reasoning.failures) : null,
+              ),
+          h('div', { style: S.note }, t('reasoningPrefixLabel')),
+          h('textarea', {
+            style: { ...S.input, minHeight: 56, fontFamily: 'inherit' },
+            value: reasoningDraft,
+            placeholder: t('reasoningPrefixPlaceholder'),
+            'data-prefill-reasoning-prefix': '',
+            onChange: (event) => setReasoningDraft(event.target.value),
+          }),
+          h(
+            'div',
+            { style: S.chipRow },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: S.button,
+                'data-prefill-reasoning-enable': '',
+                disabled: reasoningBusy,
+                onClick: () => void mutateReasoning(REASONING_ENABLE_ROUTE, { prefix: reasoningDraft }),
+              },
+              t('reasoningEnable'),
+            ),
+            reasoning !== null && reasoning.enabled === true
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: S.button,
+                    'data-prefill-reasoning-disable': '',
+                    disabled: reasoningBusy,
+                    onClick: () => void mutateReasoning(REASONING_DISABLE_ROUTE, undefined),
+                  },
+                  t('reasoningDisable'),
+                )
+              : null,
+            h(
+              'button',
+              { type: 'button', style: S.button, 'data-prefill-reasoning-refresh': '', disabled: reasoningBusy, onClick: () => void refreshReasoning() },
+              t('reasoningRefresh'),
+            ),
+          ),
+          reasoningError !== '' ? h('div', { style: S.warn }, reasoningError) : null,
+          reasoning !== null && reasoning.hasApiKey === false ? h('div', { style: S.warn }, t('reasoningNoKey')) : null,
+          reasoning !== null && reasoning.enabled === true ? h('div', { style: S.note }, t('reasoningRouteHint')) : null,
+          reasoning !== null && Array.isArray(reasoning.audit) && reasoning.audit.length > 0
+            ? h(
+                'div',
+                { style: S.note },
+                t('reasoningAudit') + '：' + reasoning.audit.slice(-3).map((entry) => String(entry?.kind ?? 'event') + (entry?.status === undefined ? '' : ' ' + String(entry.status))).join(' / '),
+              )
+            : reasoning !== null ? h('div', { style: S.note }, t('reasoningAudit') + '：' + t('reasoningAuditEmpty')) : null,
+        ),
+
+        // ── 开发者区（默认折叠）──────────────────────────────────────────────
+        h(
+          'button',
+          {
+            type: 'button',
+            style: S.button,
+            'data-prefill-dev-toggle': devOpen ? 'open' : 'closed',
+            'aria-expanded': devOpen ? 'true' : 'false',
+            onClick: () => setDevOpen((value) => !value),
+          },
+          devOpen ? t('devHide') : t('devShow'),
+        ),
+        ...(devOpen ? devCards : []),
         h('div', { style: S.note }, t('m1Note')),
       )
     }
@@ -5576,7 +6592,6 @@ window.__ModuleLoader__.load({
       const [cardUser, setCardUser] = React.useState('')
       const [avatars, setAvatars] = React.useState({})
       const [cardPreview, setCardPreview] = React.useState(null)
-      const cardFileRef = React.useRef(null)
       const [envelope, setEnvelope] = React.useState(null)
       const [toast, setToast] = React.useState('')
       const [open, setOpen] = React.useState({ guide: false })
@@ -5724,7 +6739,6 @@ window.__ModuleLoader__.load({
       // P2-6：保存 / 另存为成功一次 +1（「保存」按钮角上的 ✓ 看它）。
       const [savedTick, setSavedTick] = React.useState(0)
       // P2-11：刚导入的角色卡（{ id, fresh }）：列表里那张入场 + 描边高亮，BLOCK_GLOW_MS 后清掉。
-      const [cardArrive, setCardArrive] = React.useState(null)
       const cardRef = React.useRef(null)
       React.useEffect(() => {
         setCardOpenLocal(cardOpenMap.get(sessionId) === true)
@@ -6235,16 +7249,6 @@ window.__ModuleLoader__.load({
         }
       }, [sessionId])
 
-      // P2-11：导入的卡挂上后（同一次提交）滚进视野并入场；高亮随 cardArrive 清掉。
-      React.useLayoutEffect(() => {
-        if (cardArrive === null) return undefined
-        const animation = ARRIVE_FX.card(cardRef.current, cardArrive)
-        const timer = setTimeout(() => setCardArrive((current) => (current === cardArrive ? null : current)), BLOCK_GLOW_MS)
-        return () => {
-          clearTimeout(timer)
-          animation?.cancel?.()
-        }
-      }, [cardArrive])
       // P2-1：左栏 / 窄屏标签的「当前」高亮层：换节时从上一项滑过来。渲染里记下这次的节（navNow），提交后和上次比；
       // 起点 = 上一项本身的框（它还在，只是不再高亮），终点 = 新高亮层的框。
       const navRef = React.useRef(null)
@@ -6642,76 +7646,6 @@ window.__ModuleLoader__.load({
         }
         flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
       }
-      const importCardFile = (event) => {
-        const file = event?.target?.files?.[0]
-        if (file === undefined) return
-        const reader = new FileReader()
-        const beforeIds = cards.map((card) => card.id)
-        const done = (data) => {
-          setCards(Array.isArray(data?.cards) ? data.cards : [])
-          if (data?.ok === false) flash(`${t('cardImportBad')}${data?.reason ?? ''}`)
-          else {
-            flash(t('cardImported').replace('{name}', data?.name ?? file.name))
-            const added = (data?.cards ?? []).find((card) => card.id === data?.id)
-            if (added !== undefined) {
-              pickCard(added)
-              setCardArrive(cardArrival(beforeIds, added.id))
-            }
-          }
-        }
-        if (/\.png$/i.test(file.name) || file.type === 'image/png') {
-          reader.onload = () => {
-            const bytes = new Uint8Array(reader.result)
-            let binary = ''
-            for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
-            void cardsCall({ op: 'import', png: btoa(binary) }).then(done).catch(failed())
-          }
-          reader.readAsArrayBuffer(file)
-        } else {
-          reader.onload = () => void cardsCall({ op: 'import', json: String(reader.result) }).then(done).catch(failed())
-          reader.readAsText(file)
-        }
-        event.target.value = ''
-      }
-      const exportCardPng = async () => {
-        const data = await cardsCall({ op: 'export-png', id: cardPick })
-        if (typeof data?.png !== 'string') {
-          flash(String(data?.reason ?? 'error'))
-          return
-        }
-        const binary = atob(data.png)
-        const bytes = new Uint8Array(binary.length)
-        for (let at = 0; at < binary.length; at += 1) bytes[at] = binary.charCodeAt(at)
-        const url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
-        const anchor = document.createElement('a')
-        anchor.href = url
-        anchor.download = `${data.name ?? cardPick}.png`
-        anchor.click()
-        setTimeout(() => URL.revokeObjectURL(url), 4000)
-      }
-      const exportCard = async () => {
-        const data = await cardsCall({ op: 'get', id: cardPick })
-        if (data?.card === undefined) return
-        const blob = new Blob([`${JSON.stringify(data.card, null, 2)}\n`], { type: 'application/json' })
-        const url = URL.createObjectURL(blob)
-        const anchor = document.createElement('a')
-        anchor.href = url
-        anchor.download = `${data.card.data?.name ?? cardPick}.json`
-        anchor.click()
-        setTimeout(() => URL.revokeObjectURL(url), 4000)
-      }
-      const deleteCard = () => {
-        if (!armConfirm(`card:${cardPick}`)) return
-        setConfirming('')
-        void cardsCall({ op: 'delete', id: cardPick })
-          .then((data) => {
-            setCards(Array.isArray(data?.cards) ? data.cards : [])
-            setCardPick('')
-            setCardPreview(null)
-          })
-          .catch(failed())
-      }
-
       const currentOverrides = async () => {
         const fresh = injectionDraftOf(sessionId)
         try {
@@ -6863,16 +7797,6 @@ window.__ModuleLoader__.load({
             }
             setSeedNote('')
             setSeedDraft({ text: memory.text.trim(), throughTurn: Number(memory.throughTurn) || 0 })
-          })
-          .catch(failed())
-      }
-      const deletePack = (name) => {
-        if (!armConfirm(`del:${name}`)) return
-        setConfirming('')
-        void packsCall({ op: 'delete', name })
-          .then((data) => {
-            adoptPacks(data)
-            flash(`${t('deleted')}「${name}」`)
           })
           .catch(failed())
       }
@@ -7101,18 +8025,12 @@ window.__ModuleLoader__.load({
           detail[0] ? h('span', { style: { fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } }, detail[0]) : null,
           h('span', null, detail[1]),
           detail[2] ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, `· ${detail[2]}`) : null,
-          hoveredPack
-            ? h(
-                ConfirmButton,
-                {
-                  armed: confirming === `del:${hoveredPack.name}`,
-                  style: V.btnGhost,
-                  'data-prefill-pack-delete': hoveredPack.name,
-                  onClick: () => deletePack(hoveredPack.name),
-                },
-                confirming === `del:${hoveredPack.name}` ? t('confirmYes') : t('deletePack'),
-              )
-            : null,
+          // PR4：删除 / 导入导出搬到左侧栏「库」；卡片只留「套用」「存为」。
+          h(
+            'button',
+            { type: 'button', style: V.btnGhost, 'data-prefill-open-prefill': 'library', onClick: () => openPrefillPanel('library') },
+            t('manageLibrary'),
+          ),
         ),
         h('div', { style: { ...V.hint, maxWidth: '68ch' }, 'data-prefill-preset-content': '' }, t('presetContentHint')),
       )
@@ -7263,18 +8181,11 @@ window.__ModuleLoader__.load({
           off: !isOn('card'),
           offTitle: t('offTitle'),
           offBody: t('cardOffBody'),
+          // PR4：导入 / 导出 / 删除搬到左侧栏「库」。
           right: h(
             'button',
-            {
-              type: 'button',
-              style: V.btnGhost,
-              'data-prefill-card-import': '',
-              onClick: (event) => {
-                event.stopPropagation()
-                cardFileRef.current?.click()
-              },
-            },
-            withIcon('upload', t('cardImport'), 12),
+            { type: 'button', style: V.btnGhost, 'data-prefill-open-prefill': 'library', onClick: () => openPrefillPanel('library') },
+            withIcon('folder', t('manageLibrary'), 12),
           ),
         },
         h('div', { style: V.hint }, cards.length === 0 ? t('cardsEmpty') : t('cardsHint')),
@@ -7317,7 +8228,6 @@ window.__ModuleLoader__.load({
                     'aria-pressed': cardPick === card.id ? 'true' : 'false',
                     onClick: () => pickCard(card),
                   },
-                  cardArrive !== null && cardArrive.id === card.id ? h(BlockGlow, { key: 'glow', radius: 14 }) : null,
                   avatars[card.id]
                     ? h('img', { src: avatars[card.id], alt: '', style: { width: 16, height: 16, borderRadius: '50%', objectFit: 'cover', flex: '0 0 auto' } })
                     : glyph({ icon: card.icon }),
@@ -7354,21 +8264,7 @@ window.__ModuleLoader__.load({
                 ),
               ),
               h('div', { style: V.hint }, activePreset === `card:${pickedCard.id}` ? t('cardInUse') : t('cardApplyHint')),
-              h(
-                'div',
-                { style: V.row },
-                h('button', { type: 'button', style: V.btnGhost, onClick: () => void exportCard().catch(failed()) }, withIcon('download', t('cardExport'), 12)),
-                pickedCard.hasAvatar === true
-                  ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-card-export-png': '', onClick: () => void exportCardPng().catch(failed()) }, withIcon('image', t('cardExportPng'), 12))
-                  : null,
-                h(
-                  ConfirmButton,
-                  { armed: confirming === `card:${cardPick}`, style: V.btnGhost, 'data-prefill-card-delete': '', onClick: deleteCard },
-                  withIcon('trash-2', confirming === `card:${cardPick}` ? t('confirmYes') : t('cardDelete'), 12),
-                ),
-              ),
             ),
-        h('input', { ref: cardFileRef, type: 'file', accept: '.json,.png,application/json,image/png', style: { display: 'none' }, onChange: importCardFile }),
       )
 
       // ── 来源标签（0.14）：每格标「来自角色卡 / 来自预设 / 本会话改过」──
@@ -8083,7 +8979,6 @@ window.__ModuleLoader__.load({
         },
         bench: benchMigrated.bench,
         benchTowers: benchMigrated.benchTowers,
-        asDefault: state?.everyTurn?.['*']?.enabled === true,
         // 约束承接的接缝标记：只认本会话那格，改面板时别丢。
         seam: state?.everyTurn?.[sessionId]?.seam === true,
       }
@@ -8116,11 +9011,7 @@ window.__ModuleLoader__.load({
           ...(typeof nextValue.firstOnce === 'boolean' ? { firstOnce: nextValue.firstOnce } : {}),
         }
         map[sessionId] = entry
-        if (nextValue.asDefault === true) {
-          const { override: _ignored, ...autoForDefault } = auto
-          const { seam: _seam, firstOnce: _once, ...forDefault } = entry
-          map['*'] = { ...forDefault, auto: autoForDefault }
-        } else delete map['*']
+        // PR2：新会话默认（'*'）由左侧栏「预填装」页统一编辑 —— 卡片写本会话配置时不再碰它。
         const data = await postJson(STATE_ROUTE, { everyTurn: map })
         setEnvelope(data)
         notifyStateChanged()
@@ -9308,16 +10199,13 @@ window.__ModuleLoader__.load({
                 : null,
             )
           : null,
+        // PR2：新会话默认改在左侧栏「预填装」页编辑（一个字段只有一处可编辑）；这里只读显示。
         h(
-          'label',
-          { style: { ...V.row, gap: 6, fontSize: 12 } },
-          h('input', {
-            type: 'checkbox',
-            checked: everyTurn.asDefault,
-            'data-prefill-everyturn-default': '1',
-            onChange: (event) => editEveryTurn({ asDefault: event.target.checked }, true),
-          }),
-          t('everyTurnDefault'),
+          'div',
+          { style: { ...V.hint, fontSize: 12, whiteSpace: 'normal' }, 'data-prefill-everyturn-default-readonly': '1' },
+          t('everyTurnDefault') + '：' + (state?.everyTurn?.['*']?.enabled === true ? t('defaultOn') : t('defaultOff')) + ' · ' + t('movedToSidebar'),
+          ' ',
+          h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, 'data-prefill-open-prefill': 'default-everyturn', onClick: () => openPrefillPanel('default-everyturn') }, t('openDefault')),
         ),
       )
 
@@ -10084,35 +10972,12 @@ window.__ModuleLoader__.load({
               h('div', { style: V.row }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-error-detail-dismiss': '', onClick: () => setError(null) }, t('errDismiss'))),
             )
 
-      // 「⋯」菜单：全局的面板偏好（目前只有动效档位）。写 state.ui.motion：全局，不进预设、不随导出。
-      const motionPref = normalizeMotion(envelope?.state?.ui?.motion)
-      const writeMotion = (value) => {
-        const before = motionPref
-        setMotionPref(value)
-        void postJson(STATE_ROUTE, { ui: { motion: value } })
-          .then((data) => setEnvelope(data))
-          .catch((err) => {
-            setMotionPref(before)
-            failed('motion', t('errOpMotion'))(err)
-          })
-      }
+      // PR2：动效偏好搬到左侧栏「偏好」（一个字段只有一处可编辑）；这里只留一句指路。
       const moreMenu = h(
         'div',
         { 'data-prefill-menu': 'more', role: 'menu', style: { ...V.popover, left: 'auto', right: 12, width: 'min(320px, calc(100% - 24px))', gap: 8 } },
         h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, t('motionTitle')),
-        h(
-          'div',
-          { style: { ...V.seg, alignSelf: 'flex-start' }, role: 'radiogroup', 'aria-label': t('motionTitle') },
-          ...MOTION_LEVELS.map((level) =>
-            h(
-              'button',
-              { key: level, type: 'button', role: 'radio', 'aria-checked': motion === level ? 'true' : 'false', style: V.segBtn(motion === level), 'data-prefill-motion-opt': level, onClick: () => writeMotion(level) },
-              t(level === 'full' ? 'motionFull' : level === 'lite' ? 'motionLite' : 'motionOff'),
-            ),
-          ),
-        ),
-        h('div', { style: { ...V.hint, fontSize: 11.5, whiteSpace: 'normal' } }, motionPref === null ? t('motionAutoNow') : t('motionManualNow')),
-        motionPref === null ? null : h('button', { type: 'button', style: { ...V.btnGhost, alignSelf: 'flex-start' }, 'data-prefill-motion-opt': 'auto', onClick: () => writeMotion(null) }, t('motionAuto')),
+        h('div', { style: { ...V.hint, fontSize: 11.5, whiteSpace: 'normal' } }, t('motionMovedHint')),
       )
 
       // 世界书 / 故事记忆是角色卡的子项（0.14）：只在套用的卡带了它们时出现在左栏，缩进挂在「角色卡」下面。
@@ -10867,13 +11732,6 @@ window.__ModuleLoader__.load({
           return extra
         }
 
-      const setGlobalLevel = (on) =>
-        void writeSandbox((table) => {
-          const scope = scopeOf(table, '*')
-          if (on && level !== 'strict') scope.level = level
-          else delete scope.level
-        }).catch(() => {})
-
       const setPack = (id, scopeKey, action) =>
         void writeSandbox((table) => {
           const scope = scopeOf(table, scopeKey)
@@ -11037,12 +11895,14 @@ window.__ModuleLoader__.load({
             ],
           }),
           view?.levelFrom === 'global' ? h('span', { style: V.sectionMeta }, t('sbxLevelFromGlobal')) : null,
+          // PR2：全局档位搬到左侧栏「新会话默认」（一个字段只有一处可编辑）；这里只读显示。
           level !== 'strict'
             ? h(
-                'label',
-                { style: { ...V.row, gap: 5, fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
-                h('input', { type: 'checkbox', checked: globalScope.level === level, 'data-prefill-sbx-global-level': '', onChange: (event) => setGlobalLevel(event.target.checked) }),
-                t('sbxLevelGlobal'),
+                'div',
+                { style: { ...V.hint, fontSize: 12 }, 'data-prefill-sbx-global-level-readonly': globalScope.level ?? '' },
+                t('sbxLevelGlobal') + '：' + (globalScope.level ? t(globalScope.level === 'controlled' ? 'sbxLevelControlled' : 'sbxLevelObserve') : t('defaultOff')) + ' · ' + t('movedToSidebar'),
+                ' ',
+                h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, 'data-prefill-open-prefill': 'default-sandbox', onClick: () => openPrefillPanel('default-sandbox') }, t('openDefault')),
               )
             : null,
           statusLine,
@@ -11145,17 +12005,13 @@ window.__ModuleLoader__.load({
             pack.locked || pack.setting?.session === undefined
               ? null
               : h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, title: t('sbxReset'), onClick: () => setPack(pack.id, sessionId, undefined) }, '↺'),
+            // PR2：全局记住搬到左侧栏「新会话默认」（一个字段只有一处可编辑）；这里只读显示。
             pack.locked
               ? null
               : h(
-                  'button',
-                  {
-                    type: 'button',
-                    style: { ...V.btn, fontSize: 12 },
-                    'data-prefill-sbx-remember': pack.id,
-                    onClick: () => setPack(pack.id, '*', globalOn ? undefined : explicit ?? (value === '' ? 'allow' : value)),
-                  },
-                  globalOn ? t('sbxForget') : t('sbxRemember'),
+                  'span',
+                  { style: { ...V.hint, fontSize: 11.5 }, 'data-prefill-sbx-remember-readonly': pack.id },
+                  t('sbxGlobalLabel') + '：' + (pack.setting?.global === 'allow' ? t('sbxAllow') : pack.setting?.global === 'deny' ? t('sbxDeny') : t('defaultOff')),
                 ),
           ),
           opened && !pack.locked
@@ -12090,6 +12946,7 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
+        panelCtx = ctx // PR3：左侧页 / 卡片双向导航用（layout.selectPanel / uiWorkspace.openSession）。
         ctx.effect(() => ctx.locale.register(NS, { zh: { ...zh, ...SBX_TEXT.zh }, en: { ...en, ...SBX_TEXT.en } }), 'dsh-prefill: copy dictionaries')
 
         const t = ctx.locale.bind(NS)

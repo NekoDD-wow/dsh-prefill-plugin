@@ -3,6 +3,20 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.19.0 — 2026-11-02
+- **左侧栏「预填装」升级为完整设置页（公开 issue #44 的 PR1–PR4，作者 @dymk1ex1xz；移植进私人主干后随本版发布）**：页面结构改为 总览 → 新会话默认（每轮注入 / 会话沙盒）→ 库（预设 / 角色卡 / 积木 / 塔）→ 偏好 → 开发者折叠。
+  - 总览：按会话列出预设 / 沙盒 / 每轮注入 / 待发与在册状态，带「打开（切会话并弹卡片）」「复制 id」；在册会话排前，行内先显示会话标题、id 作副行。
+  - 新会话默认：每轮注入与沙盒档位/来源包默认放行都可以在页面上改；卡片里对应区域改为只读并提示「在左侧栏改」。
+  - 库：预设 / 角色卡 / 自定义积木·塔的管理搬到这里，卡片只留「套用 / 存为」。
+  - 偏好：动效档位、「不再提示」重置；开发者选项默认折叠（探针开关 / 放行来源与工具 / 运行状态 / 生效会话）。
+  - 页面根自己滚动（宿主主区 `overflow:hidden`，内容长时之前整块被裁掉）；单测新增 `tests/settings-harness.mjs` 与 `tests/settings-pane-render.test.mjs`。
+- **实验：思考前缀（DeepSeek Chat Prefix Completion，Beta）**：新会话默认/每轮都以前缀开头，并保留工具调用循环。
+  - 启用后插件起本地代理并自动写入一个 pi-ai 模型路由「DeepSeek Flash（思考前缀）」；到模型选择器切换即可，关掉实验会删路由、停代理。
+  - 请求处理：去掉 `tools`、把 tool 历史文本化、注入工具清单（由插件从 registry schema 自动生成）、末尾加 assistant 前缀消息；清单默认伪装为 `role: system`，被拒时降级为 `<system-reminder>` 包装的 user 消息，再不行回退原始请求。
+  - 响应处理：把模型输出的 DSML 文本调用流式改写成结构化 `tool_calls`（文本增量直发、只在出现起始标记时缓冲），坏标记容错、调用名校验/去重/上限 8 个，usage 透传。
+  - 审计：代理保留最近 50 条事件（`/api/dsh-prefill/reasoning/status` 可读）；连续 3 次失败自动停用并记录。
+  - 左侧页新增「实验 · 思考前缀」卡片：状态（代理端口 / 清单工具数 / 连续失败 / 密钥就绪）、前缀编辑、保存并启用 / 停用 / 刷新。
+
 ## 0.18.2 — 2026-11-02
 - **会话沙盒受控档放行 DSH 核心消息来源（公开 issue #40 / PR #41）**：`skill-invocation`（用户 `/技能名` 调用技能时追加的技能正文）、`ptc-mode`（PTC 模式下带图片的工具结果）、`cordis-host-runner`（Cordis 插件激活 / 运行失败回报）、`webhook`（webhook 会话开场指令）加进「DSH 核心 · 运行时上下文」包（`sandbox-packs.js` 头注释补 0.2.1-rc.5 出处）。之前受控档下调用技能时技能正文被 pre-step 丢掉，模型只看到不认识的斜杠命令；显式拦这个包时照旧拦。单测 `tests/controlled-core-kinds.test.mjs`（3 项）。
 - **整体替换配置前作废每轮注入 / 工作区说明的防抖编辑（公开 issue #42 / PR #43）**：套用预设 / 取消预设 / 撤销取消 / 恢复开局时，700ms 内旧的防抖定时器会把 `state.everyTurn[会话]` / `state.workspaceInstructions[会话]` 整格写回，盖掉刚换上的预设。现在 `applyLayered`、`restoreOpening`、`undoClearPreset` 一开头就 `clearTimeout`（会话切换不清，旧定时器写的是旧会话，等于保存用户输入）。单测 `tests/preset-pending-edits.test.mjs`（5 项）。

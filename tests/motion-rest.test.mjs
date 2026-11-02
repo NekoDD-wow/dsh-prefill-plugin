@@ -719,13 +719,10 @@ test('[P2-11] ARRIVE_FX.card：找到那张卡 ⇒ 只滚内容区到看得见�
   assert.ok(d.main.scrollTop > 0, 'off：照样滚到位')
 })
 
-test('[P2-11] 接线：导入前记下已有的卡，导入成功后 setCardArrive(cardArrival(...))；layout effect 走 ARRIVE_FX.card，BLOCK_GLOW_MS 后清掉；那张卡挂 BlockGlow（radius 14）', () => {
-  assert.match(dockSrc, /const beforeIds = cards\.map\(\(card\) => card\.id\)/)
-  assert.match(dockSrc, /pickCard\(added\)\n\s+setCardArrive\(cardArrival\(beforeIds, added\.id\)\)/)
-  assert.match(dockSrc, /const animation = ARRIVE_FX\.card\(cardRef\.current, cardArrive\)/)
-  assert.match(dockSrc, /setTimeout\(\(\) => setCardArrive\(\(current\) => \(current === cardArrive \? null : current\)\), BLOCK_GLOW_MS\)/)
-  assert.match(dockSrc, /cardArrive !== null && cardArrive\.id === card\.id \? h\(BlockGlow, \{ key: 'glow', radius: 14 \}\) : null/)
-  assert.ok(dockSrc.indexOf('ARRIVE_FX.card(') < dockSrc.indexOf("if (sessionId === '' || !enabled || items === null) return null"), 'hook 在提前返回之前')
+test('[P2-11] 导入已搬到左侧栏「库」：卡片侧不再自己导入，cardArrive 接线随之移除；cardArrival / ARRIVE_FX / BlockGlow 仍可用', () => {
+  assert.doesNotMatch(dockSrc, /const beforeIds = cards\.map\(\(card\) => card\.id\)/)
+  assert.doesNotMatch(dockSrc, /cardsCall\(\{ op: 'import'/)
+  assert.doesNotMatch(dockSrc, /cardArrive/)
   assert.match(src, /function BlockGlow\(props\) \{\n\s+const radius = props\?\.radius \?\? 10/)
 })
 

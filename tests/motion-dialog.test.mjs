@@ -261,10 +261,10 @@ test('[P1-6] ConfirmButton：待确认 = 警告色 + min-width 锁住原宽 + �
   assert.equal(g.render({ armed: true, style: { border: 'none' }, children: ['y'] }).props.style.borderColor, undefined)
 })
 
-test('[P1-6] 接线：七处二次确认都换成 ConfirmButton；复原计时统一 CONFIRM_MS；不再只换文字颜色', () => {
+test('[P1-6] 接线：二次确认都换成 ConfirmButton；复原计时统一 CONFIRM_MS；不再只换文字颜色（PR4 后卡片只留 3 处，其余在左侧栏）', () => {
   assert.match(dockSrc, /setTimeout\(\(\) => setConfirming\(\(current\) => \(current === key \? '' : current\)\), CONFIRM_MS\)/)
   const armed = [...dockSrc.matchAll(/ConfirmButton,\s*\{\s*armed: confirming === ([^,\n]+),/g)].map((m) => m[1])
-  assert.deepEqual(armed.sort(), ["'clear'", "'restore-opening'", "'restore-opening'", '`card:${cardPick}`', '`del:${hoveredPack.name}`'].sort())
+  assert.deepEqual(armed.sort(), ["'clear'", "'restore-opening'", "'restore-opening'"].sort())
   assert.match(sandboxSrc, /h\(ConfirmButton, \{ armed: confirmClear, [\s\S]{0,120}'data-prefill-sbx-clear': ''/)
   assert.match(sandboxSrc, /setTimeout\(\(\) => setConfirmClear\(false\), CONFIRM_MS\)/)
   assert.match(injectSrc, /ConfirmButton,\s*\{ armed: confirmClear, style: S\.gateBtn/)

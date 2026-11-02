@@ -215,7 +215,8 @@ export function sandboxViews(state, sources = {}, sessionIds = []) {
   for (const id of Object.keys(sources.audit ?? {})) ids.add(id)
   for (const id of Object.keys(sandboxOf(state))) if (id !== '*') ids.add(id)
   const out = {}
-  for (const id of ids) {
+  // 全局默认（'*'）也出一份：左侧栏「新会话默认」要拿包目录 + 全局档位 / 包开关（PR2）。
+  for (const id of [...new Set([...ids, '*'])]) {
     try {
       out[id] = sandboxView(state, id, sources)
     } catch (error) {

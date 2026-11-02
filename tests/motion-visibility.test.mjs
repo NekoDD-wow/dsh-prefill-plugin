@@ -361,7 +361,8 @@ test('面板接线：错误 pill 在头部、失败都报给 pill、开关乐观
   assert.match(src, /'data-prefill-error-detail': error\.key/)
   // 面板里没有只写 meta 小字的失败处理了：全部经 failed() → reportError
   assert.doesNotMatch(dockSrc, /\.catch\(\(\) => setStatus\('error'\)\)/)
-  assert.ok((dockSrc.match(/\.catch\(failed\(/g) ?? []).length >= 30)
+  // PR4 把 4 条库管理路径（预设删除 / 卡导入导出删除）搬到左侧栏后，卡片里剩 24 处。
+  assert.ok((dockSrc.match(/\.catch\(failed\(/g) ?? []).length >= 24)
   assert.match(dockSrc, /reportError\(sessionId, key, op \?\? t\('errOpSync'\), err\)/)
   assert.match(dockSrc, /window\.addEventListener\(ERROR_EVENT, onError\)/)
   // P0-2：开关 = 乐观更新 + busy；失败回弹（SHAKE 是位移类）
