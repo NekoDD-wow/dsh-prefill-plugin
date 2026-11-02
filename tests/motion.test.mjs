@@ -316,7 +316,7 @@ test('面板接线：绘制前测量、固定高度、presence、档位属性、
   assert.match(src, /'data-prefill-more': ''/)
   assert.match(src, /'data-prefill-pref-motion': 'auto'/)
   assert.match(src, /'data-prefill-pref-motion': level/)
-  assert.match(src, /mutate\(\{ ui: \{ motion: value \} \}, 'motion'/)
+  assert.match(src, /act\('prefs', 'motion', opOf\('prefsTitle', 'opMotion'\), \{ ui: \{ motion: value \} \}\)/)
   assert.match(src, /motionMovedHint/)
   for (const key of ['moreTitle', 'motionTitle', 'motionFull', 'motionLite', 'motionOff', 'motionAuto']) assert.equal(src.match(new RegExp(`\\b${key}:`, 'g'))?.length, 2, key)
 })

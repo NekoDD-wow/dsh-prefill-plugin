@@ -96,11 +96,15 @@ test('写入失败：错误 pill 带 key；同一操作后来成功 ⇒ 收起',
   assert.equal(h.find(tree, (props) => typeof props['data-prefill-error-pill'] === 'string').length, 0, '成功收起同一 key 的错误')
 })
 
-test('恢复默认：两步确认后才写入（armed 清空、探针全关、工具全放行）', async () => {
+test('恢复默认：在开发者区里，两步确认后才写入（armed 清空、探针全关、工具全放行）', async () => {
   const h = makeSettingsHarness(envelope())
   h.render()
   await h.settle()
   let tree = h.render()
+  // issue #45 第 14 条：它只重置开发者区的东西，收进开发者折叠区。
+  assert.equal(h.find(tree, (props) => props['data-prefill-reset'] !== undefined).length, 0, '折叠时不显示')
+  h.find(tree, (props) => props['data-prefill-dev-toggle'] !== undefined)[0].props.onClick()
+  tree = h.render()
   const resetNode = () => h.find(tree, (props) => props['data-prefill-reset'] !== undefined)[0]
   resetNode().props.onClick()
   await h.settle()
@@ -368,6 +372,10 @@ test('实验区：显示状态（工具清单 / 密钥）并可保存前缀启�
   assert.match(text, /reasoningOff/)
   const input = h.find(tree, (props) => props['data-prefill-reasoning-prefix'] !== undefined)[0]
   assert.equal(input.props.value, '他喵测试前缀', '状态里的前缀回填到输入框')
+  // issue #45 第 15 条：会起代理、写模型路由 ⇒ 两步确认。
+  h.find(tree, (props) => props['data-prefill-reasoning-enable'] !== undefined)[0].props.onClick()
+  tree = h.render()
+  assert.equal(h.posts.filter((entry) => entry.path === '/api/dsh-prefill/reasoning/enable').length, 0, '第一下只进入待确认')
   h.find(tree, (props) => props['data-prefill-reasoning-enable'] !== undefined)[0].props.onClick()
   await h.settle()
   const enabled = h.posts.filter((entry) => entry.path === '/api/dsh-prefill/reasoning/enable')

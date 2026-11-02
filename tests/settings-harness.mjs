@@ -24,7 +24,7 @@ const LEVERS = [
   { key: 'blockMessages', tone: 'block' },
 ]
 
-export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
+export function makeSettingsHarness(envelope, { routes = {}, titleOf, summaryOf } = {}) {
   const slots = []
   const effects = []
   const callbacks = []
@@ -117,8 +117,10 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
       normalizeMotionSrc + '\n' +
       'const useBusy = () => createBusy()\n' +
       'const Toggle = (props) => h("button", { "data-prefill-toggle": props.label, "data-on": props.on ? "true" : "false", onClick: props.onToggle }, props.label)\n' +
-      'const ErrorPill = (props) => (props.error ? h("span", { "data-prefill-error-pill": props.error.key }, props.error.op) : (props.fallback ?? null))\n' +
+      'const ErrorPill = (props) => (props.error ? h("span", { "data-prefill-error-pill": props.error.key, onClick: props.onToggle }, props.error.op) : (props.fallback ?? null))\n' +
       'const ConfirmButton = ({ armed, children, ...rest }) => h("button", { ...rest, "data-prefill-confirm": armed ? "true" : "false" }, ...[children].flat())\n' +
+      // 每节标题旁的「✓ 已保存」（真组件会几秒后淡出）：这里只看计数与文案。
+      'const SectionSaved = (props) => (props.tick > 0 ? h("span", { "data-prefill-section-saved": String(props.tick) }, props.text) : null)\n' +
       busyAttrsSrc + '\n' +
       sectionSrc + '\n' +
       'return { PrefillSection }',
@@ -156,7 +158,7 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
     cursor = 0
     effectCursor = 0
     callbackCursor = 0
-    return expand(mod.PrefillSection({ t, titleOf }))
+    return expand(mod.PrefillSection({ t, titleOf, summaryOf }))
   }
   const find = (tree, pred) => {
     const out = []

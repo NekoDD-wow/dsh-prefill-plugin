@@ -1781,6 +1781,47 @@ window.__ModuleLoader__.load({
         '✓',
       )
     }
+    /**
+     * 左侧栏设置页每节标题旁的「✓ 已保存」（公开 issue #45 第 13 条，与 SaveCheck 同一套 pop / 淡出）：
+     * tick 变了（相对挂上时）⇒ 出现并 pop，SECTION_SAVED_MS 后淡出卸载；显示中又保存 ⇒ 重新计时。
+     * text 可换（「已复制」「已刷新」）。外层 aria-live="polite" 常驻，出现时读屏会念。
+     */
+    const SECTION_SAVED_MS = 2400
+    function SectionSaved(props) {
+      const { tick = 0, text = '' } = props
+      const ref = React.useRef(null)
+      const seen = React.useRef(tick)
+      const [shown, setShown] = React.useState(0)
+      React.useLayoutEffect(() => {
+        if (tick === seen.current) return
+        seen.current = tick
+        setShown(tick)
+      }, [tick])
+      React.useLayoutEffect(() => {
+        if (shown === 0) return undefined
+        const pop = SAVE_FX.pop(ref.current)
+        let exit = null
+        const timer = setTimeout(() => {
+          exit = SAVE_FX.out(ref.current, () => setShown((current) => (current === shown ? 0 : current)))
+        }, SECTION_SAVED_MS)
+        return () => {
+          clearTimeout(timer)
+          pop?.cancel?.()
+          exit?.abort()
+        }
+      }, [shown])
+      return h(
+        'span',
+        { 'aria-live': 'polite', 'aria-atomic': 'true', 'data-prefill-section-saved-live': '', style: { display: 'inline-flex', alignItems: 'center', minWidth: 0 } },
+        shown === 0
+          ? null
+          : h(
+              'span',
+              { ref, 'data-prefill-section-saved': String(shown), style: { display: 'inline-flex', alignItems: 'center', gap: 4, height: 22, padding: '0 8px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', color: 'var(--dsw-alias-state-success-primary, #30a46c)', background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary, #30a46c) 12%, transparent)' } },
+              '✓ ' + text,
+            ),
+      )
+    }
 
     /**
      * 图标：Lucide（https://lucide.dev，ISC 许可，见 THIRD_PARTY_NOTICES.md）。
@@ -2213,6 +2254,33 @@ window.__ModuleLoader__.load({
       libraryImport: '导入…',
       libraryUnhide: '找回',
       manageLibrary: '管理库 ↗',
+      // ── 公开 issue #45 PR C：就地反馈 / 未保存 / 思考前缀确认 / 总览过滤 ──
+      unsaved: '未保存',
+      discardChanges: '放弃修改',
+      secDefault: '新会话默认',
+      secDev: '开发者选项',
+      secReasoning: '思考前缀',
+      opSbxLevel: '沙盒档位',
+      opSbxPack: '来源包「{name}」',
+      opMotion: '动效',
+      opArmed: '生效会话',
+      opAllow: '放行来源「{name}」',
+      opTool: '放行工具「{name}」',
+      opTools: '放行工具',
+      opPackDelete: '删除预设「{name}」',
+      opPackImport: '导入预设',
+      opPackExport: '导出预设「{name}」',
+      opCardDelete: '删除角色卡「{name}」',
+      opCardImport: '导入角色卡',
+      opCardExport: '导出角色卡「{name}」',
+      opBlockDelete: '删除积木「{name}」',
+      opTowerDelete: '删除塔「{name}」',
+      opUnhide: '找回「{name}」',
+      reasoningSavePrefix: '保存前缀',
+      reasoningEnableTip: '会起本地代理并写入模型路由「DeepSeek Flash（思考前缀）」；点两下确认。',
+      reasoningRefreshed: '已刷新',
+      overviewFilter: '按标题或 id 过滤',
+      overviewFilterEmpty: '没有匹配的会话。',
       // ── PR2 end ──
       // ── 预填装内容（输入框上方的编辑区）──
       dockTitle: '预填装内容',
@@ -2444,6 +2512,33 @@ window.__ModuleLoader__.load({
       libraryImport: 'Import…',
       libraryUnhide: 'Restore',
       manageLibrary: 'Manage library ↗',
+      // ── public issue #45 PR C: inline feedback / unsaved / reasoning confirm / overview filter ──
+      unsaved: 'Unsaved',
+      discardChanges: 'Discard changes',
+      secDefault: 'New-session defaults',
+      secDev: 'Developer options',
+      secReasoning: 'Reasoning prefix',
+      opSbxLevel: 'sandbox level',
+      opSbxPack: 'source pack “{name}”',
+      opMotion: 'motion',
+      opArmed: 'affected sessions',
+      opAllow: 'allowed source “{name}”',
+      opTool: 'allowed tool “{name}”',
+      opTools: 'allowed tools',
+      opPackDelete: 'delete preset “{name}”',
+      opPackImport: 'import preset',
+      opPackExport: 'export preset “{name}”',
+      opCardDelete: 'delete card “{name}”',
+      opCardImport: 'import card',
+      opCardExport: 'export card “{name}”',
+      opBlockDelete: 'delete block “{name}”',
+      opTowerDelete: 'delete tower “{name}”',
+      opUnhide: 'restore “{name}”',
+      reasoningSavePrefix: 'Save prefix',
+      reasoningEnableTip: 'Starts a local proxy and adds the model route “DeepSeek Flash (reasoning prefix)”; click twice to confirm.',
+      reasoningRefreshed: 'Refreshed',
+      overviewFilter: 'Filter by title or id',
+      overviewFilterEmpty: 'No matching sessions.',
       // ── PR2 end ──
       // ── prefill content (editor above the composer) ──
       dockTitle: 'Prefill content',
@@ -4059,49 +4154,43 @@ window.__ModuleLoader__.load({
      */
     function PrefillSection(props) {
       const t = props.t ?? ((key) => key)
+      /** 总览会话多于这个数才给过滤框（issue #45 第 16 条）。 */
+      const OVERVIEW_FILTER_MIN = 8
+      /** 「未保存」标记的颜色（与待确认同一档提醒色）。 */
+      const UNSAVED_TONE = 'var(--dsw-alias-state-warn-primary)'
       const [state, setState] = React.useState(null)
       // envelope（整封信）也留一份：清单（injections.catalog）在它上面，不在 state 上。
       const [envelope, setEnvelope] = React.useState(null)
       const [ping, setPing] = React.useState({ phase: 'idle' })
-      const [note, setNote] = React.useState('')
       const [allowDraft, setAllowDraft] = React.useState('')
       // 工具放行的草稿：空串 = 全部放行（null），一个空格 = 一个都不给（[]）。
       const [toolsDraft, setToolsDraft] = React.useState('')
       // PR1：开发者区（M1 探针）默认折叠 —— 日常使用不需要它。
       const [devOpen, setDevOpen] = React.useState(false)
-      // 思考前缀实验（DeepSeek Beta）：状态 + 前缀草稿 + 操作中标记。
+      // 思考前缀实验（DeepSeek Beta）：状态 + 前缀草稿。忙碌 / 失败与其它节同一套 busy(key) + 错误 pill（issue #45 第 15 条）。
       const [reasoning, setReasoning] = React.useState(null)
       const [reasoningDraft, setReasoningDraft] = React.useState('')
-      const [reasoningBusy, setReasoningBusy] = React.useState(false)
-      const [reasoningError, setReasoningError] = React.useState('')
-      const refreshReasoning = React.useCallback(async () => {
-        try {
-          const data = await postJson(REASONING_STATUS_ROUTE)
-          if (data !== null && typeof data === 'object') setReasoning(data)
-          if (typeof data?.config?.prefix === 'string') {
-            setReasoningDraft((current) => (current === '' ? data.config.prefix : current))
-          }
-          setReasoningError('')
-        } catch {
-          setReasoningError(t('reasoningUnavailable'))
+      const [reasoningLoadFailed, setReasoningLoadFailed] = React.useState(false)
+      const [reasoningArmed, setReasoningArmed] = React.useState(false)
+      const reasoningArmTimer = React.useRef(null)
+      const loadReasoning = React.useCallback(async () => {
+        const data = await postJson(REASONING_STATUS_ROUTE)
+        if (data !== null && typeof data === 'object') setReasoning(data)
+        if (typeof data?.config?.prefix === 'string') {
+          setReasoningDraft((current) => (current === '' ? data.config.prefix : current))
         }
+        setReasoningLoadFailed(false)
+        return data
       }, [])
+      /** 后台同步（挂载 + 每次 STATE_EVENT）：静默；拉不到只在还没有状态时显示「后台没有响应」。 */
+      const syncReasoning = React.useCallback(() => {
+        void loadReasoning().catch(() => setReasoningLoadFailed(true))
+      }, [loadReasoning])
       React.useEffect(() => {
-        void refreshReasoning()
-      }, [refreshReasoning])
-      const mutateReasoning = async (path, body) => {
-        setReasoningBusy(true)
-        try {
-          const data = await postJson(path, body)
-          if (data !== null && typeof data === 'object') setReasoning(data)
-          setReasoningError('')
-          notifyStateChanged()
-        } catch (error) {
-          setReasoningError(t('reasoningFailed').replace('{reason}', String(error?.message ?? error)))
-        } finally {
-          setReasoningBusy(false)
-        }
-      }
+        syncReasoning()
+        window.addEventListener(STATE_EVENT, syncReasoning)
+        return () => window.removeEventListener(STATE_EVENT, syncReasoning)
+      }, [syncReasoning])
       // 会话标题：uiWorkspace.sessions 快照（DSH 生成，随会话变化刷新）。
       const [sessionsTick, setSessionsTick] = React.useState(0)
       React.useEffect(() => {
@@ -4132,10 +4221,39 @@ window.__ModuleLoader__.load({
           return ''
         }
       }
+      /** 会话的最近更新时间 / 工作目录（uiWorkspace.sessions 快照的 updatedAt / cwd；props.summaryOf 供单测注入）。拿不到 ⇒ 0 / ''。 */
+      const sessionMetaOf = (id) => {
+        void sessionsTick
+        let summary
+        if (typeof props.summaryOf === 'function') {
+          try {
+            summary = props.summaryOf(id)
+          } catch {
+            summary = undefined
+          }
+        }
+        if (summary === undefined || summary === null) {
+          try {
+            const byId = panelCtx?.get?.('uiWorkspace')?.sessions?.list?.getSnapshot?.()?.byId
+            summary = byId !== null && typeof byId === 'object' ? byId[id] : undefined
+          } catch {
+            summary = undefined
+          }
+        }
+        const updatedAt = Number(summary?.updatedAt)
+        return { updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0, cwd: typeof summary?.cwd === 'string' ? summary.cwd : '' }
+      }
       const [resetArmed, setResetArmed] = React.useState(false)
       // 与卡片共用同一套可见性：busy(key) 防连点、错误 pill 说清哪个操作失败。
       const busy = useBusy()
-      const [error, setError] = React.useState(null)
+      // issue #45 第 13 条：就地反馈 —— 每节（section）自己的「✓ 已保存」计数与错误 pill，不再只有页顶一处。
+      //   sectionFb = { [节]: { tick, text } }；sectionErrors = { [节]: errorsReduce 的状态 }。
+      const [sectionFb, setSectionFb] = React.useState({})
+      const [sectionErrors, setSectionErrors] = React.useState({})
+      // issue #45 第 16 条：总览过滤（会话多于 OVERVIEW_FILTER_MIN 个时才出现）。
+      const [overviewFilter, setOverviewFilter] = React.useState('')
+      const packImportRef = React.useRef(null)
+      const cardImportRef = React.useRef(null)
       // PR2：新会话默认（每轮注入）的草稿；null = 跟随服务端，编辑后才有值。
       const [defTurnDraft, setDefTurnDraft] = React.useState(null)
       // PR4：库（预设 / 角色卡 / 积木塔）—— 按工作区存，先用一个在册会话定位工作区。
@@ -4192,36 +4310,51 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener(ANCHOR_EVENT, onAnchor)
       }, [])
 
-      /** 失败：错误 pill（与卡片同一套）+ 一行状态字；sessionId 用空串（全局页，不进会话卡片的 pill）。 */
+      /** 某一节的错误 pill 状态（errorsReduce 同一套语义；各节互不影响）。 */
+      const reduceSectionError = React.useCallback((section, action) => {
+        setSectionErrors((current) => {
+          const next = errorsReduce(current[section] ?? null, action)
+          if (next === (current[section] ?? null)) return current
+          const out = { ...current }
+          if (next === null) delete out[section]
+          else out[section] = next
+          return out
+        })
+      }, [])
+      /** 某一节成功：标题旁冒「✓ 已保存」（或给定文案），几秒后淡出（SectionSaved）。 */
+      const markSaved = React.useCallback((section, text) => {
+        setSectionFb((current) => ({ ...current, [section]: { tick: (current[section]?.tick ?? 0) + 1, text: text ?? t('saved') } }))
+      }, [t])
+      /** 「新会话默认 · 沙盒档位」这种 op：节名 · 具体哪一项。 */
+      const opOf = (sectionKey, itemKey, name) => t(sectionKey) + ' · ' + (itemKey === undefined ? '' : t(itemKey).replace('{name}', String(name ?? '')))
+
+      /** 失败：那一节标题旁的错误 pill（与卡片同一套）；sessionId 用空串（全局页，不进会话卡片的 pill）。 */
       const fail = React.useCallback(
-        (key, op, err) => {
-          setNote(t('saveFailed') + ': ' + String(err))
-          setError((current) => errorsReduce(current, { type: 'fail', key, op: op ?? t('errOpSettings'), detail: errorDetail(err), at: Date.now() }))
+        (section, key, op, err) => {
+          reduceSectionError(section, { type: 'fail', key, op: op ?? t('errOpSettings'), detail: errorDetail(err), at: Date.now() })
           reportError('', key, op ?? t('errOpSettings'), err)
         },
-        [t],
+        [t, reduceSectionError],
       )
 
-      /** 带忙碌态与错误 pill 的写入：同一 key 进行中再点忽略；成功收起同一操作的错误；写完广播。 */
+      /** 带忙碌态与错误 pill 的写入：同一 key 进行中再点忽略；成功在那一节冒「已保存」、收起同一操作的错误；写完广播。 */
       const act = React.useCallback(
-        (key, op, body) => {
+        (section, key, op, body) => {
           const running = busy.run(key, async () => {
             const data = await call(body)
             adopt(data)
-            setNote(t('saved'))
+            markSaved(section)
             // 同一操作后来成功了 ⇒ 收起它的错误 pill（与卡片 errorsReduce 同一套语义）。
-            setError((current) => errorsReduce(current, { type: 'ok', key }))
+            reduceSectionError(section, { type: 'ok', key })
             reportOk('', key)
             notifyStateChanged()
             return data
           })
           if (running === null) return null
-          return running.catch((err) => fail(key, op, err))
+          return running.catch((err) => fail(section, key, op, err))
         },
-        [busy, call, adopt, t, fail],
+        [busy, call, adopt, fail, markSaved, reduceSectionError],
       )
-
-      const mutate = (body, key = 'settings', op = undefined) => act(key, op, body)
 
       const splitList = (text) =>
         text
@@ -4241,7 +4374,7 @@ window.__ModuleLoader__.load({
       const liveSet = new Set([...Object.keys(envelope?.tools?.sessions ?? {}), ...Object.keys(envelope?.turns ?? {})])
       const setArmed = (id, on) => {
         const next = on ? [...new Set([...armed, id])] : armed.filter((entry) => entry !== id)
-        void mutate({ armed: next }, 'armed:' + id, t('errOpSettings'))
+        void act('dev', 'armed:' + id, opOf('secDev', 'opArmed'), { armed: next })
       }
 
       // ── PR3：跨会话总览（在册会话 + 当前配置）─────────────────────────────────
@@ -4253,12 +4386,18 @@ window.__ModuleLoader__.load({
         ...Object.keys(state?.activePreset ?? {}),
         ...Object.keys(state?.everyTurn ?? {}).filter((id) => id !== '*'),
       ])].filter((id) => typeof id === 'string' && id !== '' && id !== '*').sort()
+      // issue #45 第 16 条：在册优先，再按会话最近更新时间（uiWorkspace 快照的 updatedAt）排，拿不到时间按标题，最后按 id。
       const overviewRows = overviewIds.map((id) => {
         const view = envelope?.sandboxView?.[id]
         const own = state?.everyTurn?.[id]
         const fallback = state?.everyTurn?.['*']
+        const meta = sessionMetaOf(id)
+        const title = sessionTitleOf(id)
         return {
           id,
+          title,
+          cwd: meta.cwd,
+          updatedAt: meta.updatedAt,
           preset: state?.activePreset?.[id] ?? '',
           level: typeof view?.level === 'string' ? view.level : '',
           blocked: Number(view?.blocked) || 0,
@@ -4266,13 +4405,23 @@ window.__ModuleLoader__.load({
           manual: Number(envelope?.manualQueued?.[id]) || 0,
           live: Object.prototype.hasOwnProperty.call(envelope?.tools?.sessions ?? {}, id),
         }
-      }).sort((a, b) => Number(b.live) - Number(a.live))
+      }).sort(
+        (a, b) =>
+          Number(b.live) - Number(a.live) ||
+          b.updatedAt - a.updatedAt ||
+          (a.title || a.id).localeCompare(b.title || b.id) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      )
+      const overviewFiltering = overviewRows.length > OVERVIEW_FILTER_MIN
+      const overviewNeedle = overviewFiltering ? overviewFilter.trim().toLowerCase() : ''
+      const overviewShown =
+        overviewNeedle === '' ? overviewRows : overviewRows.filter((row) => row.id.toLowerCase().includes(overviewNeedle) || row.title.toLowerCase().includes(overviewNeedle))
       const copySessionId = (id) => {
         try {
           void navigator?.clipboard?.writeText?.(id)
-          setNote(t('copied'))
-        } catch {
-          setNote(id)
+          markSaved('overview', t('copied'))
+        } catch (err) {
+          fail('overview', 'copy:' + id, opOf('overviewTitle', 'overviewCopy'), err)
         }
       }
 
@@ -4309,18 +4458,34 @@ window.__ModuleLoader__.load({
         window.addEventListener(STATE_EVENT, loadLibrary)
         return () => window.removeEventListener(STATE_EVENT, loadLibrary)
       }, [loadLibrary])
-      const libAct = (key, body, path) => {
+      const libAct = (key, op, body, path) => {
         const running = busy.run(key, async () => {
           const data = await postRoute(path, body)
-          setNote(t('saved'))
-          setError((current) => errorsReduce(current, { type: 'ok', key }))
+          markSaved('library')
+          reduceSectionError('library', { type: 'ok', key })
           reportOk('', key)
           loadLibrary()
           return data
         })
         if (running === null) return null
-        return running.catch((err) => fail(key, t('errOpSettings'), err))
+        return running.catch((err) => fail('library', key, op, err))
       }
+      // 库的工作区下拉（issue #45 第 16 条）：按总览顺序列会话、显示标题（+ cwd）；同一 cwd 只留一个（当前选中的优先）。
+      const libOptions = (() => {
+        const out = []
+        const byCwd = new Map()
+        for (const row of overviewRows) {
+          if (row.cwd !== '') {
+            if (byCwd.has(row.cwd)) {
+              if (row.id === libSession) out[byCwd.get(row.cwd)] = row
+              continue
+            }
+            byCwd.set(row.cwd, out.length)
+          }
+          out.push(row)
+        }
+        return out
+      })()
       const downloadFile = (name, blob) => {
         try {
           const url = URL.createObjectURL(blob)
@@ -4339,14 +4504,14 @@ window.__ModuleLoader__.load({
           if (data?.pack === undefined || data?.pack === null) return
           downloadFile(name + '.prefill.json', new Blob([JSON.stringify(data.pack, null, 2) + '\n'], { type: 'application/json' }))
         } catch (err) {
-          fail('lib:pack-export:' + name, t('errOpSettings'), err)
+          fail('library', 'lib:pack-export:' + name, opOf('libraryTitle', 'opPackExport', name), err)
         }
       }
       const importLibPack = (event) => {
         const file = event?.target?.files?.[0]
         if (file === undefined) return
         const reader = new FileReader()
-        reader.onload = () => void libAct('lib:pack-import', { sessionId: libSession, op: 'import', name: file.name.replace(/\.(prefill\.)?json$/i, ''), json: String(reader.result) }, PACKS_ROUTE)
+        reader.onload = () => void libAct('lib:pack-import', opOf('libraryTitle', 'opPackImport'), { sessionId: libSession, op: 'import', name: file.name.replace(/\.(prefill\.)?json$/i, ''), json: String(reader.result) }, PACKS_ROUTE)
         reader.readAsText(file)
         event.target.value = ''
       }
@@ -4359,7 +4524,7 @@ window.__ModuleLoader__.load({
           for (let at = 0; at < binary.length; at += 1) bytes[at] = binary.charCodeAt(at)
           downloadFile((data.name ?? id) + '.png', new Blob([bytes], { type: 'image/png' }))
         } catch (err) {
-          fail('lib:card-export:' + id, t('errOpSettings'), err)
+          fail('library', 'lib:card-export:' + id, opOf('libraryTitle', 'opCardExport', id), err)
         }
       }
       const importLibCard = (event) => {
@@ -4371,11 +4536,11 @@ window.__ModuleLoader__.load({
             const bytes = new Uint8Array(reader.result)
             let binary = ''
             for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
-            void libAct('lib:card-import', { sessionId: libSession, op: 'import', png: btoa(binary) }, CARDS_ROUTE)
+            void libAct('lib:card-import', opOf('libraryTitle', 'opCardImport'), { sessionId: libSession, op: 'import', png: btoa(binary) }, CARDS_ROUTE)
           }
           reader.readAsArrayBuffer(file)
         } else {
-          reader.onload = () => void libAct('lib:card-import', { sessionId: libSession, op: 'import', json: String(reader.result) }, CARDS_ROUTE)
+          reader.onload = () => void libAct('lib:card-import', opOf('libraryTitle', 'opCardImport'), { sessionId: libSession, op: 'import', json: String(reader.result) }, CARDS_ROUTE)
           reader.readAsText(file)
         }
         event.target.value = ''
@@ -4389,15 +4554,15 @@ window.__ModuleLoader__.load({
         setLibArmed('')
         return true
       }
-      const deleteLibPack = (name) => { if (armLib('pack:' + name)) void libAct('lib:pack:' + name, { sessionId: libSession, op: 'delete', name }, PACKS_ROUTE) }
-      const deleteLibCard = (id) => { if (armLib('card:' + id)) void libAct('lib:card:' + id, { sessionId: libSession, op: 'delete', id }, CARDS_ROUTE) }
-      const deleteLibBlock = (id) => { if (armLib('block:' + id)) void libAct('lib:block:' + id, { sessionId: libSession, op: 'block-delete', id }, PACKS_ROUTE) }
-      const deleteLibTower = (id) => { if (armLib('tower:' + id)) void libAct('lib:tower:' + id, { sessionId: libSession, op: 'tower-delete', id }, PACKS_ROUTE) }
-      const unhideLib = (id) => void libAct('lib:unhide:' + id, { sessionId: libSession, op: 'hidden-set', ids: lib.hidden.filter((entry) => entry !== id) }, PACKS_ROUTE)
+      const deleteLibPack = (name) => { if (armLib('pack:' + name)) void libAct('lib:pack:' + name, opOf('libraryTitle', 'opPackDelete', name), { sessionId: libSession, op: 'delete', name }, PACKS_ROUTE) }
+      const deleteLibCard = (id) => { if (armLib('card:' + id)) void libAct('lib:card:' + id, opOf('libraryTitle', 'opCardDelete', lib.cards.find((card) => card.id === id)?.name ?? id), { sessionId: libSession, op: 'delete', id }, CARDS_ROUTE) }
+      const deleteLibBlock = (id) => { if (armLib('block:' + id)) void libAct('lib:block:' + id, opOf('libraryTitle', 'opBlockDelete', lib.blocks.find((block) => block.id === id)?.name ?? id), { sessionId: libSession, op: 'block-delete', id }, PACKS_ROUTE) }
+      const deleteLibTower = (id) => { if (armLib('tower:' + id)) void libAct('lib:tower:' + id, opOf('libraryTitle', 'opTowerDelete', lib.towers.find((tower) => tower.id === id)?.name ?? id), { sessionId: libSession, op: 'tower-delete', id }, PACKS_ROUTE) }
+      const unhideLib = (id) => void libAct('lib:unhide:' + id, opOf('libraryTitle', 'opUnhide', id), { sessionId: libSession, op: 'hidden-set', ids: lib.hidden.filter((entry) => entry !== id) }, PACKS_ROUTE)
 
       // ── PR2：新会话默认 / 偏好（唯一编辑处；卡片里只读）─────────────────────
       const everyTurnDefault = state?.everyTurn?.['*']
-      const defTurn = defTurnDraft ?? {
+      const defTurnServer = {
         enabled: everyTurnDefault?.enabled === true,
         mode: everyTurnDefault?.mode === 'until' ? 'until' : 'always',
         untilTurn: Number(everyTurnDefault?.untilTurn) || 0,
@@ -4405,6 +4570,10 @@ window.__ModuleLoader__.load({
         firstText: typeof everyTurnDefault?.firstText === 'string' ? everyTurnDefault.firstText : '',
         bench: Array.isArray(everyTurnDefault?.bench) && everyTurnDefault.bench.length > 0,
       }
+      const defTurn = defTurnDraft ?? defTurnServer
+      // issue #45 第 12 条：只有这一节要点「保存为默认」—— 草稿和服务端不同时标「未保存」，可「放弃修改」。
+      const defTurnDirty =
+        defTurnDraft !== null && ['enabled', 'mode', 'untilTurn', 'text', 'firstText'].some((field) => defTurnDraft[field] !== defTurnServer[field])
       const setDefTurn = (patch) => setDefTurnDraft({ ...defTurn, ...patch })
       const saveDefaultTurn = () => {
         const entry = {
@@ -4417,7 +4586,7 @@ window.__ModuleLoader__.load({
           auto: everyTurnDefault?.auto ?? { warmup: 3, streak: 3, probation: 2 },
         }
         const map = { ...(state?.everyTurn ?? {}), '*': entry }
-        void mutate({ everyTurn: map }, 'default-turn', t('errOpSettings'))
+        void act('default-everyturn', 'default-turn', t('defaultTurnTitle'), { everyTurn: map })
       }
       const globalScope = state?.sandbox?.['*'] ?? {}
       const globalView = envelope?.sandboxView?.['*']
@@ -4426,7 +4595,7 @@ window.__ModuleLoader__.load({
         const scope = { ...globalScope }
         if (level === '') delete scope.level
         else scope.level = level
-        void mutate({ sandbox: { ...(state?.sandbox ?? {}), '*': scope } }, 'default-sbx-level', t('errOpSettings'))
+        void act('default-sandbox', 'default-sbx-level', opOf('secDefault', 'opSbxLevel'), { sandbox: { ...(state?.sandbox ?? {}), '*': scope } })
       }
       const writeGlobalPack = (id, action) => {
         const packs = { ...(globalScope.packs ?? {}) }
@@ -4435,33 +4604,88 @@ window.__ModuleLoader__.load({
         const scope = { ...globalScope }
         if (Object.keys(packs).length === 0) delete scope.packs
         else scope.packs = packs
-        void mutate({ sandbox: { ...(state?.sandbox ?? {}), '*': scope } }, 'default-sbx-pack:' + id, t('errOpSettings'))
+        void act('default-sandbox', 'default-sbx-pack:' + id, opOf('secDefault', 'opSbxPack', (globalView?.packs ?? []).find((pack) => pack.id === id)?.label ?? id), { sandbox: { ...(state?.sandbox ?? {}), '*': scope } })
       }
       const motionNow = normalizeMotion(envelope?.state?.ui?.motion)
       const writeMotion = (value) => {
         const before = motionNow
         setMotionPref(value)
-        void mutate({ ui: { motion: value } }, 'motion', t('errOpSettings')).then((data) => {
+        void act('prefs', 'motion', opOf('prefsTitle', 'opMotion'), { ui: { motion: value } }).then((data) => {
           if (data === undefined) setMotionPref(before)
         })
       }
 
       const hostTone = ping.phase === 'ok' ? 'ok' : ping.phase === 'error' ? 'fail' : undefined
 
-      // 错误详情（与卡片同一套）：点 pill 展开原因 / 时间。
-      const errorPanel =
-        error === null
-          ? null
-          : h(
-              'div',
-              { 'data-prefill-error-detail': error.key, role: 'dialog', 'aria-label': t('errPill').replace('{op}', error.op), style: { ...S.card, gap: 6, borderColor: tint(ERROR_TONE, 45) } },
-              h('div', { style: { fontWeight: 700, fontSize: 13, color: ERROR_TONE } }, '⚠ ' + t('errPill').replace('{op}', error.op) + (error.count > 1 ? ' ×' + error.count : '')),
-              h('div', { style: S.note }, t('errDetailWhat')),
-              h('div', { style: S.note }, t('errDetailReason') + '：', h('code', null, error.detail || t('errDetailUnknown'))),
-              h('div', { style: S.note }, t('errDetailAt') + '：' + (error.at ? new Date(error.at).toLocaleTimeString() : '—')),
-              h('div', { style: S.note }, t('errDetailHint')),
-              h('div', { style: S.chipRow }, h('button', { type: 'button', style: S.button, 'data-prefill-error-detail-dismiss': '', onClick: () => setError(null) }, t('errDismiss'))),
-            )
+      // ── 就地反馈（issue #45 第 13 条）：每节标题旁 = 错误 pill（点开看详情）+「✓ 已保存」（几秒后淡出）──
+      /** 一节的标题行：标题 + 额外标记（如「未保存」）+ 这一节的错误 pill + 已保存提示。title 为 null ⇒ 只放后面几样。 */
+      const sectionHead = (section, title, extra = []) =>
+        h(
+          'div',
+          { 'data-prefill-section-head': section, style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 } },
+          title === null ? null : h('div', { style: S.cardTitle }, title),
+          ...extra,
+          h(ErrorPill, {
+            t,
+            error: sectionErrors[section] ?? null,
+            onToggle: () => reduceSectionError(section, { type: 'toggle' }),
+            onDismiss: () => reduceSectionError(section, { type: 'dismiss' }),
+          }),
+          h(SectionSaved, { tick: sectionFb[section]?.tick ?? 0, text: sectionFb[section]?.text ?? '' }),
+        )
+      /** 一节的错误详情（与卡片同一套文案）：点 pill 才展开，放在这一节里。 */
+      const sectionErrorDetail = (section) => {
+        const error = sectionErrors[section]
+        if (error === undefined || error === null || error.open !== true) return null
+        return h(
+          'div',
+          { 'data-prefill-error-detail': error.key, role: 'dialog', 'aria-label': t('errPill').replace('{op}', error.op), style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderRadius: 8, border: '1px solid ' + tint(ERROR_TONE, 45) } },
+          h('div', { style: { fontWeight: 700, fontSize: 13, color: ERROR_TONE } }, '⚠ ' + t('errPill').replace('{op}', error.op) + (error.count > 1 ? ' ×' + error.count : '')),
+          h('div', { style: S.note }, t('errDetailWhat')),
+          h('div', { style: S.note }, t('errDetailReason') + '：', h('code', null, error.detail || t('errDetailUnknown'))),
+          h('div', { style: S.note }, t('errDetailAt') + '：' + (error.at ? new Date(error.at).toLocaleTimeString() : '—')),
+          h('div', { style: S.note }, t('errDetailHint')),
+          h('div', { style: S.chipRow }, h('button', { type: 'button', style: S.button, 'data-prefill-error-detail-dismiss': '', onClick: () => reduceSectionError(section, { type: 'dismiss' }) }, t('errDismiss'))),
+        )
+      }
+
+      // ── 思考前缀的操作（issue #45 第 15 条）：busy(key) 防连点、三个操作互斥；失败进这一节的错误 pill ──
+      const reasoningAct = (key, op, path, body, savedText) => {
+        if (busy.anyPending('reasoning:')) return null
+        const running = busy.run(key, async () => {
+          const data = path === REASONING_STATUS_ROUTE ? await loadReasoning() : await postJson(path, body)
+          if (path !== REASONING_STATUS_ROUTE && data !== null && typeof data === 'object') setReasoning(data)
+          setReasoningLoadFailed(false)
+          markSaved('reasoning', savedText)
+          reduceSectionError('reasoning', { type: 'ok', key })
+          reportOk('', key)
+          // 启用 / 停用会写 state.ui.reasoningPrefix：广播，别处（以及本页的状态）跟着刷新。不改代理逻辑。
+          if (path !== REASONING_STATUS_ROUTE) notifyStateChanged()
+          return data
+        })
+        if (running === null) return null
+        return running.catch((err) => fail('reasoning', key, op, err))
+      }
+      const reasoningEnabled = reasoning !== null && reasoning.enabled === true
+      const disarmReasoning = () => {
+        clearTimeout(reasoningArmTimer.current)
+        reasoningArmTimer.current = null
+        setReasoningArmed(false)
+      }
+      /** 「保存并启用」：会起本地代理、写模型路由 ⇒ 两步确认（ConfirmButton）；已启用时只是「保存前缀」，一下就存。 */
+      const enableReasoning = () => {
+        if (!reasoningEnabled && !reasoningArmed) {
+          clearTimeout(reasoningArmTimer.current)
+          setReasoningArmed(true)
+          reasoningArmTimer.current = setTimeout(() => {
+            reasoningArmTimer.current = null
+            setReasoningArmed(false)
+          }, CONFIRM_MS)
+          return
+        }
+        disarmReasoning()
+        void reasoningAct('reasoning:enable', opOf('secReasoning', reasoningEnabled ? 'reasoningSavePrefix' : 'reasoningEnable'), REASONING_ENABLE_ROUTE, { prefix: reasoningDraft })
+      }
 
       // ── 开发者区（M1 探针，默认折叠）────────────────────────────────────────
       const devCards = [
@@ -4478,7 +4702,7 @@ window.__ModuleLoader__.load({
               h(Toggle, {
                 on: state?.levers?.[lever.key] === true,
                 label: t(lever.key),
-                onToggle: () => void mutate({ levers: { [lever.key]: !(state?.levers?.[lever.key] === true) } }, 'lever:' + lever.key, t('errOpSettings')),
+                onToggle: () => void act('dev', 'lever:' + lever.key, opOf('secDev', lever.key), { levers: { [lever.key]: !(state?.levers?.[lever.key] === true) } }),
               }),
             ),
           ),
@@ -4491,7 +4715,7 @@ window.__ModuleLoader__.load({
               h(Toggle, {
                 on: state?.levers?.[lever.key] === true,
                 label: t(lever.key),
-                onToggle: () => void mutate({ levers: { [lever.key]: !(state?.levers?.[lever.key] === true) } }, 'lever:' + lever.key, t('errOpSettings')),
+                onToggle: () => void act('dev', 'lever:' + lever.key, opOf('secDev', lever.key), { levers: { [lever.key]: !(state?.levers?.[lever.key] === true) } }),
               }),
             ),
           ),
@@ -4516,7 +4740,7 @@ window.__ModuleLoader__.load({
                     const current = splitList(allowDraft)
                     const next = current.includes(kind) ? current.filter((entry) => entry !== kind) : [...current, kind]
                     setAllowDraft(next.join(', '))
-                    void mutate({ allowKinds: next }, 'allow:' + kind, t('errOpSettings'))
+                    void act('dev', 'allow:' + kind, opOf('secDev', 'opAllow', kind), { allowKinds: next })
                   },
                 },
                 kind,
@@ -4544,7 +4768,7 @@ window.__ModuleLoader__.load({
                     const current = splitList(toolsDraft)
                     const next = current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name]
                     setToolsDraft(next.join(','))
-                    void mutate({ tools: next }, 'tool:' + name, t('errOpSettings'))
+                    void act('dev', 'tool:' + name, opOf('secDev', 'opTool', name), { tools: next })
                   },
                 },
                 name,
@@ -4552,12 +4776,12 @@ window.__ModuleLoader__.load({
             ),
             h(
               'button',
-              { type: 'button', style: S.chip(toolsDraft === ''), onClick: () => { setToolsDraft(''); void mutate({ tools: null }, 'tools:all', t('errOpSettings')) } },
+              { type: 'button', style: S.chip(toolsDraft === ''), onClick: () => { setToolsDraft(''); void act('dev', 'tools:all', opOf('secDev', 'opTools'), { tools: null }) } },
               t('toolsAll'),
             ),
             h(
               'button',
-              { type: 'button', style: S.chip(toolsDraft === ' '), onClick: () => { setToolsDraft(' '); void mutate({ tools: [] }, 'tools:none', t('errOpSettings')) } },
+              { type: 'button', style: S.chip(toolsDraft === ' '), onClick: () => { setToolsDraft(' '); void act('dev', 'tools:none', opOf('secDev', 'opTools'), { tools: [] }) } },
               t('toolsNone'),
             ),
           ),
@@ -4610,7 +4834,46 @@ window.__ModuleLoader__.load({
             h('span', { style: { ...S.note, marginLeft: 'auto' } }, t('armedAllTip')),
           ),
         ),
-
+        // ── 恢复默认（issue #45 第 14 条：它只重置本区的探针 / 生效会话 / 放行来源 / 工具，所以收进开发者区）──
+        h(
+          'div',
+          { key: 'reset', style: S.card, 'data-prefill-reset-card': '' },
+          h('div', { style: S.note }, t('resetTip')),
+          h(
+            'div',
+            { style: S.chipRow },
+            h(
+              ConfirmButton,
+              {
+                armed: resetArmed,
+                style: S.button,
+                title: t('resetTip'),
+                'data-prefill-reset': '',
+                ...busyAttrs(busy, 'reset'),
+                onClick: () => {
+                  if (!resetArmed) {
+                    setResetArmed(true)
+                    setTimeout(() => setResetArmed(false), CONFIRM_MS)
+                    return
+                  }
+                  setResetArmed(false)
+                  void act(
+                    'dev',
+                    'reset',
+                    opOf('secDev', 'resetGlobal'),
+                    {
+                      armed: [],
+                      levers: { probeSection: false, probeContext: false, blockSections: false, blockContexts: false, blockTools: false, blockMessages: false },
+                      allowKinds: ['user'],
+                      tools: null,
+                    },
+                  )
+                },
+              },
+              resetArmed ? t('confirmYes') : t('resetGlobal'),
+            ),
+          ),
+        ),
       ]
 
       return h(
@@ -4620,57 +4883,29 @@ window.__ModuleLoader__.load({
         h('div', { style: { ...S.intro, padding: '8px 10px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2)', borderLeft: '3px solid var(--dsw-alias-brand-primary)' } }, t('settingsWhere')),
         h('div', { style: S.intro }, t('intro')),
 
-        // 头部一行：错误 pill（左）+ 恢复默认（右，两步确认，与沙盒页同一套 ConfirmButton）。
-        h(
-          'div',
-          { style: { ...S.chipRow, justifyContent: 'space-between' } },
-          h(ErrorPill, {
-            t,
-            error,
-            onToggle: () => setError((current) => errorsReduce(current, { type: 'toggle' })),
-            onDismiss: () => setError(null),
-            fallback: note === '' ? null : h('span', { style: S.note }, note),
-          }),
-          h(
-            ConfirmButton,
-            {
-              armed: resetArmed,
-              style: { ...S.button, alignSelf: 'center' },
-              title: t('resetTip'),
-              'data-prefill-reset': '',
-              onClick: () => {
-                if (!resetArmed) {
-                  setResetArmed(true)
-                  setTimeout(() => setResetArmed(false), CONFIRM_MS)
-                  return
-                }
-                setResetArmed(false)
-                void mutate(
-                  {
-                    armed: [],
-                    levers: { probeSection: false, probeContext: false, blockSections: false, blockContexts: false, blockTools: false, blockMessages: false },
-                    allowKinds: ['user'],
-                    tools: null,
-                  },
-                  'reset',
-                  t('errOpSettings'),
-                )
-              },
-            },
-            resetArmed ? t('confirmYes') : t('resetGlobal'),
-          ),
-        ),
-        errorPanel,
 
         // ── 总览（PR3）：在册会话 + 当前配置；每行「打开」= 切会话 + 弹卡片 ──────
         h(
           'div',
           { style: S.card, 'data-prefill-anchor': 'overview' },
-          h('div', { style: S.cardTitle }, t('overviewTitle')),
+          sectionHead('overview', t('overviewTitle')),
+          sectionErrorDetail('overview'),
           h('div', { style: S.note }, t('overviewHint')),
           overviewRows.length === 0 ? h('div', { style: S.note }, t('overviewEmpty')) : null,
-          ...overviewRows.map((row) => {
-            const title = sessionTitleOf(row.id)
+          overviewFiltering
+            ? h('input', {
+                type: 'search',
+                style: S.input,
+                value: overviewFilter,
+                placeholder: t('overviewFilter'),
+                'aria-label': t('overviewFilter'),
+                'data-prefill-overview-filter': '',
+                onChange: (event) => setOverviewFilter(event.target.value),
+              })
+            : null,
+          overviewFiltering && overviewShown.length === 0 ? h('div', { style: S.note }, t('overviewFilterEmpty')) : null,
+          ...overviewShown.map((row) => {
+            const title = row.title
             const label = title !== '' ? title : row.id
             return h(
               'div',
@@ -4709,7 +4944,10 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: S.card, 'data-prefill-default-everyturn': '', 'data-prefill-anchor': 'default-everyturn' },
-          h('div', { style: S.cardTitle }, t('defaultTurnTitle')),
+          sectionHead('default-everyturn', t('defaultTurnTitle'), [
+            defTurnDirty ? h('span', { key: 'unsaved', style: { ...S.pill, color: UNSAVED_TONE, borderColor: UNSAVED_TONE }, 'data-prefill-default-turn-unsaved': '' }, t('unsaved')) : null,
+          ]),
+          sectionErrorDetail('default-everyturn'),
           h('div', { style: S.note }, t('defaultTurnHint')),
           h(
             'label',
@@ -4765,15 +5003,22 @@ window.__ModuleLoader__.load({
             onChange: (event) => setDefTurn({ firstText: event.target.value }),
           }),
           h(
-            'button',
-            {
-              type: 'button',
-              style: S.button,
-              'data-prefill-default-turn-save': '',
-              ...busyAttrs(busy, 'default-turn'),
-              onClick: saveDefaultTurn,
-            },
-            t('saveDefault'),
+            'div',
+            { style: S.chipRow },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: S.button,
+                'data-prefill-default-turn-save': '',
+                ...busyAttrs(busy, 'default-turn'),
+                onClick: saveDefaultTurn,
+              },
+              t('saveDefault'),
+            ),
+            defTurnDirty
+              ? h('button', { type: 'button', style: S.button, 'data-prefill-default-turn-discard': '', onClick: () => setDefTurnDraft(null) }, t('discardChanges'))
+              : null,
           ),
         ),
 
@@ -4781,7 +5026,8 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: S.card, 'data-prefill-default-sandbox': '', 'data-prefill-anchor': 'default-sandbox' },
-          h('div', { style: S.cardTitle }, t('defaultSbxTitle')),
+          sectionHead('default-sandbox', t('defaultSbxTitle')),
+          sectionErrorDetail('default-sandbox'),
           h('div', { style: S.note }, t('defaultSbxHint')),
           h(
             'div',
@@ -4822,7 +5068,8 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: S.card, 'data-prefill-anchor': 'library' },
-          h('div', { style: S.cardTitle }, t('libraryTitle')),
+          sectionHead('library', t('libraryTitle')),
+          sectionErrorDetail('library'),
           h('div', { style: S.note }, t('libraryHint')),
           overviewIds.length === 0
             ? h('div', { style: S.note }, t('libraryNoSession'))
@@ -4833,7 +5080,7 @@ window.__ModuleLoader__.load({
                 h(
                   'select',
                   { style: S.input, value: libSession, 'data-prefill-lib-session': '', onChange: (event) => setLibSid(event.target.value) },
-                  ...overviewIds.map((id) => h('option', { key: id, value: id }, id)),
+                  ...libOptions.map((row) => h('option', { key: row.id, value: row.id }, (row.title !== '' ? row.title : row.id) + (row.cwd !== '' ? ' · ' + row.cwd : ''))),
                 ),
               ),
           h('div', { style: S.group }, t('libraryPacks')),
@@ -4855,11 +5102,12 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
+          // 导入：真按钮（Tab 得到、Enter / 空格可按）点隐藏的 file input（issue #45 第 16 条）。
           h(
-            'label',
-            { style: S.button },
-            t('libraryImport'),
-            h('input', { type: 'file', accept: '.json', style: { display: 'none' }, 'data-prefill-lib-pack-import': '', onChange: importLibPack }),
+            'div',
+            { style: S.chipRow },
+            h('button', { type: 'button', style: S.button, 'data-prefill-lib-pack-import-open': '', ...busyAttrs(busy, 'lib:pack-import'), onClick: () => packImportRef.current?.click?.() }, t('libraryImport')),
+            h('input', { ref: packImportRef, type: 'file', accept: '.json', tabIndex: -1, 'aria-hidden': 'true', style: { display: 'none' }, 'data-prefill-lib-pack-import': '', onChange: importLibPack }),
           ),
           h('div', { style: S.group }, t('libraryCards')),
           lib.cards.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
@@ -4883,10 +5131,10 @@ window.__ModuleLoader__.load({
             ),
           ),
           h(
-            'label',
-            { style: S.button },
-            t('libraryImport'),
-            h('input', { type: 'file', accept: '.json,.png,application/json,image/png', style: { display: 'none' }, 'data-prefill-lib-card-import': '', onChange: importLibCard }),
+            'div',
+            { style: S.chipRow },
+            h('button', { type: 'button', style: S.button, 'data-prefill-lib-card-import-open': '', ...busyAttrs(busy, 'lib:card-import'), onClick: () => cardImportRef.current?.click?.() }, t('libraryImport')),
+            h('input', { ref: cardImportRef, type: 'file', accept: '.json,.png,application/json,image/png', tabIndex: -1, 'aria-hidden': 'true', style: { display: 'none' }, 'data-prefill-lib-card-import': '', onChange: importLibCard }),
           ),
           h('div', { style: S.group }, t('libraryBlocks')),
           lib.blocks.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
@@ -4931,7 +5179,8 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: S.card, 'data-prefill-prefs': '', 'data-prefill-anchor': 'prefs' },
-          h('div', { style: S.cardTitle }, t('prefsTitle')),
+          sectionHead('prefs', t('prefsTitle')),
+          sectionErrorDetail('prefs'),
           h('div', { style: S.note }, t('motionTitle')),
           h(
             'div',
@@ -4957,7 +5206,7 @@ window.__ModuleLoader__.load({
               style: S.button,
               'data-prefill-pref-reset-noask': '',
               ...busyAttrs(busy, 'noask'),
-              onClick: () => void mutate({ ui: { ...(envelope?.state?.ui ?? {}), loreConstWarn: false } }, 'noask', t('errOpSettings')),
+              onClick: () => void act('prefs', 'noask', opOf('prefsTitle', 'resetNoAsk'), { ui: { ...(envelope?.state?.ui ?? {}), loreConstWarn: false } }),
             },
             t('resetNoAsk'),
           ),
@@ -4968,10 +5217,11 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: S.card, 'data-prefill-reasoning': '' },
-          h('div', { style: S.cardTitle }, t('reasoningTitle')),
+          sectionHead('reasoning', t('reasoningTitle')),
+          sectionErrorDetail('reasoning'),
           h('div', { style: S.note }, t('reasoningHint')),
           reasoning === null
-            ? h('div', { style: S.note }, reasoningError === '' ? t('reasoningLoading') : reasoningError)
+            ? h('div', { style: S.note }, reasoningLoadFailed ? t('reasoningUnavailable') : t('reasoningLoading'))
             : h(
                 'div',
                 { style: S.sessionMeta },
@@ -5006,37 +5256,55 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: S.chipRow },
-            h(
-              'button',
-              {
-                type: 'button',
-                style: S.button,
-                'data-prefill-reasoning-enable': '',
-                disabled: reasoningBusy,
-                onClick: () => void mutateReasoning(REASONING_ENABLE_ROUTE, { prefix: reasoningDraft }),
-              },
-              t('reasoningEnable'),
-            ),
-            reasoning !== null && reasoning.enabled === true
+            reasoningEnabled
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: S.button,
+                    'data-prefill-reasoning-enable': '',
+                    ...busyAttrs(busy, 'reasoning:enable'),
+                    onClick: enableReasoning,
+                  },
+                  t('reasoningSavePrefix'),
+                )
+              : h(
+                  ConfirmButton,
+                  {
+                    armed: reasoningArmed,
+                    style: S.button,
+                    title: t('reasoningEnableTip'),
+                    'data-prefill-reasoning-enable': '',
+                    ...busyAttrs(busy, 'reasoning:enable'),
+                    onClick: enableReasoning,
+                  },
+                  reasoningArmed ? t('confirmYes') : t('reasoningEnable'),
+                ),
+            reasoningEnabled
               ? h(
                   'button',
                   {
                     type: 'button',
                     style: S.button,
                     'data-prefill-reasoning-disable': '',
-                    disabled: reasoningBusy,
-                    onClick: () => void mutateReasoning(REASONING_DISABLE_ROUTE, undefined),
+                    ...busyAttrs(busy, 'reasoning:disable'),
+                    onClick: () => void reasoningAct('reasoning:disable', opOf('secReasoning', 'reasoningDisable'), REASONING_DISABLE_ROUTE, undefined),
                   },
                   t('reasoningDisable'),
                 )
               : null,
             h(
               'button',
-              { type: 'button', style: S.button, 'data-prefill-reasoning-refresh': '', disabled: reasoningBusy, onClick: () => void refreshReasoning() },
+              {
+                type: 'button',
+                style: S.button,
+                'data-prefill-reasoning-refresh': '',
+                ...busyAttrs(busy, 'reasoning:refresh'),
+                onClick: () => void reasoningAct('reasoning:refresh', opOf('secReasoning', 'reasoningRefresh'), REASONING_STATUS_ROUTE, undefined, t('reasoningRefreshed')),
+              },
               t('reasoningRefresh'),
             ),
           ),
-          reasoningError !== '' ? h('div', { style: S.warn }, reasoningError) : null,
           reasoning !== null && reasoning.hasApiKey === false ? h('div', { style: S.warn }, t('reasoningNoKey')) : null,
           reasoning !== null && reasoning.enabled === true ? h('div', { style: S.note }, t('reasoningRouteHint')) : null,
           reasoning !== null && Array.isArray(reasoning.audit) && reasoning.audit.length > 0
@@ -5048,19 +5316,27 @@ window.__ModuleLoader__.load({
             : reasoning !== null ? h('div', { style: S.note }, t('reasoningAudit') + '：' + t('reasoningAuditEmpty')) : null,
         ),
 
-        // ── 开发者区（默认折叠）──────────────────────────────────────────────
+        // ── 开发者区（默认折叠）：展开按钮那一行兼作这一区的标题行（错误 pill / 已保存）────────
         h(
-          'button',
-          {
-            type: 'button',
-            style: S.button,
-            'data-prefill-dev-toggle': devOpen ? 'open' : 'closed',
-            'aria-expanded': devOpen ? 'true' : 'false',
-            onClick: () => setDevOpen((value) => !value),
-          },
-          devOpen ? t('devHide') : t('devShow'),
+          'div',
+          { 'data-prefill-dev': devOpen ? 'open' : 'closed', style: { display: 'flex', flexDirection: 'column', gap: 'inherit' } },
+          sectionHead('dev', null, [
+            h(
+              'button',
+              {
+                key: 'toggle',
+                type: 'button',
+                style: S.button,
+                'data-prefill-dev-toggle': devOpen ? 'open' : 'closed',
+                'aria-expanded': devOpen ? 'true' : 'false',
+                onClick: () => setDevOpen((value) => !value),
+              },
+              devOpen ? t('devHide') : t('devShow'),
+            ),
+          ]),
+          sectionErrorDetail('dev'),
+          ...(devOpen ? devCards : []),
         ),
-        ...(devOpen ? devCards : []),
         h('div', { style: S.note }, t('m1Note')),
       )
     }
