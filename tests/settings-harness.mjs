@@ -24,7 +24,7 @@ const LEVERS = [
   { key: 'blockMessages', tone: 'block' },
 ]
 
-export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
+export function makeSettingsHarness(envelope, { routes = {}, titleOf, t: translate } = {}) {
   const slots = []
   const effects = []
   const callbacks = []
@@ -146,7 +146,8 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
     '/api/dsh-prefill/reasoning/disable',
   )
 
-  const t = (key) => key
+  // 默认 t 返回 key；传 t（如一份字典查表）可以测具体文案（英文冒号 / 复数等）。
+  const t = typeof translate === 'function' ? translate : (key) => key
   const expand = (node) => {
     if (node === null || node === undefined || typeof node !== 'object') return node
     if (typeof node.type === 'function') return expand(node.type({ ...node.props, children: node.children }))

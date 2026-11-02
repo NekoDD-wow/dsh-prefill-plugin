@@ -36,7 +36,8 @@ test('渲染：开发者区默认折叠；展开后生效会话勾选框 = 在�
   assert.deepEqual(boxes.filter((node) => node.props.checked === true).map((node) => node.props['data-prefill-armed-session']).sort(), ['gone', 's2'])
   assert.equal(h.find(tree, (props) => props['data-prefill-dev-toggle'] !== undefined)[0].props['data-prefill-dev-toggle'], 'open')
   assert.equal(h.find(tree, (props) => props['data-prefill-toggle'] !== undefined).length, 6, '展开后渲染 6 个探针开关')
-  assert.equal(h.find(tree, (props, node) => node.type === 'pre').length, 1, '展开后渲染状态 JSON')
+  assert.equal(h.find(tree, (props, node) => node.type === 'pre').length, 0, '状态 JSON 默认收起（#45 PR D）')
+  assert.equal(h.find(tree, (props) => props['data-prefill-state-json-toggle'] !== undefined).length, 1, '展开后有「展开状态 JSON」按钮')
 })
 
 test('展开开发者区：6 个探针开关 + 运行状态出现', async () => {
@@ -48,7 +49,7 @@ test('展开开发者区：6 个探针开关 + 运行状态出现', async () => 
   tree = h.render()
   assert.equal(h.find(tree, (props) => props['data-prefill-dev-toggle'] !== undefined)[0].props['data-prefill-dev-toggle'], 'open')
   assert.equal(h.find(tree, (props) => props['data-prefill-toggle'] !== undefined).length, 6)
-  assert.equal(h.find(tree, (props, node) => node.type === 'pre').length, 1)
+  assert.equal(h.find(tree, (props) => props['data-prefill-state-json-copy'] !== undefined).length, 1, '运行状态卡有「复制 JSON」')
 })
 
 test('勾选生效会话：写入 armed + 广播 STATE_EVENT + 报 ok', async () => {
@@ -235,13 +236,13 @@ test('PR3：总览列出在册会话 + 当前配置；「打开」走 openSessio
   assert.deepEqual(h.sessionOpens, ['s1'], '「打开」= 切会话 + 弹卡片（openSessionAndCard）')
 })
 
-test('PR3：左侧页有四个可定位锚点；卡片「改默认 ↗」走 openPrefillPanel', async () => {
+test('PR3：左侧页的可定位锚点（#45 PR D 加了实验 / 开发者）；卡片「改默认 ↗」走 openPrefillPanel', async () => {
   const h = makeSettingsHarness(pr3Envelope())
   h.render()
   await h.settle()
   const tree = h.render()
   const anchors = h.find(tree, (props) => typeof props['data-prefill-anchor'] === 'string').map((node) => node.props['data-prefill-anchor'])
-  assert.deepEqual(anchors.sort(), ['default-everyturn', 'default-sandbox', 'library', 'overview', 'prefs'])
+  assert.deepEqual(anchors.sort(), ['default-everyturn', 'default-sandbox', 'dev', 'library', 'overview', 'prefs', 'reasoning'])
   assert.equal(h.panelOpens.length, 0, '卡片侧按钮不在左侧页里，这里不触发')
 })
 
