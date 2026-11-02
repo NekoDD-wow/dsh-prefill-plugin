@@ -3578,6 +3578,10 @@ window.__ModuleLoader__.load({
       stateJsonHide: '收起状态 JSON',
       stateJsonCopy: '复制 JSON',
       reasoningCatalogValueOne: '{n} 个工具 · {kb} KB',
+      // 来源包名：中文就是宿主给的原名；补上是为了中文界面不回退到英文译文（宿主缺 key 时会落到 en）。
+      'sbxPack_prefill': '本插件 · dsh-prefill',
+      'sbxPack_dsh-core-prompt': 'DSH 核心 · 系统提示',
+      'sbxPack_dsh-core-context': 'DSH 核心 · 运行时上下文',
     })
     Object.assign(en, {
       labelColon: ': ',

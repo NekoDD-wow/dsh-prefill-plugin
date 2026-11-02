@@ -246,6 +246,9 @@ test('第 25 条：英文用半角冒号、单数 tool、来源包名有译文�
   assert.doesNotMatch(reasoning, /：/)
   const pack = textOf(h.find(tree, (props) => props['data-prefill-default-pack'] === 'dsh-core-prompt')[0])
   assert.match(pack, /^DSH core · system prompt/)
+  // 中文界面也要有这几条，否则宿主缺 key 时落到 en，中文页面里冒出英文包名。
+  assert.match(src, /'sbxPack_dsh-core-prompt': 'DSH 核心 · 系统提示',/)
+  assert.match(src, /'sbxPack_dsh-core-context': 'DSH 核心 · 运行时上下文',/)
 })
 
 test('第 25 条：英文页头说明换成新文案（不再说这页是开发者开关页）', () => {
