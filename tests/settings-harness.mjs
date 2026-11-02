@@ -14,6 +14,8 @@ const fnSrc = (head) => {
 const feedbackSrc = src.slice(src.indexOf('    // <feedback>'), src.indexOf('    // </feedback>'))
 const busyAttrsSrc = fnSrc('    function busyAttrs(')
 const normalizeMotionSrc = fnSrc('    function normalizeMotion(')
+// PR B（#45）：总览的「开 / 关」和卡片同口径（左栏开关 + 旧 enabled），用模块级的 everyTurnSwitchOn。
+const everyTurnSwitchOnSrc = fnSrc('    function everyTurnSwitchOn(')
 
 const LEVERS = [
   { key: 'probeSection', tone: 'write' },
@@ -24,13 +26,16 @@ const LEVERS = [
   { key: 'blockMessages', tone: 'block' },
 ]
 
-export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
+export function makeSettingsHarness(envelope, { routes = {}, titleOf, initialAnchor, summaryOf, t: translate } = {}) {
   const slots = []
   const effects = []
   const callbacks = []
   let cursor = 0
   let effectCursor = 0
   let callbackCursor = 0
+  const refs = []
+  let refCursor = 0
+  let panelAnchor = typeof initialAnchor === 'string' ? initialAnchor : ''
   const fetches = []
   const dispatched = []
   const stateEvents = []
@@ -83,7 +88,12 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
       callbacks[index] = { deps, fn }
       return fn
     },
-    useRef: (value) => ({ current: value }),
+    // 和真 React 一样跨渲染保留同一个对象（定时器 / 待滚动锚点靠它）。
+    useRef(value) {
+      const index = refCursor++
+      if (!(index in refs)) refs[index] = { current: value }
+      return refs[index]
+    },
     useLayoutEffect() {},
   }
   const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) })
@@ -111,15 +121,18 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
 
   const make = new Function(
     'React', 'h', 'S', 'LEVERS', 'notifyStateChanged', 'setMotionPref', 'tint', 'ERROR_TONE', 'CONFIRM_MS',
-    'STATE_ROUTE', 'STATE_EVENT', 'ANCHOR_EVENT', 'openPrefillPanel', 'openSessionAndCard', 'PACKS_ROUTE', 'CARDS_ROUTE', 'window', 'fetch', 'postJson', 'REASONING_STATUS_ROUTE', 'REASONING_ENABLE_ROUTE', 'REASONING_DISABLE_ROUTE',
+    'STATE_ROUTE', 'STATE_EVENT', 'ANCHOR_EVENT', 'takePanelAnchor', 'openPrefillPanel', 'openSessionAndCard', 'PACKS_ROUTE', 'CARDS_ROUTE', 'window', 'fetch', 'postJson', 'REASONING_STATUS_ROUTE', 'REASONING_ENABLE_ROUTE', 'REASONING_DISABLE_ROUTE',
     feedbackSrc + '\n' +
       'const MOTION_LEVELS = ["full", "lite", "off"]\n' +
       normalizeMotionSrc + '\n' +
       'const useBusy = () => createBusy()\n' +
       'const Toggle = (props) => h("button", { "data-prefill-toggle": props.label, "data-on": props.on ? "true" : "false", onClick: props.onToggle }, props.label)\n' +
-      'const ErrorPill = (props) => (props.error ? h("span", { "data-prefill-error-pill": props.error.key }, props.error.op) : (props.fallback ?? null))\n' +
+      'const ErrorPill = (props) => (props.error ? h("span", { "data-prefill-error-pill": props.error.key, onClick: props.onToggle }, props.error.op) : (props.fallback ?? null))\n' +
       'const ConfirmButton = ({ armed, children, ...rest }) => h("button", { ...rest, "data-prefill-confirm": armed ? "true" : "false" }, ...[children].flat())\n' +
+      // 每节标题旁的「✓ 已保存」（真组件会几秒后淡出）：这里只看计数与文案。
+      'const SectionSaved = (props) => (props.tick > 0 ? h("span", { "data-prefill-section-saved": String(props.tick) }, props.text) : null)\n' +
       busyAttrsSrc + '\n' +
+      everyTurnSwitchOnSrc + '\n' +
       sectionSrc + '\n' +
       'return { PrefillSection }',
   )
@@ -134,6 +147,11 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
     '/api/dsh-prefill/state',
     'dsh-prefill:state-changed',
     'dsh-prefill:anchor',
+    () => {
+      const anchor = panelAnchor
+      panelAnchor = ''
+      return anchor
+    },
     (anchor) => panelOpens.push(anchor ?? ''),
     (sessionId) => sessionOpens.push(sessionId),
     '/api/dsh-prefill/packs',
@@ -146,7 +164,8 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
     '/api/dsh-prefill/reasoning/disable',
   )
 
-  const t = (key) => key
+  // 默认 t 返回 key；传 t（如一份字典查表）可以测具体文案（英文冒号 / 复数等）。
+  const t = typeof translate === 'function' ? translate : (key) => key
   const expand = (node) => {
     if (node === null || node === undefined || typeof node !== 'object') return node
     if (typeof node.type === 'function') return expand(node.type({ ...node.props, children: node.children }))
@@ -156,7 +175,8 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
     cursor = 0
     effectCursor = 0
     callbackCursor = 0
-    return expand(mod.PrefillSection({ t, titleOf }))
+    refCursor = 0
+    return expand(mod.PrefillSection({ t, titleOf, summaryOf, initialAnchor }))
   }
   const find = (tree, pred) => {
     const out = []
@@ -173,7 +193,12 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
   const emitStateEvent = () => {
     for (const entry of listeners) if (entry.type === 'dsh-prefill:state-changed') entry.fn()
   }
+  const emitAnchor = (anchor) => {
+    for (const entry of listeners) if (entry.type === 'dsh-prefill:anchor') entry.fn({ detail: { anchor } })
+  }
+  const setPanelAnchor = (anchor) => { panelAnchor = anchor }
+  const peekPanelAnchor = () => panelAnchor
   const failDetails = () => dispatched.filter((detail) => detail?.type === 'fail')
   const okDetails = () => dispatched.filter((detail) => detail?.type === 'ok')
-  return { render, find, fetches, posts, dispatched, failDetails, okDetails, stateEvents, motionPrefs, panelOpens, sessionOpens, slots, settle, setFailNext, emitStateEvent, mod }
+  return { render, find, emitAnchor, setPanelAnchor, peekPanelAnchor, fetches, posts, dispatched, failDetails, okDetails, stateEvents, motionPrefs, panelOpens, sessionOpens, slots, settle, setFailNext, emitStateEvent, mod }
 }
