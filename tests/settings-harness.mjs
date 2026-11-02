@@ -24,13 +24,16 @@ const LEVERS = [
   { key: 'blockMessages', tone: 'block' },
 ]
 
-export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
+export function makeSettingsHarness(envelope, { routes = {}, titleOf, initialAnchor } = {}) {
   const slots = []
   const effects = []
   const callbacks = []
   let cursor = 0
   let effectCursor = 0
   let callbackCursor = 0
+  const refs = []
+  let refCursor = 0
+  let panelAnchor = typeof initialAnchor === 'string' ? initialAnchor : ''
   const fetches = []
   const dispatched = []
   const stateEvents = []
@@ -83,7 +86,12 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
       callbacks[index] = { deps, fn }
       return fn
     },
-    useRef: (value) => ({ current: value }),
+    // 和真 React 一样跨渲染保留同一个对象（定时器 / 待滚动锚点靠它）。
+    useRef(value) {
+      const index = refCursor++
+      if (!(index in refs)) refs[index] = { current: value }
+      return refs[index]
+    },
     useLayoutEffect() {},
   }
   const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) })
@@ -111,7 +119,7 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
 
   const make = new Function(
     'React', 'h', 'S', 'LEVERS', 'notifyStateChanged', 'setMotionPref', 'tint', 'ERROR_TONE', 'CONFIRM_MS',
-    'STATE_ROUTE', 'STATE_EVENT', 'ANCHOR_EVENT', 'openPrefillPanel', 'openSessionAndCard', 'PACKS_ROUTE', 'CARDS_ROUTE', 'window', 'fetch', 'postJson', 'REASONING_STATUS_ROUTE', 'REASONING_ENABLE_ROUTE', 'REASONING_DISABLE_ROUTE',
+    'STATE_ROUTE', 'STATE_EVENT', 'ANCHOR_EVENT', 'takePanelAnchor', 'openPrefillPanel', 'openSessionAndCard', 'PACKS_ROUTE', 'CARDS_ROUTE', 'window', 'fetch', 'postJson', 'REASONING_STATUS_ROUTE', 'REASONING_ENABLE_ROUTE', 'REASONING_DISABLE_ROUTE',
     feedbackSrc + '\n' +
       'const MOTION_LEVELS = ["full", "lite", "off"]\n' +
       normalizeMotionSrc + '\n' +
@@ -134,6 +142,11 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
     '/api/dsh-prefill/state',
     'dsh-prefill:state-changed',
     'dsh-prefill:anchor',
+    () => {
+      const anchor = panelAnchor
+      panelAnchor = ''
+      return anchor
+    },
     (anchor) => panelOpens.push(anchor ?? ''),
     (sessionId) => sessionOpens.push(sessionId),
     '/api/dsh-prefill/packs',
@@ -156,6 +169,7 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
     cursor = 0
     effectCursor = 0
     callbackCursor = 0
+    refCursor = 0
     return expand(mod.PrefillSection({ t, titleOf }))
   }
   const find = (tree, pred) => {
@@ -173,7 +187,12 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
   const emitStateEvent = () => {
     for (const entry of listeners) if (entry.type === 'dsh-prefill:state-changed') entry.fn()
   }
+  const emitAnchor = (anchor) => {
+    for (const entry of listeners) if (entry.type === 'dsh-prefill:anchor') entry.fn({ detail: { anchor } })
+  }
+  const setPanelAnchor = (anchor) => { panelAnchor = anchor }
+  const peekPanelAnchor = () => panelAnchor
   const failDetails = () => dispatched.filter((detail) => detail?.type === 'fail')
   const okDetails = () => dispatched.filter((detail) => detail?.type === 'ok')
-  return { render, find, fetches, posts, dispatched, failDetails, okDetails, stateEvents, motionPrefs, panelOpens, sessionOpens, slots, settle, setFailNext, emitStateEvent, mod }
+  return { render, find, emitAnchor, setPanelAnchor, peekPanelAnchor, fetches, posts, dispatched, failDetails, okDetails, stateEvents, motionPrefs, panelOpens, sessionOpens, slots, settle, setFailNext, emitStateEvent, mod }
 }

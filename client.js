@@ -1915,6 +1915,12 @@ window.__ModuleLoader__.load({
         // 广播失败不影响导航。
       }
     }
+    /** 读走待滚动的锚点（读完清空）：左侧页挂载时用它补上挂载前发出、没人接的 ANCHOR_EVENT。 */
+    function takePanelAnchor() {
+      const anchor = panelAnchor
+      panelAnchor = ''
+      return typeof anchor === 'string' ? anchor : ''
+    }
     function openSessionAndCard(sessionId) {
       if (typeof sessionId !== 'string' || sessionId === '') return
       try {
@@ -2145,6 +2151,9 @@ window.__ModuleLoader__.load({
       defaultTurnEnable: '新会话默认开启每轮注入',
       defaultTurnBenchWarn: '当前默认来自工作台（积木）；保存这里的文本会改成纯文本默认。',
       saveDefault: '保存为默认',
+      discardDefault: '放弃修改',
+      defaultTurnUntilNeed: '「只注入前 N 轮」要填 N（至少 1）才能保存。',
+      errOpLibraryLoad: '读取库',
       defaultSbxTitle: '新会话默认 · 会话沙盒',
       defaultSbxHint: '新会话默认用哪一档、各来源包默认放行还是拦截。',
       defaultNone: '不设',
@@ -2176,6 +2185,8 @@ window.__ModuleLoader__.load({
       reasoningEnable: '保存并启用',
       reasoningDisable: '停用',
       reasoningRefresh: '刷新状态',
+      reasoningRefreshed: '状态已刷新（{time}）',
+      reasoningRefreshing: '刷新中…',
       reasoningRouteHint: '已启用：到输入框下方模型选择器切到「DeepSeek Flash（思考前缀）」，再正常发消息即可。',
       reasoningAudit: '最近审计',
       reasoningAuditEmpty: '暂无失败记录',
@@ -2376,6 +2387,9 @@ window.__ModuleLoader__.load({
       defaultTurnEnable: 'On by default for new sessions',
       defaultTurnBenchWarn: 'The current default came from a workbench; saving text here replaces it with a plain-text default.',
       saveDefault: 'Save as default',
+      discardDefault: 'Discard changes',
+      defaultTurnUntilNeed: 'Enter N (at least 1) for “only the first N turns” before saving.',
+      errOpLibraryLoad: 'Load library',
       defaultSbxTitle: 'New-session default · session sandbox',
       defaultSbxHint: 'Default level for new sessions and per-pack allow / deny defaults.',
       defaultNone: 'None',
@@ -2407,6 +2421,8 @@ window.__ModuleLoader__.load({
       reasoningEnable: 'Save & enable',
       reasoningDisable: 'Disable',
       reasoningRefresh: 'Refresh',
+      reasoningRefreshed: 'Status refreshed ({time})',
+      reasoningRefreshing: 'Refreshing…',
       reasoningRouteHint: 'Enabled: switch to "DeepSeek Flash (reasoning prefix)" in the model picker, then send messages normally.',
       reasoningAudit: 'Recent audit',
       reasoningAuditEmpty: 'no failures',
@@ -4074,6 +4090,8 @@ window.__ModuleLoader__.load({
       const [reasoningDraft, setReasoningDraft] = React.useState('')
       const [reasoningBusy, setReasoningBusy] = React.useState(false)
       const [reasoningError, setReasoningError] = React.useState('')
+      // 手动「刷新状态」成功的时间：给按钮一个看得见的反馈（挂载时那次自动拉取不算）。
+      const [reasoningRefreshedAt, setReasoningRefreshedAt] = React.useState(0)
       const refreshReasoning = React.useCallback(async () => {
         try {
           const data = await postJson(REASONING_STATUS_ROUTE)
@@ -4082,10 +4100,21 @@ window.__ModuleLoader__.load({
             setReasoningDraft((current) => (current === '' ? data.config.prefix : current))
           }
           setReasoningError('')
+          return true
         } catch {
           setReasoningError(t('reasoningUnavailable'))
+          return false
         }
       }, [])
+      const manualRefreshReasoning = async () => {
+        setReasoningBusy(true)
+        setReasoningRefreshedAt(0)
+        try {
+          if (await refreshReasoning()) setReasoningRefreshedAt(Date.now())
+        } finally {
+          setReasoningBusy(false)
+        }
+      }
       React.useEffect(() => {
         void refreshReasoning()
       }, [refreshReasoning])
@@ -4133,6 +4162,16 @@ window.__ModuleLoader__.load({
         }
       }
       const [resetArmed, setResetArmed] = React.useState(false)
+      // 两步确认的自动解除计时：用 ref 存，新的一次 arm 先清掉旧的，旧定时器不会提前解除新的确认态。
+      const resetTimer = React.useRef(null)
+      const libArmTimer = React.useRef(null)
+      React.useEffect(
+        () => () => {
+          clearTimeout(resetTimer.current)
+          clearTimeout(libArmTimer.current)
+        },
+        [],
+      )
       // 与卡片共用同一套可见性：busy(key) 防连点、错误 pill 说清哪个操作失败。
       const busy = useBusy()
       const [error, setError] = React.useState(null)
@@ -4143,12 +4182,17 @@ window.__ModuleLoader__.load({
       const [lib, setLib] = React.useState({ packs: [], cards: [], blocks: [], towers: [], hidden: [] })
       const [libArmed, setLibArmed] = React.useState('')
 
-      const adopt = React.useCallback((next) => {
+      /**
+       * 收下一份服务端状态。clearDraft 只在「自己刚把默认每轮注入存成功」时为 true：
+       * 外部广播 / 同页别的控件写入后的 refresh 不再冲掉没保存的默认草稿。
+       * allowDraft / toolsDraft 是点了即存的镜像（没有未保存的中间态），照旧跟服务端同步。
+       */
+      const adopt = React.useCallback((next, { clearDraft = false } = {}) => {
         setEnvelope(next)
         setState(next?.state ?? null)
         setMotionPref(next?.state?.ui?.motion)
         setAllowDraft((next?.state?.allowKinds ?? []).join(', '))
-        setDefTurnDraft(null)
+        if (clearDraft) setDefTurnDraft(null)
         const toolList = next?.state?.tools
         setToolsDraft(Array.isArray(toolList) ? (toolList.length === 0 ? ' ' : toolList.join(',')) : '')
       }, [])
@@ -4181,16 +4225,33 @@ window.__ModuleLoader__.load({
       }, [refresh])
 
       // PR3：卡片点「改默认 ↗」时把左侧页滚到对应小节（没有 URL 路由 / 面板事件，用一条窗口事件带锚点）。
+      const scrollToAnchor = (anchor) => {
+        if (typeof anchor !== 'string' || anchor === '') return
+        const node = typeof document !== 'undefined' ? document.querySelector('[data-prefill-anchor="' + anchor + '"]') : null
+        if (node !== null && node !== undefined && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'start' })
+      }
+      // 已挂载：照旧接 ANCHOR_EVENT（顺手把 panelAnchor 读走，免得下次挂载又滚一次）。
       React.useEffect(() => {
         const onAnchor = (event) => {
-          const anchor = event?.detail?.anchor
-          if (typeof anchor !== 'string' || anchor === '') return
-          const node = typeof document !== 'undefined' ? document.querySelector('[data-prefill-anchor="' + anchor + '"]') : null
-          if (node !== null && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'start' })
+          takePanelAnchor()
+          scrollToAnchor(event?.detail?.anchor)
         }
         window.addEventListener(ANCHOR_EVENT, onAnchor)
         return () => window.removeEventListener(ANCHOR_EVENT, onAnchor)
       }, [])
+      // 未挂载：openPrefillPanel 先 selectPanel 再发事件，这时本组件还没挂上、没人接 ⇒ 挂载时读 panelAnchor（读完清空）。
+      // 等第一次拉到状态（总览行数定下来、版面不再跳）再滚；拉失败也滚。
+      const pendingAnchor = React.useRef('')
+      React.useEffect(() => {
+        const anchor = takePanelAnchor()
+        if (anchor !== '') pendingAnchor.current = anchor
+      }, [])
+      React.useEffect(() => {
+        if (ping.phase === 'idle' || pendingAnchor.current === '') return
+        const anchor = pendingAnchor.current
+        pendingAnchor.current = ''
+        scrollToAnchor(anchor)
+      }, [ping.phase])
 
       /** 失败：错误 pill（与卡片同一套）+ 一行状态字；sessionId 用空串（全局页，不进会话卡片的 pill）。 */
       const fail = React.useCallback(
@@ -4207,7 +4268,7 @@ window.__ModuleLoader__.load({
         (key, op, body) => {
           const running = busy.run(key, async () => {
             const data = await call(body)
-            adopt(data)
+            adopt(data, { clearDraft: key === 'default-turn' })
             setNote(t('saved'))
             // 同一操作后来成功了 ⇒ 收起它的错误 pill（与卡片 errorsReduce 同一套语义）。
             setError((current) => errorsReduce(current, { type: 'ok', key }))
@@ -4237,7 +4298,7 @@ window.__ModuleLoader__.load({
         ...Object.keys(envelope?.snapshots ?? {}),
         ...Object.keys(envelope?.turns ?? {}),
         ...armed.filter((id) => id !== '*'),
-      ])].filter((id) => typeof id === 'string' && id !== '').sort()
+      ])].filter((id) => typeof id === 'string' && id !== '' && id !== '*').sort()
       const liveSet = new Set([...Object.keys(envelope?.tools?.sessions ?? {}), ...Object.keys(envelope?.turns ?? {})])
       const setArmed = (id, on) => {
         const next = on ? [...new Set([...armed, id])] : armed.filter((entry) => entry !== id)
@@ -4267,18 +4328,33 @@ window.__ModuleLoader__.load({
           live: Object.prototype.hasOwnProperty.call(envelope?.tools?.sessions ?? {}, id),
         }
       }).sort((a, b) => Number(b.live) - Number(a.live))
+      // 等剪贴板的结果再提示：失败（没权限 / 没有 clipboard API）就把 id 显示出来，方便手动复制。
       const copySessionId = (id) => {
+        let pending
         try {
-          void navigator?.clipboard?.writeText?.(id)
-          setNote(t('copied'))
+          const clipboard = typeof navigator !== 'undefined' ? navigator?.clipboard : undefined
+          if (typeof clipboard?.writeText !== 'function') throw new Error('no clipboard')
+          pending = Promise.resolve(clipboard.writeText(id))
         } catch {
           setNote(id)
+          return Promise.resolve(false)
         }
+        return pending.then(
+          () => {
+            setNote(t('copied'))
+            return true
+          },
+          () => {
+            setNote(id)
+            return false
+          },
+        )
       }
 
       // ── PR4：库（预设 / 角色卡 / 自定义积木·塔）─────────────────────────────
       const liveIds = overviewIds.filter((id) => Object.prototype.hasOwnProperty.call(envelope?.tools?.sessions ?? {}, id))
-      const libSession = libSid !== '' ? libSid : liveIds[0] ?? ''
+      // 下拉框显示的就是实际加载的会话：手选的（仍在列表里）> 第一个在册会话 > 第一个总览会话（不在册 ⇒ 后台落全局库）。
+      const libSession = libSid !== '' && overviewIds.includes(libSid) ? libSid : liveIds[0] ?? overviewIds[0] ?? ''
       const postRoute = React.useCallback(async (path, body) => {
         const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) })
         if (!response.ok) throw new Error('HTTP ' + response.status)
@@ -4302,8 +4378,8 @@ window.__ModuleLoader__.load({
               hidden: Array.isArray(packsData?.hiddenBuiltins) ? packsData.hiddenBuiltins : [],
             })
           })
-          .catch(() => {})
-      }, [libSession, postRoute])
+          .catch((err) => fail('lib:load', t('errOpLibraryLoad'), err))
+      }, [libSession, postRoute, fail, t])
       React.useEffect(() => {
         loadLibrary()
         window.addEventListener(STATE_EVENT, loadLibrary)
@@ -4381,9 +4457,14 @@ window.__ModuleLoader__.load({
         event.target.value = ''
       }
       const armLib = (key) => {
+        clearTimeout(libArmTimer.current)
+        libArmTimer.current = null
         if (libArmed !== key) {
           setLibArmed(key)
-          setTimeout(() => setLibArmed(''), CONFIRM_MS)
+          libArmTimer.current = setTimeout(() => {
+            libArmTimer.current = null
+            setLibArmed('')
+          }, CONFIRM_MS)
           return false
         }
         setLibArmed('')
@@ -4406,7 +4487,10 @@ window.__ModuleLoader__.load({
         bench: Array.isArray(everyTurnDefault?.bench) && everyTurnDefault.bench.length > 0,
       }
       const setDefTurn = (patch) => setDefTurnDraft({ ...defTurn, ...patch })
+      // 「只注入前 N 轮」必须 N ≥ 1：不然存进去是 untilTurn: 0（等于一轮都不注入 / 语义不明）。
+      const defTurnUntilInvalid = defTurn.mode === 'until' && !(Math.floor(Number(defTurn.untilTurn) || 0) >= 1)
       const saveDefaultTurn = () => {
+        if (defTurnUntilInvalid) return
         const entry = {
           enabled: defTurn.enabled,
           text: defTurn.text,
@@ -4440,8 +4524,11 @@ window.__ModuleLoader__.load({
       const motionNow = normalizeMotion(envelope?.state?.ui?.motion)
       const writeMotion = (value) => {
         const before = motionNow
+        // 上一次还在写 ⇒ act 返回 null，这次点击忽略（不先套用，也不 .then）。
+        const running = mutate({ ui: { motion: value } }, 'motion', t('errOpSettings'))
+        if (running === null) return
         setMotionPref(value)
-        void mutate({ ui: { motion: value } }, 'motion', t('errOpSettings')).then((data) => {
+        void running.then((data) => {
           if (data === undefined) setMotionPref(before)
         })
       }
@@ -4639,9 +4726,14 @@ window.__ModuleLoader__.load({
               title: t('resetTip'),
               'data-prefill-reset': '',
               onClick: () => {
+                clearTimeout(resetTimer.current)
+                resetTimer.current = null
                 if (!resetArmed) {
                   setResetArmed(true)
-                  setTimeout(() => setResetArmed(false), CONFIRM_MS)
+                  resetTimer.current = setTimeout(() => {
+                    resetTimer.current = null
+                    setResetArmed(false)
+                  }, CONFIRM_MS)
                   return
                 }
                 setResetArmed(false)
@@ -4746,10 +4838,12 @@ window.__ModuleLoader__.load({
                 min: 1,
                 value: String(defTurn.untilTurn || ''),
                 style: S.input,
+                'aria-invalid': defTurnUntilInvalid ? 'true' : undefined,
                 'data-prefill-default-turn-until': '',
                 onChange: (event) => setDefTurn({ untilTurn: Number(event.target.value) || 0 }),
               })
             : null,
+          defTurnUntilInvalid ? h('div', { style: S.warn, 'data-prefill-default-turn-until-warn': '' }, t('defaultTurnUntilNeed')) : null,
           h('textarea', {
             style: { ...S.input, minHeight: 56, fontFamily: 'inherit' },
             value: defTurn.text,
@@ -4765,15 +4859,23 @@ window.__ModuleLoader__.load({
             onChange: (event) => setDefTurn({ firstText: event.target.value }),
           }),
           h(
-            'button',
-            {
-              type: 'button',
-              style: S.button,
-              'data-prefill-default-turn-save': '',
-              ...busyAttrs(busy, 'default-turn'),
-              onClick: saveDefaultTurn,
-            },
-            t('saveDefault'),
+            'div',
+            { style: S.chipRow },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: S.button,
+                'data-prefill-default-turn-save': '',
+                ...busyAttrs(busy, 'default-turn'),
+                ...(defTurnUntilInvalid ? { disabled: true, title: t('defaultTurnUntilNeed') } : {}),
+                onClick: saveDefaultTurn,
+              },
+              t('saveDefault'),
+            ),
+            defTurnDraft === null
+              ? null
+              : h('button', { type: 'button', style: S.button, 'data-prefill-default-turn-discard': '', onClick: () => setDefTurnDraft(null) }, t('discardDefault')),
           ),
         ),
 
@@ -4824,7 +4926,7 @@ window.__ModuleLoader__.load({
           { style: S.card, 'data-prefill-anchor': 'library' },
           h('div', { style: S.cardTitle }, t('libraryTitle')),
           h('div', { style: S.note }, t('libraryHint')),
-          overviewIds.length === 0
+          libSession === ''
             ? h('div', { style: S.note }, t('libraryNoSession'))
             : h(
                 'label',
@@ -5032,10 +5134,13 @@ window.__ModuleLoader__.load({
               : null,
             h(
               'button',
-              { type: 'button', style: S.button, 'data-prefill-reasoning-refresh': '', disabled: reasoningBusy, onClick: () => void refreshReasoning() },
-              t('reasoningRefresh'),
+              { type: 'button', style: S.button, 'data-prefill-reasoning-refresh': '', disabled: reasoningBusy, 'aria-busy': reasoningBusy ? 'true' : undefined, onClick: () => void manualRefreshReasoning() },
+              reasoningBusy ? t('reasoningRefreshing') : t('reasoningRefresh'),
             ),
           ),
+          reasoningRefreshedAt > 0 && !reasoningBusy
+            ? h('div', { style: S.note, 'data-prefill-reasoning-refreshed': '' }, t('reasoningRefreshed').replace('{time}', new Date(reasoningRefreshedAt).toLocaleTimeString()))
+            : null,
           reasoningError !== '' ? h('div', { style: S.warn }, reasoningError) : null,
           reasoning !== null && reasoning.hasApiKey === false ? h('div', { style: S.warn }, t('reasoningNoKey')) : null,
           reasoning !== null && reasoning.enabled === true ? h('div', { style: S.note }, t('reasoningRouteHint')) : null,
