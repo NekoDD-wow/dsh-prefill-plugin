@@ -14,6 +14,8 @@ const fnSrc = (head) => {
 const feedbackSrc = src.slice(src.indexOf('    // <feedback>'), src.indexOf('    // </feedback>'))
 const busyAttrsSrc = fnSrc('    function busyAttrs(')
 const normalizeMotionSrc = fnSrc('    function normalizeMotion(')
+// PR B（#45）：总览的「开 / 关」和卡片同口径（左栏开关 + 旧 enabled），用模块级的 everyTurnSwitchOn。
+const everyTurnSwitchOnSrc = fnSrc('    function everyTurnSwitchOn(')
 
 const LEVERS = [
   { key: 'probeSection', tone: 'write' },
@@ -120,6 +122,7 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf } = {}) {
       'const ErrorPill = (props) => (props.error ? h("span", { "data-prefill-error-pill": props.error.key }, props.error.op) : (props.fallback ?? null))\n' +
       'const ConfirmButton = ({ armed, children, ...rest }) => h("button", { ...rest, "data-prefill-confirm": armed ? "true" : "false" }, ...[children].flat())\n' +
       busyAttrsSrc + '\n' +
+      everyTurnSwitchOnSrc + '\n' +
       sectionSrc + '\n' +
       'return { PrefillSection }',
   )

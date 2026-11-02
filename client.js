@@ -1968,6 +1968,28 @@ window.__ModuleLoader__.load({
       const own = state?.everyTurn?.[sessionId]
       return !(own !== null && typeof own === 'object' && own.enabled === false)
     }
+    /**
+     * PR B（issue #45 第 9 条）：把本会话的每轮注入条目复制成新会话默认（everyTurn['*']）。
+     * 语义照 0.18.2 卡片「新会话默认也开启」（旧 writeEveryTurn 勾选默认时写 map['*'] 的那一支）：enabled 恒 true；
+     * 工作台（bench / benchTowers）原样带上；只属于本会话的 seam / firstOnce / since 和 auto.override 去掉
+     * （gate.js everyTurnFor 对 '*' 本来也不认这几项）。没有本会话条目 ⇒ null。
+     */
+    function defaultEveryTurnOf(entry) {
+      if (entry === null || typeof entry !== 'object') return null
+      const auto = entry.auto !== null && typeof entry.auto === 'object' ? { ...entry.auto } : { warmup: 3, streak: 3, probation: 2 }
+      delete auto.override
+      const hasBench = Array.isArray(entry.bench) && entry.bench.length > 0
+      return {
+        enabled: true,
+        text: typeof entry.text === 'string' ? entry.text : '',
+        firstText: typeof entry.firstText === 'string' ? entry.firstText : '',
+        untilTurn: Math.max(0, Math.floor(Number(entry.untilTurn) || 0)),
+        mode: entry.mode === 'auto' || entry.mode === 'until' ? entry.mode : 'always',
+        checks: Array.isArray(entry.checks) ? entry.checks : [],
+        auto,
+        ...(hasBench ? { bench: entry.bench, benchTowers: entry.benchTowers ?? {} } : {}),
+      }
+    }
     const tint = (color, pct = 12) => `color-mix(in srgb, ${color} ${pct}%, var(--dsw-alias-bg-base))`
     const num = (value) => (Number.isFinite(value) ? Math.round(value).toLocaleString('en-US') : '—')
 
@@ -2141,12 +2163,15 @@ window.__ModuleLoader__.load({
       errOpSettings: '全局设置',
       // ── PR2（公开 issue #44）：新会话默认 / 偏好搬到左侧页；卡片只读 ──
       defaultTurnTitle: '新会话默认 · 每轮注入',
-      defaultTurnHint: '新会话开跑时默认套用这条提醒；这里有且只有这一处能改（卡片里只读）。',
+      defaultTurnHint: '所有没单独设置每轮注入的会话（包括新会话、也包括已有的旧会话）都套用这条；某个会话自己设过就以它自己的为准。这里改文本 / 开关；要把某个会话的设置（含工作台）整份设成默认，到那个会话的卡片里点「设为新会话默认」。',
       defaultTurnEnable: '新会话默认开启每轮注入',
       defaultTurnBenchWarn: '当前默认来自工作台（积木）；保存这里的文本会改成纯文本默认。',
       saveDefault: '保存为默认',
       defaultSbxTitle: '新会话默认 · 会话沙盒',
-      defaultSbxHint: '新会话默认用哪一档、各来源包默认放行还是拦截。',
+      defaultSbxHint: '所有没单独设档位 / 包开关的会话（包括新会话、也包括已有的旧会话）按这里：用哪一档、各来源包默认放行还是拦截。会话自己设过的以会话为准。',
+      defaultSbxStrictNote: '当前默认是「严格」（不是从这里设的，比如手改了状态文件）。这里不提供严格档：它会接管所有没单独设置的会话（包括没勾「生效会话」的）。点上面任一档会替换它。',
+      defaultTurnBenchLocked: '当前默认来自工作台（积木），文本由工作台生成、这里只读；保存只改开关 / 注入方式 / 轮数，工作台原样保留。要换内容：在某个会话的卡片里编辑后点「设为新会话默认」，或改成纯文本默认。',
+      defaultTurnToPlain: '改成纯文本默认',
       defaultNone: '不设',
       prefsTitle: '偏好',
       resetNoAsk: '重置所有「不再提示」',
@@ -2183,7 +2208,16 @@ window.__ModuleLoader__.load({
       reasoningUnavailable: '后台没有响应：重启一次 DSH 再试。',
       // ── PR3（公开 issue #44）：跨会话总览 + 双向跳转 ──
       overviewTitle: '总览',
-      overviewHint: '在册会话与它们的当前配置；「打开」= 切到那个会话并弹出预填装卡片。',
+      overviewHint: '在册会话与它们的当前配置。「默认」= 这个会话没单独设置、跟随下面的新会话默认；「本会话」= 这个会话自己设过。「打开」= 切到那个会话并弹出预填装卡片。',
+      overviewOn: '开',
+      overviewOff: '关',
+      overviewFromDefault: '默认',
+      overviewFromSession: '本会话',
+      everyTurnDefaultNow: '新会话默认（所有没单独设置的会话）',
+      everyTurnFollowingDefault: '本会话正跟随默认',
+      everyTurnSetDefault: '设为新会话默认',
+      everyTurnSetDefaultTip: '把本会话的每轮注入（含工作台、注入方式）复制成新会话默认：所有没单独设置的会话都会改用它。',
+      everyTurnSetDefaultDone: '已设为新会话默认',
       overviewEmpty: '当前没有在册会话。',
       overviewOpen: '打开',
       overviewCopy: '复制 id',
@@ -2372,12 +2406,15 @@ window.__ModuleLoader__.load({
       errOpSettings: 'Global settings',
       // ── PR2 (public issue #44): new-session defaults / preferences moved to the left page ──
       defaultTurnTitle: 'New-session default · every-turn reminder',
-      defaultTurnHint: 'The reminder new sessions start with. This is the only place to edit it (the card is read-only).',
+      defaultTurnHint: 'Every session without its own every-turn setting (new sessions and existing ones alike) uses this; a session that has its own setting keeps it. Edit the text / switch here; to make a session’s whole setup (workbench included) the default, use “Set as new-session default” in that session’s card.',
       defaultTurnEnable: 'On by default for new sessions',
       defaultTurnBenchWarn: 'The current default came from a workbench; saving text here replaces it with a plain-text default.',
+      defaultTurnBenchLocked: 'The current default came from a workbench (blocks); its text is generated from the workbench and is read-only here. Saving only changes the switch / mode / turn count and keeps the workbench. To change the content, edit it in a session’s card and use “Set as new-session default”, or switch to a plain-text default.',
+      defaultTurnToPlain: 'Switch to plain-text default',
       saveDefault: 'Save as default',
       defaultSbxTitle: 'New-session default · session sandbox',
-      defaultSbxHint: 'Default level for new sessions and per-pack allow / deny defaults.',
+      defaultSbxHint: 'Every session without its own level / pack settings (new sessions and existing ones alike) follows this: which level, and whether each source pack is allowed or blocked by default. A session’s own settings win.',
+      defaultSbxStrictNote: 'The current default is “Strict” (not set from here, e.g. the state file was edited by hand). Strict is not offered here: it would take over every session without its own setting, including ones not in “Affected sessions”. Picking any level above replaces it.',
       defaultNone: 'None',
       prefsTitle: 'Preferences',
       resetNoAsk: 'Reset all “don’t ask again”',
@@ -2414,7 +2451,16 @@ window.__ModuleLoader__.load({
       reasoningUnavailable: 'Host did not respond: restart DSH and retry.',
       // ── PR3 (public issue #44): cross-session overview + two-way navigation ──
       overviewTitle: 'Overview',
-      overviewHint: 'Live sessions and their current setup; “Open” switches to that session and opens the Prefill card.',
+      overviewHint: 'Live sessions and their current setup. “default” = the session has no setting of its own and follows the new-session default below; “this session” = set on the session itself. “Open” switches to that session and opens the Prefill card.',
+      overviewOn: 'on',
+      overviewOff: 'off',
+      overviewFromDefault: 'default',
+      overviewFromSession: 'this session',
+      everyTurnDefaultNow: 'New-session default (every session without its own setting)',
+      everyTurnFollowingDefault: 'this session follows the default',
+      everyTurnSetDefault: 'Set as new-session default',
+      everyTurnSetDefaultTip: 'Copy this session’s every-turn setup (workbench and mode included) to the new-session default: every session without its own setting will use it.',
+      everyTurnSetDefaultDone: 'Set as new-session default',
       overviewEmpty: 'No live sessions right now.',
       overviewOpen: 'Open',
       overviewCopy: 'Copy id',
@@ -4253,16 +4299,29 @@ window.__ModuleLoader__.load({
         ...Object.keys(state?.activePreset ?? {}),
         ...Object.keys(state?.everyTurn ?? {}).filter((id) => id !== '*'),
       ])].filter((id) => typeof id === 'string' && id !== '' && id !== '*').sort()
+      // PR B（#45 第 10 条）：每轮注入 / 沙盒都标出来源 —— 'session' = 本会话自己设过，'default' = 跟随 '*'（新会话默认）。
+      const isEntryObject = (value) => value !== null && typeof value === 'object'
       const overviewRows = overviewIds.map((id) => {
         const view = envelope?.sandboxView?.[id]
         const own = state?.everyTurn?.[id]
         const fallback = state?.everyTurn?.['*']
+        // 与 gate.js everyTurnFor 同口径：本会话那格 ?? '*'；enabled、左栏开关、两段文本都要有才算「开」。
+        const turnEntry = isEntryObject(own) ? own : isEntryObject(fallback) ? fallback : undefined
+        const turnText = String(turnEntry?.text ?? '').trim() + String(turnEntry?.firstText ?? '').trim()
+        const ownLevel = state?.sandbox?.[id]?.level
+        const globalLevelOf = state?.sandbox?.['*']?.level
+        const levelFrom =
+          typeof view?.levelFrom === 'string'
+            ? view.levelFrom
+            : typeof ownLevel === 'string' ? 'session' : typeof globalLevelOf === 'string' ? 'global' : 'default'
         return {
           id,
           preset: state?.activePreset?.[id] ?? '',
-          level: typeof view?.level === 'string' ? view.level : '',
+          level: typeof view?.level === 'string' ? view.level : typeof ownLevel === 'string' ? ownLevel : typeof globalLevelOf === 'string' ? globalLevelOf : '',
+          levelFrom,
           blocked: Number(view?.blocked) || 0,
-          everyTurn: own !== undefined ? own?.enabled === true : fallback?.enabled === true,
+          everyTurn: turnEntry !== undefined && turnEntry.enabled === true && turnText !== '' && everyTurnSwitchOn(state, id),
+          everyTurnFrom: isEntryObject(own) ? 'session' : isEntryObject(fallback) ? 'default' : '',
           manual: Number(envelope?.manualQueued?.[id]) || 0,
           live: Object.prototype.hasOwnProperty.call(envelope?.tools?.sessions ?? {}, id),
         }
@@ -4397,24 +4456,38 @@ window.__ModuleLoader__.load({
 
       // ── PR2：新会话默认 / 偏好（唯一编辑处；卡片里只读）─────────────────────
       const everyTurnDefault = state?.everyTurn?.['*']
+      const defHasBench = Array.isArray(everyTurnDefault?.bench) && everyTurnDefault.bench.length > 0
       const defTurn = defTurnDraft ?? {
         enabled: everyTurnDefault?.enabled === true,
-        mode: everyTurnDefault?.mode === 'until' ? 'until' : 'always',
+        // 'auto' 只能从卡片「设为新会话默认」带过来：这里照样显示、保存时原样留着，不降成 always。
+        mode: everyTurnDefault?.mode === 'until' || everyTurnDefault?.mode === 'auto' ? everyTurnDefault.mode : 'always',
         untilTurn: Number(everyTurnDefault?.untilTurn) || 0,
         text: typeof everyTurnDefault?.text === 'string' ? everyTurnDefault.text : '',
         firstText: typeof everyTurnDefault?.firstText === 'string' ? everyTurnDefault.firstText : '',
-        bench: Array.isArray(everyTurnDefault?.bench) && everyTurnDefault.bench.length > 0,
+        // 默认来自工作台时文本区只读（文本是工作台编译出来的）；点「改成纯文本」才放开编辑，保存时丢掉工作台。
+        plain: false,
       }
+      const defBenchLocked = defHasBench && defTurn.plain !== true
       const setDefTurn = (patch) => setDefTurnDraft({ ...defTurn, ...patch })
       const saveDefaultTurn = () => {
+        // PR B（#45 第 9 条）：在已有的 '*' 条目上改 —— bench / benchTowers / seam 等结构原样留着，只改开关 / 方式 / 轮数；
+        // 工作台默认的文本不在这里改（改了会和工作台对不上：卡片按工作台显示、闸门按文本发）。
+        const base = everyTurnDefault !== null && typeof everyTurnDefault === 'object' ? everyTurnDefault : {}
         const entry = {
+          ...base,
           enabled: defTurn.enabled,
-          text: defTurn.text,
-          firstText: defTurn.firstText,
           untilTurn: defTurn.mode === 'until' ? Math.max(0, Math.floor(Number(defTurn.untilTurn) || 0)) : 0,
           mode: defTurn.mode,
-          checks: Array.isArray(everyTurnDefault?.checks) ? everyTurnDefault.checks : [],
-          auto: everyTurnDefault?.auto ?? { warmup: 3, streak: 3, probation: 2 },
+          checks: Array.isArray(base.checks) ? base.checks : [],
+          auto: base.auto ?? { warmup: 3, streak: 3, probation: 2 },
+        }
+        if (!defBenchLocked) {
+          entry.text = defTurn.text
+          entry.firstText = defTurn.firstText
+        }
+        if (defHasBench && defTurn.plain === true) {
+          delete entry.bench
+          delete entry.benchTowers
         }
         const map = { ...(state?.everyTurn ?? {}), '*': entry }
         void mutate({ everyTurn: map }, 'default-turn', t('errOpSettings'))
@@ -4686,12 +4759,18 @@ window.__ModuleLoader__.load({
                   h('span', { style: S.pill }, t('overviewPreset') + '：' + (row.preset === '' ? t('overviewNone') : row.preset)),
                   h(
                     'span',
-                    { style: S.pill },
+                    { style: S.pill, 'data-prefill-overview-sandbox': row.id, 'data-from': row.levelFrom },
                     t('overviewSandbox') + '：' +
                       (row.level === '' ? t('overviewNone') : t(row.level === 'controlled' ? 'sbxLevelControlled' : row.level === 'strict' ? 'sbxLevelStrict' : 'sbxLevelObserve')) +
+                      (row.levelFrom === 'global' ? ' · ' + t('overviewFromDefault') : row.levelFrom === 'session' ? ' · ' + t('overviewFromSession') : '') +
                       (row.blocked > 0 ? ' · ' + t('sbxBlockedN').replace('{n}', String(row.blocked)) : ''),
                   ),
-                  h('span', { style: S.pill }, t('overviewEveryTurn') + '：' + (row.everyTurn ? t('defaultOn') : t('defaultOff'))),
+                  h(
+                    'span',
+                    { style: S.pill, 'data-prefill-overview-everyturn': row.id, 'data-from': row.everyTurnFrom },
+                    t('overviewEveryTurn') + '：' + (row.everyTurn ? t('overviewOn') : t('overviewOff')) +
+                      (row.everyTurnFrom === 'default' ? ' · ' + t('overviewFromDefault') : row.everyTurnFrom === 'session' ? ' · ' + t('overviewFromSession') : ''),
+                  ),
                   row.manual > 0 ? h('span', { style: S.pill }, t('overviewManual') + ' ' + row.manual) : null,
                   h('span', { style: row.live ? { ...S.pill, color: 'var(--dsw-alias-brand-primary)' } : S.pill }, row.live ? t('overviewLive') : t('overviewNotLive')),
                 ),
@@ -4722,11 +4801,21 @@ window.__ModuleLoader__.load({
             }),
             h('span', null, t('defaultTurnEnable')),
           ),
-          defTurn.bench ? h('div', { style: S.warn }, t('defaultTurnBenchWarn')) : null,
+          defBenchLocked
+            ? h(
+                'div',
+                { style: S.warn, 'data-prefill-default-turn-bench': 'locked' },
+                t('defaultTurnBenchLocked'),
+                ' ',
+                h('button', { type: 'button', style: S.button, 'data-prefill-default-turn-plain': '', onClick: () => setDefTurn({ plain: true }) }, t('defaultTurnToPlain')),
+              )
+            : defHasBench
+              ? h('div', { style: S.warn, 'data-prefill-default-turn-bench': 'plain' }, t('defaultTurnBenchWarn'))
+              : null,
           h(
             'div',
             { style: S.chipRow },
-            ...['always', 'until'].map((mode) =>
+            ...['always', 'until', ...(everyTurnDefault?.mode === 'auto' ? ['auto'] : [])].map((mode) =>
               h(
                 'button',
                 {
@@ -4736,7 +4825,7 @@ window.__ModuleLoader__.load({
                   'data-prefill-default-turn-mode': mode,
                   onClick: () => setDefTurn({ mode }),
                 },
-                t(mode === 'always' ? 'everyTurnModeAlways' : 'everyTurnModeUntil'),
+                t(mode === 'always' ? 'everyTurnModeAlways' : mode === 'auto' ? 'everyTurnModeAuto' : 'everyTurnModeUntil'),
               ),
             ),
           ),
@@ -4754,6 +4843,7 @@ window.__ModuleLoader__.load({
             style: { ...S.input, minHeight: 56, fontFamily: 'inherit' },
             value: defTurn.text,
             placeholder: t('everyTurnPlaceholder'),
+            readOnly: defBenchLocked,
             'data-prefill-default-turn-text': '',
             onChange: (event) => setDefTurn({ text: event.target.value }),
           }),
@@ -4761,6 +4851,7 @@ window.__ModuleLoader__.load({
             style: { ...S.input, minHeight: 44, fontFamily: 'inherit' },
             value: defTurn.firstText,
             placeholder: t('everyTurnFirstPlaceholder'),
+            readOnly: defBenchLocked,
             'data-prefill-default-turn-first': '',
             onChange: (event) => setDefTurn({ firstText: event.target.value }),
           }),
@@ -4802,6 +4893,8 @@ window.__ModuleLoader__.load({
               t('sbxLevelControlled'),
             ),
           ),
+          // PR B（#45 第 11 条）：'*' 不提供严格档（会接管所有会话，见 PR 说明）；状态文件里手写了也照实说出来，别显示成「不设」。
+          globalLevel === 'strict' ? h('div', { style: S.warn, 'data-prefill-default-sbx-strict': '' }, t('defaultSbxStrictNote')) : null,
           ...(globalView?.packs ?? []).filter((pack) => pack.locked !== true).map((pack) =>
             h(
               'div',
@@ -9031,6 +9124,19 @@ window.__ModuleLoader__.load({
         if (immediate) run()
         else everyTurnTimer.current = setTimeout(run, 700)
       }
+      // PR B（#45 第 9 条）：本会话有自己的条目时，卡片可以把它（含工作台）复制成新会话默认（'*'）。
+      const hasOwnEveryTurn = state?.everyTurn?.[sessionId] !== null && typeof state?.everyTurn?.[sessionId] === 'object'
+      const setSessionAsDefault = async () => {
+        // 还没落盘的草稿（700ms 防抖里的）先写掉，复制的是用户眼前这份。
+        clearTimeout(everyTurnTimer.current)
+        const fresh = everyTurnDraft !== null ? await writeEveryTurn(everyTurn) : await postJson(STATE_ROUTE, undefined)
+        const entry = defaultEveryTurnOf(fresh?.state?.everyTurn?.[sessionId])
+        if (entry === null) return null
+        const data = await postJson(STATE_ROUTE, { everyTurn: { ...(fresh?.state?.everyTurn ?? {}), '*': entry } })
+        setEnvelope(data)
+        notifyStateChanged()
+        return data
+      }
       // ── v0.15：工作台（积木 / 积木塔）────────────────────────────────────────
       const benchNarrow = bounds?.narrow === true
       /** 输入框按内容自动增高（展开着的长块、世界书编辑）。 */
@@ -10203,9 +10309,32 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: { ...V.hint, fontSize: 12, whiteSpace: 'normal' }, 'data-prefill-everyturn-default-readonly': '1' },
-          t('everyTurnDefault') + '：' + (state?.everyTurn?.['*']?.enabled === true ? t('defaultOn') : t('defaultOff')) + ' · ' + t('movedToSidebar'),
+          t('everyTurnDefaultNow') + '：' + (state?.everyTurn?.['*']?.enabled === true ? t('overviewOn') : t('overviewOff')) +
+            (hasOwnEveryTurn ? '' : ' · ' + t('everyTurnFollowingDefault')) + ' · ' + t('movedToSidebar'),
           ' ',
           h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, 'data-prefill-open-prefill': 'default-everyturn', onClick: () => openPrefillPanel('default-everyturn') }, t('openDefault')),
+          // PR B（#45 第 9 条）：恢复 0.18 的能力 —— 把本会话（含工作台）整份设成新会话默认；两步确认。
+          hasOwnEveryTurn
+            ? h(
+                ConfirmButton,
+                {
+                  armed: confirming === 'everyturn-default',
+                  style: { ...V.btnGhost, fontSize: 11.5 },
+                  'data-prefill-everyturn-set-default': '',
+                  title: t('everyTurnSetDefaultTip'),
+                  ...busyAttrs(busyCtl, 'everyturn-default'),
+                  onClick: () => {
+                    if (!armConfirm('everyturn-default')) return
+                    setConfirming('')
+                    act('everyturn-default', t('errOpBench'), async () => {
+                      await setSessionAsDefault()
+                      flash(t('everyTurnSetDefaultDone'))
+                    })
+                  },
+                },
+                confirming === 'everyturn-default' ? t('confirmYes') : t('everyTurnSetDefault'),
+              )
+            : null,
         ),
       )
 
@@ -11900,7 +12029,8 @@ window.__ModuleLoader__.load({
             ? h(
                 'div',
                 { style: { ...V.hint, fontSize: 12 }, 'data-prefill-sbx-global-level-readonly': globalScope.level ?? '' },
-                t('sbxLevelGlobal') + '：' + (globalScope.level ? t(globalScope.level === 'controlled' ? 'sbxLevelControlled' : 'sbxLevelObserve') : t('defaultOff')) + ' · ' + t('movedToSidebar'),
+                // PR B（#45 第 11 条）：'*' 是 strict 时照实显示「严格」，不再落到「观察」。
+                t('sbxLevelGlobal') + '：' + (globalScope.level ? sbxLevelLabel(t, globalScope.level) : t('defaultOff')) + ' · ' + t('movedToSidebar'),
                 ' ',
                 h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, 'data-prefill-open-prefill': 'default-sandbox', onClick: () => openPrefillPanel('default-sandbox') }, t('openDefault')),
               )
