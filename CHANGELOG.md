@@ -3,6 +3,10 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.18.2 — 2026-11-02
+- **会话沙盒受控档放行 DSH 核心消息来源（公开 issue #40 / PR #41）**：`skill-invocation`（用户 `/技能名` 调用技能时追加的技能正文）、`ptc-mode`（PTC 模式下带图片的工具结果）、`cordis-host-runner`（Cordis 插件激活 / 运行失败回报）、`webhook`（webhook 会话开场指令）加进「DSH 核心 · 运行时上下文」包（`sandbox-packs.js` 头注释补 0.2.1-rc.5 出处）。之前受控档下调用技能时技能正文被 pre-step 丢掉，模型只看到不认识的斜杠命令；显式拦这个包时照旧拦。单测 `tests/controlled-core-kinds.test.mjs`（3 项）。
+- **整体替换配置前作废每轮注入 / 工作区说明的防抖编辑（公开 issue #42 / PR #43）**：套用预设 / 取消预设 / 撤销取消 / 恢复开局时，700ms 内旧的防抖定时器会把 `state.everyTurn[会话]` / `state.workspaceInstructions[会话]` 整格写回，盖掉刚换上的预设。现在 `applyLayered`、`restoreOpening`、`undoClearPreset` 一开头就 `clearTimeout`（会话切换不清，旧定时器写的是旧会话，等于保存用户输入）。单测 `tests/preset-pending-edits.test.mjs`（5 项）。
+
 ## 0.18.1 — 2026-11-01
 - **设置页搬到 DSH 左侧栏（官方通道）**。原来它注册成 DSH「设置」页里的一节（`settings.section`），日常在面板里找不到。
   - 左侧栏（新会话 / 插件 / 自动化任务 那一列）新增「预填装」一行：`sidebar.panellist` 注册（order 20，排在「插件 / 自动化任务」之后），图标是自绘的 16 / 18px 滑杆（不引宿主图标包）。
