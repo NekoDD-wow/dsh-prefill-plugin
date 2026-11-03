@@ -26,6 +26,19 @@ test('带 tools：不加前缀（官方要求 prefix 与 function calling 互斥
   assert.equal(result.reason, 'has-tools')
 })
 
+test('内容前缀：content 走 contentPrefix；只有内容前缀也能注入；两个都空才不注入', () => {
+  const both = injectReasoningPrefix(body(), { reasoningPrefix: '想', contentPrefix: '好的' })
+  assert.equal(both.applied, true)
+  assert.deepEqual(both.body.messages.at(-1), { role: 'assistant', content: '好的', prefix: true, reasoning_content: '想' })
+  const contentOnly = injectReasoningPrefix(body(), { reasoningPrefix: '', contentPrefix: '好的' })
+  assert.equal(contentOnly.applied, true)
+  assert.deepEqual(contentOnly.body.messages.at(-1), { role: 'assistant', content: '好的', prefix: true })
+  const reasoningOnly = injectReasoningPrefix(body(), { reasoningPrefix: '想' })
+  assert.equal(reasoningOnly.body.messages.at(-1).content, '')
+  assert.equal(injectReasoningPrefix(body(), {}).applied, false)
+  assert.equal(canInject(body(), '', '  '), 'empty-prefix')
+})
+
 test('空前缀 / 无消息：不加前缀', () => {
   assert.equal(canInject(body(), ''), 'empty-prefix')
   assert.equal(canInject({ messages: [] }, '他喵'), 'no-messages')
@@ -122,7 +135,7 @@ const startUpstream = async (handler) => {
   return { server, bodies, port: server.address().port }
 }
 
-test('系统消息伪装：清单以 role=system 注入在 prefix 之前', async () => {
+test('系统消息伪装：清单以 role=system 注入在开头 system 段之后，前缀消息仍在末尾（稳定前缀位置，利于缓存）', async () => {
   const upstream = await startUpstream(() => ({ status: 200 }))
   const proxy = createReasoningPrefixProxy({
     getConfig: () => ({ enabled: true, upstream: 'http://127.0.0.1:' + upstream.port, reasoningPrefix: '他喵', stripTools: true, shim: true, textualize: true, catalog: '清单正文' }),
@@ -137,10 +150,11 @@ test('系统消息伪装：清单以 role=system 注入在 prefix 之前', async
     assert.equal(response.status, 200)
     const sent = upstream.bodies[0]
     const last = sent.messages.at(-1)
-    const catalog = sent.messages.at(-2)
+    const catalog = sent.messages[0]
     assert.equal(last.role, 'assistant')
     assert.equal(last.prefix, true)
     assert.deepEqual(catalog, { role: 'system', content: '清单正文' })
+    assert.deepEqual(sent.messages[1], { role: 'user', content: '你好' })
   } finally {
     proxy.server.closeAllConnections?.()
     await proxy.close()
@@ -163,11 +177,37 @@ test('回退链：system 版被拒 → user 包装版重试，审计记录 400',
     })
     assert.equal(response.status, 200)
     assert.equal(upstream.bodies.length, 2)
-    const catalog = upstream.bodies[1].messages.at(-2)
+    const catalog = upstream.bodies[1].messages[0]
     assert.equal(catalog.role, 'user')
     assert.match(catalog.content, /<system-reminder>/)
     const audit = proxy.audit()
     assert.ok(audit.some((entry) => entry.kind === 'upstream-error' && entry.status === 400))
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    upstream.server.closeAllConnections?.()
+    await new Promise((resolve) => upstream.server.close(resolve))
+  }
+})
+
+test('清单插在开头 system 段之后：有 system 时不顶到最前面', async () => {
+  const upstream = await startUpstream(() => ({ status: 200 }))
+  const proxy = createReasoningPrefixProxy({
+    getConfig: () => ({ enabled: true, upstream: 'http://127.0.0.1:' + upstream.port, reasoningPrefix: '他喵', stripTools: true, shim: true, textualize: true, catalog: '清单正文' }),
+  })
+  const port = await proxy.listen(0)
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', connection: 'close' },
+      body: JSON.stringify({ model: 'deepseek-flash', messages: [{ role: 'system', content: '系统提示' }, { role: 'user', content: '你好' }] }),
+    })
+    assert.equal(response.status, 200)
+    const sent = upstream.bodies[0]
+    assert.deepEqual(sent.messages[0], { role: 'system', content: '系统提示' })
+    assert.deepEqual(sent.messages[1], { role: 'system', content: '清单正文' })
+    assert.deepEqual(sent.messages[2], { role: 'user', content: '你好' })
+    assert.equal(sent.messages.at(-1).role, 'assistant')
   } finally {
     proxy.server.closeAllConnections?.()
     await proxy.close()
@@ -310,6 +350,32 @@ test('代理流式：上游慢慢吐，客户端先收到文本块（不是整�
     assert.match(text, /"usage"/)
     assert.match(text, /"usage":{"prompt_tokens":1/)
     assert.match(text, /data: \[DONE\]/)
+
+test('代理：端口被占用时顺序回退到空位（模型路由不再指向死端口）', async () => {
+  const blocker = http.createServer((_req, res) => res.end('occupied'))
+  await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve))
+  const busy = blocker.address().port
+  // 上游指向必然拒连的本地端口：不碰真实网络，502 就证明请求确实打到了这个代理。
+  const proxy = createReasoningPrefixProxy({ getConfig: () => ({ enabled: false, upstream: 'http://127.0.0.1:9' }) })
+  try {
+    const port = await proxy.listen(busy)
+    assert.notEqual(port, busy)
+    assert.ok(port > busy && port <= busy + 16, '回退端口应该在 busy+1..busy+16')
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    // enabled=false ⇒ 透传；没配上游时 502 也算“连上了自己的端口”。
+    assert.ok([200, 502].includes(response.status))
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    blocker.closeAllConnections?.()
+    await new Promise((resolve) => blocker.close(resolve))
+  }
+})
+
   } finally {
     proxy.server.closeAllConnections?.()
     await proxy.close()
@@ -318,4 +384,305 @@ test('代理流式：上游慢慢吐，客户端先收到文本块（不是整�
   }
 })
 
+
+// ── P1：回退链开关 / 模板变量 ────────────────────────────────────────────────
+test('回退链：fallbackOrder=user-first 时先试 user 版；allowPassthrough=false 时不再透传', async () => {
+  const upstream = await startUpstream(() => ({ status: 400, json: { error: { message: 'bad' } } }))
+  const proxy = createReasoningPrefixProxy({
+    getConfig: () => ({
+      enabled: true,
+      upstream: 'http://127.0.0.1:' + upstream.port,
+      reasoningPrefix: '他喵',
+      stripTools: true,
+      shim: true,
+      textualize: true,
+      catalog: '清单正文',
+      fallbackOrder: 'user-first',
+      allowPassthrough: false,
+    }),
+  })
+  const port = await proxy.listen(0)
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', connection: 'close' },
+      body: JSON.stringify({ model: 'deepseek-flash', messages: [{ role: 'user', content: '你好' }] }),
+    })
+    assert.equal(response.status, 502)
+    assert.equal(upstream.bodies.length, 2)
+    assert.equal(upstream.bodies[0].messages[0].role, 'user')
+    assert.match(upstream.bodies[0].messages[0].content, /<system-reminder>/)
+    assert.equal(upstream.bodies[1].messages[0].role, 'system')
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    upstream.server.closeAllConnections?.()
+    await new Promise((resolve) => upstream.server.close(resolve))
+  }
+})
+
+test('模板变量：reasoningPrefix/contentPrefix 里的 {{model}} / {{date}} 发请求前展开', async () => {
+  const upstream = await startUpstream(() => ({ status: 200 }))
+  const proxy = createReasoningPrefixProxy({
+    getConfig: () => ({
+      enabled: true,
+      upstream: 'http://127.0.0.1:' + upstream.port,
+      reasoningPrefix: '模型={{model}}',
+      contentPrefix: '日期={{date}}',
+      stripTools: true,
+      shim: true,
+      textualize: true,
+      catalog: '清单正文',
+    }),
+  })
+  const port = await proxy.listen(0)
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', connection: 'close' },
+      body: JSON.stringify({ model: 'deepseek-flash', messages: [{ role: 'user', content: '你好' }] }),
+    })
+    assert.equal(response.status, 200)
+    const sent = upstream.bodies[0]
+    const last = sent.messages.at(-1)
+    assert.equal(last.prefix, true)
+    assert.equal(last.reasoning_content, '模型=deepseek-flash')
+    assert.match(last.content, /^日期=\d{4}-\d{2}-\d{2}$/)
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    upstream.server.closeAllConnections?.()
+    await new Promise((resolve) => upstream.server.close(resolve))
+  }
+})
+
+// ── v0.20.8 修复回归：静默丢弃 / 截断当成功 / 挂死 / 透传三态 ────────────────
+
+const sseFrame = (delta, finish) => 'data: ' + JSON.stringify({ id: 'x', model: 'm', created: 1, choices: [{ index: 0, delta, finish_reason: finish === undefined ? null : finish }] })
+
+const rawUpstream = async (handler) => {
+  const server = http.createServer(handler)
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return { server, port: server.address().port }
+}
+
+const stopAll = async (...servers) => {
+  for (const server of servers) {
+    server.closeAllConnections?.()
+    await new Promise((resolve) => server.close(resolve))
+  }
+}
+
+const proxyOf = async (upstreamPort, cfg, outcomes) => {
+  const proxy = createReasoningPrefixProxy({
+    getConfig: () => Object.assign({ enabled: true, upstream: 'http://127.0.0.1:' + upstreamPort, reasoningPrefix: 'x', stripTools: true, shim: true, textualize: true, catalog: '清单' }, cfg),
+    onOutcome: (outcome) => outcomes.push(outcome),
+  })
+  return { proxy, port: await proxy.listen(0) }
+}
+
+test('P0-1：上游用 CRLF 分帧时，正文 / 思考 / 工具调用照常还原（修复前整段被静默丢掉）', async () => {
+  const call = '<' + DSML + ' invoke name="read">' + '<' + DSML + ' parameter name="file_path" string="true">a.md</' + DSML + ' parameter>' + '</' + DSML + ' invoke>'
+  const upstream = await rawUpstream((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(sseFrame({ role: 'assistant' }) + '\r\n\r\n')
+    res.write(sseFrame({ reasoning_content: '想一下' }) + '\r\n\r\n')
+    res.write(sseFrame({ content: '前文' + call + '后文' }) + '\r\n\r\n')
+    res.write(sseFrame({}, 'stop') + '\r\n\r\n')
+    res.write('data: [DONE]\r\n\r\n')
+    res.end()
+  })
+  const outcomes = []
+  const { proxy, port } = await proxyOf(upstream.port, {}, outcomes)
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'm', stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    const text = await response.text()
+    assert.match(text, /前文/, 'CRLF 帧里的正文不能再丢')
+    assert.match(text, /后文/)
+    assert.match(text, /"name":"read"/)
+    assert.match(text, /想一下/)
+    assert.match(text, /data: \[DONE\]/)
+    assert.equal(outcomes.at(-1).ok, true)
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    await stopAll(upstream.server)
+  }
+})
+
+test('P0-1：上游返回非 SSE 的 200（网关 200-JSON / stream:false）时正文不丢', async () => {
+  const upstream = await rawUpstream((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ id: 'y', model: 'm', created: 1, choices: [{ index: 0, message: { role: 'assistant', content: '你好呀', reasoning_content: '想想' }, finish_reason: 'stop' }], usage: { prompt_tokens: 3, completion_tokens: 4 } }))
+  })
+  const outcomes = []
+  const { proxy, port } = await proxyOf(upstream.port, {}, outcomes)
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'm', stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    const text = await response.text()
+    assert.match(text, /你好呀/)
+    assert.match(text, /想想/)
+    assert.match(text, /"finish_reason":"stop"/)
+    assert.match(text, /data: \[DONE\]/)
+    assert.equal(outcomes.at(-1).ok, true)
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    await stopAll(upstream.server)
+  }
+})
+
+test('P1-2：shim 路径上游中途断流 ⇒ 补 finish + [DONE] 且记失败（不再当成功）', async () => {
+  const upstream = await rawUpstream((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(sseFrame({ content: '半截' }) + '\n\n')
+    setTimeout(() => res.socket.destroy(), 40)
+  })
+  const outcomes = []
+  const { proxy, port } = await proxyOf(upstream.port, {}, outcomes)
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'm', stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    const text = await response.text()
+    assert.match(text, /半截/)
+    assert.match(text, /"finish_reason":"stop"/, '断流也要给结束标记，客户端不能挂死')
+    assert.match(text, /data: \[DONE\]/)
+    assert.equal(outcomes.at(-1).ok, false, '截断必须记失败')
+    assert.equal(proxy.stats().failed, 1)
+    assert.ok(proxy.audit().some((entry) => entry.kind === 'stream-error'))
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    await stopAll(upstream.server)
+  }
+})
+
+test('P1-3：非 shim 透传上游中途断流 ⇒ 客户端响应会结束（不再挂死）且记失败', async () => {
+  const upstream = await rawUpstream((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write('data: ' + JSON.stringify({ id: 'x', choices: [{ index: 0, delta: { content: '半截' } }] }) + '\n\n')
+    setTimeout(() => res.socket.destroy(), 40)
+  })
+  const outcomes = []
+  const { proxy, port } = await proxyOf(upstream.port, { shim: false }, outcomes)
+  try {
+    const ended = await new Promise((resolve) => {
+      let settled = false
+      const done = (value) => { if (!settled) { settled = true; resolve(value) } }
+      const request = http.request({ host: '127.0.0.1', port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' } }, (response) => {
+        response.on('data', () => {})
+        response.on('end', () => done(true))
+        response.on('close', () => done(true))
+      })
+      request.on('error', () => done(true))
+      request.end(JSON.stringify({ model: 'm', stream: true, messages: [{ role: 'user', content: 'hi' }] }))
+      setTimeout(() => done(false), 2500)
+    })
+    assert.equal(ended, true, '上游断流后客户端响应必须结束，不能一直挂着')
+    assert.equal(outcomes.at(-1).ok, false)
+    assert.ok(proxy.audit().some((entry) => entry.kind === 'stream-error'))
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    await stopAll(upstream.server)
+  }
+})
+
+test('P1-1：请求体没读完就断开 ⇒ 不冒泡 unhandledRejection', async () => {
+  const upstream = await rawUpstream((_req, res) => { res.writeHead(200, { 'content-type': 'application/json' }).end('{}') })
+  const rejections = []
+  const onRejection = (error) => rejections.push(error)
+  process.on('unhandledRejection', onRejection)
+  const { proxy, port } = await proxyOf(upstream.port, {})
+  try {
+    await new Promise((resolve) => {
+      const request = http.request({ host: '127.0.0.1', port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json', 'content-length': '100000' } }, () => {})
+      request.on('error', () => {})
+      request.write('{"model":"m","messages":[')
+      setTimeout(() => { request.destroy(); setTimeout(resolve, 400) }, 60)
+    })
+    assert.deepEqual(rejections, [], '客户端断开不能让宿主吃到 unhandledRejection')
+  } finally {
+    process.off('unhandledRejection', onRejection)
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    await stopAll(upstream.server)
+  }
+})
+
+test('P0-4：透传三态分开记账 —— skipped / ignored 不算失败，只有真被拒的 passthrough 才算', async () => {
+  const ok = await rawUpstream((_req, res) => { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true })) })
+  try {
+    // 用户点了「清空本轮填装」：impl 传的就是 enabled:false + skipping:true
+    const skipped = await (async () => {
+      const outcomes = []
+      const { proxy, port } = await proxyOf(ok.port, { enabled: false, skipping: true }, outcomes)
+      try {
+        await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }) })
+        return outcomes.at(-1)
+      } finally { proxy.server.closeAllConnections?.(); await proxy.close() }
+    })()
+    assert.equal(skipped.variant, 'skipped')
+    assert.equal(skipped.ok, true)
+
+    // 触发标记未命中：本轮本就不该加前缀
+    const ignored = await (async () => {
+      const outcomes = []
+      const { proxy, port } = await proxyOf(ok.port, { match: '不存在的标记' }, outcomes)
+      try {
+        await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }) })
+        return outcomes.at(-1)
+      } finally { proxy.server.closeAllConnections?.(); await proxy.close() }
+    })()
+    assert.equal(ignored.variant, 'ignored')
+
+    // 实验整体关着：也只是转发
+    const off = await (async () => {
+      const outcomes = []
+      const { proxy, port } = await proxyOf(ok.port, { enabled: false }, outcomes)
+      try {
+        await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }) })
+        return outcomes.at(-1)
+      } finally { proxy.server.closeAllConnections?.(); await proxy.close() }
+    })()
+    assert.equal(off.variant, 'ignored')
+
+    // 前缀版被上游拒绝 ⇒ 退回透传：这一种才是失败
+    const rejecting = await rawUpstream((req, res) => {
+      let raw = ''
+      req.on('data', (chunk) => { raw += chunk })
+      req.on('end', () => {
+        const parsed = JSON.parse(raw || '{}')
+        const prefixed = Array.isArray(parsed.messages) && parsed.messages.some((message) => message && message.prefix === true)
+        if (prefixed) { res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":"prefix not supported"}'); return }
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}')
+      })
+    })
+    try {
+      const outcomes = []
+      const { proxy, port } = await proxyOf(rejecting.port, {}, outcomes)
+      try {
+        await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }) })
+        const last = outcomes.at(-1)
+        assert.equal(last.variant, 'passthrough')
+        assert.equal(last.ok, true)
+      } finally { proxy.server.closeAllConnections?.(); await proxy.close() }
+    } finally {
+      await stopAll(rejecting.server)
+    }
+  } finally {
+    await stopAll(ok.server)
+  }
+})
 

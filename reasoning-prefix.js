@@ -15,19 +15,77 @@
 import http from 'node:http'
 import { appendFileSync } from 'node:fs'
 
-/** 判断一条请求能否加前缀：无工具、有消息、前缀非空。 */
-export function canInject(body, reasoningPrefix) {
-  if (typeof reasoningPrefix !== 'string' || reasoningPrefix.trim() === '') return 'empty-prefix'
+/** 判断一条请求能否加前缀：无工具、有消息、思考前缀 / 内容前缀至少一个非空。 */
+export function canInject(body, reasoningPrefix, contentPrefix = '') {
+  const reasoning = typeof reasoningPrefix === 'string' ? reasoningPrefix : ''
+  const content = typeof contentPrefix === 'string' ? contentPrefix : ''
+  if (reasoning.trim() === '' && content.trim() === '') return 'empty-prefix'
   if (!Array.isArray(body?.messages) || body.messages.length === 0) return 'no-messages'
   if (Array.isArray(body.tools) && body.tools.length > 0) return 'has-tools'
   return null
 }
 
-export function injectReasoningPrefix(body, { reasoningPrefix, contentPrefix = '' } = {}) {
-  const reason = canInject(body, reasoningPrefix)
+/**
+ * 把最后一条消息改成 assistant 前缀（官方 beta 的 Chat Prefix Completion）：
+ *   · contentPrefix → 回复正文的开头（想让模型「接下来写」的正文）；
+ *   · reasoningPrefix → 思维链开头（reasoning_content，beta 字段）。
+ * 两个都空时不注入；只有一个时另一个字段不带（官方要求 prefix 消息里字段可省略）。
+ */
+export function injectReasoningPrefix(body, { reasoningPrefix = '', contentPrefix = '' } = {}) {
+  const reason = canInject(body, reasoningPrefix, contentPrefix)
   if (reason !== null) return { body, applied: false, reason }
-  const messages = [...body.messages, { role: 'assistant', content: contentPrefix, reasoning_content: reasoningPrefix, prefix: true }]
+  const prefixMessage = { role: 'assistant', content: String(contentPrefix ?? ''), prefix: true }
+  if (String(reasoningPrefix ?? '').trim() !== '') prefixMessage.reasoning_content = String(reasoningPrefix)
+  const messages = [...body.messages, prefixMessage]
   return { body: { ...body, messages }, applied: true, reason: null }
+}
+
+/**
+ * 从上游 usage 里抽统一口径的缓存 / token 统计。
+ * 兼容 DeepSeek（prompt_cache_hit_tokens / prompt_cache_miss_tokens）、
+ * OpenAI（prompt_tokens_details.cached_tokens）、Anthropic（cache_read_input_tokens）。
+ * @param {unknown} raw 上游返回的 usage 对象
+ * @returns {{prompt:number, completion:number, cacheHit:number, cacheMiss:number|undefined}|null}
+ */
+export function parseUsage(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+  const details = raw.prompt_tokens_details !== null && typeof raw.prompt_tokens_details === 'object' ? raw.prompt_tokens_details : {}
+  const prompt = num(raw.prompt_tokens) ?? num(raw.input_tokens)
+  const completion = num(raw.completion_tokens) ?? num(raw.output_tokens)
+  const cacheHit = num(raw.prompt_cache_hit_tokens) ?? num(details.cached_tokens) ?? num(raw.cache_read_input_tokens)
+  const explicitMiss = num(raw.prompt_cache_miss_tokens)
+  if (prompt === undefined && completion === undefined && cacheHit === undefined) return null
+  return {
+    prompt: prompt ?? 0,
+    completion: completion ?? 0,
+    cacheHit: cacheHit ?? 0,
+    cacheMiss: explicitMiss ?? (prompt !== undefined ? Math.max(0, prompt - (cacheHit ?? 0)) : undefined),
+  }
+}
+
+/**
+ * 前缀模板变量（P1）：`{{date}}` / `{{time}}` / `{{model}}` / `{{provider}}` / `{{turn}}` / `{{session}}`。
+ * 认不出的变量原样保留（不丢信息，也方便用户发现打错了）。
+ * @param {string} text 前缀原文
+ * @param {{date?:string,time?:string,model?:string,provider?:string,turn?:number,session?:string}} [context]
+ */
+export function interpolatePrefixVars(text, context) {
+  if (typeof text !== 'string' || text === '') return text
+  const now = new Date()
+  const pad = (value) => String(value).padStart(2, '0')
+  const vars = {
+    date: context?.date ?? now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()),
+    time: context?.time ?? pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds()),
+    model: context?.model,
+    provider: context?.provider,
+    turn: context?.turn,
+    session: context?.session,
+  }
+  return text.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (whole, key) => {
+    const value = vars[key]
+    return value === undefined || value === null || value === '' ? whole : String(value)
+  })
 }
 
 function splitBy(text, size) {
@@ -308,12 +366,28 @@ export function parseDsmlToolCalls(text) {
   return { pre: text.slice(0, firstIndex), calls, post: text.slice(lastIndex) }
 }
 
+/** 工具清单的固定开头：代理用它判断「清单是否已在历史里」（history 模式不重复注入）。 */
+export const TOOL_CATALOG_MARK = '【前缀模式工具说明】'
+
+/** 请求消息里是否已经有工具清单（history 模式注入过一次后就不再注入）。 */
+export function hasToolCatalogMessage(messages) {
+  if (!Array.isArray(messages)) return false
+  return messages.some((message) => {
+    const content = message?.content
+    if (typeof content === 'string') return content.includes(TOOL_CATALOG_MARK)
+    if (Array.isArray(content)) return content.some((part) => typeof part?.text === 'string' && part.text.includes(TOOL_CATALOG_MARK))
+    return false
+  })
+}
+
 /**
  * 由工具 registry 的 wire schemas 生成「前缀模式」用的文本清单。
  * @param schemas - [{ name, description, parameters }]（parameters 为 JSON Schema 对象）
+ * @param options.detail - 'full' 完整（默认）| 'brief' 精简（描述 60 字 + 仅参数名）| 'names' 仅工具名
  * @returns 注入上下文的纯文本
  */
-export function buildToolCatalog(schemas) {
+export function buildToolCatalog(schemas, options) {
+  const detail = options?.detail === 'names' ? 'names' : options?.detail === 'brief' ? 'brief' : 'full'
   const list = Array.isArray(schemas) ? schemas : []
   const lines = [
     '【前缀模式工具说明】本轮没有 tools 参数。需要时按下面的格式发起工具调用：',
@@ -333,11 +407,20 @@ export function buildToolCatalog(schemas) {
   }
   for (const schema of list) {
     if (typeof schema?.name !== 'string' || schema.name === '') continue
+    if (detail === 'names') {
+      lines.push('- ' + schema.name)
+      if (lines.length > 80) break
+      continue
+    }
     const parameters = schema.parameters !== null && typeof schema.parameters === 'object' ? schema.parameters : {}
     const properties = parameters.properties !== null && typeof parameters.properties === 'object' ? parameters.properties : {}
     const required = Array.isArray(parameters.required) ? new Set(parameters.required) : new Set()
-    const params = Object.keys(properties).map((key) => describeParam(key, properties[key], required.has(key)))
-    const description = typeof schema.description === 'string' ? schema.description.replace(/\s+/g, ' ').slice(0, 160) : ''
+    const params =
+      detail === 'brief'
+        ? Object.keys(properties)
+        : Object.keys(properties).map((key) => describeParam(key, properties[key], required.has(key)))
+    const description =
+      typeof schema.description === 'string' ? schema.description.replace(/\s+/g, ' ').slice(0, detail === 'brief' ? 60 : 160) : ''
     lines.push('- ' + schema.name + '：' + description + (params.length > 0 ? '；参数：' + params.join('，') : '；无参数'))
     if (lines.length > 80) break
   }
@@ -372,21 +455,150 @@ export function toolCatalogText() {
 export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}) {
   /** 最近 50 条审计（状态路由读它）。 */
   const audit = []
+  /** 面板开关控制的 JSONL 日志（写文件；开关/路径来自 state，经 getConfig 传进来）。 */
+  let currentLogging = null
+  const proxyLog = (entry) => {
+    const logging = currentLogging
+    if (logging?.enabled !== true) return
+    const target = typeof logging.file === 'string' && logging.file !== '' ? logging.file : ''
+    if (target === '') return
+    try {
+      appendFileSync(target, JSON.stringify(entry) + '\n')
+    } catch {
+      // 日志写不进去不影响转发
+    }
+  }
   const record = (event) => {
-    audit.push({ at: Date.now(), ...event })
+    const entry = { at: Date.now(), ...event }
+    audit.push(entry)
     if (audit.length > 50) audit.shift()
+    proxyLog(entry)
+  }
+  /** 累计统计（实验面板读它；审计只留最近 50 条，统计不能只靠审计回溯）。 */
+  const stats = {
+    requests: 0,
+    ok: 0,
+    failed: 0,
+    variants: {},
+    calls: 0,
+    firstDeltaMs: { sum: 0, count: 0 },
+    ms: { sum: 0, count: 0 },
+    lastAt: 0,
+    // P0：缓存 / token 统计（上游 usage 口径）+ 首块延迟样本（算 p95）+ 上次请求形态。
+    usage: { requests: 0, prompt: 0, completion: 0, cacheHit: 0, cacheMiss: 0 },
+    lastUsage: null,
+    firstDeltaSamples: [],
+    lastRequest: null,
+  }
+  /** 记录一次上游 usage（同一请求可能多次回调，取最后一次）。 */
+  const recordUsage = (raw) => {
+    const usage = parseUsage(raw)
+    if (usage === null) return null
+    stats.lastUsage = usage
+    stats.usage.requests += 1
+    stats.usage.prompt += usage.prompt
+    stats.usage.completion += usage.completion
+    stats.usage.cacheHit += usage.cacheHit
+    stats.usage.cacheMiss += usage.cacheMiss ?? 0
+    return usage
+  }
+  /** 非流式 / SSE 透传路径的 usage 抽取（转发给客户端的同时顺手记账）。 */
+  const collectUsageFromBody = (contentType, text) => {
+    if (typeof text !== 'string' || text === '') return null
+    try {
+      if (String(contentType).includes('text/event-stream')) {
+        let last = null
+        for (const line of text.split('\n')) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith('data:')) continue
+          const payload = trimmed.slice(5).trim()
+          if (payload === '' || payload === '[DONE]') continue
+          const parsed = JSON.parse(payload)
+          if (parsed !== null && typeof parsed === 'object' && parsed.usage !== null && parsed.usage !== undefined) last = parsed.usage
+        }
+        if (last !== null) return recordUsage(last)
+      } else {
+        const parsed = JSON.parse(text)
+        if (parsed !== null && typeof parsed === 'object' && parsed.usage !== null && parsed.usage !== undefined) return recordUsage(parsed.usage)
+      }
+    } catch {
+      // 解析失败不影响转发（只是诊断数字）。
+    }
+    return null
+  }
+  /** 首块延迟 p95（只留最近 100 个样本，够诊断用）。 */
+  const firstDeltaP95 = () => {
+    const list = stats.firstDeltaSamples
+    if (list.length === 0) return null
+    const sorted = [...list].sort((a, b) => a - b)
+    const at = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)
+    return sorted[at]
+  }
+  const bump = ({ ok, variant, ms, firstDeltaMs, calls } = {}) => {
+    stats.requests += 1
+    stats.lastAt = Date.now()
+    if (ok === true) {
+      stats.ok += 1
+      stats.variants[String(variant ?? 'none')] = (stats.variants[String(variant ?? 'none')] ?? 0) + 1
+      if (Number.isFinite(ms)) {
+        stats.ms.sum += ms
+        stats.ms.count += 1
+      }
+      if (Number.isFinite(firstDeltaMs)) {
+        stats.firstDeltaMs.sum += firstDeltaMs
+        stats.firstDeltaMs.count += 1
+      }
+      if (Number.isFinite(calls)) stats.calls += calls
+    } else stats.failed += 1
   }
   const server = http.createServer(async (req, res) => {
-    const chunks = []
-    for await (const chunk of req) chunks.push(chunk)
-    const incoming = Buffer.concat(chunks)
+    // 客户端在请求体发完之前断开时 for await(req) 会抛 aborted；漏出去就是 unhandledRejection，
+    // Node 默认 --unhandled-rejections=throw ⇒ 宿主进程会被终止。这里就地收口。
+    let incoming
+    try {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      incoming = Buffer.concat(chunks)
+    } catch (error) {
+      logger?.warn?.('dsh-prefill: reasoning-prefix 读取请求体失败（客户端可能已断开）: ' + String(error?.message ?? error))
+      try { res.destroy() } catch { /* 连接已经没了 */ }
+      return
+    }
     const config = getConfig?.() ?? {}
+    currentLogging = config.logging !== null && typeof config.logging === 'object' ? config.logging : null
+    // P1：调试文件路径也走 state（面板可开关），环境变量只作兼容兜底。
+    const debugPaths = {
+      dump: String(currentLogging?.dumpFile ?? '') || process.env.DSH_PREFILL_SPIKE_DUMP || '',
+      raw: String(currentLogging?.rawFile ?? '') || process.env.DSH_PREFILL_SPIKE_RAW || '',
+      content: String(currentLogging?.contentFile ?? '') || process.env.DSH_PREFILL_SPIKE_CONTENT || '',
+    }
     const isChat = req.url?.includes('/chat/completions') === true
     let applied = false
     let shimActive = false
     let reason = 'not-chat'
     let systemBody = null
     let userBody = null
+    /** 上次请求的形态（P0 诊断：消息数 / tools / 清单大小 / 前缀），最终变体确定后记账。 */
+    let requestShape = null
+    const markRequest = (variant) => {
+      if (requestShape === null) return
+      stats.lastRequest = {
+        at: Date.now(),
+        variant,
+        messages: requestShape.messages,
+        tools: requestShape.tools,
+        catalogBytes: requestShape.catalogBytes,
+        textualized: requestShape.textualized,
+        reasoningPrefix: requestShape.reasoningPrefix,
+        contentPrefix: requestShape.contentPrefix,
+        catalogMode: requestShape.catalogMode,
+        catalogDetail: requestShape.catalogDetail,
+        catalogPosition: requestShape.catalogPosition,
+        catalogInjected: requestShape.catalogInjected,
+        catalogHead: requestShape.catalogHead,
+        prefixMessage: requestShape.prefixMessage,
+      }
+    }
     if (isChat && config.enabled !== false) {
       try {
         const body = JSON.parse(incoming.toString('utf8'))
@@ -417,18 +629,57 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             reason = null
             if (textualized.changed > 0) logger?.info?.('dsh-prefill: reasoning-prefix 文本化了 ' + textualized.changed + ' 条 tool 消息')
           }
-          const result = injectReasoningPrefix(draft, config)
+          // P1：前缀模板变量（{{date}}/{{time}}/{{model}} 等）在发请求前展开。
+          const interpolatedConfig = {
+            ...config,
+            reasoningPrefix: interpolatePrefixVars(config.reasoningPrefix, { model: draft.model }),
+            contentPrefix: interpolatePrefixVars(config.contentPrefix, { model: draft.model }),
+          }
+          const result = injectReasoningPrefix(draft, interpolatedConfig)
           if (!result.applied) {
             reason = result.reason
             return null
           }
           applied = true
           reason = null
+          requestShape = {
+            messages: Array.isArray(draft.messages) ? draft.messages.length : 0,
+            tools: Array.isArray(body.tools) ? body.tools.length : 0,
+            catalogBytes: catalog.length,
+            textualized: config.textualize === true || process.env.DSH_PREFILL_SPIKE_TEXTUALIZE === '1',
+            reasoningPrefix: String(interpolatedConfig.reasoningPrefix ?? ''),
+            contentPrefix: String(interpolatedConfig.contentPrefix ?? ''),
+            catalogMode: config.catalogMode === 'history' ? 'history' : 'each',
+            catalogDetail: config.catalogDetail === 'brief' || config.catalogDetail === 'names' ? config.catalogDetail : 'full',
+            catalogPosition: config.catalogPosition === 'tail' ? 'tail' : 'head',
+            catalogInjected: config.catalogMode !== 'history' || !hasToolCatalogMessage(result.body.messages),
+            // P0 预览正文片段：清单前几行 + 实际注入的前缀消息（面板展开看）。
+            catalogHead: catalog.split('\n').slice(0, 8).join('\n').slice(0, 900),
+            prefixMessage: {
+              reasoning: String(interpolatedConfig.reasoningPrefix ?? '').slice(0, 200),
+              content: String(interpolatedConfig.contentPrefix ?? '').slice(0, 200),
+            },
+          }
           const shim = config.shim === true || process.env.DSH_PREFILL_SPIKE_SHIM === '1'
           if (shim) {
             const messages = result.body.messages
             const prefixMessage = messages[messages.length - 1]
-            result.body.messages = [...messages.slice(0, -1), catalogMessages[catalogRole], prefixMessage]
+            const base = messages.slice(0, -1)
+            // catalogMode=history：插件已把清单一次性注入会话历史（含在 messages 里）⇒ 这里不再重复注入；
+            // 万一历史里没有（注入失败 / 被压缩掉），退回每轮注入兜底。
+            const injectCatalog = !(config.catalogMode === 'history' && hasToolCatalogMessage(messages))
+            if (injectCatalog) {
+              if (config.catalogPosition === 'tail') {
+                // 老行为：紧贴 prefix 消息。尾部会被后面增长的历史顶开 ⇒ 每轮都不进缓存。
+                result.body.messages = [...base, catalogMessages[catalogRole], prefixMessage]
+              } else {
+                // 默认：插在开头 system 段之后 —— 每轮都一样的大块作为稳定前缀被上游缓存
+                // （P0 实测：尾部放置缓存命中 ~51%，挪到开头后第 2 轮起 95–96%）。
+                let insertAt = 0
+                while (insertAt < base.length && base[insertAt]?.role === 'system') insertAt += 1
+                result.body.messages = [...base.slice(0, insertAt), catalogMessages[catalogRole], ...base.slice(insertAt), prefixMessage]
+              }
+            }
             shimActive = true
           }
           return Buffer.from(JSON.stringify(result.body), 'utf8')
@@ -449,7 +700,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     }
     const upstream = String(config.upstream ?? 'https://api.deepseek.com/beta').replace(/\/+$/, '')
     const target = upstream + String(req.url ?? '').replace(/^\/(?:beta\/)?v1/, '')
-    const dumpPath = process.env.DSH_PREFILL_SPIKE_DUMP
+    const dumpPath = debugPaths.dump
     if (typeof dumpPath === 'string' && dumpPath !== '' && isChat && systemBody !== null) {
       try {
         const parsed = JSON.parse(systemBody.toString('utf8'))
@@ -459,16 +710,38 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       }
     }
     const variants = [];
-    const preferUser = config.catalogRole === 'user';
-    if (preferUser) {
-      if (userBody !== null && shimActive) variants.push({ kind: 'user', body: userBody });
-      if (systemBody !== null && shimActive) variants.push({ kind: 'system', body: systemBody });
-    } else {
-      if (systemBody !== null && shimActive) variants.push({ kind: 'system', body: systemBody });
-      if (userBody !== null && shimActive) variants.push({ kind: 'user', body: userBody });
+    // 回退链顺序（P1 可配）：system-first / user-first；不配时按 catalogRole 偏好。
+    // catalogRole=user 表示「清单伪装成 user 消息」，所以它同时决定首选变体。
+    const order =
+      config.fallbackOrder === 'system-first'
+        ? ['system', 'user']
+        : config.fallbackOrder === 'user-first'
+          ? ['user', 'system']
+          : config.catalogRole === 'user'
+            ? ['user', 'system']
+            : ['system', 'user']
+    for (const kind of order) {
+      if (kind === 'user' && userBody !== null && shimActive) variants.push({ kind: 'user', body: userBody })
+      if (kind === 'system' && systemBody !== null && shimActive) variants.push({ kind: 'system', body: systemBody })
     }
     if (systemBody !== null && !shimActive) variants.push({ kind: 'prefixed', body: systemBody });
-    variants.push({ kind: 'passthrough', body: incoming });
+    // 是否允许透传（P1 可配）：关掉后只试前缀版本；若本轮没有任何前缀版本（比如「清空填装」），兜底仍透传。
+    if (config.allowPassthrough !== false || variants.length === 0) variants.push({ kind: 'passthrough', body: incoming });
+    /**
+     * 透传有三种完全不同的含义，面板与「连续失败自动停用」必须分开看 ——
+     * 以前一律叫 passthrough，于是「用户主动跳过」「触发标记未命中」都被算成失败，
+     * 几次之后实验自己把自己关掉（还会删掉模型路由）。
+     *   · skipped     = 用户点了「清空本轮填装」（config.skipping）；
+     *   · ignored     = 本轮本就不该加前缀（非 chat / 标记未命中 / 前缀为空 / 带工具）；
+     *   · passthrough = 前缀版被上游拒绝后退回透传 —— 只有这一种算失败。
+     */
+    const IGNORED_REASONS = ['not-chat', 'no-match', 'empty-prefix', 'no-messages', 'has-tools']
+    const outcomeVariant = (kind) => {
+      if (kind !== 'passthrough') return kind
+      if (config.skipping === true) return 'skipped'
+      if (IGNORED_REASONS.includes(reason)) return 'ignored'
+      return 'passthrough'
+    }
     const started = Date.now()
     try {
       let final = null
@@ -489,12 +762,14 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         logger?.warn?.(`dsh-prefill: reasoning-prefix ${variant.kind} 上游 ${response.status}: ${text.slice(0, 300)}`)
         if (variant.kind === 'passthrough') {
           res.writeHead(response.status, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(text) }).end(text)
-          onOutcome?.({ ok: false, variant: 'passthrough', status: response.status })
+          bump({ ok: false })
+          onOutcome?.({ ok: false, variant: outcomeVariant('passthrough'), status: response.status })
           return;
         }
       }
       if (final === null) {
         res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('reasoning-prefix proxy: no variant succeeded')
+        bump({ ok: false })
         onOutcome?.({ ok: false, variant: 'none', status: 502 })
         return;
       }
@@ -504,6 +779,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         outHeaders[key] = value
       }
       const transformedVariant = finalVariant === 'system' || finalVariant === 'user'
+      // 对外记账用的变体名：透传要区分 skipped / ignored / passthrough（见 outcomeVariant）。
+      const reportedVariant = outcomeVariant(finalVariant)
+      const upstreamIsSse = String(final.headers.get('content-type') ?? '').includes('text/event-stream')
       if (shimActive && transformedVariant) {
         // 流式改写：文本增量立即转发，只有出现 DSML 起始标记时才缓冲成 tool_calls。
         res.writeHead(final.status, {
@@ -516,11 +794,27 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         let base = null
         let callCount = 0
         const seenCalls = new Set()
-        const MAX_EMITTED_CALLS = 8
+        // 流中途断掉时客户端可能已经没了：写响应要包起来；收尾必须走 closeStream（补 finish + [DONE]），
+        // 否则 DSH 那边等不到结束标记，我们这边还会把它记成一次成功。
+        let streamError = null
+        let sawFrame = false
+        let sawPayload = false
+        const safeWrite = (text) => {
+          try {
+            if (res.writableEnded !== true && res.destroyed !== true) res.write(text)
+          } catch {
+            // 客户端断开后写入会抛，忽略即可
+          }
+        }
+        // 一次响应最多吐几个工具调用：面板可调（state.ui.reasoningPrefix.maxEmittedCalls），默认 8。
+        const MAX_EMITTED_CALLS = Number.isInteger(config.maxEmittedCalls) ? Math.max(1, Math.min(32, config.maxEmittedCalls)) : 8
         let firstDeltaMs = null
         let finished = false
         const collected = []
-        const contentLog = process.env.DSH_PREFILL_SPIKE_CONTENT
+        // P0 审计详情：记下每次工具调用的名字与参数摘要（面板展开看）。
+        const callDetails = []
+        let requestUsage = null
+        const contentLog = debugPaths.content
         const writeChunk = (delta, finishReason) => {
           const payload = {
             id: typeof base?.id === 'string' ? base.id : 'shim',
@@ -529,9 +823,11 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             model: typeof base?.model === 'string' ? base.model : '',
             choices: [{ index: 0, delta, finish_reason: finishReason === undefined ? null : finishReason }],
           }
-          res.write('data: ' + JSON.stringify(payload) + '\n\n')
+          safeWrite('data: ' + JSON.stringify(payload) + '\n\n')
         }
         const writeUsage = (usage) => {
+          const parsed = recordUsage(usage)
+          if (parsed !== null) requestUsage = parsed
           const payload = {
             id: typeof base?.id === 'string' ? base.id : 'shim',
             object: 'chat.completion.chunk',
@@ -540,11 +836,12 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             choices: [],
             usage,
           }
-          res.write('data: ' + JSON.stringify(payload) + '\n\n')
+          safeWrite('data: ' + JSON.stringify(payload) + '\n\n')
         }
         const emitEvents = (events) => {
           for (const event of events) {
             if (event.type === 'content') {
+              sawPayload = true
               if (firstDeltaMs === null) firstDeltaMs = Date.now() - started
               writeChunk({ content: event.text })
             } else if (event.type === 'calls') {
@@ -556,6 +853,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
                 seenCalls.add(call.name + '\u0000' + call.arguments)
                 const index = callCount
                 callCount += 1
+                sawPayload = true
+                callDetails.push({ name: call.name, args: call.arguments.slice(0, 160) })
                 if (firstDeltaMs === null) firstDeltaMs = Date.now() - started
                 writeChunk({ tool_calls: [{ index, id: 'call_' + index + '_' + Math.random().toString(36).slice(2, 10), type: 'function', function: { name: call.name, arguments: '' } }] })
                 for (let offset = 0; offset < call.arguments.length; offset += 120) {
@@ -573,8 +872,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         }
         const closeStream = () => {
           if (finished !== true) finish('stop')
-          res.write('data: [DONE]\n\n')
-          res.end()
+          safeWrite('data: [DONE]\n\n')
+          try { if (res.writableEnded !== true) res.end() } catch { /* 已经断了 */ }
           if (typeof contentLog === 'string' && contentLog !== '') {
             try {
               appendFileSync(contentLog, JSON.stringify({ at: Date.now(), text: collected.join('') }) + '\n')
@@ -594,12 +893,14 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           } catch {
             return
           }
+          sawFrame = true
           if (base === null) base = chunk
           if (chunk.usage !== undefined && chunk.usage !== null) writeUsage(chunk.usage)
           const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined
           const delta = choice !== null && typeof choice === 'object' ? choice.delta : undefined
           if (delta !== null && typeof delta === 'object') {
             if (typeof delta.reasoning_content === 'string' && delta.reasoning_content !== '') {
+              sawPayload = true
               if (firstDeltaMs === null) firstDeltaMs = Date.now() - started
               writeChunk({ reasoning_content: delta.reasoning_content })
             }
@@ -617,41 +918,94 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         }
         if (final.body !== null) {
           const { Readable } = await import('node:stream')
-          await new Promise((resolve) => {
-            const reader = Readable.fromWeb(final.body)
-            const decoder = new TextDecoder()
-            let frameBuffer = ''
-            reader.on('data', (chunk) => {
-              frameBuffer += decoder.decode(chunk, { stream: true })
-              let splitAt
-              while ((splitAt = frameBuffer.indexOf('\n\n')) >= 0) {
-                const raw = frameBuffer.slice(0, splitAt)
-                frameBuffer = frameBuffer.slice(splitAt + 2)
-                handleFrame(raw)
-              }
+          if (upstreamIsSse !== true) {
+            // 上游没按 SSE 回（网关 200-JSON / 忽略了 stream:true）：整段读进来按同一口径吐 SSE。
+            // 以前会走进帧切分分支，永远匹配不到 '\n\n' ⇒ 正文被静默丢掉（只剩 finish + [DONE]）。
+            let raw = ''
+            await new Promise((resolve) => {
+              const reader = Readable.fromWeb(final.body)
+              reader.on('data', (chunk) => { raw += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk) })
+              reader.on('end', resolve)
+              reader.on('error', (error) => { streamError = error; resolve() })
             })
-            reader.on('end', () => {
+            if (streamError === null) {
               try {
-                handleFrame(frameBuffer)
-              } catch {
-                // 尾帧解析失败不影响收尾
+                const parsed = JSON.parse(raw)
+                base = parsed
+                const message = parsed?.choices?.[0]?.message ?? {}
+                if (parsed?.usage !== undefined && parsed.usage !== null) writeUsage(parsed.usage)
+                if (typeof message.reasoning_content === 'string' && message.reasoning_content !== '') {
+                  sawPayload = true
+                  if (firstDeltaMs === null) firstDeltaMs = Date.now() - started
+                  writeChunk({ reasoning_content: message.reasoning_content })
+                }
+                if (typeof message.content === 'string' && message.content !== '') {
+                  sawPayload = true
+                  collected.push(message.content)
+                  emitEvents(parser.push(message.content))
+                }
+              } catch (error) {
+                streamError = error
               }
-              closeStream()
-              resolve()
+            }
+            closeStream()
+          } else {
+            await new Promise((resolve) => {
+              const reader = Readable.fromWeb(final.body)
+              const decoder = new TextDecoder()
+              let frameBuffer = ''
+              reader.on('data', (chunk) => {
+                frameBuffer += decoder.decode(chunk, { stream: true })
+                // SSE 规范允许 CRLF 分帧；只按 '\n\n' 切会永远匹配不到 ⇒ 整段回复被静默丢掉。
+                if (frameBuffer.indexOf('\r') >= 0) frameBuffer = frameBuffer.replace(/\r\n/g, '\n')
+                let splitAt
+                while ((splitAt = frameBuffer.indexOf('\n\n')) >= 0) {
+                  const raw = frameBuffer.slice(0, splitAt)
+                  frameBuffer = frameBuffer.slice(splitAt + 2)
+                  handleFrame(raw)
+                }
+              })
+              reader.on('end', () => {
+                try {
+                  handleFrame(frameBuffer)
+                } catch {
+                  // 尾帧解析失败不影响收尾
+                }
+                closeStream()
+                resolve()
+              })
+              reader.on('error', (error) => {
+                // 以前只 res.end()：没有 finish_reason、没有 [DONE]，parser 缓冲的文本与调用全丢，
+                // 而且下游还会记成一次成功。现在补完整收尾，并把这次标成失败。
+                streamError = error
+                closeStream()
+                resolve()
+              })
             })
-            reader.on('error', () => {
-              try {
-                res.end()
-              } catch {
-                // 客户端已断开
-              }
-              resolve()
-            })
-          })
+          }
         } else {
           closeStream()
         }
-        record({ kind: 'shim', variant: finalVariant, status: final.status, calls: callCount, ms: Date.now() - started, firstDeltaMs })
+        if (firstDeltaMs !== null && Number.isFinite(firstDeltaMs)) {
+          stats.firstDeltaSamples.push(firstDeltaMs)
+          if (stats.firstDeltaSamples.length > 100) stats.firstDeltaSamples.shift()
+        }
+        markRequest(reportedVariant)
+        if (streamError !== null) {
+          // 上游中途断流：尾巴已经尽量补成 finish + [DONE]（不让客户端挂死），但必须记成失败 ——
+          // 以前这里 bump ok，面板全绿，用户完全不知道回复被截断了。
+          record({ kind: 'stream-error', variant: reportedVariant, status: final.status, error: String(streamError?.message ?? streamError), ms: Date.now() - started, firstDeltaMs })
+          bump({ ok: false })
+          onOutcome?.({ ok: false, variant: reportedVariant, status: final.status, error: 'stream' })
+          logger?.warn?.('dsh-prefill: reasoning-prefix shim 流中断: ' + String(streamError?.message ?? streamError))
+          return;
+        }
+        if (sawFrame === true && sawPayload !== true && callCount === 0) {
+          // 收到过帧却一个增量都没解析出来：不再静默当成功，留一条审计（不判失败，避免误停用）。
+          record({ kind: 'no-delta', variant: reportedVariant, status: final.status, bytes: collected.join('').length })
+        }
+        record({ kind: 'shim', variant: reportedVariant, status: final.status, calls: callCount, callsDetail: callDetails.slice(0, 8), usage: requestUsage, ms: Date.now() - started, firstDeltaMs })
+        bump({ ok: true, variant: reportedVariant, ms: Date.now() - started, firstDeltaMs, calls: callCount })
         const shimLog = process.env.DSH_PREFILL_SPIKE_LOG
         if (typeof shimLog === 'string' && shimLog !== '') {
           try {
@@ -660,38 +1014,58 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             // 日志失败不影响转发
           }
         }
-        onOutcome?.({ ok: true, variant: finalVariant, status: final.status, calls: callCount })
+        onOutcome?.({ ok: true, variant: reportedVariant, status: final.status, calls: callCount })
         logger?.info?.('dsh-prefill: reasoning-prefix shim 流式转换完成，文本首块 ' + String(firstDeltaMs ?? '-') + 'ms，工具调用 ' + callCount + ' 个')
         return;
       }
       res.writeHead(final.status, outHeaders)
-      const rawPathForStream = process.env.DSH_PREFILL_SPIKE_RAW
+      let forwardUsage = null
+      const rawPathForStream = debugPaths.raw
       if (final.body !== null) {
         const { Readable } = await import('node:stream')
+        const contentType = String(final.headers.get('content-type') ?? '')
+        let collected = ''
+        let forwardError = null
         await new Promise((resolve) => {
           const reader = Readable.fromWeb(final.body)
-          if (typeof rawPathForStream === 'string' && rawPathForStream !== '') {
-            reader.on('data', (chunk) => { try { appendFileSync(rawPathForStream, chunk) } catch { /* ignore */ } })
-          }
+          reader.on('data', (chunk) => {
+            if (typeof rawPathForStream === 'string' && rawPathForStream !== '') {
+              try { appendFileSync(rawPathForStream, chunk) } catch { /* ignore */ }
+            }
+            if (collected.length < 4 * 1024 * 1024) collected += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
+          })
           reader.pipe(res)
           reader.on('end', resolve)
-          reader.on('error', resolve)
+          // 以前只 resolve：pipe 在源出错时不会关目标 ⇒ 客户端响应永不结束（挂死），还记成成功。
+          reader.on('error', (error) => { forwardError = error; try { res.destroy() } catch { /* 已经断了 */ } resolve() })
         })
+        if (forwardError !== null) {
+          markRequest(reportedVariant)
+          record({ kind: 'stream-error', variant: reportedVariant, status: final.status, error: String(forwardError?.message ?? forwardError), ms: Date.now() - started })
+          bump({ ok: false })
+          onOutcome?.({ ok: false, variant: reportedVariant, status: final.status, error: 'stream' })
+          logger?.warn?.('dsh-prefill: reasoning-prefix 转发流中断: ' + String(forwardError?.message ?? forwardError))
+          return;
+        }
+        forwardUsage = collectUsageFromBody(contentType, collected)
       } else res.end()
-      record({ kind: 'forward', variant: finalVariant, status: final.status, ms: Date.now() - started })
+      markRequest(reportedVariant)
+      record({ kind: 'forward', variant: reportedVariant, status: final.status, usage: forwardUsage, ms: Date.now() - started })
+      bump({ ok: true, variant: reportedVariant, ms: Date.now() - started })
       const logPath = process.env.DSH_PREFILL_SPIKE_LOG
       if (typeof logPath === 'string' && logPath !== '') {
         try {
-          appendFileSync(logPath, JSON.stringify({ at: Date.now(), applied, reason, variant: finalVariant, status: final.status, target, ms: Date.now() - started }) + '\n')
+          appendFileSync(logPath, JSON.stringify({ at: Date.now(), applied, reason, variant: reportedVariant, status: final.status, target, ms: Date.now() - started }) + '\n')
         } catch {
           // 日志写不进去不影响转发
         }
       }
-      onOutcome?.({ ok: true, variant: finalVariant, status: final.status })
-      logger?.info?.(`dsh-prefill: reasoning-prefix ${applied ? '已加前缀(' + finalVariant + ')' : '透传(' + reason + ')'} → ${target} [${final.status}] ${Date.now() - started}ms`)
+      onOutcome?.({ ok: true, variant: reportedVariant, status: final.status })
+      logger?.info?.(`dsh-prefill: reasoning-prefix ${applied ? '已加前缀(' + reportedVariant + ')' : '透传(' + reason + ')'} → ${target} [${final.status}] ${Date.now() - started}ms`)
     } catch (error) {
       logger?.warn?.(`dsh-prefill: reasoning-prefix 转发失败: ${String(error?.message ?? error)}`)
       record({ kind: 'transport-error', error: String(error?.message ?? error) })
+      bump({ ok: false })
       onOutcome?.({ ok: false, variant: 'none', status: 0 })
       res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('reasoning-prefix proxy error: ' + String(error?.message ?? error))
     }
@@ -699,10 +1073,67 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
   return {
     server,
     audit: () => [...audit],
+    /** 实验面板用的累计统计（深拷贝，调用方改不到内部计数）。 */
+    stats: () => ({
+      ...stats,
+      variants: { ...stats.variants },
+      ms: { ...stats.ms },
+      firstDeltaMs: { ...stats.firstDeltaMs },
+      usage: { ...stats.usage },
+      lastUsage: stats.lastUsage === null ? null : { ...stats.lastUsage },
+      firstDeltaSamples: stats.firstDeltaSamples.slice(-20),
+      firstDeltaP95: firstDeltaP95(),
+      lastRequest: stats.lastRequest === null ? null : { ...stats.lastRequest },
+    }),
+    resetStats: () => {
+      stats.requests = 0
+      stats.ok = 0
+      stats.failed = 0
+      stats.variants = {}
+      stats.calls = 0
+      stats.firstDeltaMs = { sum: 0, count: 0 }
+      stats.ms = { sum: 0, count: 0 }
+      stats.lastAt = 0
+      stats.usage = { requests: 0, prompt: 0, completion: 0, cacheHit: 0, cacheMiss: 0 }
+      stats.lastUsage = null
+      stats.firstDeltaSamples = []
+      stats.lastRequest = null
+    },
+    /**
+     * 绑定 127.0.0.1 上的端口；被占用时顺序向后找空位（最多 16 个）。
+     * 端口冲突在多实例 / 残留进程下很常见，静默失败会让「模型路由指向死端口」，
+     * 所以这里直接换端口并把实际端口回给调用方（由调用方写回状态 + 路由 baseURL）。
+     */
     listen(port) {
       return new Promise((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(port, '127.0.0.1', () => resolve(server.address().port))
+        let attempts = 0
+        const maxAttempts = 16
+        const cleanup = () => {
+          server.off('error', onError)
+          server.off('listening', onListening)
+        }
+        const onError = (error) => {
+          if (error?.code === 'EADDRINUSE' && attempts < maxAttempts) {
+            attempts += 1
+            const next = port + attempts
+            if (next <= 65535) {
+              tryListen(next)
+              return
+            }
+          }
+          cleanup()
+          reject(error)
+        }
+        const onListening = () => {
+          cleanup()
+          resolve(server.address().port)
+        }
+        const tryListen = (candidate) => {
+          server.once('error', onError)
+          server.once('listening', onListening)
+          server.listen(candidate, '127.0.0.1')
+        }
+        tryListen(port)
       })
     },
     close() {

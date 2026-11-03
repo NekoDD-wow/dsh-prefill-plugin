@@ -16,7 +16,7 @@ const baseEnvelope = () => ({
     levers: { probeSection: false, probeContext: false, blockSections: false, blockContexts: false, blockTools: false, blockMessages: false },
     allowKinds: ['user'],
     tools: null,
-    ui: { motion: 'full' },
+    ui: { motion: 'full', experimental: true },
     everyTurn: {
       '*': { enabled: true, text: '默认提醒', firstText: '', mode: 'always', checks: [], auto: { warmup: 3, streak: 3, probation: 2 } },
     },

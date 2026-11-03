@@ -21,11 +21,12 @@
  * @module @local/dsh-prefill
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import https from 'node:https'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { zstdDecompressSync } from 'node:zlib'
 import { builtinPreset, builtinSummaries, everyTurnBlocks, everyTurnPresets, everyTurnTowers, migrateLegacyCwdOverrides, migrateLegacyCwdPrompt } from './builtin-presets.js'
 import { blockFromPreset, compileBench, makeBlock, normalizeChecks } from './blocks.js'
@@ -150,20 +151,90 @@ export function sanitizeUi(raw) {
   if (['full', 'lite', 'off'].includes(raw.motion)) out.motion = raw.motion
   // 「改常驻条目会重拼系统提示」的确认框勾了「不再提示」⇒ 记住（全局设置，不进预设）。
   if (raw.loreConstWarn === true) out.loreConstWarn = true
+  // 实验性功能总开关（默认关）：关着时实验区只留开关，胶囊弹窗不显示实验面板。
+  if (raw.experimental === true) out.experimental = true
   // 思考前缀实验（DeepSeek beta）：开关 / 前缀 / 端口 / 路由名 / 触发标记；未知字段丢掉。
   const reasoning = raw.reasoningPrefix
   if (reasoning !== null && typeof reasoning === 'object' && !Array.isArray(reasoning)) {
     const next = {}
     if (reasoning.enabled === true) next.enabled = true
     if (typeof reasoning.prefix === 'string') next.prefix = reasoning.prefix.slice(0, 2000)
+    // 内容前缀（assistant 消息的 content 开头，官方 beta 的另一种前缀）。
+    if (typeof reasoning.contentPrefix === 'string') next.contentPrefix = reasoning.contentPrefix.slice(0, 2000)
     if (Number.isInteger(reasoning.port) && reasoning.port > 0 && reasoning.port < 65536) next.port = reasoning.port
     if (typeof reasoning.providerId === 'string' && /^[a-z0-9-]+$/.test(reasoning.providerId)) next.providerId = reasoning.providerId
     if (typeof reasoning.modelId === 'string' && reasoning.modelId !== '') next.modelId = reasoning.modelId.slice(0, 200)
     if (typeof reasoning.match === 'string') next.match = reasoning.match
     if (reasoning.catalogRole === 'user' || reasoning.catalogRole === 'system') next.catalogRole = reasoning.catalogRole
+    // 面板可调的 shim / textualize（默认 true）：**必须在这里放行**，否则路由收下、写盘时被丢掉，
+    // 表现就是「保存提示成功、复选框回弹、代理永远按 true 跑」（docs §5 那条坑）。
+    if (typeof reasoning.shim === 'boolean') next.shim = reasoning.shim
+    if (typeof reasoning.textualize === 'boolean') next.textualize = reasoning.textualize
+    // 工具清单的三个可选口径（v0.20.5）：
+    // catalogMode：each = 每轮代理内部注入（默认）| history = 插件往会话历史注入一次，代理不再重复注入
+    // catalogDetail：full 完整 / brief 精简 / names 仅工具名（瘦身）
+    // catalogPosition：head 插在开头 system 段后（利于缓存，默认）/ tail 紧贴前缀消息（老行为）
+    if (reasoning.catalogMode === 'history' || reasoning.catalogMode === 'each') next.catalogMode = reasoning.catalogMode === 'history' ? 'history' : 'each'
+    if (reasoning.catalogDetail === 'full' || reasoning.catalogDetail === 'brief' || reasoning.catalogDetail === 'names') next.catalogDetail = reasoning.catalogDetail
+    if (reasoning.catalogPosition === 'head' || reasoning.catalogPosition === 'tail') next.catalogPosition = reasoning.catalogPosition === 'tail' ? 'tail' : 'head'
+    // P1：回退链顺序 / 是否允许 passthrough。
+    if (reasoning.fallbackOrder === 'system-first' || reasoning.fallbackOrder === 'user-first') next.fallbackOrder = reasoning.fallbackOrder
+    if (reasoning.allowPassthrough === false) next.allowPassthrough = false
+    // P1：清单包含 / 排除（工具名；最多 60 个，单个 ≤80 字）。
+    const toolList = (value) => {
+      if (!Array.isArray(value)) return undefined
+      const out = value
+        .filter((item) => typeof item === 'string' && item.trim() !== '')
+        .map((item) => item.trim().slice(0, 80))
+        .slice(0, 60)
+      return out.length > 0 ? out : undefined
+    }
+    const include = toolList(reasoning.catalogInclude)
+    if (include !== undefined) next.catalogInclude = include
+    const exclude = toolList(reasoning.catalogExclude)
+    if (exclude !== undefined) next.catalogExclude = exclude
+    // 代理 JSONL 日志：开关 + 路径（默认路径由 config 兜底，这里只存用户改过的）。
+    if (reasoning.logging !== null && typeof reasoning.logging === 'object' && !Array.isArray(reasoning.logging)) {
+      const logging = {}
+      if (reasoning.logging.enabled === true) logging.enabled = true
+      if (typeof reasoning.logging.file === 'string' && reasoning.logging.file.trim() !== '') logging.file = reasoning.logging.file.trim().slice(0, 300)
+      // P1：调试用三份文件（请求形态 dump / 原始流 raw / 模型文本 content），空字符串 = 关闭。
+      for (const key of ['dumpFile', 'rawFile', 'contentFile']) {
+        if (typeof reasoning.logging[key] === 'string' && reasoning.logging[key].trim() !== '') logging[key] = reasoning.logging[key].trim().slice(0, 300)
+      }
+      if (Object.keys(logging).length > 0) next.logging = logging
+    }
+    // 实验面板可调的硬编码：一次响应最多吐几个工具调用 / 连续失败几次自动停用。
+    if (Number.isInteger(reasoning.maxEmittedCalls) && reasoning.maxEmittedCalls >= 1 && reasoning.maxEmittedCalls <= 32) next.maxEmittedCalls = reasoning.maxEmittedCalls
+    if (Number.isInteger(reasoning.failureThreshold) && reasoning.failureThreshold >= 1 && reasoning.failureThreshold <= 10) next.failureThreshold = reasoning.failureThreshold
     out.reasoningPrefix = next
   }
   return Object.keys(out).length > 0 ? out : undefined
+}
+
+/**
+ * 前缀预设（独立预设，v0.20.3）：[{ name, prefix, contentPrefix }]。
+ * 先独立存，之后整体预设要接过来时直接读这张表即可。
+ */
+export function sanitizePrefixPresets(raw) {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set()
+  const out = []
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const name = typeof entry.name === 'string' ? entry.name.trim().slice(0, 60) : ''
+    if (name === '' || seen.has(name)) continue
+    seen.add(name)
+    out.push({
+      name,
+      prefix: typeof entry.prefix === 'string' ? entry.prefix.slice(0, 2000) : '',
+      contentPrefix: typeof entry.contentPrefix === 'string' ? entry.contentPrefix.slice(0, 2000) : '',
+      // P1：预设也可以带触发标记（套用时一并写入 match；空 = 不改当前触发）。
+      ...(typeof entry.match === 'string' && entry.match !== '' ? { match: entry.match.slice(0, 200) } : {}),
+    })
+    if (out.length >= 30) break
+  }
+  return out
 }
 
 export function normalizeState(raw) {
@@ -184,8 +255,10 @@ export function normalizeState(raw) {
       : [...DEFAULT_ALLOW_KINDS],
     // 面板全局偏好：合法才留，否则连键一起去掉（`...source` 摊进来的脏值也盖掉）。
     ui: sanitizeUi(source.ui),
+    reasoningPrefixPresets: sanitizePrefixPresets(source.reasoningPrefixPresets),
   })
   if (out.ui === undefined) delete out.ui
+  if (out.reasoningPrefixPresets.length === 0) delete out.reasoningPrefixPresets
   return migrateLegacyCwdSandbox(out)
 }
 
@@ -1041,8 +1114,35 @@ export function apply(ctx) {
 
   // ── 思考前缀实验（DeepSeek 官方 beta 专用）：状态在 state.ui.reasoningPrefix，启用时起代理并确保 pi-ai 路由 ──
   const REASONING_DEFAULT = { enabled: false, prefix: '', port: 46321, providerId: 'prefill-think', modelId: 'deepseek-flash' }
+  /** 实验性功能总开关（state.ui.experimental）：关着时实验能力一律不可用（env 强制端口除外）。 */
+  const experimentalOn = () => {
+    try {
+      return readState()?.ui?.experimental === true
+    } catch {
+      return false
+    }
+  }
   /** 当前活动代理：{ proxy, port }；未启用为 null。 */
   let reasoningActive = null
+  /**
+   * 前缀日志（v0.20.3）：每轮第一步记一条「这轮实际会发的前缀」快照，面板据此逐轮微调。
+   * 内存环形 + JSONL 落盘（<DATA_DIR>/prefix-log.jsonl），状态文件不动（每请求写 900KB 不划算）。
+   */
+  const prefixLog = []
+  const PREFIX_LOG_LIMIT = 200
+  /** 前缀轮总数（不受环形 200 上限影响，面板「前缀轮」用）。 */
+  let prefixTurnTotal = 0
+  /** 代理 JSONL 日志默认落盘路径（面板可改；开关在 state 里）。 */
+  const DEFAULT_PROXY_LOG = join(DATA_DIR, 'reasoning-proxy.jsonl')
+  /** 用户点了「清空本轮填装」的会话：下一轮第一个请求跳过前缀（记进日志，标明 skipped）。 */
+  const prefixSkipQueued = new Set()
+  /** 本轮正在跳过前缀的会话 / 轮号：整轮都跳过（多步工具轮也不加），轮结束时清掉。 */
+  let skipTurnSession = ''
+  let skipTurnNumber = 0
+  /** 最近一次代理启动失败的原因（面板要能看到「为什么模型选择不生效」）。 */
+  let reasoningProxyError = null
+  /** 最近一次 apply 的结果（enable/disable/repair 路由回给面板）。 */
+  let reasoningLastApply = null
   const reasoningConfigOf = () => {
     let raw
     try {
@@ -1052,9 +1152,13 @@ export function apply(ctx) {
     }
     const config = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
     const envPort = Number(process.env.DSH_PREFILL_SPIKE_PORT || 0)
+    const experimental = experimentalOn()
     return {
-      enabled: config.enabled === true || envPort > 0,
+      // 环境变量端口 = 隔离实验用，绕过总开关；面板里的启用必须总开关先开。
+      experimental,
+      enabled: envPort > 0 ? true : config.enabled === true && experimental,
       prefix: typeof config.prefix === 'string' ? config.prefix : process.env.DSH_PREFILL_SPIKE_PREFIX || '',
+      contentPrefix: typeof config.contentPrefix === 'string' ? config.contentPrefix : process.env.DSH_PREFILL_SPIKE_CONTENT_PREFIX || '',
       port: Number.isInteger(config.port) && config.port > 0 ? config.port : envPort > 0 ? envPort : REASONING_DEFAULT.port,
       providerId: typeof config.providerId === 'string' && config.providerId !== '' ? config.providerId : REASONING_DEFAULT.providerId,
       modelId: typeof config.modelId === 'string' && config.modelId !== '' ? config.modelId : REASONING_DEFAULT.modelId,
@@ -1062,14 +1166,110 @@ export function apply(ctx) {
       shim: config.shim !== false,
       textualize: config.textualize !== false,
       catalogRole: config.catalogRole === 'user' ? 'user' : 'system',
+      catalogMode: config.catalogMode === 'history' ? 'history' : 'each',
+      catalogDetail: config.catalogDetail === 'brief' || config.catalogDetail === 'names' ? config.catalogDetail : 'full',
+      catalogPosition: config.catalogPosition === 'tail' ? 'tail' : 'head',
+      // 原来是硬编码在代理 / 自动停用里的 8 与 3：搬到状态里，由面板暴露。
+      maxEmittedCalls: Number.isInteger(config.maxEmittedCalls) ? config.maxEmittedCalls : 8,
+      failureThreshold: Number.isInteger(config.failureThreshold) ? config.failureThreshold : 3,
+      // P1：回退链顺序 / 允许 passthrough / 清单包含排除。
+      fallbackOrder: config.fallbackOrder === 'user-first' ? 'user-first' : config.fallbackOrder === 'system-first' ? 'system-first' : '',
+      allowPassthrough: config.allowPassthrough !== false,
+      catalogInclude: Array.isArray(config.catalogInclude) ? config.catalogInclude : [],
+      catalogExclude: Array.isArray(config.catalogExclude) ? config.catalogExclude : [],
+      // P0：代理 JSONL 日志（面板开关 + 路径；默认落在 <DATA_DIR>/reasoning-proxy.jsonl）。
+      logging: {
+        enabled: config.logging !== null && typeof config.logging === 'object' && config.logging.enabled === true,
+        file:
+          config.logging !== null && typeof config.logging === 'object' && typeof config.logging.file === 'string' && config.logging.file !== ''
+            ? config.logging.file
+            : DEFAULT_PROXY_LOG,
+        dumpFile: config.logging !== null && typeof config.logging === 'object' && typeof config.logging.dumpFile === 'string' ? config.logging.dumpFile : '',
+        rawFile: config.logging !== null && typeof config.logging === 'object' && typeof config.logging.rawFile === 'string' ? config.logging.rawFile : '',
+        contentFile: config.logging !== null && typeof config.logging === 'object' && typeof config.logging.contentFile === 'string' ? config.logging.contentFile : '',
+      },
     }
+  }
+  /** 每轮第一步记一条前缀快照：这一轮实际会发什么（含是否被跳过），面板按轮显示。 */
+  const recordPrefixTurn = (sessionId, turn) => {
+    if (typeof sessionId !== 'string' || sessionId === '') return
+    const config = reasoningConfigOf()
+    prefixTurnTotal += 1
+    const skipped = prefixSkipQueued.has(sessionId)
+    if (skipped) {
+      prefixSkipQueued.delete(sessionId)
+      skipTurnSession = sessionId
+      skipTurnNumber = Number(turn) || 0
+    }
+    const entry = {
+      sessionId,
+      turn: Number(turn) || 0,
+      at: Date.now(),
+      enabled: config.enabled,
+      proxyRunning: reasoningActive !== null,
+      reasoningPrefix: config.prefix,
+      contentPrefix: config.contentPrefix,
+      skipped,
+    }
+    prefixLog.push(entry)
+    if (prefixLog.length > PREFIX_LOG_LIMIT) prefixLog.shift()
+    try {
+      mkdirSync(DATA_DIR, { recursive: true })
+      appendFileSync(join(DATA_DIR, 'prefix-log.jsonl'), JSON.stringify(entry) + '\n', 'utf8')
+    } catch (error) {
+      note({ seat: 'reasoning-prefix', prefixLog: String(error?.message ?? error) })
+    }
+    note({ seat: 'reasoning-prefix', turn: entry.turn, reasoning: config.prefix.slice(0, 40), content: config.contentPrefix.slice(0, 40), skipped })
+  }
+  /**
+   * catalogMode=history：把工具清单**一次性注入会话历史**（工具集不变就不重复注入；
+   * 工具集变了、或上下文压缩把它挤掉之后，自动再补一条）。
+   * 注入的是 source.kind='prefill' 的 user 消息：DSH 会写进会话日志（模型可见），
+   * 但不会当作普通用户消息展示；代理看到历史里已有清单就不再每轮重复注入。
+   * @returns {Promise<boolean>} 这一轮是否新注入了清单
+   */
+  const ensureCatalogInjected = async (payload, decision) => {
+    const config = reasoningConfigOf()
+    if (config.enabled !== true || config.catalogMode !== 'history') return false
+    if (Number(payload?.step ?? 1) !== 1) return false
+    const agent = payload?.agent
+    if (typeof agent?.id !== 'string') return false
+    const catalog = toolCatalogOf()
+    if (catalog === '') return false
+    const hash = createHash('sha1').update(catalog).digest('hex').slice(0, 12)
+    let existing = null
+    for (const event of sessionEvents(agent, agent.id)) {
+      if (event?.type === 'user/message' && event.data?.source?.prefill === 'tool-catalog') existing = event.data
+    }
+    if (existing !== null && existing.source?.catalogHash === hash) return false
+    const messages = Array.isArray(decision?.messages) ? decision.messages : []
+    if (messages.some((message) => message?.source?.prefill === 'tool-catalog')) return false
+    const injected = {
+      id: 'prefill-tool-catalog-' + hash,
+      role: 'user',
+      source: { kind: 'prefill', prefill: 'tool-catalog', catalogHash: hash, bytes: catalog.length },
+      content: [{ type: 'text', text: catalog }],
+    }
+    decision.messages = [injected, ...messages]
+    note({ seat: 'reasoning-prefix', catalog: 'injected', id: agent.id, hash, bytes: catalog.length, detail: config.catalogDetail })
+    return true
   }
   /** 由工具 registry 现拼的文本清单（每请求一次；tools 服务不在时退回内置清单）。 */
   const toolCatalogOf = () => {
     try {
       const tools = ctx.get('tools')
       if (typeof tools?.schemas !== 'function') return ''
-      return buildToolCatalog(tools.schemas())
+      const config = reasoningConfigOf()
+      // P1：按工具名做包含 / 排除（大小写不敏感；include 非空时只留名单内的）。
+      const include = new Set(config.catalogInclude.map((name) => name.toLowerCase()))
+      const exclude = new Set(config.catalogExclude.map((name) => name.toLowerCase()))
+      const schemas = tools.schemas().filter((schema) => {
+        const name = typeof schema?.name === 'string' ? schema.name.toLowerCase() : ''
+        if (name === '') return false
+        if (include.size > 0 && !include.has(name)) return false
+        return !exclude.has(name)
+      })
+      return buildToolCatalog(schemas, { detail: config.catalogDetail })
     } catch (error) {
       note({ seat: 'reasoning-prefix', catalog: String(error?.message ?? error) })
       return ''
@@ -1160,7 +1360,11 @@ export function apply(ctx) {
       return { ok: false, error: String(error?.message ?? error) }
     }
   }
-  /** 连续失败计数：前缀轮被上游拒绝 / 回退透传达到 3 次 ⇒ 自动关实验并记审计。 */
+  /**
+   * 连续失败计数：前缀轮被上游拒绝 / 回退透传达到阈值 ⇒ 自动关实验并记审计。
+   * ⚠️ 代理侧现在把透传分成三态（skipped = 用户点了「清空本轮填装」、ignored = 本轮本就不该加前缀、
+   * passthrough = 前缀被上游拒绝），只有最后一种该算失败 —— 否则跳过/未命中几次就会把实验自己关掉。
+   */
   let reasoningFailures = 0
   const onReasoningOutcome = (outcome) => {
     const failed = outcome?.ok !== true || outcome.variant === 'passthrough'
@@ -1169,7 +1373,9 @@ export function apply(ctx) {
       return
     }
     reasoningFailures += 1
-    if (reasoningFailures < 3) return
+    // 连续失败阈值改为可调（状态里的 failureThreshold，默认 3）。
+    const threshold = Number.isInteger(reasoningConfigOf().failureThreshold) ? reasoningConfigOf().failureThreshold : 3
+    if (reasoningFailures < Math.max(1, threshold)) return
     reasoningFailures = 0
     note({ seat: 'reasoning-prefix', autoDisable: true, last: outcome })
     try {
@@ -1182,19 +1388,32 @@ export function apply(ctx) {
   const ensureReasoningProxy = async () => {
     const config = reasoningConfigOf()
     if (!config.enabled) return null
-    if (reasoningActive !== null) return reasoningActive
+    if (reasoningActive !== null && reasoningActive.port === config.port) return reasoningActive
+    // 端口变了（或首次启动）：先把旧代理关掉，再按新端口起。
+    if (reasoningActive !== null) await stopReasoningProxy()
     const proxy = createReasoningPrefixProxy({
       getConfig: () => {
         const current = reasoningConfigOf()
+        // 「清空本轮填装」：整轮跳过前缀（多步工具轮也不加）；轮结束时由 turn-stopping 复位。
+        const skipping = skipTurnSession !== '' && current.enabled
         return {
-          enabled: current.enabled,
+          enabled: skipping ? false : current.enabled,
+          skipping,
           stripTools: true,
           textualize: current.textualize,
           shim: current.shim,
           match: current.match,
           catalogRole: current.catalogRole,
+          catalogMode: current.catalogMode,
+          catalogDetail: current.catalogDetail,
+          catalogPosition: current.catalogPosition,
+          fallbackOrder: current.fallbackOrder,
+          allowPassthrough: current.allowPassthrough,
+          maxEmittedCalls: current.maxEmittedCalls,
           reasoningPrefix: current.prefix,
+          contentPrefix: current.contentPrefix,
           catalog: toolCatalogOf(),
+          logging: current.logging,
         }
       },
       logger: {
@@ -1205,11 +1424,23 @@ export function apply(ctx) {
     })
     const active = { proxy, port: config.port }
     try {
+      // listen 自带端口回退：46321 被别的实例 / 残留进程占住时会顺序向后找空位。
       active.port = await proxy.listen(config.port)
+      reasoningProxyError = null
       reasoningActive = active
+      if (active.port !== config.port) {
+        // 实际端口和配置不一致 ⇒ 写回状态，保证路由 baseURL 跟着代理走（否则模型选择指向死端口）。
+        note({ seat: 'reasoning-prefix', portFallback: { want: config.port, got: active.port } })
+        try {
+          patchState({ ui: { reasoningPrefix: { ...reasoningConfigOf(), port: active.port } } })
+        } catch (error) {
+          note({ seat: 'reasoning-prefix', portPersist: String(error?.message ?? error) })
+        }
+      }
       note({ seat: 'reasoning-prefix', listening: active.port })
     } catch (error) {
-      note({ seat: 'reasoning-prefix', listen: String(error?.message ?? error) })
+      reasoningProxyError = String(error?.message ?? error)
+      note({ seat: 'reasoning-prefix', listen: reasoningProxyError })
       return null
     }
     return active
@@ -1224,16 +1455,58 @@ export function apply(ctx) {
       note({ seat: 'reasoning-prefix', close: String(error?.message ?? error) })
     }
   }
+  /** 最近一次代理 / 路由写入的结果：面板据此显示「模型路由」状态，别再静默失败。 */
+  const reasoningRouteState = { ok: null, error: null, at: null }
   const applyReasoningState = async () => {
     const config = reasoningConfigOf()
     if (!config.enabled) {
-      await removeReasoningRoute()
+      const removed = await removeReasoningRoute()
       await stopReasoningProxy()
-      return { enabled: false }
+      reasoningProxyError = null
+      reasoningRouteState.ok = removed.ok === true ? true : false
+      reasoningRouteState.error = removed.ok === true ? null : String(removed.error ?? '')
+      reasoningRouteState.at = Date.now()
+      const applied = { ok: removed.ok !== false, enabled: false, ...removed }
+      reasoningLastApply = applied
+      return applied
     }
-    await ensureReasoningProxy()
+    const active = await ensureReasoningProxy()
+    if (active === null) {
+      // 代理都起不来就别写路由：写出去只会让「模型选择」指向死端口（这正是「选了没用」的来由）。
+      await removeReasoningRoute()
+      const applied = { ok: false, enabled: true, proxyRunning: false, port: config.port, error: reasoningProxyError ?? '代理未监听' }
+      reasoningRouteState.ok = false
+      reasoningRouteState.error = applied.error
+      reasoningRouteState.at = Date.now()
+      reasoningLastApply = applied
+      return applied
+    }
     const route = await upsertReasoningRoute()
-    return { enabled: true, ...route }
+    reasoningRouteState.ok = route.ok === true
+    reasoningRouteState.error = route.ok === true ? null : String(route.error ?? '')
+    reasoningRouteState.at = Date.now()
+    const applied = { ok: route.ok === true, enabled: true, proxyRunning: true, port: active.port, ...route }
+    reasoningLastApply = applied
+    return applied
+  }
+  /** 面板用的模型路由快照：写没写、在不在 llm-pi-ai 配置里、指向哪个端口。 */
+  const reasoningRouteOf = (settings) => {
+    const config = reasoningConfigOf()
+    const profile = reasoningProviderProfile(config)
+    const form = settings === undefined ? undefined : reasoningFormOf(settings)
+    const providerIds = Array.isArray(form?.providerIds) ? form.providerIds : null
+    return {
+      ok: reasoningRouteState.ok,
+      error: reasoningRouteState.error,
+      at: reasoningRouteState.at,
+      providerId: config.providerId,
+      modelId: config.modelId,
+      displayName: profile.displayName,
+      modelName: profile.models[0]?.name ?? '',
+      port: config.port,
+      baseURL: 'http://127.0.0.1:' + String(config.port) + '/beta/v1',
+      inConfig: providerIds === null ? null : providerIds.includes(config.providerId),
+    }
   }
 
   // 启动时按已保存的实验状态自启（settings/credentials 尚未就绪也没关系，enable 路由会再试一次）。
@@ -1247,7 +1520,22 @@ export function apply(ctx) {
     'agent/pre-step',
     async (payload, next) => {
       if (typeof payload?.agent?.id === 'string') openTurn.add(payload.agent.id)
-      return handle(payload, await next(), 'root')
+      // 前缀日志：每轮第一步记一条（面板逐轮微调用；日志里也标出这轮是否被「清空填装」跳过）。
+      if (Number(payload?.step) === 1 && typeof payload?.agent?.id === 'string') {
+        try {
+          recordPrefixTurn(payload.agent.id, payload?.turn)
+        } catch (error) {
+          note({ seat: 'reasoning-prefix', logTurn: String(error?.message ?? error) })
+        }
+      }
+      const decision = await next()
+      // 工具清单「注入一次」（catalogMode=history）：工具集不变就不重复注入，变了/被压缩掉才补。
+      try {
+        await ensureCatalogInjected(payload, decision)
+      } catch (error) {
+        note({ seat: 'reasoning-prefix', catalog: 'inject-failed', error: String(error?.message ?? error) })
+      }
+      return handle(payload, decision, 'root')
     },
     { prepend: true },
   )
@@ -1289,6 +1577,11 @@ export function apply(ctx) {
     const id = payload?.agent?.id
     if (typeof id !== 'string') return
     openTurn.delete(id)
+    // 轮结束：这一轮若被「清空填装」跳过，到此为止（下一轮恢复正常）。
+    if (skipTurnSession === id) {
+      skipTurnSession = ''
+      skipTurnNumber = 0
+    }
     if (pendingReprime.has(id)) await flushPendingReprime()
   })
 
@@ -1445,12 +1738,15 @@ export function apply(ctx) {
         ok: true,
         enabled: config.enabled,
         proxyRunning: reasoningActive !== null,
+        proxyError: reasoningProxyError,
         port: reasoningActive !== null ? reasoningActive.port : config.port,
-        config: { prefix: config.prefix, providerId: config.providerId, modelId: config.modelId, shim: config.shim, textualize: config.textualize, catalogRole: config.catalogRole },
+        config: { prefix: config.prefix, contentPrefix: config.contentPrefix, providerId: config.providerId, modelId: config.modelId, shim: config.shim, textualize: config.textualize, catalogRole: config.catalogRole },
         catalog: { bytes: catalog.length, tools: (catalog.match(/^- /gm) ?? []).length },
         hasSettings: settings !== undefined,
         hasApiKey: await reasoningKeyReady(),
         failures: reasoningFailures,
+        route: reasoningRouteOf(settings),
+        applied: reasoningLastApply,
         audit: reasoningActive !== null ? (reasoningActive.proxy.audit?.() ?? []).slice(-10) : [],
         ...(settings === undefined ? {} : { form: reasoningFormOf(settings) }),
       }
@@ -1462,16 +1758,32 @@ export function apply(ctx) {
       } catch {
         body = {}
       }
+      if (!experimentalOn()) {
+        // 实验性功能总开关没开：不允许启用（关闭时启动流程也会删路由）。
+        return Response.json({ ok: false, enabled: false, error: '实验性功能未开启：先在左侧页实验区打开总开关。' }, noStore)
+      }
       const current = reasoningConfigOf()
       const next = {
         enabled: true,
         prefix: typeof body.prefix === 'string' ? body.prefix : current.prefix,
+        contentPrefix: typeof body.contentPrefix === 'string' ? body.contentPrefix : current.contentPrefix,
         port: Number.isInteger(body.port) && body.port > 0 ? body.port : current.port,
         providerId: typeof body.providerId === 'string' && body.providerId !== '' ? body.providerId : current.providerId,
         modelId: typeof body.modelId === 'string' && body.modelId !== '' ? body.modelId : current.modelId,
+        match: current.match,
         shim: current.shim,
         textualize: current.textualize,
         catalogRole: typeof body.catalogRole === 'string' && body.catalogRole === 'user' ? 'user' : current.catalogRole,
+        catalogMode: current.catalogMode,
+        catalogDetail: current.catalogDetail,
+        catalogPosition: current.catalogPosition,
+        fallbackOrder: current.fallbackOrder,
+        allowPassthrough: current.allowPassthrough,
+        catalogInclude: current.catalogInclude,
+        catalogExclude: current.catalogExclude,
+        logging: current.logging,
+        maxEmittedCalls: current.maxEmittedCalls,
+        failureThreshold: current.failureThreshold,
       }
       patchState({ ui: { reasoningPrefix: next } })
       const applied = await applyReasoningState()
@@ -1482,12 +1794,371 @@ export function apply(ctx) {
       const applied = await applyReasoningState()
       return Response.json({ ...reasoningStatus(), applied }, noStore)
     }
+
+    // ── 实验面板（胶囊弹窗里的「实验」页）：总开关 + 累计统计 + 暴露参数 ──
+    const readJsonBody = async (request) => {
+      try {
+        return (await request?.json?.()) ?? {}
+      } catch {
+        return {}
+      }
+    }
+    /** 面板可写的参数（也是状态里的真相）；实验性功能关着时全部不可用。 */
+    const experimentalKnobsOf = () => {
+      const config = reasoningConfigOf()
+      return {
+        experimental: config.experimental,
+        port: config.port,
+        prefix: config.prefix,
+        contentPrefix: config.contentPrefix,
+        providerId: config.providerId,
+        modelId: config.modelId,
+        shim: config.shim,
+        textualize: config.textualize,
+        catalogRole: config.catalogRole,
+        catalogMode: config.catalogMode,
+        catalogDetail: config.catalogDetail,
+        catalogPosition: config.catalogPosition,
+        match: config.match,
+        maxEmittedCalls: config.maxEmittedCalls,
+        failureThreshold: config.failureThreshold,
+        fallbackOrder: config.fallbackOrder,
+        allowPassthrough: config.allowPassthrough,
+        catalogInclude: config.catalogInclude,
+        catalogExclude: config.catalogExclude,
+        loggingEnabled: config.logging.enabled,
+        loggingFile: config.logging.file,
+        loggingDump: String(config.logging.dumpFile ?? '') !== '',
+        loggingRaw: String(config.logging.rawFile ?? '') !== '',
+        loggingContent: String(config.logging.contentFile ?? '') !== '',
+      }
+    }
+    /** P0：代理 JSONL 日志状态（开关 / 路径 / 是否已落盘 / 文件大小）。 */
+    const proxyLoggingStatus = () => {
+      const config = reasoningConfigOf()
+      const file = config.logging.file
+      let exists = false
+      let bytes = 0
+      try {
+        const stat = statSync(file)
+        exists = true
+        bytes = stat.size
+      } catch {
+        // 还没写过
+      }
+      return {
+        enabled: config.logging.enabled,
+        file,
+        exists,
+        bytes,
+        dumpFile: config.logging.dumpFile,
+        rawFile: config.logging.rawFile,
+        contentFile: config.logging.contentFile,
+      }
+    }
+    /** @param {{ sessionId?: string }} [scope] 面板会把当前会话带进来：日志 / 跳过状态按会话给。 */
+    const experimentalStatus = async (scope = {}) => {
+      const sessionId = typeof scope.sessionId === 'string' ? scope.sessionId : ''
+      const config = reasoningConfigOf()
+      const route = reasoningRouteOf(settingsOf())
+      const log = sessionId === '' ? prefixLog.slice(-30) : prefixLog.filter((entry) => entry.sessionId === sessionId).slice(-30)
+      return {
+        ok: true,
+        experimental: experimentalOn(),
+        knobs: experimentalKnobsOf(),
+        // 代理没起来时没有统计数据（不是 0，是「没有」）。
+        stats: reasoningActive !== null ? (reasoningActive.proxy.stats?.() ?? null) : null,
+        reasoning: await reasoningStatus(),
+        presets: readState()?.reasoningPrefixPresets ?? [],
+        // P0：前缀轮计数（total 不受环形上限影响）与代理日志状态（开关 / 路径 / 是否已落盘 / 大小）。
+        turns: { total: prefixTurnTotal, session: log.length },
+        logging: proxyLoggingStatus(),
+        log,
+        // 「填装」状态：这轮到底加不加前缀（跳过按钮 / 已排队跳过）。
+        prefill: {
+          enabled: config.enabled,
+          proxyRunning: reasoningActive !== null,
+          routeOk: route.ok === true && route.inConfig === true,
+          skipQueued: prefixSkipQueued.has(sessionId),
+          skipping: skipTurnSession === sessionId && skipTurnSession !== '',
+          ready: config.enabled && reasoningActive !== null && route.ok === true && route.inConfig === true && !(skipTurnSession === sessionId && skipTurnSession !== ''),
+        },
+      }
+    }
+    const experimentalToggle = async (request) => {
+      const body = await readJsonBody(request)
+      const on = body.on === true
+      const raw = readState()?.ui?.reasoningPrefix
+      const rawConfig = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+      // 关总开关 ⇒ 顺带停用实验（否则代理继续跑，和「关掉就不可用」不一致）。
+      patchState({ ui: { experimental: on, ...(on ? {} : { reasoningPrefix: { ...rawConfig, enabled: false } }) } })
+      const applied = await applyReasoningState()
+      return Response.json({ ...(await experimentalStatus()), applied }, noStore)
+    }
+    const experimentalConfig = async (request) => {
+      const body = await readJsonBody(request)
+      if (!experimentalOn()) return Response.json({ ok: false, error: '实验性功能未开启：先在左侧页实验区打开总开关。' }, noStore)
+      const raw = readState()?.ui?.reasoningPrefix
+      const base = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+      const patch = {}
+      const isInt = (value, min, max) => Number.isInteger(value) && value >= min && value <= max
+      const reject = (message) => Response.json({ ok: false, error: message }, noStore)
+      if (body.port !== undefined) {
+        if (!isInt(body.port, 1, 65535)) return reject('端口要 1..65535 的整数')
+        patch.port = body.port
+      }
+      if (body.enabled !== undefined) {
+        if (typeof body.enabled !== 'boolean') return reject('enabled 要是布尔值')
+        patch.enabled = body.enabled
+      }
+      if (body.prefix !== undefined) {
+        if (typeof body.prefix !== 'string') return reject('前缀要是字符串')
+        patch.prefix = body.prefix.slice(0, 2000)
+      }
+      if (body.contentPrefix !== undefined) {
+        if (typeof body.contentPrefix !== 'string') return reject('内容前缀要是字符串')
+        patch.contentPrefix = body.contentPrefix.slice(0, 2000)
+      }
+      if (body.providerId !== undefined) {
+        if (typeof body.providerId !== 'string' || !/^[a-z0-9-]+$/.test(body.providerId)) return reject('模型路由名只能是小写字母/数字/短横线')
+        patch.providerId = body.providerId
+      }
+      if (body.modelId !== undefined) {
+        if (typeof body.modelId !== 'string' || body.modelId === '' || body.modelId.length > 200) return reject('模型 id 要 1..200 字符')
+        patch.modelId = body.modelId
+      }
+      if (body.match !== undefined) {
+        if (typeof body.match !== 'string') return reject('触发标记要是字符串')
+        patch.match = body.match
+      }
+      if (body.shim !== undefined) {
+        if (typeof body.shim !== 'boolean') return reject('shim 要是布尔值')
+        patch.shim = body.shim
+      }
+      if (body.textualize !== undefined) {
+        if (typeof body.textualize !== 'boolean') return reject('textualize 要是布尔值')
+        patch.textualize = body.textualize
+      }
+      if (body.catalogRole !== undefined) {
+        if (body.catalogRole !== 'system' && body.catalogRole !== 'user') return reject('清单伪装只支持 system / user')
+        patch.catalogRole = body.catalogRole
+      }
+      if (body.catalogMode !== undefined) {
+        if (body.catalogMode !== 'each' && body.catalogMode !== 'history') return reject('清单注入方式只支持 each / history')
+        patch.catalogMode = body.catalogMode
+      }
+      if (body.catalogDetail !== undefined) {
+        if (!['full', 'brief', 'names'].includes(body.catalogDetail)) return reject('清单详略只支持 full / brief / names')
+        patch.catalogDetail = body.catalogDetail
+      }
+      if (body.catalogPosition !== undefined) {
+        if (body.catalogPosition !== 'head' && body.catalogPosition !== 'tail') return reject('清单位置只支持 head / tail')
+        patch.catalogPosition = body.catalogPosition
+      }
+      if (body.fallbackOrder !== undefined) {
+        if (!['', 'system-first', 'user-first'].includes(body.fallbackOrder)) return reject('回退顺序只支持 默认 / system-first / user-first')
+        patch.fallbackOrder = body.fallbackOrder === 'system-first' || body.fallbackOrder === 'user-first' ? body.fallbackOrder : ''
+      }
+      if (body.allowPassthrough !== undefined) {
+        if (typeof body.allowPassthrough !== 'boolean') return reject('允许透传要是布尔值')
+        patch.allowPassthrough = body.allowPassthrough
+      }
+      const nameList = (value) => {
+        if (!Array.isArray(value)) return null
+        return value.filter((item) => typeof item === 'string' && item.trim() !== '').map((item) => item.trim().slice(0, 80)).slice(0, 60)
+      }
+      if (body.catalogInclude !== undefined) {
+        const include = nameList(body.catalogInclude)
+        if (include === null) return reject('清单包含要是字符串数组')
+        patch.catalogInclude = include
+      }
+      if (body.catalogExclude !== undefined) {
+        const exclude = nameList(body.catalogExclude)
+        if (exclude === null) return reject('清单排除要是字符串数组')
+        patch.catalogExclude = exclude
+      }
+      if (body.loggingEnabled !== undefined || body.loggingFile !== undefined || body.loggingDump !== undefined || body.loggingRaw !== undefined || body.loggingContent !== undefined) {
+        const logging = { ...(base.logging !== null && typeof base.logging === 'object' ? base.logging : {}) }
+        if (body.loggingEnabled !== undefined) {
+          if (typeof body.loggingEnabled !== 'boolean') return reject('日志开关要是布尔值')
+          logging.enabled = body.loggingEnabled
+        }
+        if (body.loggingFile !== undefined) {
+          if (typeof body.loggingFile !== 'string' || body.loggingFile.trim() === '') return reject('日志路径要是非空字符串')
+          logging.file = body.loggingFile.trim().slice(0, 300)
+        }
+        // 调试三件套：勾选 = 写默认路径（<数据目录>/proxy-*.log），取消 = 清掉该字段。
+        for (const [field, key, suffix] of [
+          ['loggingDump', 'dumpFile', 'proxy-dump.jsonl'],
+          ['loggingRaw', 'rawFile', 'proxy-raw.log'],
+          ['loggingContent', 'contentFile', 'proxy-content.jsonl'],
+        ]) {
+          if (body[field] === undefined) continue
+          if (typeof body[field] !== 'boolean') return reject(field + ' 要是布尔值')
+          if (body[field] === true) logging[key] = join(DATA_DIR, suffix)
+          else delete logging[key]
+        }
+        patch.logging = logging
+      }
+      if (body.maxEmittedCalls !== undefined) {
+        if (!isInt(body.maxEmittedCalls, 1, 32)) return reject('一次最多工具调用要 1..32 的整数')
+        patch.maxEmittedCalls = body.maxEmittedCalls
+      }
+      if (body.failureThreshold !== undefined) {
+        if (!isInt(body.failureThreshold, 1, 10)) return reject('连续失败阈值要 1..10 的整数')
+        patch.failureThreshold = body.failureThreshold
+      }
+      if (Object.keys(patch).length === 0) return reject('没有可写字段')
+      patchState({ ui: { reasoningPrefix: { ...base, ...patch } } })
+      const applied = await applyReasoningState()
+      return Response.json({ ...(await experimentalStatus()), applied }, noStore)
+    }
+    /** 上游连通性测试：TLS 握手 + HEAD，不碰 key、不发业务请求。 */
+    const experimentalPing = async () => {
+      const upstream = String(process.env.DSH_PREFILL_UPSTREAM ?? 'https://api.deepseek.com/beta').replace(/\/+$/, '')
+      let host = ''
+      try {
+        host = new URL(upstream).hostname
+      } catch {
+        host = ''
+      }
+      const started = Date.now()
+      if (host === '') return Response.json({ ok: false, error: 'upstream 不是合法 URL', ms: 0 }, noStore)
+      try {
+        await new Promise((resolve, reject) => {
+          const request = https.request({ host, port: 443, method: 'HEAD', path: '/', timeout: 5000 }, (response) => {
+            response.resume()
+            resolve()
+          })
+          request.on('timeout', () => request.destroy(new Error('timeout')))
+          request.on('error', reject)
+          request.end()
+        })
+        return Response.json({ ok: true, host, ms: Date.now() - started }, noStore)
+      } catch (error) {
+        return Response.json({ ok: false, host, error: String(error?.message ?? error), ms: Date.now() - started }, noStore)
+      }
+    }
+    /** P0：导出前缀日志 + 审计 + 统计为 JSONL（面板下载，或直接 curl）。 */
+    const experimentalExport = async (request) => {
+      const body = await readJsonBody(request)
+      const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+      const lines = []
+      for (const entry of prefixLog) {
+        if (sessionId === '' || entry.sessionId === sessionId) lines.push(JSON.stringify({ kind: 'prefix', ...entry }))
+      }
+      const audit = reasoningActive !== null ? (reasoningActive.proxy.audit?.() ?? []) : []
+      for (const entry of audit) lines.push(JSON.stringify({ kind: 'audit', ...entry }))
+      const stats = reasoningActive !== null ? (reasoningActive.proxy.stats?.() ?? null) : null
+      if (stats !== null) lines.push(JSON.stringify({ kind: 'stats', stats }))
+      return new Response(lines.join('\n') + '\n', {
+        headers: {
+          'content-type': 'application/x-ndjson; charset=utf-8',
+          'cache-control': 'no-store',
+          'content-disposition': 'attachment; filename="prefill-prefix-log.jsonl"',
+        },
+      })
+    }
+    const experimentalStatsReset = async (request) => {
+      reasoningActive?.proxy?.resetStats?.()
+      const body = await readJsonBody(request)
+      return Response.json(await experimentalStatus({ sessionId: body.sessionId }), noStore)
+    }
+    /** 前缀预设（独立预设）：list / save / delete / apply。 */
+    const experimentalPresets = async (request) => {
+      const body = await readJsonBody(request)
+      if (!experimentalOn()) return Response.json({ ok: false, error: '实验性功能未开启：先在左侧页实验区打开总开关。' }, noStore)
+      const op = typeof body.op === 'string' ? body.op : 'list'
+      const list = readState()?.reasoningPrefixPresets ?? []
+      const reply = async () => Response.json({ ...(await experimentalStatus({ sessionId: body.sessionId })), presets: readState()?.reasoningPrefixPresets ?? [] }, noStore)
+      if (op === 'list') return reply()
+      if (op === 'save') {
+        const name = typeof body.name === 'string' ? body.name.trim().slice(0, 60) : ''
+        if (name === '') return Response.json({ ok: false, error: '预设名不能为空' }, noStore)
+        const entry = {
+          name,
+          prefix: typeof body.prefix === 'string' ? body.prefix.slice(0, 2000) : '',
+          contentPrefix: typeof body.contentPrefix === 'string' ? body.contentPrefix.slice(0, 2000) : '',
+          ...(typeof body.match === 'string' && body.match !== '' ? { match: body.match.slice(0, 200) } : {}),
+        }
+        const next = [...list.filter((item) => item.name !== name), entry].slice(-30)
+        patchState({ reasoningPrefixPresets: next })
+        return reply()
+      }
+      if (op === 'delete') {
+        const name = typeof body.name === 'string' ? body.name : ''
+        patchState({ reasoningPrefixPresets: list.filter((item) => item.name !== name) })
+        return reply()
+      }
+      if (op === 'apply') {
+        const name = typeof body.name === 'string' ? body.name : ''
+        const entry = list.find((item) => item.name === name)
+        if (entry === undefined) return Response.json({ ok: false, error: '找不到这个前缀预设' }, noStore)
+        const raw = readState()?.ui?.reasoningPrefix
+        const base = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+        patchState({
+          ui: {
+            reasoningPrefix: {
+              ...base,
+              prefix: entry.prefix,
+              contentPrefix: entry.contentPrefix,
+              ...(typeof entry.match === 'string' && entry.match !== '' ? { match: entry.match } : {}),
+            },
+          },
+        })
+        const applied = await applyReasoningState()
+        return Response.json({ ...(await experimentalStatus({ sessionId: body.sessionId })), applied }, noStore)
+      }
+      // P1：前缀预设导出 / 导入（导出给面板下载 JSON；导入接受同结构数组，同名覆盖）。
+      if (op === 'export') return Response.json({ ok: true, presets: list }, noStore)
+      if (op === 'import') {
+        const incoming = Array.isArray(body.presets) ? sanitizePrefixPresets(body.presets) : []
+        if (incoming.length === 0) return Response.json({ ok: false, error: '导入内容里没有可用的前缀预设' }, noStore)
+        const merged = [...list.filter((item) => !incoming.some((preset) => preset.name === item.name)), ...incoming].slice(-30)
+        patchState({ reasoningPrefixPresets: merged })
+        return reply()
+      }
+      return Response.json({ ok: false, error: '未知操作：' + op }, noStore)
+    }
+    /** 「清空本轮填装」：排队让下一轮整轮跳过前缀（日志里标 skipped）。 */
+    const experimentalSkip = async (request) => {
+      const body = await readJsonBody(request)
+      const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+      const on = body.on !== false
+      if (sessionId === '') return Response.json({ ok: false, error: '缺少会话 id' }, noStore)
+      if (on) prefixSkipQueued.add(sessionId)
+      else prefixSkipQueued.delete(sessionId)
+      return Response.json(await experimentalStatus({ sessionId }), noStore)
+    }
+    register({
+      path: '/api/dsh-prefill/reasoning/repair',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async () => Response.json({ ...(await reasoningStatus()), applied: await applyReasoningState() }, noStore),
+    }, 'dsh-prefill: reasoning repair')
     register({ path: '/api/dsh-prefill/reasoning/status', methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(await reasoningStatus(), noStore) }, 'dsh-prefill: reasoning status')
     register({ path: '/api/dsh-prefill/reasoning/enable', methods: ['POST'], requestBody: 'buffered', fetch: reasoningEnable }, 'dsh-prefill: reasoning enable')
     register({ path: '/api/dsh-prefill/reasoning/disable', methods: ['POST'], requestBody: 'buffered', fetch: reasoningDisable }, 'dsh-prefill: reasoning disable')
     register({ path: '/api/dsh-prefill/reasoning-spike/status', methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(reasoningStatus(), noStore) }, 'dsh-prefill: reasoning status (spike alias)')
     register({ path: '/api/dsh-prefill/reasoning-spike/upsert', methods: ['POST'], requestBody: 'buffered', fetch: reasoningEnable }, 'dsh-prefill: reasoning enable (spike alias)')
     register({ path: '/api/dsh-prefill/reasoning-spike/remove', methods: ['POST'], requestBody: 'buffered', fetch: reasoningDisable }, 'dsh-prefill: reasoning disable (spike alias)')
+    // 实验面板（胶囊弹窗）：状态 / 总开关 / 参数 / 统计清零。
+    register({
+      path: '/api/dsh-prefill/experimental/status',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (request) => {
+        const body = await readJsonBody(request)
+        return Response.json(await experimentalStatus({ sessionId: body.sessionId }), noStore)
+      },
+    }, 'dsh-prefill: experimental status')
+    register({ path: '/api/dsh-prefill/experimental/toggle', methods: ['POST'], requestBody: 'buffered', fetch: experimentalToggle }, 'dsh-prefill: experimental toggle')
+    register({ path: '/api/dsh-prefill/experimental/config', methods: ['POST'], requestBody: 'buffered', fetch: experimentalConfig }, 'dsh-prefill: experimental config')
+    register({ path: '/api/dsh-prefill/experimental/stats/reset', methods: ['POST'], requestBody: 'buffered', fetch: experimentalStatsReset }, 'dsh-prefill: experimental stats reset')
+    register({ path: '/api/dsh-prefill/experimental/presets', methods: ['POST'], requestBody: 'buffered', fetch: experimentalPresets }, 'dsh-prefill: experimental presets')
+    register({ path: '/api/dsh-prefill/experimental/skip', methods: ['POST'], requestBody: 'buffered', fetch: experimentalSkip }, 'dsh-prefill: experimental skip')
+    register({ path: '/api/dsh-prefill/experimental/ping', methods: ['POST'], requestBody: 'buffered', fetch: experimentalPing }, 'dsh-prefill: experimental ping')
+    register({ path: '/api/dsh-prefill/experimental/export', methods: ['POST'], requestBody: 'buffered', fetch: experimentalExport }, 'dsh-prefill: experimental export')
     const sandboxViewsFor = (state) => {
       try {
         const gate = gateCache.module

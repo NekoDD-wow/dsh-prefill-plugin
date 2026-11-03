@@ -37,7 +37,9 @@ test('设置页还是原来那页：标题 / 「日常使用不需要来这里�
 test('预填装卡片左栏恢复原样：不再多出「设置」页，还是 8 个开关项 + 用量与缓存', () => {
   assert.doesNotMatch(src, /EXTRA_NAV/)
   assert.doesNotMatch(src, /settingsSection/)
-  assert.match(src, /const sections = \{ cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, workspace: workspaceSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection \}/)
+  // v0.20.2：实验性功能开着时多一页「实验」（ExperimentalPanel），关着不挂载。
+  assert.match(src, /const sections = \{/)
+  assert.match(src, /lab: experimentalOn \? h\(ExperimentalPanel, \{ t, sessionId \}\) : null,/)
   assert.match(src, /tabItem\('usage', 'usage', 'var\(--dsw-alias-label-tertiary\)'\),/)
   assert.match(src, /navItem\('usage', 'usage', 'var\(--dsw-alias-label-tertiary\)'\),/)
 })

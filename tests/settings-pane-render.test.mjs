@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { makeSettingsHarness } from './settings-harness.mjs'
 
-const envelope = () => ({
+const envelope = (ui = {}) => ({
   ok: true,
   state: {
     version: 2,
@@ -11,7 +11,7 @@ const envelope = () => ({
     levers: { probeSection: false, probeContext: false, blockSections: false, blockContexts: false, blockTools: false, blockMessages: false },
     allowKinds: ['user'],
     tools: null,
-    ui: { motion: 'lite' },
+    ui: { motion: 'lite', ...ui },
     activePreset: { s1: 'builtin:pure' },
   },
   tools: { catalog: ['read', 'bash'], sessions: { s1: ['read'], s2: [] } },
@@ -246,7 +246,7 @@ test('PR3：左侧页的可定位锚点（#45 PR D 加了实验 / 开发者）�
   await h.settle()
   const tree = h.render()
   const anchors = h.find(tree, (props) => typeof props['data-prefill-anchor'] === 'string').map((node) => node.props['data-prefill-anchor'])
-  assert.deepEqual(anchors.sort(), ['default-everyturn', 'default-sandbox', 'dev', 'library', 'overview', 'prefs', 'reasoning'])
+  assert.deepEqual(anchors.sort(), ['default-everyturn', 'default-sandbox', 'dev', 'experimental', 'library', 'overview', 'prefs', 'reasoning'])
   assert.equal(h.panelOpens.length, 0, '卡片侧按钮不在左侧页里，这里不触发')
 })
 
@@ -348,15 +348,28 @@ const reasoningStatus = () => ({
   enabled: false,
   proxyRunning: false,
   port: 46321,
-  config: { prefix: '他喵测试前缀', providerId: 'prefill-think', modelId: 'deepseek-flash' },
+  config: { prefix: '他喵测试前缀', contentPrefix: '内容前缀测试', providerId: 'prefill-think', modelId: 'deepseek-flash' },
   catalog: { tools: 15, bytes: 6622 },
   hasApiKey: true,
   failures: 0,
+  proxyError: null,
+  route: {
+    ok: true,
+    error: null,
+    at: 0,
+    providerId: 'prefill-think',
+    modelId: 'deepseek-flash',
+    displayName: 'DeepSeek（思考前缀）',
+    modelName: 'DeepSeek Flash（思考前缀）',
+    port: 46321,
+    baseURL: 'http://127.0.0.1:46321/beta/v1',
+    inConfig: true,
+  },
   audit: [],
 })
 
 test('实验区：显示状态（工具清单 / 密钥）并可保存前缀启用', async () => {
-  const h = makeSettingsHarness(envelope(), {
+  const h = makeSettingsHarness(envelope({ experimental: true }), {
     routes: {
       '/api/dsh-prefill/reasoning/status': reasoningStatus,
       '/api/dsh-prefill/reasoning/enable': () => ({ ...reasoningStatus(), enabled: true, proxyRunning: true }),
@@ -373,6 +386,9 @@ test('实验区：显示状态（工具清单 / 密钥）并可保存前缀启�
   assert.match(text, /reasoningOff/)
   const input = h.find(tree, (props) => props['data-prefill-reasoning-prefix'] !== undefined)[0]
   assert.equal(input.props.value, '他喵测试前缀', '状态里的前缀回填到输入框')
+  const contentInput = h.find(tree, (props) => props['data-prefill-reasoning-content-prefix'] !== undefined)[0]
+  assert.equal(contentInput.props.value, '内容前缀测试', '状态里的内容前缀回填到输入框')
+  assert.match(text, /reasoningContentPrefixHint/, '内容前缀旁说明「只返回续写部分」')
   // issue #45 第 15 条：会起代理、写模型路由 ⇒ 两步确认。
   h.find(tree, (props) => props['data-prefill-reasoning-enable'] !== undefined)[0].props.onClick()
   tree = h.render()
@@ -381,15 +397,49 @@ test('实验区：显示状态（工具清单 / 密钥）并可保存前缀启�
   await h.settle()
   const enabled = h.posts.filter((entry) => entry.path === '/api/dsh-prefill/reasoning/enable')
   assert.equal(enabled.length, 1)
-  assert.deepEqual(enabled[0].body, { prefix: '他喵测试前缀' })
+  assert.deepEqual(enabled[0].body, { prefix: '他喵测试前缀', contentPrefix: '内容前缀测试' })
   tree = h.render()
   const after = flattenText(h.find(tree, (props) => props['data-prefill-reasoning'] !== undefined)[0]).join(' ')
   assert.match(after, /reasoningOn/)
   assert.ok(h.find(tree, (props) => props['data-prefill-reasoning-disable'] !== undefined).length > 0, '启用后出现停用按钮')
 })
 
+
+test('实验性功能总开关：关着时实验区只留开关，思考前缀被门禁（v0.20.2）', async () => {
+  const h = makeSettingsHarness(envelope())
+  h.render()
+  await h.settle()
+  let tree = h.render()
+  const toggle = () => h.find(tree, (props) => props['data-prefill-experimental-toggle'] !== undefined)[0]
+  assert.ok(toggle(), '总开关存在')
+  assert.equal(toggle().props['data-prefill-experimental-toggle'], 'off')
+  const reasoningCard = h.find(tree, (props) => props['data-prefill-reasoning'] !== undefined)[0]
+  const cardText = flattenText(reasoningCard).join(' ')
+  assert.match(cardText, /expOffNote/, '关闭时思考前缀卡片给门禁提示')
+  assert.equal(h.find(tree, (props) => props['data-prefill-reasoning-enable'] !== undefined).length, 0, '关闭时没有启用按钮')
+  // 打开总开关：打 toggle 路由，随后重拉整封信
+  h.find(tree, (props) => props['data-prefill-experimental-toggle'] !== undefined)[0].props.onClick()
+  await h.settle()
+  const posts = h.posts.filter((entry) => entry.path === '/api/dsh-prefill/experimental/toggle')
+  assert.equal(posts.length, 1)
+  assert.deepEqual(posts[0].body, { on: true })
+})
+
+test('实验性功能总开关：开着时实验区可用、思考前缀卡片完整渲染', async () => {
+  const h = makeSettingsHarness(envelope({ experimental: true }), {
+    routes: { '/api/dsh-prefill/reasoning/status': () => ({ ...reasoningStatus(), enabled: false }) },
+  })
+  h.render()
+  await h.settle()
+  const tree = h.render()
+  const toggle = h.find(tree, (props) => props['data-prefill-experimental-toggle'] !== undefined)[0]
+  assert.equal(toggle.props['data-prefill-experimental-toggle'], 'on')
+  assert.ok(h.find(tree, (props) => props['data-prefill-reasoning-enable'] !== undefined).length > 0, '开着时出现启用按钮')
+  assert.equal(h.find(tree, (props) => props['data-prefill-reasoning-gated'] !== undefined).length, 0, '不渲染门禁提示')
+})
+
 test('实验区：缺 DEEPSEEK_API_KEY 时给提示', async () => {
-  const h = makeSettingsHarness(envelope(), {
+  const h = makeSettingsHarness(envelope({ experimental: true }), {
     routes: { '/api/dsh-prefill/reasoning/status': () => ({ ...reasoningStatus(), hasApiKey: false }) },
   })
   h.render()
@@ -401,3 +451,69 @@ test('实验区：缺 DEEPSEEK_API_KEY 时给提示', async () => {
   const warns = h.find(tree, () => true).filter((node) => flattenText(node).join(' ').includes('reasoningNoKey'))
   assert.ok(warns.length > 0, '缺 key 时给出提示')
 })
+
+test('实验区：模型路由写没写、在不在配置里、代理在不在跑都要摆在台面上（v0.20.1）', async () => {
+  const enabled = () => ({ ...reasoningStatus(), enabled: true, proxyRunning: true })
+  const h = makeSettingsHarness(envelope({ experimental: true }), {
+    routes: {
+      '/api/dsh-prefill/reasoning/status': enabled,
+      '/api/dsh-prefill/reasoning/repair': () => ({ ...enabled(), applied: { ok: true } }),
+    },
+  })
+  h.render()
+  await h.settle()
+  let tree = h.render()
+  const card = () => h.find(tree, (props) => props['data-prefill-reasoning'] !== undefined)[0]
+  const text = flattenText(card()).join(' ')
+  assert.match(text, /reasoningRouteLabel/, '显示模型路由一行')
+  assert.match(text, /reasoningRouteOk/, '路由已写入')
+  assert.match(text, /deepseek-flash/, '显示实际模型 id')
+  assert.ok(h.find(tree, (props) => props['data-prefill-reasoning-repair'] !== undefined).length > 0, '启用后有「修复路由」按钮')
+  // 点修复 ⇒ 打 repair 路由
+  h.find(tree, (props) => props['data-prefill-reasoning-repair'] !== undefined)[0].props.onClick()
+  await h.settle()
+  assert.equal(h.posts.filter((entry) => entry.path === '/api/dsh-prefill/reasoning/repair').length, 1)
+  // 路由从配置里消失 ⇒ 明确警告 + 修复提示
+  const missing = makeSettingsHarness(envelope({ experimental: true }), {
+    routes: { '/api/dsh-prefill/reasoning/status': () => ({ ...enabled(), route: { ...reasoningStatus().route, ok: false, error: 'nope', inConfig: false } }) },
+  })
+  missing.render()
+  await missing.settle()
+  tree = missing.render()
+  const missingText = flattenText(tree).join(' ')
+  assert.match(missingText, /reasoningRouteBroken/)
+  assert.match(missingText, /reasoningRouteNotInConfig/)
+})
+
+test('实验区：代理没起来 / applied.ok=false ⇒ 警告与错误 pill，不再假装成功', async () => {
+  const down = () => ({
+    ...reasoningStatus(),
+    enabled: true,
+    proxyRunning: false,
+    proxyError: 'listen EADDRINUSE 127.0.0.1:46321',
+    applied: { ok: false, enabled: true, proxyRunning: false, error: 'listen EADDRINUSE' },
+  })
+  const h = makeSettingsHarness(envelope({ experimental: true }), {
+    routes: {
+      '/api/dsh-prefill/reasoning/status': down,
+      '/api/dsh-prefill/reasoning/enable': down,
+    },
+  })
+  h.render()
+  await h.settle()
+  let tree = h.render()
+  const text = flattenText(tree).join(' ')
+  assert.match(text, /reasoningProxyDown/, '代理没跑要警告')
+  assert.ok(h.find(tree, (props) => props['data-prefill-reasoning-proxy-down'] !== undefined).length > 0)
+  // 点「停用」失败时同理：错误进这一节的 pill
+  h.find(tree, (props) => props['data-prefill-reasoning-enable'] !== undefined)[0].props.onClick()
+  await h.settle()
+  tree = h.render()
+  assert.ok(
+    h.find(tree, (props) => typeof props['data-prefill-error-pill'] === 'string' && props['data-prefill-error-pill'].startsWith('reasoning:')).length > 0,
+    'applied.ok=false 要出现错误 pill',
+  )
+  const details = h.failDetails().map((detail) => detail.detail ?? '')
+  assert.ok(details.some((detail) => String(detail).includes('EADDRINUSE')), '错误详情带上服务端原因')
+})
+

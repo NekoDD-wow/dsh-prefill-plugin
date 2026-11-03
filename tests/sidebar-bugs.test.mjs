@@ -286,7 +286,7 @@ test('#45-8 思考前缀「刷新状态」：点了有 busy 态，完成后给�
       return { enabled: false, proxyRunning: false, failures: 0 }
     },
   }
-  const h = await mounted(envelope(), { routes })
+  const h = await mounted(envelope({ state: { ui: { motion: 'lite', experimental: true } } }), { routes })
   let tree = h.render()
   // C（#45 第 15 条）：刷新并入全页同一套 busy(key) + SectionSaved，不再自带 busy / 已刷新标记。
   assert.equal(h.find(tree, (props) => props['data-prefill-section-saved'] !== undefined).length, 0, '挂载时那次自动拉取不算')

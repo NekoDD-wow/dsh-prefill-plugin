@@ -121,7 +121,7 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf, initialAnc
 
   const make = new Function(
     'React', 'h', 'S', 'LEVERS', 'notifyStateChanged', 'setMotionPref', 'tint', 'ERROR_TONE', 'CONFIRM_MS',
-    'STATE_ROUTE', 'STATE_EVENT', 'ANCHOR_EVENT', 'takePanelAnchor', 'openPrefillPanel', 'openSessionAndCard', 'PACKS_ROUTE', 'CARDS_ROUTE', 'window', 'fetch', 'postJson', 'REASONING_STATUS_ROUTE', 'REASONING_ENABLE_ROUTE', 'REASONING_DISABLE_ROUTE',
+    'STATE_ROUTE', 'STATE_EVENT', 'ANCHOR_EVENT', 'takePanelAnchor', 'openPrefillPanel', 'openSessionAndCard', 'PACKS_ROUTE', 'CARDS_ROUTE', 'window', 'fetch', 'postJson', 'REASONING_STATUS_ROUTE', 'REASONING_ENABLE_ROUTE', 'REASONING_DISABLE_ROUTE', 'REASONING_REPAIR_ROUTE', 'EXPERIMENTAL_STATUS_ROUTE', 'EXPERIMENTAL_TOGGLE_ROUTE', 'EXPERIMENTAL_CONFIG_ROUTE', 'EXPERIMENTAL_STATS_RESET_ROUTE',
     feedbackSrc + '\n' +
       'const MOTION_LEVELS = ["full", "lite", "off"]\n' +
       normalizeMotionSrc + '\n' +
@@ -162,6 +162,11 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf, initialAnc
     '/api/dsh-prefill/reasoning/status',
     '/api/dsh-prefill/reasoning/enable',
     '/api/dsh-prefill/reasoning/disable',
+    '/api/dsh-prefill/reasoning/repair',
+    '/api/dsh-prefill/experimental/status',
+    '/api/dsh-prefill/experimental/toggle',
+    '/api/dsh-prefill/experimental/config',
+    '/api/dsh-prefill/experimental/stats/reset',
   )
 
   // 默认 t 返回 key；传 t（如一份字典查表）可以测具体文案（英文冒号 / 复数等）。

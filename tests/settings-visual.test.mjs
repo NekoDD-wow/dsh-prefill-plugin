@@ -7,7 +7,7 @@ import { makeSettingsHarness } from './settings-harness.mjs'
 
 const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 
-const envelope = () => ({
+const envelope = (ui = {}) => ({
   ok: true,
   state: {
     version: 2,
@@ -15,7 +15,7 @@ const envelope = () => ({
     levers: { probeSection: false, probeContext: false, blockSections: false, blockContexts: false, blockTools: false, blockMessages: false },
     allowKinds: ['user'],
     tools: null,
-    ui: { motion: 'lite' },
+    ui: { motion: 'lite', ...ui },
     activePreset: { s1: 'card:宋知夏-2rgz3x', s2: 'builtin:pure', s3: 'card:c1' },
     everyTurn: { '*': { enabled: false, text: '', firstText: '', mode: 'always' } },
   },
@@ -64,7 +64,8 @@ const textOf = (node) => text(node).join('')
 
 /** 渲染到库也加载完（envelope 到了以后 effect 才带着会话拉库）。 */
 async function ready(options = {}) {
-  const h = makeSettingsHarness(envelope(), { routes: routes(), ...options })
+  const { ui, ...rest } = options
+  const h = makeSettingsHarness(envelope(ui), { routes: routes(), ...rest })
   h.render()
   await h.settle()
   h.render()
@@ -154,8 +155,8 @@ test('第 22 条：页顶小节目录，点了滚到对应 data-prefill-anchor',
   const tree = h.render()
   const links = h.find(tree, (props) => typeof props['data-prefill-toc-link'] === 'string')
   const order = links.map((node) => node.props['data-prefill-toc-link'])
-  assert.deepEqual(order, ['overview', 'default-everyturn', 'library', 'prefs', 'reasoning', 'dev'])
-  assert.deepEqual(text(links.map((node) => ({ children: node.children }))), ['tocOverview', 'tocDefaults', 'tocLibrary', 'tocPrefs', 'tocExperiment', 'tocDev'])
+  assert.deepEqual(order, ['overview', 'default-everyturn', 'library', 'prefs', 'experimental', 'reasoning', 'dev'])
+  assert.deepEqual(text(links.map((node) => ({ children: node.children }))), ['tocOverview', 'tocDefaults', 'tocLibrary', 'tocPrefs', 'tocExperimental', 'tocExperiment', 'tocDev'])
   const anchors = new Set(h.find(tree, (props) => typeof props['data-prefill-anchor'] === 'string').map((node) => node.props['data-prefill-anchor']))
   for (const anchor of order) assert.ok(anchors.has(anchor), '目录项都有对应锚点：' + anchor)
 
@@ -236,7 +237,7 @@ const EN = {
 }
 
 test('第 25 条：英文用半角冒号、单数 tool、来源包名有译文就用译文', async () => {
-  const h = await ready({ t: (key) => EN[key] ?? key })
+  const h = await ready({ t: (key) => EN[key] ?? key, ui: { experimental: true } })
   const tree = h.render()
   const overview = textOf(h.find(tree, (props) => props['data-prefill-overview-row'] === 's2')[0])
   assert.match(overview, /Every-turn: off/)

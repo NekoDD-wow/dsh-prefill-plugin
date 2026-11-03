@@ -3,6 +3,77 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.20.8 — 2026-11-03
+- **思考前缀：静默丢弃 / 截断当成功 / 挂死 / 自己把自己关掉 —— 四类 P0 + 三条 P1 修复**（审查报告：`.review/rp-v020/consolidated.md`）：
+  - **P0 上游分帧假设过窄（静默丢整段回复）**：shim 只按 `\n\n` 切 SSE 帧、且不看 content-type。上游用 **CRLF** 分帧（SSE 规范允许）时帧永远切不开，尾帧整段 `JSON.parse` 失败被吞 —— 客户端只收到 `finish_reason:"stop"` + `[DONE]`，正文 / 思维链 / 工具调用全丢，还记 `ok`。现在：切分前把 `\r\n` 归一成 `\n`；**非 SSE 的 200**（网关 200-JSON / 忽略 `stream:true`）整段读进来按同一口径转成 SSE；另加「收到过帧却零增量」的 `no-delta` 审计。
+  - **P0 实验页渲染崩溃**：`stats` 为 null（总开关开着但实验未启用）或 `stats.lastRequest` 为 null（启用后还没请求过 / 统计清零后）时直接解引用 → TypeError。预览段改用 `lastRequest` 守卫。
+  - **P0 `shim` / `textualize` 保存后被白名单静默丢弃**：路由收下、写盘时 `sanitizeUi` 没有这两个键 ⇒ 复选框回弹、代理永远按 `true` 跑（正是 docs §5 那条坑）。白名单放行两个布尔键。
+  - **P0 「成功透传」被算成连续失败 ⇒ 实验自己关掉自己**：`onOutcome` 里 `variant === 'passthrough'` 一律记失败，而「清空本轮填装」（`enabled:false`）、触发标记未命中、非 chat 请求走的都是透传 —— 一轮 3 次请求就写 `enabled:false` + 删 `llm-pi-ai` 路由 + 停代理，当前轮后续 step 直接失效且无原因。代理侧把透传拆成三态：`skipped`（用户主动跳过）/ `ignored`（本轮本就不该加前缀）/ `passthrough`（前缀被上游拒绝）—— 只有最后一种算失败。
+  - **P1 请求体没读完就断开** ⇒ `for await (req)` 抛 `aborted`，漏成 unhandledRejection（Node 默认终止进程）。就地 try/catch 收口。
+  - **P1 shim 路径上游中途断流** ⇒ 原来只 `res.end()`：没有 `finish_reason`、没有 `[DONE]`，parser 缓冲的文本与工具调用全丢，还记成功。现在补完整收尾（`closeStream`）并记 `stream-error` + `ok:false`。
+  - **P1 非 shim 透传上游中途断流** ⇒ `reader.on('error', resolve)` 不结束响应，客户端**挂死**且记成功。现在 `res.destroy()` + 记失败。
+- 回归测试（全部是真行为，不是源码正则）：CRLF 分帧 / 非 SSE 200 / shim 断流 / 透传断流 / 请求体中途断开 / 透传三态、`shim`+`textualize` 往返、实验页四种 stats 形态真渲染。
+- 单测：**599 项 / 598 通过 / 1 跳过 / 0 失败**（0.20.7 为 588 / 587 / 1）。
+## 0.20.7 — 2026-11-03
+- **P1 收尾（四块）**：
+  - **回退链控制**：`fallbackOrder` = 默认（按 catalogRole 偏好）/ `system-first` / `user-first`；`allowPassthrough` 关掉后只试前缀版本（本轮没前缀版本时仍兜底透传）。
+  - **清单包含 / 排除**：`catalogInclude` / `catalogExclude`（工具名，大小写不敏感；include 非空时只留名单内）。实测 include=read + exclude=bash ⇒ 清单 6.6KB → **269 B**。
+  - **前缀库升级**：预设可带 `match` 触发标记（套用一并写入）；新增导出 / 导入（面板按钮，JSON 文件，同名覆盖）；前缀支持**模板变量** `{{date}}` / `{{time}}` / `{{model}}` / `{{provider}}`，发请求前展开，认不出的原样保留。
+  - **调试 env 收编**：`DUMP` / `RAW` / `CONTENT` 三份调试文件也走 state（面板勾选，默认写 `<数据目录>/proxy-*.log`；环境变量仅兜底）。
+- 实测：`variant=user`（user-first 生效）、预览里前缀显示「模型=deepseek-flash 先想：」、日志与 dump 各落盘 1 行。
+- 单测：模板变量 / 回退链与 passthrough 关闭 / sanitize P1 字段；总计 588 项。
+
+## 0.20.6 — 2026-11-03
+- **P0 收尾（诊断面板补完）**：
+  - **审计详情**：代理审计记录补上「工具调用名 + 参数摘要」（`callsDetail`，最多 8 条，参数截 160 字）、每次请求的 token / 缓存命中（`usage`）；面板每条审计展开显示调用与用量，`upstream-error` 的错误正文也直接展示（原来只记不显）。
+  - **前缀轮计数**：「前缀轮」pill（total 不受日志环形上限影响；status 里 `turns: { total, session }`）。
+  - **请求形态预览**：新增「清单前 8 行」与「前缀消息原文（思考 / 内容）」两块（原来只有长度数字）。
+  - **代理 JSONL 日志**：日志开关 + 路径搬进 state（面板可勾选、可改路径、可复制路径），显示是否已落盘与文件大小；代理按 `getConfig().logging` 每请求写一行（含 callsDetail / usage / 首块 / 耗时）。原来只能靠 `DSH_PREFILL_SPIKE_*` 环境变量。
+- 实测：一轮 read 调用在面板审计里显示 `调用：read({"file_path":"PLAN.md"})` + `tokens 4004 / 缓存命中 3840`；日志文件落盘 3 行，字段与面板一致。
+- 单测：`sanitizeUi` 日志开关/路径白名单；总计 584 项。
+
+## 0.20.5 — 2026-11-03
+- **工具清单三个可选项（实验面板）**：
+  - `catalogMode`：`each` = 每轮由代理注入（默认）；`history` = 插件往**会话历史**注入一次，工具集不变就不重复注入，工具集变了 / 上下文压缩把它挤掉后才补一条。代理侧检测历史里已有清单（固定标记）就不再每轮注入；注入失败自动回退每轮注入兜底。
+  - `catalogDetail`：`full` 完整 / `brief` 描述 60 字 + 仅参数名 / `names` 仅工具名 —— brief 实测清单从 6.6KB 降到 2.1KB。
+  - `catalogPosition`：`head` 插在开头 system 段后（默认，缓存友好）/ `tail` 紧贴前缀消息（老行为）。
+- **history 模式实测**（3 轮 4 请求）：会话里只有 **1 条**清单消息（source=prefill/tool-catalog + catalogHash），UI 正文里完全不出现清单；最后一轮缓存命中 **98.5%**（14208/14418），工具调用（read）正常。
+- 注入机制：pre-step 里把清单作为 `source.kind='prefill', prefill='tool-catalog'` 的 user 消息插进本轮消息（DSH 会写进会话日志、模型可见，但不按普通用户消息渲染）；按 `catalogHash` 判断是否已注入，hash 变/历史里没有才补。
+- 单测：`buildToolCatalog` 三档详略、`hasToolCatalogMessage` 标记检测、`sanitizeUi` 三个口径校验。
+
+## 0.20.4 — 2026-11-03
+- **P0 补全（诊断面板）**：
+  - 缓存 / token 统计：代理从上游 usage 抽 `prompt_tokens` / `completion_tokens` / `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`（兼容 DeepSeek、OpenAI `cached_tokens`、Anthropic `cache_read_input_tokens` 三种口径，流式 shim 与非流式透传都读），累计进 stats，面板显示「缓存命中 %」与输入 / 输出 token。
+  - 首块延迟 **p95**（最近 100 个样本）；「上次请求」预览：消息数 / 原本 tools 数 / 清单字节 / 前后缀长度 / 最终变体。
+  - 上游**连通性测试**（TLS + HEAD，不碰 key）：面板按钮显示「上游可达 110 ms」或失败原因。
+  - **导出 JSONL**：前缀日志 + 审计 + 统计一键下载（`/experimental/export`，ndjson）。
+- **缓存回归修复（重要）**：工具清单原来插在**末尾**（prefix 消息前），每轮会被后面增长的历史顶开、永远不被复用 —— 实测缓存命中率只有 ~51%；把清单改插到**开头 system 段之后**，作为稳定前缀被缓存，第 2 轮起实测 **95–96%**（第 1 轮 35% 属首次请求，正常）。历史本身没被改，之前以为的「缓存掉了」其实是这笔尾部注入的账。
+- 单测：`parseUsage` 三种口径；清单位置用例更新 + 新增「有 system 段时清单不顶到最前面」。
+
+## 0.20.3 — 2026-11-03
+- **前缀预设（独立）**：`state.reasoningPrefixPresets = [{ name, prefix, contentPrefix }]`（`sanitizePrefixPresets`：名字必填 / 去重 / 60 字 / 每项 2000 字 / 最多 30 条）。实验页可保存 / 套用 / 删除，套用只改前缀不动路由；先独立存，之后整体预设要接时直接读这张表。
+- **前缀日志（逐轮）**：每轮第一步记一条快照（会话 / 轮号 / 时间 / 思考前缀 / 内容前缀 / 是否被跳过），内存环形 200 条 + 追加落盘 `<DATA_DIR>/prefix-log.jsonl`（不塞进 state，避免每请求写 900KB）。实验页新增「前缀日志」区：**大字、等宽**显示，按轮分块（第 N 轮 + 时间），思考前缀 / 内容前缀分色；另有一块「本轮（即将发出）」读当前配置，和「已发出」区分，方便每轮微调。
+- **本轮填装状态 + 清空**：实验页显示「已填装 / 未填装 / 已排队跳过 / 本轮跳过中」；「清空本轮填装」= 让**下一轮整轮**跳过前缀（多步工具轮也不加），轮结束自动复位；日志里这一轮标 `skipped`。新路由 `/experimental/{presets,skip}`，status 支持 `sessionId` 按会话过滤日志 / 跳过状态。
+- 单测：`sanitizePrefixPresets`（必填 / 去重 / 截断 / 上限）。
+
+## 0.20.2 — 2026-11-03
+- **实验性功能总开关 + 胶囊弹窗里的「实验」诊断面板**（P0 诊断 / P1 参数可调的第一步）：
+  - 左侧页「实验」区新增总开关（`state.ui.experimental`，默认关）：关着时思考前缀卡片只留开关与提示，所有实验按钮不可用；`/reasoning/enable` 直接拒绝（"实验性功能未开启"）；启动时也不会复活之前启用的代理 / 路由。关开关会顺带停用正在跑的思考前缀（代理关掉、路由删掉）。
+  - 胶囊弹窗（预填装芯片打开的卡片）新增一页「实验」：只在总开关开着时出现（关掉即从左侧导航消失）。里面是 **统计 + 暴露参数 + 路由**：
+    - 统计：本地代理累计的请求 / 成功 / 失败 / 工具调用次数 / 平均首块延迟 / 平均耗时 / 回退分布（`system` / `user` / `passthrough` 各多少次），可「清零统计」；代理没起来时显示「没有数据」而不是 0。
+    - 暴露参数（原来硬编码 / 只在代码里的）：代理端口、**思考前缀**、**内容前缀（contentPrefix）**、模型路由名、模型 id、触发标记、清单伪装（system / user）、流式改写开关、工具历史文本化开关、**一次最多工具调用**（原死写的 8）、**连续失败自动停用阈值**（原死写的 3）。保存后立即生效：改端口会重启代理（端口回退照旧），改路由名 / 模型 id 会重建 pi-ai 路由。
+    - 内容前缀（v0.20.2 补）：`injectReasoningPrefix` 一直都支持 `contentPrefix`（写进 assistant 前缀消息的 `content`），本版把它接到状态 `state.ui.reasoningPrefix.contentPrefix`、左侧页思考前缀卡片（第二个输入框）、实验面板（第二个 textarea）与 `/experimental/config`；可以只给内容前缀（思考前缀留空）——只要两者至少一个非空就注入。面板注明官方只返回「续写部分」：前缀本身不会出现在回复里。
+    - 路由 + 审计 + 复制 / 展开 JSON + 「修复路由」。
+  - 新路由：`/api/dsh-prefill/experimental/{status,toggle,config,stats/reset}`；`state.ui` 白名单新增 `experimental` 与两个新参数（带范围校验）。代理新增累计 `stats()` / `resetStats()`（深拷贝、可清零）。
+  - 单测：`tests/experimental.test.mjs`（状态白名单 / 参数范围 / 统计计数与清零 / 上游失败计数）；`tests/settings-pane-render.test.mjs` 加总开关与门禁、实验页路由状态；harness 补 4 条新路由；既有用例按「实验性功能开着」补 `ui.experimental`。
+
+## 0.20.1 — 2026-11-03
+- **思考前缀实验：模型路由不再「静默消失 / 静默失效」**（用户反馈：模型选择不生效、找不到插件创建的特殊模型配置）。根因三条：① 实验未启用时启动流程会删掉上次创建的 `prefill-think` 路由，面板只字不提；② 代理端口（默认 46321）被其它实例 / 残留进程占用时 `listen` 失败，但启用仍返回成功、路由照样写出去 —— 模型选择指向死端口，表现就是「选了没用」；③ 面板从不检查 `applied`，路由写失败也不报错。
+  - 代理 `listen` 支持端口回退：被占用时顺序向后找空位（最多 16 个），把实际端口写回 `state.ui.reasoningPrefix.port` 并用它重建路由 `baseURL`。
+  - `applyReasoningState` 改为返回结构化结果：代理起不来就不写路由（并清掉残留），路由写失败把原因带回来；`/reasoning/status` 新增 `route`（`providerId` / `modelId` / 显示名 / `baseURL` / `port` / `inConfig`）、`proxyError`、`applied`。
+  - 面板新增「模型路由」一行：已写入 / 未写入 / 写入失败 + 实际 provider/model + 模型选择器里显示的名字；代理没跑、配置里没有路由时给警告；新增「修复路由」按钮（重起代理并重写路由，不动前缀）；`applied.ok=false` 时冒错误 pill 并带服务端原因，不再假装成功。
+  - 新路由 `POST /api/dsh-prefill/reasoning/repair`；单测：`tests/reasoning-prefix.test.mjs` 加端口回退（占住端口后仍能绑到空位且请求可达），`tests/settings-pane-render.test.mjs` 加路由状态 / 修复按钮 / `applied.ok=false` 错误 pill；`tests/settings-harness.mjs` 补 `REASONING_REPAIR_ROUTE`。
+
 ## 0.20.0 — 2026-11-03
 - **左侧栏「预填装」页 8 处修复（公开 issue #45 PR A）**：「改默认 ↗」在页面未挂载时也能滚到对应小节；默认每轮注入的未保存草稿不再被状态广播 / 同页其它写入冲掉（新增「放弃修改」）；动效档位连点不再抛错；库删除 / 恢复默认的两步确认不再被旧定时器提前解除；没有在册会话时库按下拉框显示的会话加载；「生效会话」不再多出一行 `*`；「只注入前 N 轮」未填 N 时禁止保存；复制 id 等剪贴板结果再提示、库加载失败走错误 pill、思考前缀「刷新状态」有 busy 态与完成提示。单测 `tests/sidebar-bugs.test.mjs`。
 - **左侧栏「预填装」默认值模型（公开 issue #45 第 9–11 条，PR B）**：

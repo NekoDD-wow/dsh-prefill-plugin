@@ -1881,6 +1881,16 @@ window.__ModuleLoader__.load({
     const REASONING_STATUS_ROUTE = '/api/dsh-prefill/reasoning/status'
     const REASONING_ENABLE_ROUTE = '/api/dsh-prefill/reasoning/enable'
     const REASONING_DISABLE_ROUTE = '/api/dsh-prefill/reasoning/disable'
+    const REASONING_REPAIR_ROUTE = '/api/dsh-prefill/reasoning/repair'
+    /** 实验面板（胶囊弹窗「实验」页）：总开关 / 状态 / 参数 / 统计清零。 */
+    const EXPERIMENTAL_STATUS_ROUTE = '/api/dsh-prefill/experimental/status'
+    const EXPERIMENTAL_TOGGLE_ROUTE = '/api/dsh-prefill/experimental/toggle'
+    const EXPERIMENTAL_CONFIG_ROUTE = '/api/dsh-prefill/experimental/config'
+    const EXPERIMENTAL_STATS_RESET_ROUTE = '/api/dsh-prefill/experimental/stats/reset'
+    const EXPERIMENTAL_PRESETS_ROUTE = '/api/dsh-prefill/experimental/presets'
+    const EXPERIMENTAL_SKIP_ROUTE = '/api/dsh-prefill/experimental/skip'
+    const EXPERIMENTAL_PING_ROUTE = '/api/dsh-prefill/experimental/ping'
+    const EXPERIMENTAL_EXPORT_ROUTE = '/api/dsh-prefill/experimental/export'
     /** 手动注入路由（一次性，issue #19「C」）：op = list | add | edit | remove。 */
     const INJECT_ROUTE = '/api/dsh-prefill/inject'
 
@@ -2248,6 +2258,9 @@ window.__ModuleLoader__.load({
       reasoningNoKey: '缺少 DEEPSEEK_API_KEY：先在设置里配好密钥，再启用。',
       reasoningPrefixLabel: '前缀（助手首句开头）',
       reasoningPrefixPlaceholder: '例如：好的，我先理一下思路。',
+      reasoningContentPrefixLabel: '内容前缀（助手回复正文开头，可空）',
+      reasoningContentPrefixPlaceholder: '例如：好的，我来说明一下。留空 = 只加思考前缀。',
+      reasoningContentPrefixHint: '官方前缀续写只把「续写部分」返回给 DSH：前缀本身不会出现在回复里，模型会接着你的开头写。',
       reasoningEnable: '保存并启用',
       reasoningDisable: '停用',
       reasoningRefresh: '刷新状态',
@@ -2258,6 +2271,146 @@ window.__ModuleLoader__.load({
       reasoningAuditEmpty: '暂无失败记录',
       reasoningFailed: '操作失败：{reason}',
       reasoningUnavailable: '后台没有响应：重启一次 DSH 再试。',
+      // 模型路由（v0.20.1）：面板要把「路由写没写 / 在不在配置里 / 代理在不在跑」摆出来。
+      reasoningRouteLabel: '模型路由',
+      reasoningRouteOk: '已写入',
+      reasoningRouteMissing: '未写入',
+      reasoningRouteBroken: '写入失败',
+      reasoningRouteInConfig: '配置里已存在',
+      reasoningRouteNotInConfig: '配置里没有',
+      reasoningRouteName: '模型选择器里显示为「{name}」',
+      reasoningRoutePort: '代理端口 {port}',
+      reasoningRepair: '修复路由',
+      reasoningRepairTip: '重新起代理并写一次模型路由（不动前缀）；模型选择器里没有它时点这里。',
+      reasoningRepaired: '模型路由已修复',
+      reasoningProxyDown: '代理没在跑：模型选择会连到死端口。点「修复路由」。',
+      reasoningApplyFailed: '启用/停用没完全成功：{reason}',
+      // 实验性功能总开关 + 胶囊弹窗里的实验面板（v0.20.2）
+      expTitle: '实验性功能',
+      expHint: '总开关：关闭时实验区（思考前缀）与胶囊弹窗里的实验面板都不可用。实验功能可能不稳定，建议先在 web profile 里试。',
+      expOnLabel: '已开启',
+      expOffLabel: '未开启',
+      expToggleOp: '实验性功能',
+      expOffNote: '实验性功能未开启：打开上面的开关后，才能使用思考前缀与诊断面板。',
+      expOffWarn: '关闭实验性功能会顺带停用正在跑的思考前缀。',
+      labTitle: '实验',
+      labNavStatus: '统计 · 参数',
+      labHint: '诊断与参数都在这里：统计来自本地代理的累计数据；参数写进 state 后立即生效（改端口会重启代理）。关闭实验性功能后这个面板会消失。',
+      labStatsTitle: '统计',
+      labStatsRequests: '请求',
+      labStatsOk: '成功',
+      labStatsFailed: '失败',
+      labStatsVariants: '回退分布',
+      labStatsFirstDelta: '首块',
+      labStatsMs: '总耗时',
+      labStatsCalls: '工具调用',
+      labStatsEmpty: '代理没在跑：还没有统计数据。',
+      labKnobsTitle: '接口参数（暴露给面板）',
+      labKnobPort: '代理端口',
+      labKnobPrefix: '思考前缀',
+      labKnobContentPrefix: '内容前缀',
+      labKnobCatalogMode: '清单注入',
+      labKnobCatalogDetail: '清单详略',
+      labKnobCatalogPosition: '清单位置',
+      labCatalogEach: '每轮注入（缓存友好）',
+      labCatalogHistory: '仅首次进历史（推荐）',
+      labCatalogFull: '完整',
+      labCatalogBrief: '精简（60 字）',
+      labCatalogNames: '仅工具名',
+      labKnobFallbackOrder: '回退顺序',
+      labFallbackDefault: '默认（按伪装偏好）',
+      labFallbackSystem: 'system 优先',
+      labFallbackUser: 'user 优先',
+      labKnobAllowPassthrough: '允许透传（关掉只试前缀版）',
+      labKnobCatalogInclude: '清单只包含（逗号分隔）',
+      labKnobCatalogExclude: '清单排除（逗号分隔）',
+      labPrefixVarsHint: '前缀支持模板变量：{{date}} {{time}} {{model}} {{provider}}（认不出的原样保留）',
+      labLoggingDump: '请求形态 dump',
+      labLoggingRaw: '原始流 raw',
+      labLoggingContent: '模型文本 content',
+      labPresetExport: '导出预设',
+      labPresetImport: '导入预设',
+      labPresetExported: '预设已导出',
+      labPresetImported: '预设已导入',
+      labCatalogHead: '开头 system 后',
+      labCatalogTail: '末尾前缀前',
+      labKnobProvider: '模型路由名',
+      labKnobModel: '模型 id',
+      labKnobCatalogRole: '清单伪装',
+      labKnobShim: '流式改写成 tool_calls',
+      labKnobTextualize: '工具历史文本化',
+      labKnobMatch: '触发标记（空 = 每轮）',
+      labKnobMaxCalls: '一次最多工具调用',
+      labKnobFailure: '连续失败自动停用',
+      labSave: '保存参数',
+      labSaved: '参数已保存',
+      labResetStats: '清零统计',
+      labStatsReset: '统计已清零',
+      labRefresh: '刷新',
+      labCopy: '复制 JSON',
+      labJson: '展开 JSON',
+      labJsonHide: '收起 JSON',
+      labCopied: '已复制',
+      labAuditTitle: '最近审计',
+      labAuditCalls: '调用',
+      labAuditErrorBody: '上游原文',
+      labTurns: '前缀轮',
+      labPreviewPrefixMsg: '前缀消息（思考 / 内容）',
+      labLoggingTitle: '代理 JSONL 日志',
+      labLoggingOn: '开启（每次请求写一行）',
+      labLoggingCopy: '复制路径',
+      labLoggingEnabled: '已开启',
+      labLoggingDisabled: '未开启',
+      labLoggingNoFile: '文件还没生成',
+      labNoAudit: '暂无审计记录',
+      labReasoningTitle: '思考前缀',
+      // 填装状态 / 清空 / 预设 / 日志（v0.20.3）
+      labPrefillTitle: '本轮填装',
+      labPrefillReady: '已填装：本轮会带前缀',
+      labPrefillEmpty: '未填装：本轮不加前缀',
+      labPrefillOff: '实验未启用 / 代理没跑 / 路由缺失',
+      labPrefillSkipping: '本轮已跳过（清空填装生效中）',
+      labPrefillQueued: '已排队：下一轮整轮跳过',
+      labClear: '清空本轮填装',
+      labRestore: '恢复本轮填装',
+      labClearDone: '已清空本轮填装：下一轮不加前缀',
+      labRestoreDone: '已恢复：下一轮照常加前缀',
+      labPresetsTitle: '前缀预设（独立预设，之后可并进整体预设）',
+      labPresetName: '预设名',
+      labPresetNamePh: '例如：中文思维链',
+      labPresetSave: '保存为预设',
+      labPresetApply: '套用',
+      labPresetDelete: '删除',
+      labPresetSaved: '预设已保存',
+      labPresetApplied: '预设已套用',
+      labPresetDeleted: '预设已删除',
+      labPresetEmpty: '还没有前缀预设',
+      labLogTitle: '前缀日志（逐轮）',
+      labLogEmpty: '还没有记录：发一轮消息后这里会出现这一轮实际用的前缀。',
+      labLogNext: '本轮（即将发出）',
+      labLogTurn: '第 {n} 轮',
+      labLogReasoning: '思考前缀',
+      labLogContent: '内容前缀',
+      labLogSkipped: '本轮跳过',
+      labLogEmptyValue: '（空）',
+      // P0 补全：缓存 / token / p95 / 请求预览 / 连通性 / JSONL 导出
+      labStatsCacheHit: '缓存命中',
+      labStatsPrompt: '输入 token',
+      labStatsCompletion: '输出 token',
+      labStatsP95: '首块 p95',
+      labPreviewTitle: '上次请求',
+      labPreviewMessages: '消息数',
+      labPreviewTools: '原本 tools',
+      labPreviewCatalog: '清单',
+      labPreviewPrefix: '前缀长度',
+      labPreviewEmpty: '还没有请求记录',
+      labPing: '连通性测试',
+      labPingOk: '上游可达 {ms} ms（{host}）',
+      labPingFail: '上游不可达：{reason}',
+      labExport: '导出 JSONL',
+      labExported: '已导出',
+      labGoReasoning: '到左侧页实验区管理',
+      labError: '操作失败：{reason}',
       // ── PR3（公开 issue #44）：跨会话总览 + 双向跳转 ──
       overviewTitle: '总览',
       overviewHint: '在册会话与它们的当前配置。「默认」= 这个会话没单独设置、跟随下面的新会话默认；「本会话」= 这个会话自己设过。「打开」= 切到那个会话并弹出预填装卡片。',
@@ -2525,6 +2678,9 @@ window.__ModuleLoader__.load({
       reasoningNoKey: 'DEEPSEEK_API_KEY is missing: configure it in Settings before enabling.',
       reasoningPrefixLabel: 'Prefix (start of the assistant reply)',
       reasoningPrefixPlaceholder: 'e.g. Sure, here is what you asked:',
+      reasoningContentPrefixLabel: 'Content prefix (start of the reply body, optional)',
+      reasoningContentPrefixPlaceholder: 'e.g. Sure, here is what you asked. Leave empty to use only the reasoning prefix.',
+      reasoningContentPrefixHint: 'Prefix completion returns only the continuation to DSH: the prefix itself is not shown in the reply; the model continues from your opening.',
       reasoningEnable: 'Save & enable',
       reasoningDisable: 'Disable',
       reasoningRefresh: 'Refresh',
@@ -2535,6 +2691,146 @@ window.__ModuleLoader__.load({
       reasoningAuditEmpty: 'no failures',
       reasoningFailed: 'Failed: {reason}',
       reasoningUnavailable: 'Host did not respond: restart DSH and retry.',
+      // Model route (v0.20.1): surface whether the route is written / present / backed by a live proxy.
+      reasoningRouteLabel: 'Model route',
+      reasoningRouteOk: 'written',
+      reasoningRouteMissing: 'not written',
+      reasoningRouteBroken: 'write failed',
+      reasoningRouteInConfig: 'present in config',
+      reasoningRouteNotInConfig: 'missing from config',
+      reasoningRouteName: 'Model picker shows "{name}"',
+      reasoningRoutePort: 'Proxy port {port}',
+      reasoningRepair: 'Repair route',
+      reasoningRepairTip: 'Restart the proxy and write the model route again (prefix unchanged); use it when the model is missing from the picker.',
+      reasoningRepaired: 'Model route repaired',
+      reasoningProxyDown: 'Proxy is not running: the model route points at a dead port. Click "Repair route".',
+      reasoningApplyFailed: 'Enable/disable did not fully succeed: {reason}',
+      // Experimental master switch + the experimental panel inside the chip popup (v0.20.2)
+      expTitle: 'Experimental features',
+      expHint: 'Master switch: when off, the experiment area (reasoning prefix) and the experimental panel in the chip popup are unavailable. Experimental features may be unstable; try them in the web profile first.',
+      expOnLabel: 'on',
+      expOffLabel: 'off',
+      expToggleOp: 'Experimental features',
+      expOffNote: 'Experimental features are off: turn on the switch above to use the reasoning prefix and the diagnostics panel.',
+      expOffWarn: 'Turning experimental features off also disables the running reasoning prefix.',
+      labTitle: 'Lab',
+      labNavStatus: 'stats · knobs',
+      labHint: 'Diagnostics and knobs live here: stats come from the local proxy; knobs are written to state and apply immediately (a port change restarts the proxy). This panel disappears when experimental features are off.',
+      labStatsTitle: 'Stats',
+      labStatsRequests: 'requests',
+      labStatsOk: 'ok',
+      labStatsFailed: 'failed',
+      labStatsVariants: 'variants',
+      labStatsFirstDelta: 'first delta',
+      labStatsMs: 'duration',
+      labStatsCalls: 'tool calls',
+      labStatsEmpty: 'Proxy is not running: no stats yet.',
+      labKnobsTitle: 'Interface knobs (exposed)',
+      labKnobPort: 'Proxy port',
+      labKnobPrefix: 'Reasoning prefix',
+      labKnobContentPrefix: 'Content prefix',
+      labKnobCatalogMode: 'Catalog injection',
+      labKnobCatalogDetail: 'Catalog detail',
+      labKnobCatalogPosition: 'Catalog position',
+      labCatalogEach: 'Every request (cache-friendly)',
+      labCatalogHistory: 'Once into history (recommended)',
+      labCatalogFull: 'Full',
+      labCatalogBrief: 'Brief (60 chars)',
+      labCatalogNames: 'Names only',
+      labKnobFallbackOrder: 'Fallback order',
+      labFallbackDefault: 'Default (per role)',
+      labFallbackSystem: 'system first',
+      labFallbackUser: 'user first',
+      labKnobAllowPassthrough: 'Allow passthrough (off = prefixed variants only)',
+      labKnobCatalogInclude: 'Catalog include (comma separated)',
+      labKnobCatalogExclude: 'Catalog exclude (comma separated)',
+      labPrefixVarsHint: 'Template variables: {{date}} {{time}} {{model}} {{provider}} (unknown ones kept as-is)',
+      labLoggingDump: 'request-shape dump',
+      labLoggingRaw: 'raw stream',
+      labLoggingContent: 'model text',
+      labPresetExport: 'Export presets',
+      labPresetImport: 'Import presets',
+      labPresetExported: 'Presets exported',
+      labPresetImported: 'Presets imported',
+      labCatalogHead: 'Head, after system',
+      labCatalogTail: 'Tail, before prefix',
+      labKnobProvider: 'Model route id',
+      labKnobModel: 'Model id',
+      labKnobCatalogRole: 'Catalog disguise',
+      labKnobShim: 'Stream-rewrite to tool_calls',
+      labKnobTextualize: 'Textualize tool history',
+      labKnobMatch: 'Trigger marker (empty = every turn)',
+      labKnobMaxCalls: 'Max tool calls per response',
+      labKnobFailure: 'Auto-disable after failures',
+      labSave: 'Save knobs',
+      labSaved: 'Knobs saved',
+      labResetStats: 'Reset stats',
+      labStatsReset: 'Stats cleared',
+      labRefresh: 'Refresh',
+      labCopy: 'Copy JSON',
+      labJson: 'Show JSON',
+      labJsonHide: 'Hide JSON',
+      labCopied: 'Copied',
+      labAuditTitle: 'Recent audit',
+      labAuditCalls: 'calls',
+      labAuditErrorBody: 'upstream body',
+      labTurns: 'prefix turns',
+      labPreviewPrefixMsg: 'Prefix message (reasoning / content)',
+      labLoggingTitle: 'Proxy JSONL log',
+      labLoggingOn: 'Enable (one line per request)',
+      labLoggingCopy: 'Copy path',
+      labLoggingEnabled: 'enabled',
+      labLoggingDisabled: 'disabled',
+      labLoggingNoFile: 'file not created yet',
+      labNoAudit: 'no audit entries',
+      labReasoningTitle: 'Reasoning prefix',
+      // Prefill status / clear / presets / log (v0.20.3)
+      labPrefillTitle: 'This turn',
+      labPrefillReady: 'Prefilled: this turn carries the prefix',
+      labPrefillEmpty: 'Not prefilled: no prefix this turn',
+      labPrefillOff: 'Experiment off / proxy not running / route missing',
+      labPrefillSkipping: 'Skipped this turn (clear-prefill active)',
+      labPrefillQueued: 'Queued: next turn skips the prefix',
+      labClear: 'Clear this turn',
+      labRestore: 'Restore this turn',
+      labClearDone: 'Cleared: next turn adds no prefix',
+      labRestoreDone: 'Restored: next turn adds the prefix again',
+      labPresetsTitle: 'Prefix presets (standalone; ready to merge into full presets)',
+      labPresetName: 'Preset name',
+      labPresetNamePh: 'e.g. Chinese reasoning',
+      labPresetSave: 'Save preset',
+      labPresetApply: 'Apply',
+      labPresetDelete: 'Delete',
+      labPresetSaved: 'Preset saved',
+      labPresetApplied: 'Preset applied',
+      labPresetDeleted: 'Preset deleted',
+      labPresetEmpty: 'No prefix presets yet',
+      labLogTitle: 'Prefix log (per turn)',
+      labLogEmpty: 'No entries yet: send a turn and the prefixes actually used appear here.',
+      labLogNext: 'This turn (about to send)',
+      labLogTurn: 'Turn {n}',
+      labLogReasoning: 'Reasoning prefix',
+      labLogContent: 'Content prefix',
+      labLogSkipped: 'skipped',
+      labLogEmptyValue: '(empty)',
+      // P0 completion: cache / tokens / p95 / request preview / connectivity / JSONL export
+      labStatsCacheHit: 'cache hit',
+      labStatsPrompt: 'prompt tokens',
+      labStatsCompletion: 'output tokens',
+      labStatsP95: 'first-delta p95',
+      labPreviewTitle: 'Last request',
+      labPreviewMessages: 'messages',
+      labPreviewTools: 'tools before strip',
+      labPreviewCatalog: 'catalog',
+      labPreviewPrefix: 'prefix chars',
+      labPreviewEmpty: 'no requests yet',
+      labPing: 'Connectivity',
+      labPingOk: 'Upstream reachable in {ms} ms ({host})',
+      labPingFail: 'Upstream unreachable: {reason}',
+      labExport: 'Export JSONL',
+      labExported: 'Exported',
+      labGoReasoning: 'Manage in the experiment area on the left page',
+      labError: 'Failed: {reason}',
       // ── PR3 (public issue #44): cross-session overview + two-way navigation ──
       overviewTitle: 'Overview',
       overviewHint: 'Live sessions and their current setup. “default” = the session has no setting of its own and follows the new-session default below; “this session” = set on the session itself. “Open” switches to that session and opens the Prefill card.',
@@ -3731,6 +4027,7 @@ window.__ModuleLoader__.load({
       tocLibrary: '库',
       tocPrefs: '偏好',
       tocExperiment: '实验',
+      tocExperimental: '实验性功能',
       tocDev: '开发者',
       overviewUntitled: '未命名会话',
       defaultTurnUntilLabel: '只注入前',
@@ -3756,6 +4053,7 @@ window.__ModuleLoader__.load({
       tocLibrary: 'Library',
       tocPrefs: 'Preferences',
       tocExperiment: 'Experiment',
+      tocExperimental: 'Experimental',
       tocDev: 'Developer',
       overviewUntitled: 'Untitled session',
       defaultTurnUntilLabel: 'Inject for the first',
@@ -4373,6 +4671,8 @@ window.__ModuleLoader__.load({
       // 思考前缀实验（DeepSeek Beta）：状态 + 前缀草稿。忙碌 / 失败与其它节同一套 busy(key) + 错误 pill（issue #45 第 15 条）。
       const [reasoning, setReasoning] = React.useState(null)
       const [reasoningDraft, setReasoningDraft] = React.useState('')
+      // 内容前缀（assistant 正文开头）：和思考前缀一起保存 / 启用。
+      const [reasoningContentDraft, setReasoningContentDraft] = React.useState('')
       const [reasoningLoadFailed, setReasoningLoadFailed] = React.useState(false)
       const [reasoningArmed, setReasoningArmed] = React.useState(false)
       const reasoningArmTimer = React.useRef(null)
@@ -4381,6 +4681,9 @@ window.__ModuleLoader__.load({
         if (data !== null && typeof data === 'object') setReasoning(data)
         if (typeof data?.config?.prefix === 'string') {
           setReasoningDraft((current) => (current === '' ? data.config.prefix : current))
+        }
+        if (typeof data?.config?.contentPrefix === 'string') {
+          setReasoningContentDraft((current) => (current === '' ? data.config.contentPrefix : current))
         }
         setReasoningLoadFailed(false)
         return data
@@ -4958,7 +5261,14 @@ window.__ModuleLoader__.load({
         if (busy.anyPending('reasoning:')) return null
         const running = busy.run(key, async () => {
           const data = path === REASONING_STATUS_ROUTE ? await loadReasoning() : await postJson(path, body)
-          if (path !== REASONING_STATUS_ROUTE && data !== null && typeof data === 'object') setReasoning(data)
+          if (path !== REASONING_STATUS_ROUTE && data !== null && typeof data === 'object') {
+            setReasoning(data)
+            // 服务端已经不再静默失败：代理起不来 / 路由写失败会回 applied.ok=false，这里必须让用户看到。
+            const applied = data.applied
+            if (applied !== null && typeof applied === 'object' && applied.ok === false) {
+              throw new Error(String(applied.error ?? 'unknown'))
+            }
+          }
           setReasoningLoadFailed(false)
           markSaved('reasoning', savedText)
           reduceSectionError('reasoning', { type: 'ok', key })
@@ -4988,7 +5298,27 @@ window.__ModuleLoader__.load({
           return
         }
         disarmReasoning()
-        void reasoningAct('reasoning:enable', opOf('secReasoning', reasoningEnabled ? 'reasoningSavePrefix' : 'reasoningEnable'), REASONING_ENABLE_ROUTE, { prefix: reasoningDraft })
+        void reasoningAct('reasoning:enable', opOf('secReasoning', reasoningEnabled ? 'reasoningSavePrefix' : 'reasoningEnable'), REASONING_ENABLE_ROUTE, { prefix: reasoningDraft, contentPrefix: reasoningContentDraft })
+      }
+
+      // ── 实验性功能总开关（v0.20.2）：关着时实验区不可用、胶囊弹窗不显示实验面板 ──
+      const experimentalOn = state?.ui?.experimental === true
+      const toggleExperimental = (next) => {
+        if (busy.anyPending('experimental')) return null
+        const running = busy.run('experimental', async () => {
+          const data = await postJson(EXPERIMENTAL_TOGGLE_ROUTE, { on: next })
+          const fresh = await call(undefined)
+          adopt(fresh)
+          markSaved('experimental')
+          reduceSectionError('experimental', { type: 'ok', key: 'experimental' })
+          reportOk('', 'experimental')
+          notifyStateChanged()
+          // 关开关会顺带停用思考前缀：把最新状态同步过来（代理是否还在跑也一并刷新）。
+          syncReasoning()
+          return data
+        })
+        if (running === null) return null
+        return running.catch((err) => fail('experimental', 'experimental', t('expToggleOp'), err))
       }
 
       // PR D（#45 第 18 条）：运行状态 JSON 默认收起；「复制 JSON」写剪贴板（失败走这一节的错误 pill）。
@@ -5613,12 +5943,43 @@ window.__ModuleLoader__.load({
           h('div', { style: S.note }, t('resetNoAskHint')),
         ),
 
+        // ── 实验性功能总开关（v0.20.2）：关着时实验区不可用、胶囊弹窗不显示实验面板 ──
+        h(
+          'div',
+          { style: S.card, 'data-prefill-experimental': '', 'data-prefill-anchor': 'experimental' },
+          sectionHead('experimental', t('expTitle')),
+          sectionErrorDetail('experimental'),
+          h('div', { style: S.note }, t('expHint')),
+          h(
+            'div',
+            { style: S.switchRow },
+            h('span', { style: S.label }, t('expTitle')),
+            h(
+              'button',
+              {
+                type: 'button',
+                role: 'switch',
+                'aria-checked': experimentalOn ? 'true' : 'false',
+                'data-prefill-experimental-toggle': experimentalOn ? 'on' : 'off',
+                ...busyAttrs(busy, 'experimental'),
+                onClick: () => void toggleExperimental(!experimentalOn),
+                style: { ...S.button, ...(experimentalOn ? { borderColor: 'var(--dsw-alias-brand-primary)', color: 'var(--dsw-alias-brand-primary)' } : {}) },
+              },
+              experimentalOn ? t('expOnLabel') : t('expOffLabel'),
+            ),
+          ),
+          experimentalOn ? null : h('div', { style: S.note }, t('expOffNote')),
+          experimentalOn && reasoningEnabled ? h('div', { style: S.warn }, t('expOffWarn')) : null,
+        ),
+
         // ── 实验：思考前缀（DeepSeek Beta）────────────────────────────────────
         h(
           'div',
           { style: S.card, 'data-prefill-reasoning': '', 'data-prefill-anchor': 'reasoning' },
           sectionHead('reasoning', t('reasoningTitle')),
           sectionErrorDetail('reasoning'),
+          ...(experimentalOn
+            ? [
           h('div', { style: S.note }, t('reasoningHint')),
           reasoning === null
             ? h('div', { style: S.note }, reasoningLoadFailed ? t('reasoningUnavailable') : t('reasoningLoading'))
@@ -5645,6 +6006,27 @@ window.__ModuleLoader__.load({
                     : null,
                 reasoning.failures > 0 ? h('span', { style: S.pill }, t('reasoningFailures') + colon + reasoning.failures) : null,
               ),
+          // v0.20.1：模型路由状态摆到台面上（写没写 / 配置里有没有 / 代理在不在跑），别再让「选了模型没反应」无从查起。
+          reasoning !== null && reasoning.route !== undefined && reasoning.route !== null
+            ? h(
+                'div',
+                { style: S.sessionMeta, 'data-prefill-reasoning-route': '' },
+                h(
+                  'span',
+                  { style: S.pill },
+                  t('reasoningRouteLabel') + colon + (reasoning.route.ok === false ? t('reasoningRouteBroken') : reasoning.route.inConfig === true ? t('reasoningRouteOk') : t('reasoningRouteMissing')),
+                ),
+                h('span', { style: S.pill }, String(reasoning.route.displayName ?? '') + ' / ' + String(reasoning.route.modelId ?? '')),
+                h('span', { style: S.pill }, t('reasoningRouteName').replace('{name}', String(reasoning.route.modelName ?? ''))),
+              )
+            : null,
+          reasoning !== null && reasoning.enabled === true && reasoning.proxyRunning !== true
+            ? h('div', { style: S.warn, 'data-prefill-reasoning-proxy-down': '' }, t('reasoningProxyDown'))
+            : null,
+          reasoning !== null && reasoning.proxyError ? h('div', { style: S.warn, 'data-prefill-reasoning-proxy-error': '' }, String(reasoning.proxyError)) : null,
+          reasoning !== null && reasoning.enabled === true && reasoning.proxyRunning === true && reasoning.route !== undefined && reasoning.route !== null && reasoning.route.inConfig === false
+            ? h('div', { style: S.warn, 'data-prefill-reasoning-route-missing': '' }, t('reasoningRouteNotInConfig') + ' — ' + t('reasoningRepairTip'))
+            : null,
           h('div', { style: S.note }, t('reasoningPrefixLabel')),
           h('textarea', {
             style: { ...S.input, minHeight: 56, fontFamily: 'inherit' },
@@ -5653,6 +6035,15 @@ window.__ModuleLoader__.load({
             'data-prefill-reasoning-prefix': '',
             onChange: (event) => setReasoningDraft(event.target.value),
           }),
+          h('div', { style: S.note }, t('reasoningContentPrefixLabel')),
+          h('textarea', {
+            style: { ...S.input, minHeight: 44, fontFamily: 'inherit' },
+            value: reasoningContentDraft,
+            placeholder: t('reasoningContentPrefixPlaceholder'),
+            'data-prefill-reasoning-content-prefix': '',
+            onChange: (event) => setReasoningContentDraft(event.target.value),
+          }),
+          h('div', { style: S.note, 'data-prefill-reasoning-content-hint': '' }, t('reasoningContentPrefixHint')),
           h(
             'div',
             { style: S.chipRow },
@@ -5693,6 +6084,20 @@ window.__ModuleLoader__.load({
                   t('reasoningDisable'),
                 )
               : null,
+            reasoningEnabled
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: S.button,
+                    title: t('reasoningRepairTip'),
+                    'data-prefill-reasoning-repair': '',
+                    ...busyAttrs(busy, 'reasoning:repair'),
+                    onClick: () => void reasoningAct('reasoning:repair', opOf('secReasoning', 'reasoningRepair'), REASONING_REPAIR_ROUTE, {}, t('reasoningRepaired')),
+                  },
+                  t('reasoningRepair'),
+                )
+              : null,
             h(
               'button',
               {
@@ -5714,6 +6119,8 @@ window.__ModuleLoader__.load({
                 t('reasoningAudit') + colon + reasoning.audit.slice(-3).map((entry) => String(entry?.kind ?? 'event') + (entry?.status === undefined ? '' : ' ' + String(entry.status))).join(' / '),
               )
             : reasoning !== null ? h('div', { style: S.note }, t('reasoningAudit') + colon + t('reasoningAuditEmpty')) : null,
+                ]
+              : [h('div', { style: S.note, 'data-prefill-reasoning-gated': '' }, t('expOffNote'))]),
         ),
 
         // ── 开发者区（默认折叠）：展开按钮那一行兼作这一区的标题行（错误 pill / 已保存）────────
@@ -5752,6 +6159,7 @@ window.__ModuleLoader__.load({
       { anchor: 'default-everyturn', key: 'tocDefaults' },
       { anchor: 'library', key: 'tocLibrary' },
       { anchor: 'prefs', key: 'tocPrefs' },
+      { anchor: 'experimental', key: 'tocExperimental' },
       { anchor: 'reasoning', key: 'tocExperiment' },
       { anchor: 'dev', key: 'tocDev' },
     ]
@@ -7927,6 +8335,8 @@ window.__ModuleLoader__.load({
       }, [items, enabled, sessionId])
 
       const state = envelope?.state ?? null
+      // 实验性功能总开关：关着时胶囊弹窗不显示「实验」页（左侧页开关写 state.ui.experimental）。
+      const experimentalOn = state?.ui?.experimental === true
       const gateMode = state?.gate?.[sessionId] === 'pure' ? 'pure' : state?.gate?.[sessionId] === 'replace' ? 'replace' : 'pass'
       const storedSystem = state?.overrides?.[sessionId]?.sections?.[PERSONA_SECTION]
       const activePreset = state?.activePreset?.[sessionId] ?? ''
@@ -11450,8 +11860,10 @@ window.__ModuleLoader__.load({
         items: [B(String(filledCount)), t('countSuffix'), ' · ≈', B(num(itemsTok)), ' tok · ', injectMode ? t('itemsAfterRun') : t('modeHistory')],
         workspace: [B(ws.mode === 'off' ? t('navWsOff') : ws.mode === 'rewrite' ? t('navWsRewrite') : t('navWsPass')), ws.mode === 'rewrite' && ws.text.trim() !== '' ? ` · ≈${num(estimateTokens(ws.text))} tok` : '', ws.mode === 'pass' ? ' · AGENTS.md' : ''],
         inject: sbxSummary !== null ? [B(sbxLevelLabel(t, sbxSummary.level)), sbxSummary.blocked > 0 ? ` · ${t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked))}` : '', sbxSummary.pending > 0 ? ` · ${t('sbxPendingN').replace('{n}', String(sbxSummary.pending))}` : '', overrideCount > 0 ? ` · ${t('navChanged').replace('{n}', String(overrideCount))}${t('navChangedUnit')}` : ''] : [t('advanced'), overrideCount > 0 ? [' · ', t('navChanged').replace('{n}', '')] : '', overrideCount > 0 ? B(String(overrideCount)) : '', overrideCount > 0 ? t('navChangedUnit') : ''],
+        // 实验页没有开关：状态行只说「统计 · 参数」。
+        lab: [t('labNavStatus')],
       }
-      const offBy = { system: systemFromCardOff, everyTurn: everyTurnFromCardOff, lore: !isOn('card') && loreEntries.length > 0, memory: !isOn('card') && memoryOn }
+      const offBy = { system: systemFromCardOff, everyTurn: everyTurnFromCardOff, lore: !isOn('card') && loreEntries.length > 0, memory: !isOn('card') && memoryOn, lab: false }
       const hasContent = {
         card: appliedCardName !== '',
         lore: loreEntries.length > 0,
@@ -11461,8 +11873,9 @@ window.__ModuleLoader__.load({
         items: filledCount > 0,
         workspace: wsActive,
         inject: overrideCount > 0 || (sbxSummary !== null && (sbxSummary.level !== 'observe' || sbxSummary.blocked > 0)),
+        lab: true,
       }
-      const featureTitle = { card: t('cardsTitle'), lore: t('loreTitle'), memory: t('memoryTitle'), system: t('systemTitle'), everyTurn: t('everyTurnTitle'), items: t('itemsNavTitle'), workspace: t('wsTitle'), inject: t('injectTitle') }
+      const featureTitle = { card: t('cardsTitle'), lore: t('loreTitle'), memory: t('memoryTitle'), system: t('systemTitle'), everyTurn: t('everyTurnTitle'), items: t('itemsNavTitle'), workspace: t('wsTitle'), inject: t('injectTitle'), lab: t('labTitle') }
       // 「刷」：左栏状态签名（navStatus + isOn + offBy）和上一次提交比，变了哪些、谁引起的；提交后由 layout effect 提示。
       {
         const navSig = navSignature(FEATURE_NAV.map(([key]) => key), (key) => navStatus[key], isOn, offBy)
@@ -11490,7 +11903,18 @@ window.__ModuleLoader__.load({
           visible: cardOpen && !shrunk,
         }
       }
-      const sections = { cards: cardsSection, lore: loreSection, memory: memorySection, system: systemSection, workspace: workspaceSection, 'every-turn': everyTurnSection, items: itemsSection, inject: injectSection, usage: usageSection }
+      const sections = {
+        cards: cardsSection,
+        lore: loreSection,
+        memory: memorySection,
+        system: systemSection,
+        workspace: workspaceSection,
+        'every-turn': everyTurnSection,
+        items: itemsSection,
+        inject: injectSection,
+        usage: usageSection,
+        lab: experimentalOn ? h(ExperimentalPanel, { t, sessionId }) : null,
+      }
 
       // 芯片的摘要：预设名 + 每项一个点（关 = 灰；开但没内容 = 空心）。
       const summaryDots = FEATURE_NAV.map(([key, , color]) => ({ key, color, on: isOn(key) && offBy[key] !== true, filled: hasContent[key] === true }))
@@ -11563,7 +11987,7 @@ window.__ModuleLoader__.load({
         h('span', { key: 'hl', 'aria-hidden': 'true', 'data-prefill-nav-hl': '', style: { position: 'absolute', inset: 0, zIndex: -1, borderRadius: radius, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 1px 3px rgba(0,0,0,.08)', pointerEvents: 'none' } })
       const navItem = (key, paneId, color, parent) => {
         const selected = shownPane === paneId
-        const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
+        const off = key !== 'usage' && key !== 'lab' && (!isOn(key) || offBy[key] === true)
         const stripe = key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? 'var(--pf-off)' : color
         return h(
           'div',
@@ -11592,13 +12016,13 @@ window.__ModuleLoader__.load({
             },
           },
           selected ? navHighlight(8) : null,
-          key === 'usage' ? null : sweepLayer(key, color, 8),
+          key === 'usage' || key === 'lab' ? null : sweepLayer(key, color, 8),
           h('span', { style: { position: 'absolute', left: parent ? 16 : 4, top: parent ? 7 : 9, bottom: parent ? 7 : 9, width: 3, borderRadius: 2, background: stripe } }),
           h(
             'div',
             { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: off ? 'var(--dsw-alias-label-tertiary)' : selected ? `color-mix(in srgb, ${color} 70%, var(--dsw-alias-label-primary))` : 'var(--dsw-alias-label-primary)' } },
             h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, key === 'usage' ? t('usageTitle') : featureTitle[key]),
-            key === 'usage' ? null : switchEl(key, color),
+            key === 'usage' || key === 'lab' ? null : switchEl(key, color),
           ),
           h(
             'div',
@@ -11613,18 +12037,18 @@ window.__ModuleLoader__.load({
       }
       const tabItem = (key, paneId, color, parent) => {
         const selected = shownPane === paneId
-        const off = key !== 'usage' && (!isOn(key) || offBy[key] === true)
+        const off = key !== 'usage' && key !== 'lab' && (!isOn(key) || offBy[key] === true)
         return h(
           'span',
           { key: paneId, 'data-prefill-nav-box': paneId, style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '3px 6px 3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)' } },
           selected ? navHighlight(999) : null,
           h('span', { role: 'tab', 'aria-selected': selected ? 'true' : 'false', 'data-prefill-nav': paneId, ...(parent ? { 'data-prefill-nav-parent': parent } : {}), 'data-off': off ? 'true' : 'false', onClick: () => setPane(paneId), style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
-            key === 'usage' ? null : sweepLayer(key, color, 999),
+            key === 'usage' || key === 'lab' ? null : sweepLayer(key, color, 999),
             parent ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 } }, '└') : null,
             h('i', { style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', background: key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? 'var(--pf-off)' : color } }),
             key === 'usage' ? t('usageShort') : featureTitle[key],
           ),
-          key === 'usage' ? null : h('span', { style: { display: 'inline-flex', transform: 'scale(0.85)' } }, switchEl(key, color)),
+          key === 'usage' || key === 'lab' ? null : h('span', { style: { display: 'inline-flex', transform: 'scale(0.85)' } }, switchEl(key, color)),
         )
       }
 
@@ -11779,8 +12203,15 @@ window.__ModuleLoader__.load({
       )
 
       // 世界书 / 故事记忆是角色卡的子项（0.14）：只在套用的卡带了它们时出现在左栏，缩进挂在「角色卡」下面。
-      const navList = navEntries(FEATURE_NAV, { lore: appliedRef !== null && (loreEntries.length > 0 || loreCustom), memory: appliedRef !== null && memoryConfig !== null && typeof memoryConfig === 'object' })
-      const shownPane = (pane === 'lore' || pane === 'memory') && !navList.some(([, paneId]) => paneId === pane) ? 'cards' : pane
+      const navBase = navEntries(FEATURE_NAV, { lore: appliedRef !== null && (loreEntries.length > 0 || loreCustom), memory: appliedRef !== null && memoryConfig !== null && typeof memoryConfig === 'object' })
+      // 实验性功能开着才多一页「实验」：统计 + 暴露参数都在这里；关掉即消失。
+      const navList = experimentalOn ? [...navBase, ['lab', 'lab', 'var(--pf-system)']] : navBase
+      const shownPane =
+        (pane === 'lore' || pane === 'memory') && !navList.some(([, paneId]) => paneId === pane)
+          ? 'cards'
+          : pane === 'lab' && !experimentalOn
+            ? 'cards'
+            : pane
       navNow.current = { pane: shownPane, narrow }
       const nav = narrow
         ? h(
@@ -12386,6 +12817,660 @@ window.__ModuleLoader__.load({
           .filter((part) => part !== '')
           .join(' · '),
       }
+    }
+
+    /** 实验面板（胶囊弹窗「实验」页）：累计统计 + 暴露参数 + 模型路由。只有实验性功能开着才会挂载。 */
+    function ExperimentalPanel(props) {
+      const t = props.t ?? ((key) => key)
+      const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+      const [data, setData] = React.useState(null)
+      const [draft, setDraft] = React.useState(null)
+      const [error, setError] = React.useState('')
+      const [notice, setNotice] = React.useState('')
+      const [busy, setBusy] = React.useState('')
+      const [jsonOpen, setJsonOpen] = React.useState(false)
+      const [presetName, setPresetName] = React.useState('')
+      const [presetPick, setPresetPick] = React.useState('')
+      const load = React.useCallback(async () => {
+        const next = await postJson(EXPERIMENTAL_STATUS_ROUTE, { sessionId })
+        setData(next)
+        const knobs = next?.knobs ?? {}
+        setDraft({
+          port: String(knobs.port ?? ''),
+          prefix: String(knobs.prefix ?? ''),
+          contentPrefix: String(knobs.contentPrefix ?? ''),
+          providerId: String(knobs.providerId ?? ''),
+          modelId: String(knobs.modelId ?? ''),
+          match: String(knobs.match ?? ''),
+          shim: knobs.shim === true,
+          textualize: knobs.textualize !== false,
+          catalogRole: knobs.catalogRole === 'user' ? 'user' : 'system',
+          maxEmittedCalls: String(knobs.maxEmittedCalls ?? 8),
+          failureThreshold: String(knobs.failureThreshold ?? 3),
+          catalogMode: knobs.catalogMode === 'history' ? 'history' : 'each',
+          catalogDetail: knobs.catalogDetail === 'brief' || knobs.catalogDetail === 'names' ? knobs.catalogDetail : 'full',
+          catalogPosition: knobs.catalogPosition === 'tail' ? 'tail' : 'head',
+          loggingEnabled: knobs.loggingEnabled === true,
+          loggingFile: String(knobs.loggingFile ?? ''),
+          fallbackOrder: String(knobs.fallbackOrder ?? ''),
+          allowPassthrough: knobs.allowPassthrough !== false,
+          catalogInclude: (Array.isArray(knobs.catalogInclude) ? knobs.catalogInclude : []).join(','),
+          catalogExclude: (Array.isArray(knobs.catalogExclude) ? knobs.catalogExclude : []).join(','),
+          loggingDump: knobs.loggingDump === true,
+          loggingRaw: knobs.loggingRaw === true,
+          loggingContent: knobs.loggingContent === true,
+        })
+        return next
+      }, [sessionId])
+      React.useEffect(() => {
+        void load().catch((err) => setError(String(err?.message ?? err)))
+      }, [load])
+      React.useEffect(() => {
+        const sync = () => {
+          void load().catch(() => {})
+        }
+        window.addEventListener(STATE_EVENT, sync)
+        return () => window.removeEventListener(STATE_EVENT, sync)
+      }, [load])
+      const run = (key, fn) => {
+        if (busy !== '') return null
+        setBusy(key)
+        setError('')
+        setNotice('')
+        return Promise.resolve()
+          .then(fn)
+          .catch((err) => setError(String(err?.message ?? err)))
+          .finally(() => setBusy(''))
+      }
+      const patchDraft = (key, value) => setDraft((current) => (current === null ? current : { ...current, [key]: value }))
+      const save = () =>
+        run('save', async () => {
+          const result = await postJson(EXPERIMENTAL_CONFIG_ROUTE, {
+            port: Number(draft.port),
+            prefix: draft.prefix,
+            contentPrefix: draft.contentPrefix,
+            providerId: draft.providerId,
+            modelId: draft.modelId,
+            match: draft.match,
+            shim: draft.shim,
+            textualize: draft.textualize,
+            catalogRole: draft.catalogRole,
+            catalogMode: draft.catalogMode,
+            catalogDetail: draft.catalogDetail,
+            catalogPosition: draft.catalogPosition,
+            loggingEnabled: draft.loggingEnabled === true,
+            loggingFile: draft.loggingFile,
+            fallbackOrder: draft.fallbackOrder,
+            allowPassthrough: draft.allowPassthrough === true,
+            catalogInclude: draft.catalogInclude.split(',').map((item) => item.trim()).filter((item) => item !== ''),
+            catalogExclude: draft.catalogExclude.split(',').map((item) => item.trim()).filter((item) => item !== ''),
+            loggingDump: draft.loggingDump === true,
+            loggingRaw: draft.loggingRaw === true,
+            loggingContent: draft.loggingContent === true,
+            maxEmittedCalls: Number(draft.maxEmittedCalls),
+            failureThreshold: Number(draft.failureThreshold),
+          })
+          if (result?.ok === false) throw new Error(String(result.error ?? 'save failed'))
+          await load()
+          setNotice(t('labSaved'))
+          notifyStateChanged()
+        })
+      const ping = () =>
+        run('ping', async () => {
+          const result = await postJson(EXPERIMENTAL_PING_ROUTE, {})
+          if (result?.ok === true) {
+            setNotice(t('labPingOk').replace('{ms}', String(result.ms ?? '?')).replace('{host}', String(result.host ?? '')))
+          } else {
+            throw new Error(String(result?.error ?? 'unreachable'))
+          }
+        })
+      const exportJsonl = () =>
+        run('export', async () => {
+          const response = await fetch(EXPERIMENTAL_EXPORT_ROUTE, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId }),
+          })
+          if (!response.ok) throw new Error('HTTP ' + String(response.status))
+          const text = await response.text()
+          try {
+            const blob = new Blob([text], { type: 'application/x-ndjson' })
+            const url = URL.createObjectURL(blob)
+            const anchor = document.createElement('a')
+            anchor.href = url
+            anchor.download = 'prefill-prefix-log.jsonl'
+            anchor.click()
+            setTimeout(() => URL.revokeObjectURL(url), 4000)
+          } catch {
+            // 非浏览器环境（测试）忽略下载本身。
+          }
+          setNotice(t('labExported'))
+        })
+      const repair = () =>
+        run('repair', async () => {
+          const result = await postJson(REASONING_REPAIR_ROUTE, {})
+          if (result?.applied?.ok === false) throw new Error(String(result.applied.error ?? 'repair failed'))
+          await load()
+          setNotice(t('reasoningRepaired'))
+          notifyStateChanged()
+        })
+      const resetStats = () =>
+        run('reset', async () => {
+          await postJson(EXPERIMENTAL_STATS_RESET_ROUTE, {})
+          await load()
+          setNotice(t('labStatsReset'))
+        })
+      const refresh = () => run('refresh', async () => { await load() })
+      const copy = () =>
+        run('copy', async () => {
+          const json = JSON.stringify(data ?? null, null, 2)
+          try {
+            await navigator?.clipboard?.writeText?.(json)
+          } catch (err) {
+            throw new Error('clipboard unavailable')
+          }
+          setNotice(t('labCopied'))
+        })
+      // ── 填装状态 / 清空本轮 / 预设 / 日志（v0.20.3）──
+      const prefill = data?.prefill ?? null
+      const log = Array.isArray(data?.log) ? data.log.slice().reverse() : []
+      const presets = Array.isArray(data?.presets) ? data.presets : []
+      const skip = (on) =>
+        run(on ? 'clear' : 'restore', async () => {
+          await postJson(EXPERIMENTAL_SKIP_ROUTE, { sessionId, on })
+          await load()
+          setNotice(on ? t('labClearDone') : t('labRestoreDone'))
+          notifyStateChanged()
+        })
+      const savePreset = () =>
+        run('preset-save', async () => {
+          const result = await postJson(EXPERIMENTAL_PRESETS_ROUTE, { op: 'save', sessionId, name: presetName, prefix: draft.prefix, contentPrefix: draft.contentPrefix, match: draft.match })
+          if (result?.ok === false) throw new Error(String(result.error ?? 'save failed'))
+          await load()
+          setPresetName('')
+          setNotice(t('labPresetSaved'))
+          notifyStateChanged()
+        })
+      const applyPreset = () =>
+        run('preset-apply', async () => {
+          if (presetPick === '') throw new Error('no preset')
+          const result = await postJson(EXPERIMENTAL_PRESETS_ROUTE, { op: 'apply', sessionId, name: presetPick })
+          if (result?.ok === false) throw new Error(String(result.error ?? 'apply failed'))
+          await load()
+          setNotice(t('labPresetApplied'))
+          notifyStateChanged()
+        })
+      // P1：前缀预设导出（下载 JSON）/ 导入（选文件，同名覆盖）。
+      const exportPresets = () =>
+        run('preset-export', async () => {
+          const result = await postJson(EXPERIMENTAL_PRESETS_ROUTE, { op: 'export', sessionId })
+          if (result?.ok === false) throw new Error(String(result.error ?? 'export failed'))
+          try {
+            const blob = new Blob([JSON.stringify(result.presets ?? [], null, 2)], { type: 'application/json' })
+            const url = URL.createObjectURL(blob)
+            const anchor = document.createElement('a')
+            anchor.href = url
+            anchor.download = 'prefix-presets.json'
+            anchor.click()
+            setTimeout(() => URL.revokeObjectURL(url), 4000)
+          } catch {
+            // 非浏览器环境忽略下载
+          }
+          setNotice(t('labPresetExported'))
+        })
+      const importPresets = () =>
+        run('preset-import', async () => {
+          const input = document.createElement('input')
+          input.type = 'file'
+          input.accept = 'application/json,.json'
+          input.addEventListener('change', () => {
+            const file = input.files?.[0]
+            if (file === undefined) return
+            void file
+              .text()
+              .then(async (text) => {
+                let parsed
+                try {
+                  parsed = JSON.parse(text)
+                } catch {
+                  throw new Error('JSON 解析失败')
+                }
+                const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.presets) ? parsed.presets : []
+                const result = await postJson(EXPERIMENTAL_PRESETS_ROUTE, { op: 'import', sessionId, presets: list })
+                if (result?.ok === false) throw new Error(String(result.error ?? 'import failed'))
+                await load()
+                setNotice(t('labPresetImported'))
+                notifyStateChanged()
+              })
+              .catch((err) => setError(String(err?.message ?? err)))
+          })
+          input.click()
+        })
+      const deletePreset = () =>
+        run('preset-delete', async () => {
+          if (presetPick === '') throw new Error('no preset')
+          const result = await postJson(EXPERIMENTAL_PRESETS_ROUTE, { op: 'delete', sessionId, name: presetPick })
+          if (result?.ok === false) throw new Error(String(result.error ?? 'delete failed'))
+          await load()
+          setNotice(t('labPresetDeleted'))
+          notifyStateChanged()
+        })
+      /** 日志里「前缀值」的样式：等宽、大一号（用户要求字不能小）、思考 / 内容用不同颜色。 */
+      const logValue = (value, kind) =>
+        h(
+          'div',
+          { style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13.5, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: kind === 'reasoning' ? 'var(--pf-system)' : 'var(--pf-ai)' } },
+          String(value ?? '') === '' ? t('labLogEmptyValue') : String(value),
+        )
+      const logTurn = (entry, index) => [
+        h(
+          'div',
+          { key: 'h' + String(index), style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 700, color: 'var(--dsw-alias-label-secondary)', marginTop: index === 0 ? 0 : 10, paddingTop: index === 0 ? 0 : 8, borderTop: index === 0 ? 'none' : '1px dashed var(--dsw-alias-border-l1)' } },
+          h('span', { 'data-prefill-lab-log-turn': String(entry.turn ?? '') }, t('labLogTurn').replace('{n}', String(entry.turn ?? '?'))),
+          h('span', { style: { fontWeight: 400, color: 'var(--dsw-alias-label-tertiary)' } }, new Date(Number(entry.at ?? 0)).toLocaleTimeString()),
+          entry.skipped === true ? h('span', { style: { color: 'var(--dsw-alias-state-warn-primary)', fontWeight: 400 } }, t('labLogSkipped')) : null,
+          entry.enabled === false ? h('span', { style: { fontWeight: 400, color: 'var(--dsw-alias-label-tertiary)' } }, t('labPrefillOff')) : null,
+        ),
+        h('div', { key: 'r' + String(index), style: { marginTop: 4 } }, h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } }, t('labLogReasoning')), logValue(entry.reasoningPrefix, 'reasoning')),
+        h('div', { key: 'c' + String(index), style: { marginTop: 4 } }, h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } }, t('labLogContent')), logValue(entry.contentPrefix, 'content')),
+      ]
+      const pill = (label, value, key) =>
+        h('span', { key, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, background: 'var(--dsw-alias-bg-layer-1)', fontSize: 11.5, whiteSpace: 'nowrap' } }, label, h('b', { style: { fontVariantNumeric: 'tabular-nums' } }, value))
+      const field = (key, label, value, onChange, attrs) =>
+        h(
+          'label',
+          { key, style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
+          h('span', null, label),
+          h('input', { style: V.input, value, onChange: (event) => onChange(event.target.value), ...(attrs ?? {}) }),
+        )
+      const avg = (part) => (part !== null && part !== undefined && part.count > 0 ? Math.round(part.sum / part.count) : null)
+      if (data === null || draft === null) {
+        return h('div', { style: V.section, 'data-prefill-lab': '' }, h('div', { style: V.sectionTitle }, t('labTitle')), h('div', { style: V.hint }, error !== '' ? t('labError').replace('{reason}', error) : t('reasoningLoading')))
+      }
+      const stats = data.stats ?? null
+      const route = data.reasoning?.route ?? null
+      const audit = Array.isArray(data.reasoning?.audit) ? data.reasoning.audit.slice(-8) : []
+      const firstDelta = stats === null ? null : avg(stats.firstDeltaMs)
+      const duration = stats === null ? null : avg(stats.ms)
+      // P0：缓存命中率 = cacheHit / (cacheHit + cacheMiss)；两个都没有时给 null（显示 —）。
+      const usage = stats === null || stats.usage === undefined || stats.usage === null ? null : stats.usage
+      const cacheTotal = usage === null ? 0 : (usage.cacheHit ?? 0) + (usage.cacheMiss ?? 0)
+      const cacheRate = cacheTotal > 0 ? Math.round(((usage.cacheHit ?? 0) / cacheTotal) * 100) : null
+      // 预览段的守卫（P0）：stats 在代理没跑时是 null；本轮还没有前缀请求（含「统计清零」之后）lastRequest 是 null。
+      // 两种都是正常状态，绝不能在这里解引用炸掉整个实验页。
+      const lastRequest = stats === null ? null : (stats.lastRequest ?? null)
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 10 }, 'data-prefill-lab': '' },
+        h('div', { style: V.hint }, t('labHint')),
+        // ── 本轮填装：是否已填装 + 清空本轮（下一轮整轮跳过前缀）──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-prefill': '' },
+          h('div', { style: V.sectionTitle }, t('labPrefillTitle')),
+          h(
+            'div',
+            { style: V.row },
+            h(
+              'span',
+              { style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: prefill?.skipping === true ? 'var(--dsw-alias-state-warn-primary)' : prefill?.ready === true ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-tertiary)', background: 'var(--dsw-alias-bg-layer-1)' }, 'data-prefill-lab-prefill-state': prefill?.skipping === true ? 'skipping' : prefill?.skipQueued === true ? 'queued' : prefill?.ready === true ? 'ready' : 'off' },
+              prefill?.skipping === true
+                ? t('labPrefillSkipping')
+                : prefill?.skipQueued === true
+                  ? t('labPrefillQueued')
+                  : prefill?.ready === true
+                    ? t('labPrefillReady')
+                    : prefill?.enabled !== true
+                      ? t('labPrefillEmpty')
+                      : t('labPrefillOff'),
+            ),
+            prefill?.skipQueued === true
+              ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-restore': '', disabled: busy !== '', onClick: () => void skip(false) }, t('labRestore'))
+              : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-clear': '', disabled: busy !== '', onClick: () => void skip(true) }, t('labClear')),
+          ),
+        ),
+        // ── 前缀预设（独立预设；之后整体预设可直接接这张表）──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-presets': '' },
+          h('div', { style: V.sectionTitle }, t('labPresetsTitle')),
+          presets.length === 0 ? h('div', { style: V.hint }, t('labPresetEmpty')) : null,
+          h(
+            'div',
+            { style: V.row },
+            h(
+              'select',
+              { style: { ...V.input, width: 180 }, value: presetPick, 'data-prefill-lab-preset': '', onChange: (event) => setPresetPick(event.target.value) },
+              h('option', { value: '' }, '—'),
+              ...presets.map((item) => h('option', { key: item.name, value: item.name }, item.name)),
+            ),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-preset-apply': '', disabled: busy !== '' || presetPick === '', onClick: () => void applyPreset() }, t('labPresetApply')),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-preset-delete': '', disabled: busy !== '' || presetPick === '', onClick: () => void deletePreset() }, t('labPresetDelete')),
+          ),
+          h(
+            'div',
+            { style: V.row },
+            h('input', { style: { ...V.input, width: 160 }, value: presetName, placeholder: t('labPresetNamePh'), 'aria-label': t('labPresetName'), 'data-prefill-lab-preset-name': '', onChange: (event) => setPresetName(event.target.value) }),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-preset-save': '', disabled: busy !== '' || presetName.trim() === '', onClick: () => void savePreset() }, t('labPresetSave')),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-preset-export': '', disabled: busy !== '', onClick: () => void exportPresets() }, t('labPresetExport')),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-preset-import': '', disabled: busy !== '', onClick: () => void importPresets() }, t('labPresetImport')),
+          ),
+        ),
+        // ── 统计 ──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-stats': '' },
+          h('div', { style: V.sectionTitle }, t('labStatsTitle')),
+          stats === null
+            ? h('div', { style: V.hint }, t('labStatsEmpty'))
+            : h(
+                'div',
+                { style: V.pills },
+                pill(t('labStatsRequests'), String(stats.requests ?? 0)),
+                data.turns === undefined ? null : pill(t('labTurns'), String(data.turns.total ?? 0)),
+                pill(t('labStatsOk'), String(stats.ok ?? 0)),
+                pill(t('labStatsFailed'), String(stats.failed ?? 0)),
+                pill(t('labStatsCalls'), String(stats.calls ?? 0)),
+                firstDelta === null ? null : pill(t('labStatsFirstDelta'), firstDelta + ' ms'),
+                duration === null ? null : pill(t('labStatsMs'), duration + ' ms'),
+                stats.firstDeltaP95 === null || stats.firstDeltaP95 === undefined ? null : pill(t('labStatsP95'), String(stats.firstDeltaP95) + ' ms'),
+                cacheRate === null ? null : pill(t('labStatsCacheHit'), cacheRate + '%'),
+                usage === null ? null : pill(t('labStatsPrompt'), String(usage.prompt ?? 0)),
+                usage === null ? null : pill(t('labStatsCompletion'), String(usage.completion ?? 0)),
+                ...Object.entries(stats.variants ?? {}).map(([variant, count]) => pill(t('labStatsVariants') + ' · ' + variant, String(count), variant)),
+              ),
+        ),
+        // ── 上次请求形态（P0 诊断：tools 剥没剥、清单多大、前缀多长）──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-preview': '' },
+          h('div', { style: V.sectionTitle }, t('labPreviewTitle')),
+          lastRequest === null
+            ? h('div', { style: V.hint }, t('labPreviewEmpty'))
+            : h(
+                'div',
+                { style: V.pills },
+                pill(t('labPreviewMessages'), String(lastRequest.messages ?? 0)),
+                pill(t('labPreviewTools'), String(lastRequest.tools ?? 0)),
+                pill(t('labPreviewCatalog'), String(lastRequest.catalogBytes ?? 0) + ' B'),
+                pill(t('labPreviewPrefix'), String((lastRequest.reasoningPrefix ?? '').length) + ' / ' + String((lastRequest.contentPrefix ?? '').length)),
+                pill('variant', String(lastRequest.variant ?? '')),
+              ),
+          lastRequest === null || lastRequest.catalogHead === undefined || String(lastRequest.catalogHead) === ''
+            ? null
+            : h(
+                'pre',
+                { style: { margin: '6px 0 0', maxHeight: 160, overflow: 'auto', fontSize: 11, lineHeight: 1.5, background: 'var(--dsw-alias-bg-layer-1)', padding: 8, borderRadius: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }, 'data-prefill-lab-preview-catalog': '' },
+                String(lastRequest.catalogHead),
+              ),
+          lastRequest === null || lastRequest.prefixMessage === null || lastRequest.prefixMessage === undefined
+            ? null
+            : h(
+                'div',
+                { style: { ...V.hint, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }, 'data-prefill-lab-preview-prefix': '' },
+                t('labPreviewPrefixMsg') + '：' + String(lastRequest.prefixMessage.reasoning ?? '') + ' / ' + String(lastRequest.prefixMessage.content ?? ''),
+              ),
+        ),
+        // ── 模型路由 ──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-route': '' },
+          h('div', { style: V.sectionTitle }, t('reasoningRouteLabel')),
+          h(
+            'div',
+            { style: V.row },
+            h('span', { style: V.sectionMeta }, String(route?.displayName ?? '') + ' / ' + String(route?.modelId ?? '')),
+            h('span', { style: V.sectionMeta }, t('reasoningRoutePort').replace('{port}', String(data.reasoning?.port ?? ''))),
+            h('span', { style: V.sectionMeta }, route?.ok === false ? t('reasoningRouteBroken') : route?.inConfig === true ? t('reasoningRouteOk') : t('reasoningRouteMissing')),
+            h('span', { style: V.sectionMeta }, data.reasoning?.proxyRunning === true ? t('reasoningProxyRunning').replace('{port}', String(data.reasoning?.port ?? '')) : t('reasoningProxyStopped')),
+          ),
+        ),
+        // ── 暴露参数 ──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-knobs': '' },
+          h('div', { style: V.sectionTitle }, t('labKnobsTitle')),
+          h(
+            'div',
+            { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 } },
+            field('port', t('labKnobPort'), draft.port, (value) => patchDraft('port', value), { type: 'number', min: '1', max: '65535', 'data-prefill-lab-knob': 'port' }),
+            field('calls', t('labKnobMaxCalls'), draft.maxEmittedCalls, (value) => patchDraft('maxEmittedCalls', value), { type: 'number', min: '1', max: '32', 'data-prefill-lab-knob': 'maxEmittedCalls' }),
+            field('failure', t('labKnobFailure'), draft.failureThreshold, (value) => patchDraft('failureThreshold', value), { type: 'number', min: '1', max: '10', 'data-prefill-lab-knob': 'failureThreshold' }),
+            field('provider', t('labKnobProvider'), draft.providerId, (value) => patchDraft('providerId', value), { 'data-prefill-lab-knob': 'providerId' }),
+            field('model', t('labKnobModel'), draft.modelId, (value) => patchDraft('modelId', value), { 'data-prefill-lab-knob': 'modelId' }),
+            field('match', t('labKnobMatch'), draft.match, (value) => patchDraft('match', value), { 'data-prefill-lab-knob': 'match' }),
+            h(
+              'label',
+              { key: 'catalogMode', style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
+              h('span', null, t('labKnobCatalogMode')),
+              h(
+                'select',
+                { style: V.input, value: draft.catalogMode, 'data-prefill-lab-knob': 'catalogMode', onChange: (event) => patchDraft('catalogMode', event.target.value) },
+                h('option', { value: 'each' }, t('labCatalogEach')),
+                h('option', { value: 'history' }, t('labCatalogHistory')),
+              ),
+            ),
+            h(
+              'label',
+              { key: 'catalogDetail', style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
+              h('span', null, t('labKnobCatalogDetail')),
+              h(
+                'select',
+                { style: V.input, value: draft.catalogDetail, 'data-prefill-lab-knob': 'catalogDetail', onChange: (event) => patchDraft('catalogDetail', event.target.value) },
+                h('option', { value: 'full' }, t('labCatalogFull')),
+                h('option', { value: 'brief' }, t('labCatalogBrief')),
+                h('option', { value: 'names' }, t('labCatalogNames')),
+              ),
+            ),
+            h(
+              'label',
+              { key: 'catalogPosition', style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
+              h('span', null, t('labKnobCatalogPosition')),
+              h(
+                'select',
+                { style: V.input, value: draft.catalogPosition, 'data-prefill-lab-knob': 'catalogPosition', onChange: (event) => patchDraft('catalogPosition', event.target.value) },
+                h('option', { value: 'head' }, t('labCatalogHead')),
+                h('option', { value: 'tail' }, t('labCatalogTail')),
+              ),
+            ),
+            h(
+              'label',
+              { key: 'fallbackOrder', style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
+              h('span', null, t('labKnobFallbackOrder')),
+              h(
+                'select',
+                { style: V.input, value: draft.fallbackOrder, 'data-prefill-lab-knob': 'fallbackOrder', onChange: (event) => patchDraft('fallbackOrder', event.target.value) },
+                h('option', { value: '' }, t('labFallbackDefault')),
+                h('option', { value: 'system-first' }, t('labFallbackSystem')),
+                h('option', { value: 'user-first' }, t('labFallbackUser')),
+              ),
+            ),
+            h(
+              'label',
+              { key: 'allowPassthrough', style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, paddingTop: 16 } },
+              h('input', { type: 'checkbox', checked: draft.allowPassthrough === true, 'data-prefill-lab-toggle': 'allowPassthrough', onChange: (event) => patchDraft('allowPassthrough', event.target.checked) }),
+              t('labKnobAllowPassthrough'),
+            ),
+            h(
+              'label',
+              { key: 'catalogInclude', style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
+              h('span', null, t('labKnobCatalogInclude')),
+              h('input', { style: V.input, value: draft.catalogInclude, placeholder: 'read,write', 'data-prefill-lab-knob': 'catalogInclude', onChange: (event) => patchDraft('catalogInclude', event.target.value) }),
+            ),
+            h(
+              'label',
+              { key: 'catalogExclude', style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
+              h('span', null, t('labKnobCatalogExclude')),
+              h('input', { style: V.input, value: draft.catalogExclude, placeholder: 'bash,pwsh', 'data-prefill-lab-knob': 'catalogExclude', onChange: (event) => patchDraft('catalogExclude', event.target.value) }),
+            ),
+          ),
+          h('label', { style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
+            h('span', null, t('labKnobPrefix')),
+            h('textarea', { style: { ...V.textarea, minHeight: 48, maxHeight: 120 }, value: draft.prefix, 'data-prefill-lab-knob': 'prefix', onChange: (event) => patchDraft('prefix', event.target.value) }),
+          ),
+          h('label', { style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
+            h('span', null, t('labKnobContentPrefix')),
+            h('textarea', { style: { ...V.textarea, minHeight: 40, maxHeight: 100 }, value: draft.contentPrefix, 'data-prefill-lab-knob': 'contentPrefix', onChange: (event) => patchDraft('contentPrefix', event.target.value) }),
+          ),
+          h('div', { style: V.hint, 'data-prefill-lab-vars-hint': '' }, t('labPrefixVarsHint')),
+          h(
+            'div',
+            { style: V.row },
+            h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+              h('input', { type: 'checkbox', checked: draft.shim, 'data-prefill-lab-toggle': 'shim', onChange: (event) => patchDraft('shim', event.target.checked) }),
+              t('labKnobShim'),
+            ),
+            h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+              h('input', { type: 'checkbox', checked: draft.textualize, 'data-prefill-lab-toggle': 'textualize', onChange: (event) => patchDraft('textualize', event.target.checked) }),
+              t('labKnobTextualize'),
+            ),
+            h(
+              'label',
+              { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+              t('labKnobCatalogRole'),
+              h(
+                'select',
+                { style: { ...V.input, width: 110 }, value: draft.catalogRole, 'data-prefill-lab-knob': 'catalogRole', onChange: (event) => patchDraft('catalogRole', event.target.value) },
+                h('option', { value: 'system' }, 'system'),
+                h('option', { value: 'user' }, 'user'),
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { style: V.row },
+            h('button', { type: 'button', style: V.btn, 'data-prefill-lab-save': '', disabled: busy !== '', onClick: save }, busy === 'save' ? t('reasoningRefreshing') : t('labSave')),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-repair': '', disabled: busy !== '', onClick: repair }, t('reasoningRepair')),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-reset': '', disabled: busy !== '', onClick: resetStats }, t('labResetStats')),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-refresh': '', disabled: busy !== '', onClick: refresh }, t('labRefresh')),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-copy': '', disabled: busy !== '', onClick: copy }, t('labCopy')),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-ping': '', disabled: busy !== '', onClick: () => void ping() }, t('labPing')),
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-export': '', disabled: busy !== '', onClick: () => void exportJsonl() }, t('labExport')),
+            notice !== '' ? h('span', { style: V.sectionMeta, 'data-prefill-lab-notice': '' }, notice) : null,
+            error !== '' ? h('span', { style: { ...V.sectionMeta, color: 'var(--dsw-alias-state-error-primary, #e5484d)' }, 'data-prefill-lab-error': '' }, t('labError').replace('{reason}', error)) : null,
+          ),
+        ),
+        // ── 代理日志（P0：开关 + 路径 + 落盘状态）──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-logging': '' },
+          h('div', { style: V.sectionTitle }, t('labLoggingTitle')),
+          h(
+            'label',
+            { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+            h('input', { type: 'checkbox', checked: draft.loggingEnabled === true, 'data-prefill-lab-logging-toggle': '', onChange: (event) => patchDraft('loggingEnabled', event.target.checked) }),
+            t('labLoggingOn'),
+          ),
+          h(
+            'div',
+            { style: V.row },
+            h('input', { style: { ...V.input, flex: 1 }, value: draft.loggingFile, 'data-prefill-lab-logging-file': '', onChange: (event) => patchDraft('loggingFile', event.target.value) }),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: V.btnGhost,
+                'data-prefill-lab-logging-copy': '',
+                onClick: () => {
+                  void navigator?.clipboard?.writeText?.(String(data?.logging?.file ?? draft.loggingFile ?? ''))
+                },
+              },
+              t('labLoggingCopy'),
+            ),
+          ),
+          h(
+            'div',
+            { style: V.hint, 'data-prefill-lab-logging-state': '' },
+            (data?.logging?.enabled === true ? t('labLoggingEnabled') : t('labLoggingDisabled')) +
+              ' · ' + String(data?.logging?.file ?? draft.loggingFile ?? '') +
+              ' · ' + (data?.logging?.exists === true ? String(data?.logging?.bytes ?? 0) + ' B' : t('labLoggingNoFile')),
+          ),
+          h(
+            'div',
+            { style: V.row },
+            h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+              h('input', { type: 'checkbox', checked: draft.loggingDump === true, 'data-prefill-lab-logging-debug': 'dump', onChange: (event) => patchDraft('loggingDump', event.target.checked) }),
+              t('labLoggingDump'),
+            ),
+            h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+              h('input', { type: 'checkbox', checked: draft.loggingRaw === true, 'data-prefill-lab-logging-debug': 'raw', onChange: (event) => patchDraft('loggingRaw', event.target.checked) }),
+              t('labLoggingRaw'),
+            ),
+            h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+              h('input', { type: 'checkbox', checked: draft.loggingContent === true, 'data-prefill-lab-logging-debug': 'content', onChange: (event) => patchDraft('loggingContent', event.target.checked) }),
+              t('labLoggingContent'),
+            ),
+          ),
+          data?.logging === null || data?.logging === undefined
+            ? null
+            : h(
+                'div',
+                { style: { ...V.hint, whiteSpace: 'pre-wrap', wordBreak: 'break-all' } },
+                [data.logging.dumpFile, data.logging.rawFile, data.logging.contentFile].filter((path) => typeof path === 'string' && path !== '').join('\n'),
+              ),
+        ),
+        // ── 审计 ──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-audit-box': '' },
+          h('div', { style: V.sectionTitle }, t('labAuditTitle')),
+          audit.length === 0
+            ? h('div', { style: V.hint }, t('labNoAudit'))
+            : h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11.5, fontFamily: 'ui-monospace, Menlo, monospace', color: 'var(--dsw-alias-label-secondary)' } },
+                ...audit.map((entry, index) => {
+                  const main =
+                    new Date(Number(entry.at ?? 0)).toLocaleTimeString() +
+                    ' · ' + String(entry.kind ?? 'event') +
+                    (entry.variant ? ' · ' + String(entry.variant) : '') +
+                    (entry.status === undefined ? '' : ' · ' + String(entry.status)) +
+                    (entry.ms === undefined ? '' : ' · ' + String(entry.ms) + 'ms')
+                  const details = []
+                  if (Array.isArray(entry.callsDetail) && entry.callsDetail.length > 0) {
+                    details.push(t('labAuditCalls') + '：' + entry.callsDetail.map((call) => String(call?.name ?? '') + '(' + String(call?.args ?? '') + ')').join('，'))
+                  }
+                  if (entry.usage !== null && typeof entry.usage === 'object') {
+                    details.push('tokens：' + String(entry.usage.prompt ?? 0) + ' / ' + t('labStatsCacheHit') + ' ' + String(entry.usage.cacheHit ?? 0))
+                  }
+                  if (typeof entry.bodyHead === 'string' && entry.bodyHead !== '') details.push(t('labAuditErrorBody') + '：' + entry.bodyHead)
+                  if (typeof entry.error === 'string' && entry.error !== '') details.push(t('labAuditErrorBody') + '：' + entry.error)
+                  return h(
+                    'div',
+                    { key: String(index), 'data-prefill-lab-audit': '' },
+                    h('div', null, main),
+                    ...details.map((text, at) =>
+                      h('div', { key: 'd' + String(at), style: { color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' } }, text),
+                    ),
+                  )
+                }),
+              ),
+          h(
+            'div',
+            { style: V.row },
+            h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-json': '', 'aria-expanded': jsonOpen ? 'true' : 'false', onClick: () => setJsonOpen(!jsonOpen) }, jsonOpen ? t('labJsonHide') : t('labJson')),
+          ),
+          jsonOpen
+            ? h('pre', { style: { margin: 0, maxHeight: 200, overflow: 'auto', fontSize: 11, background: 'var(--dsw-alias-bg-layer-1)', padding: 8, borderRadius: 8 } }, JSON.stringify(data, null, 2))
+            : null,
+        ),
+        // ── 前缀日志（逐轮；字要大，思考 / 内容前缀分色）──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-log': '' },
+          h('div', { style: V.sectionTitle }, t('labLogTitle')),
+          // 本轮即将发出的前缀：直接读当前配置（还没记进日志，所以单独一块，和「已发出」区分）。
+          h(
+            'div',
+            { style: { padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--dsw-alias-border-l2)' }, 'data-prefill-lab-log-next': '' },
+            h('div', { style: { fontSize: 12.5, fontWeight: 700, color: 'var(--dsw-alias-label-secondary)' } }, t('labLogNext')),
+            h('div', { style: { marginTop: 4 } }, h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } }, t('labLogReasoning')), logValue(draft.prefix, 'reasoning')),
+            h('div', { style: { marginTop: 4 } }, h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } }, t('labLogContent')), logValue(draft.contentPrefix, 'content')),
+          ),
+          log.length === 0 ? h('div', { style: V.hint, 'data-prefill-lab-log-empty': '' }, t('labLogEmpty')) : null,
+          ...log.flatMap((entry, index) => logTurn(entry, index)),
+        ),
+      )
     }
 
     function SbxSegment(props) {
