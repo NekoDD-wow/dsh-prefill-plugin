@@ -339,24 +339,31 @@ test('nearestScrollTop / toastPlace 纯函数', () => {
   // toast：卡片 (left 100, top 200, 900×700)；内容区从 260 开始
   const card = { left: 100, top: 200, right: 1000, bottom: 900, width: 900, height: 700 }
   const area = { top: 260 }
-  // 内容区中间的按钮 ⇒ 放在它上方、右边对齐
-  assert.deepEqual(M.toastPlace(card, { top: 600, bottom: 628, right: 940 }, area), { right: 60, bottom: 900 - 600 + 6 })
-  // 头部 / 内容区顶部的按钮 ⇒ 上面放不下，放下方
-  assert.deepEqual(M.toastPlace(card, { top: 210, bottom: 238, right: 400 }, area), { right: 600, top: 238 - 200 + 6 })
-  // 右边距至少 10、最多让 toast 留在卡片里
-  assert.equal(M.toastPlace(card, { top: 600, bottom: 628, right: 1100 }, area).right, 10)
-  assert.equal(M.toastPlace(card, { top: 600, bottom: 628, right: 120 }, area).right, 900 - 140)
+  // 内容区中间的按钮（卡片右半）⇒ 放在它上方、右边起排
+  assert.deepEqual(M.toastPlace(card, { top: 600, bottom: 628, left: 700, right: 940 }, area), { side: 'right', offset: 60, bottom: 900 - 600 + 6 })
+  // 头部 / 内容区顶部的按钮（卡片左半）⇒ 上面放不下，放下方、左边起排
+  assert.deepEqual(M.toastPlace(card, { top: 210, bottom: 238, left: 380, right: 400 }, area), { side: 'left', offset: 280, top: 238 - 200 + 6 })
+  // 左栏开关（v0.21.1 的截断场景）：贴左起排，offset = 左沿距卡片左边界
+  assert.deepEqual(M.toastPlace(card, { top: 600, bottom: 628, left: 150, right: 290 }, area), { side: 'left', offset: 50, bottom: 306 })
+  // 右边距至少 8、最多让 toast 留在卡片里
+  assert.equal(M.toastPlace(card, { top: 600, bottom: 628, left: 900, right: 1100 }, area).offset, 8)
+  // 左沿最多到「留 140px 起排空间」的位置
+  assert.equal(M.toastPlace(card, { top: 600, bottom: 628, left: 120, right: 140 }, area).offset, 20)
+  // 没有 left 的旧调用方：按 right 推断，落到右半区
+  assert.deepEqual(M.toastPlace(card, { top: 600, bottom: 628, right: 940 }, area), { side: 'right', offset: 60, bottom: 900 - 600 + 6 })
   // 触发点不在卡片里 / 没有 ⇒ null（底部居中兜底）
-  assert.equal(M.toastPlace(card, { top: 950, bottom: 980, right: 500 }, area), null)
+  assert.equal(M.toastPlace(card, { top: 950, bottom: 980, left: 400, right: 500 }, area), null)
   assert.equal(M.toastPlace(card, null, area), null)
 })
 
 test('面板接线：错误 pill 在头部、失败都报给 pill、开关乐观 + busy、toast 不挡操作、新积木 reveal、芯片 / 沙盒档位忙碌态', () => {
   // P0-1：pill 在头部（不在某一节里），所以所有节都看得见；外层常驻 aria-live
-  const header = cut('      const header = h(', '      // 错误详情（P0-1）')
-  assert.match(header, /h\(ErrorPill, \{\s*t,\s*error,\s*onToggle: /)
-  // 出现时占住 token 读数徽章的位置（不另起一项，头部不折行）
-  assert.match(header, /fallback: \[\s*badge\('var\(--pf-system\)', t\('badgeFirst'\)/)
+  const header = cut('      const statRow = (label, value, hint = \'\') =>', '      // 错误详情（P0-1）')
+  // v1：中区错误 pill 改用 fallback: statusPill 占位（不再有 3 个 token 读数徽标）；状态胶囊常驻。
+  assert.match(header, /h\(ErrorPill, \{ t, error, onToggle:/)
+  assert.match(header, /fallback: statusPill/)
+  assert.match(header, /data-prefill-status-pill/)
+  assert.doesNotMatch(header, /fallback: \[/)
   assert.match(src, /'aria-live': 'assertive', 'aria-atomic': 'true', 'data-prefill-error-live': ''/)
   assert.match(src, /'data-prefill-error-detail': error\.key/)
   // 面板里没有只写 meta 小字的失败处理了：全部经 failed() → reportError
@@ -380,8 +387,11 @@ test('面板接线：错误 pill 在头部、失败都报给 pill、开关乐观
   // 转圈是装饰类（只有完整档转）
   assert.match(src, /play\(el, SPIN, \{ duration: 700, iterations: Infinity, easing: 'linear', kind: 'decor' \}\)/)
   // 芯片首次打开：busy + 失败在芯片上说明 + 报错
+  // （数据层收敛后：写之前先取整封 state 当底稿 —— summary 只带本会话那格，整表回写会抹掉别会话的开启状态）
   const chip = cut('    function PrefillToggle(props) {', '    function fallbackName(')
-  assert.match(chip, /chipBusy\.run\('open', \(\) => call\(\{ prefill:/)
+  assert.match(chip, /chipBusy\.run\('open', openPrefill\)/)
+  assert.match(chip, /const openPrefill = async \(\) => \{\s+const fresh = await call\(undefined\)/)
+  assert.match(chip, /return await call\(\{ prefill: \{ \.\.\.base, \[sessionId\]: 'default' \}, sessionId \}\)/)
   assert.match(chip, /reportError\(sessionId, 'chip', t\('errOpChip'\), err\)/)
   assert.match(chip, /'aria-pressed': on \|\| opening \? 'true' : 'false'/)
   assert.doesNotMatch(chip, /\.catch\(\(\) => \{\}\)\s*return\s*\}\s*setCardOpen/)

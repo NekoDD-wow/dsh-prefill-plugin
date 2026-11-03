@@ -51,7 +51,7 @@ import { CHECK_IDS, autoParams, modeOf, splitTurns } from './inject-auto.js'
 import { applyEnabled, sanitizeEnabled } from './enabled.js'
 import { migrateSandbox, withLegacyMirror, withLegacyView } from './sandbox.js'
 import { clampSince, lockOf, lockRecord, restorePatch, restoreSandbox, stampFirstOnce, withLock } from './turn-lock.js'
-import { sandboxViews } from './sandbox-view.js'
+import { sandboxView, sandboxViews } from './sandbox-view.js'
 import { sandboxRoute } from './sandbox-routes.js'
 import { surfaceOnRequest, surfaceRoute } from './sandbox-surface.js'
 import { claims as sandboxClaims, installClaimApi } from './sandbox-trace.js'
@@ -74,6 +74,9 @@ const DATA_DIR = join(HOME, 'prefill')
 /** 闸门状态文件。 */
 const STATE_FILE = join(DATA_DIR, 'state.json')
 
+/** 「每会话最后轮数」sidecar（跨进程复用，写状态时不必再解压大日志）。 */
+const LAST_TURN_FILE = join(DATA_DIR, 'last-turn.json')
+
 /** 启动标记：每次 apply 覆盖写，记录当前活着的 JS 模块代。 */
 const BOOT_FILE = join(DATA_DIR, 'boot.json')
 
@@ -94,6 +97,8 @@ const CARDS_ROUTE = '/api/dsh-prefill/cards'
 const MEMORY_ROUTE = '/api/dsh-prefill/memory'
 /** 会话沙盒：溯源 / 挂来源包 / 事后改写（issue #15 第 4 / 5 步，逻辑在 sandbox-routes.js）。 */
 const SANDBOX_ROUTE = '/api/dsh-prefill/sandbox'
+/** 轻量摘要（规划 §2.1）：常驻轮询只拉这一条（< 10 KB），不再每 2.5 s 拉整份 state。 */
+const SUMMARY_ROUTE = '/api/dsh-prefill/summary'
 
 /** 热插拔内核的位置。 */
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -293,6 +298,12 @@ function migrateLegacyCwdSandbox(state) {
 
 let cache = { state: null, mtimeMs: -1 }
 
+/**
+ * 最近一次读 state.json 的失败原因（'' = 正常）。readState 照旧吞异常回默认状态（闸门不能因为
+ * 坏文件停摆），但 summary 路由要据此回 `ok:false`：否则面板会把「状态文件坏了」显示成「什么都没配」。
+ */
+let stateReadError = ''
+
 function readState() {
   let mtimeMs = -1
   try {
@@ -302,11 +313,13 @@ function readState() {
   }
   if (cache.state !== null && cache.mtimeMs === mtimeMs) return cache.state
   let state = DEFAULT_STATE
+  stateReadError = ''
   if (mtimeMs >= 0) {
     try {
       state = normalizeState(JSON.parse(readFileSync(STATE_FILE, 'utf8')))
-    } catch {
+    } catch (error) {
       state = DEFAULT_STATE
+      stateReadError = String(error?.message ?? error)
     }
   }
   // 旧版「会话内注入」（state.injects，每轮发）读取时迁成每轮注入积木（issue #19「C」）。
@@ -326,6 +339,20 @@ function readState() {
   }
   cache = { state, mtimeMs }
   return state
+}
+
+/**
+ * state 文件的版本指纹（mtime + size）：客户端拿它跳过「没变化」的响应（规划 §2.1 的 `rev`）。
+ * 只做一次 statSync，不读文件；patchState / writeState 都是重写整份文件，mtime 一定变。
+ * 文件不存在 ⇒ `0#0`（与「空状态」区分开）。
+ */
+function stateRevision() {
+  try {
+    const stat = statSync(STATE_FILE)
+    return `${stat.mtimeMs}#${stat.size}`
+  } catch {
+    return '0#0'
+  }
 }
 
 /** 旧每轮注入（只有 text）迁成工作台时要认内置积木 / 塔，与面板同一套。 */
@@ -434,12 +461,20 @@ function readPacks(workspace) {
   }
 }
 
-/** 写回一个工作区的全部包，返回文件路径。 */
+/**
+ * 写一个工作区的包文件。**失败只记一笔不抛**：盘满 / 只读 / 路径被文件占住时，写接口不能把
+ * reject 冒到宿主（那会让整个路由 500、面板看不出发生了什么），返回 false 交给调用方标 reason。
+ */
 function writePacks(workspace, packs) {
   const file = packFileFor(workspace)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, `${JSON.stringify({ version: 1, packs }, null, 2)}\n`, 'utf8')
-  return file
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, `${JSON.stringify({ version: 1, packs }, null, 2)}\n`, 'utf8')
+    return true
+  } catch (error) {
+    note({ seat: 'packs-write', file, workspace: workspace ?? '(global)', error: String(error?.message ?? error) })
+    return false
+  }
 }
 
 /** 校验注入改写：只留 `{messages, sections, contexts}` 三张「名字 → 文本」表。 */
@@ -931,11 +966,135 @@ export function stampLastTurn(agent, sessionId) {
   const file = sessionLogFile(sessionId)
   if (file === undefined) return undefined
   try {
-    return splitTurns(readSessionLog(file)).at(-1)?.turn ?? 0
+    // 不在册的会话要 zstd 解压 + 解析整份日志；大日志一次 1s+。而「写状态」会反复问到同一批会话
+    // （套预设时客户端还会带整张 everyTurn 表）⇒ 按日志 mtime+size 缓存最后一轮，日志没变就直接复用。
+    // 缓存分两层：进程内 Map + 落盘 sidecar（进程重启 / 换实例后也能直接命中）。
+    let stat
+    try {
+      stat = statSync(file)
+    } catch {
+      stat = undefined // 拿不到 stat 就走慢路径（读日志失败时返回 undefined）。
+    }
+    const side = lastTurnSidecar()[sessionId]
+    if (lastTurnCacheHit(side, stat)) return side.last
+    const cached = LAST_TURN_CACHE.get(sessionId)
+    if (lastTurnCacheHit(cached, stat)) return cached.last
+    const last = splitTurns(readSessionLog(file)).at(-1)?.turn ?? 0
+    if (stat !== undefined) recordLastTurn(sessionId, last, stat)
+    return last
   } catch {
     return undefined
   }
 }
+
+/**
+ * 缓存条目是否匹配当前日志 stat（纯函数，便于单测）：mtime+size 一致 ⇒ 缓存可信。
+ * @param {{mtimeMs?:number,size?:number}|undefined|null} entry
+ * @param {{mtimeMs?:number,size?:number}|undefined|null} stat
+ */
+export function lastTurnCacheHit(entry, stat) {
+  if (entry === undefined || entry === null || stat === undefined || stat === null) return false
+  return Number(entry.mtimeMs) === Number(stat.mtimeMs) && Number(entry.size) === Number(stat.size)
+}
+
+/** 读取（并缓存）sidecar 内容：sessionId → { last, mtimeMs, size }；坏文件当作空缓存。 */
+function lastTurnSidecar() {
+  if (LAST_TURN_SIDECAR !== null) return LAST_TURN_SIDECAR
+  const out = {}
+  try {
+    const raw = JSON.parse(readFileSync(LAST_TURN_FILE, 'utf8'))
+    if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+      for (const [id, entry] of Object.entries(raw)) {
+        if (typeof id !== 'string' || id === '' || entry === null || typeof entry !== 'object') continue
+        const last = Number(entry.last)
+        const mtimeMs = Number(entry.mtimeMs)
+        const size = Number(entry.size)
+        if (!Number.isFinite(last) || !Number.isFinite(mtimeMs) || !Number.isFinite(size)) continue
+        out[id] = { last: Math.max(0, Math.floor(last)), mtimeMs, size }
+      }
+    }
+  } catch {
+    // 文件不存在 / 坏了 ⇒ 空缓存，后续按需重建。
+  }
+  LAST_TURN_SIDECAR = out
+  return out
+}
+
+/** 把 sidecar 落盘（只在算出新值 / 轮结束时调用，不是每次读都写）。 */
+function persistLastTurnSidecar() {
+  const map = LAST_TURN_SIDECAR
+  if (map === null) return
+  try {
+    mkdirSync(DATA_DIR, { recursive: true })
+    const ids = Object.keys(map)
+    if (ids.length > 300) {
+      ids.sort((a, b) => (map[a].mtimeMs ?? 0) - (map[b].mtimeMs ?? 0))
+      const keep = {}
+      for (const id of ids.slice(ids.length - 300)) keep[id] = map[id]
+      LAST_TURN_SIDECAR = keep
+    }
+    writeFileSync(LAST_TURN_FILE, JSON.stringify(LAST_TURN_SIDECAR, null, 2) + '\n', 'utf8')
+  } catch {
+    // 写不进去不影响本轮（内存缓存还在，下次再写）。
+  }
+}
+
+/**
+ * 记一条「会话最后一轮」到内存 + sidecar（写盘 / 轮结束都走它）。
+ * stat 是会话日志的 stat —— mtime+size 是校验凭据：日志一变就自动失效，不会拿旧轮数骗人。
+ * @param {string} sessionId
+ * @param {number} turn
+ * @param {{mtimeMs?:number,size?:number}} stat
+ */
+export function recordLastTurn(sessionId, turn, stat) {
+  if (typeof sessionId !== 'string' || sessionId === '') return undefined
+  const value = Number(turn)
+  if (!Number.isFinite(value)) return undefined
+  const entry = { last: Math.max(0, Math.floor(value)), mtimeMs: Number(stat?.mtimeMs) || 0, size: Number(stat?.size) || 0 }
+  const map = lastTurnSidecar()
+  const prev = map[sessionId]
+  if (prev !== undefined && prev.last === entry.last && prev.mtimeMs === entry.mtimeMs && prev.size === entry.size) return prev
+  map[sessionId] = entry
+  LAST_TURN_CACHE.set(sessionId, entry)
+  persistLastTurnSidecar()
+  return entry
+}
+
+/**
+ * 启动后空闲预热：把 state.everyTurn 里各会话的「最后一轮」提前算进 sidecar。
+ * sidecar 已经命中的几乎零成本；没命中的才读一次日志（把冷读从「用户点套用那一刻」挪到空闲）。
+ */
+export function preheatLastTurnCache() {
+  const queue = []
+  try {
+    const state = readState()
+    for (const id of Object.keys(state?.everyTurn ?? {})) {
+      if (id !== '*' && typeof id === 'string' && id !== '') queue.push(id)
+    }
+  } catch {
+    return 0
+  }
+  let index = 0
+  const tick = () => {
+    if (index >= queue.length) return
+    const id = queue[index++]
+    try {
+      stampLastTurn(undefined, id)
+    } catch {
+      // 单个会话读不了不影响后面的。
+    }
+    const next = setTimeout(tick, 120)
+    next.unref?.()
+  }
+  const first = setTimeout(tick, 0)
+  first.unref?.()
+  return queue.length
+}
+
+/** 不在册会话的「最后一轮」缓存：sessionId → { mtimeMs, size, last }（日志没动就不重复解压）。 */
+const LAST_TURN_CACHE = new Map()
+/** sidecar 的内存副本（懒加载；null = 还没读过文件）。 */
+let LAST_TURN_SIDECAR = null
 
 /** 一条消息里所有文本块的总字数。 */
 function textLength(message) {
@@ -1514,6 +1673,17 @@ export function apply(ctx) {
     void applyReasoningState().catch((error) => note({ seat: 'reasoning-prefix', apply: String(error?.message ?? error) }))
   }, 1000)
 
+  // 启动后空闲预热「每会话最后轮数」：把写状态时的冷读（大日志解压 1s+）挪到启动空闲期。
+  // sidecar 已命中的会话几乎零成本；只跑一轮，失败不影响任何功能。
+  const warmLastTurnTimer = setTimeout(() => {
+    try {
+      preheatLastTurnCache()
+    } catch {
+      // 尽力而为。
+    }
+  }, 5000)
+  warmLastTurnTimer.unref?.()
+
   // ── 座位 1（主）：根级 agent/pre-step，agent 直接来自 payload ──
   // 顺带维护"轮是否开着"，供轮次规则判断（见 reprimeAll）。
   ctx.on(
@@ -1563,6 +1733,17 @@ export function apply(ctx) {
 
   // 注入审计：盯着落进会话、会进模型的消息（含绕过 pre-step 直接写入的），未登记的记下来给面板。
   ctx.on('session/event', (session, event) => {
+    // 轮结束：把「最后轮数」+ 当时日志 stat 写进 sidecar（下次写状态不用再解压这份日志）。
+    // 这里只尽力而为：日志可能还在追加导致 mtime/size 之后变化，校验失效只会多读一次，不会给错轮数。
+    if (event?.type === 'turn/end' && typeof session?.id === 'string') {
+      try {
+        const turn = Number(event?.data?.turn)
+        const file = sessionLogFile(session.id)
+        if (Number.isFinite(turn) && file !== undefined) recordLastTurn(session.id, turn, statSync(file))
+      } catch {
+        // 落盘时序 / 日志缺失都不影响功能。
+      }
+    }
     const gate = gateCache.module
     if (typeof gate?.auditEvent !== 'function') return
     try {
@@ -2230,6 +2411,152 @@ export function apply(ctx) {
       }
     }
 
+    /**
+     * 轻量摘要（规划 §2.1）：只给**目标会话**那几格 + 最小全局字段，序列化 < 10 KB。
+     * 常驻轮询（芯片 / 纯净芯片 / 顶栏徽标）只拉它，不再拉整份 envelope —— 本机实测整份响应
+     * 1.28 MB × 3 个轮询 = 空闲 30 s 50 MB decoded，正是要消灭的那条。
+     *
+     * 刻意**不**调的东西（都会把整份 state 拖进来）：
+     *   · `withLegacyView(state)` 的整份结果（只取 gate 那一格）；
+     *   · `sandboxViewsFor(state)`（按会话 × 包 × 条目算全量视图 —— 这里只算目标会话一格）；
+     *   · `...envelope()`（state / snapshots / injections / audit / manualInbox / diagnostics 全是大字段）。
+     *
+     * 形状（客户端 store 直接消费，扁平、键名稳定）：
+     *   { ok, rev, sessionId,
+     *     prefill, gate, activePreset, armed, levers, locked, turns, materialized,
+     *     pendingReprime, running, sandbox, tools, persona, overridesPersona,
+     *     snapshots, noticeSeen, ui }
+     * 按会话的表：给了 sessionId 就只含该会话（缺失的格不出现）；没给 sessionId ⇒ 空对象
+     * （armed / pendingReprime / running / turns / materialized 这类全局表照给全）。
+     *
+     * @param {string} rawSessionId 目标会话；空 = 全局摘要
+     */
+    const summaryOf = (rawSessionId) => {
+      const sessionId = typeof rawSessionId === 'string' ? rawSessionId : ''
+      const rev = stateRevision()
+      // 先读（读的过程才可能发现文件坏了），再看错误标记。readState 自己吞异常回默认状态，
+      // 所以这里必须显式回 ok:false —— 否则面板把「读不到」显示成「什么都没配」，用户会以为配置丢了。
+      const state = readState()
+      if (stateReadError !== '') return { ok: false, rev, sessionId, reason: `state unreadable: ${stateReadError}` }
+      const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+      /** 按会话的表只挑目标会话那一格（没给 sessionId / 没这一格 ⇒ 空对象）。 */
+      const cell = (map) => (sessionId !== '' && isObject(map) && map[sessionId] !== undefined ? { [sessionId]: map[sessionId] } : {})
+      /** 全局 id 列表：给了 sessionId 就只留它和通配 '*'（'*' 是本会话的默认格）；没给就照给全。 */
+      const listOf = (ids) => (Array.isArray(ids) ? ids.filter((id) => typeof id === 'string' && (sessionId === '' || id === sessionId || id === '*')) : [])
+      // 派生视图：applyEnabled 按 state 对象缓存（WeakMap），命中后几乎是白拿；它带出 legacy 旧字段（含 gate）。
+      const legacy = applyEnabled(state)
+      const snapshotsAll = typeof gateCache.module?.snapshots === 'function' ? gateCache.module.snapshots() : {}
+      const materializedAll = typeof gateCache.module?.materialized === 'function' ? gateCache.module.materialized() : {}
+      const turnsAll = Object.fromEntries(Object.entries(snapshotsAll).map(([id, snap]) => [id, snap?.turn ?? 0]))
+      const toolsAll = typeof gateCache.module?.tools === 'function' ? gateCache.module.tools(rootCtxRef) : { catalog: [], sessions: {} }
+      // 沙盒：只算目标会话一格。有 blocked（本会话正在拦的条数）才需要 gate 的三张观察表；算不出来就只给档位。
+      const sandbox = (() => {
+        if (sessionId === '') return {}
+        const table = isObject(state?.sandbox) ? state.sandbox : {}
+        const own = typeof table[sessionId]?.level === 'string'
+        const global = typeof table['*']?.level === 'string'
+        let level = own ? table[sessionId].level : global ? table['*'].level : 'observe'
+        let levelFrom = own ? 'session' : global ? 'global' : 'default'
+        let blocked = 0
+        try {
+          const view = sandboxView(legacy, sessionId, {
+            injections: typeof gateCache.module?.injections === 'function' ? gateCache.module.injections(rootCtxRef) : {},
+            tools: toolsAll,
+            audit: typeof gateCache.module?.auditSnapshot === 'function' ? gateCache.module.auditSnapshot() : {},
+          })
+          if (typeof view?.level === 'string') level = view.level
+          if (typeof view?.levelFrom === 'string') levelFrom = view.levelFrom
+          blocked = Number(view?.blocked) || 0
+        } catch (error) {
+          note({ seat: 'summary-route', sandbox: 'view-failed', error: String(error?.message ?? error) })
+        }
+        return { [sessionId]: { level, levelFrom, blocked } }
+      })()
+      // 人格段（overrides[会话].sections['prefill:persona'] 非空）：顶栏徽标/芯片用它区分「接管」与「纯净」。
+      // ⚠️ 必须读 `legacy`（applyEnabled → withLegacyView）而不是 `state`：0.16 起 overrides 已被做成
+      // 规则表（state.sandbox[会话].rules）的兼容镜像，state 上根本没有 overrides 这个键。
+      const personaOn = (() => {
+        if (sessionId === '') return false
+        const text = isObject(legacy?.overrides) && isObject(legacy.overrides[sessionId]) ? legacy.overrides[sessionId].sections?.['prefill:persona'] : undefined
+        return typeof text === 'string' && text.trim() !== ''
+      })()
+      return {
+        ok: true,
+        rev,
+        sessionId,
+        // 旧版「本会话在用预填装」的表（值：'default' 等标签；客户端只看有没有字符串）。
+        prefill: cell(state?.prefill),
+        // 闸门模式：'pure'（严格档 / 纯净 / 接管）| 'replace'（替换系统提示）；'pass' 省略 = 默认不改。
+        gate: (() => {
+          const mode = sessionId !== '' && isObject(legacy?.gate) ? legacy.gate[sessionId] : undefined
+          return typeof mode === 'string' && mode !== '' && mode !== 'pass' ? { [sessionId]: mode } : {}
+        })(),
+        activePreset: cell(state?.activePreset),
+        armed: listOf(state?.armed),
+        levers: Object.fromEntries(Object.keys(DEFAULT_LEVERS).map((key) => [key, isObject(state?.levers) && state.levers[key] === true])),
+        // 首轮锁定记录（**原记录**：客户端 lockView 要 turn / items / legacy / preset 是否存在）。
+        locked: cell(state?.locked),
+        turns: sessionId === '' ? turnsAll : cell(turnsAll),
+        materialized: cell(materializedAll),
+        pendingReprime: listOf([...pendingReprime]),
+        running: listOf([...liveAgents].filter(([, agent]) => isRunning(agent)).map(([id]) => id)),
+        sandbox,
+        // 该会话装配到的工具数（客户端显示「工具 N」；没装配过就不出现）。
+        tools: sessionId !== '' && Array.isArray(toolsAll?.sessions?.[sessionId]) ? { [sessionId]: toolsAll.sessions[sessionId].length } : {},
+        // 人格段是否非空（扁平映射；只在该会话有内容时出现）。
+        persona: personaOn ? { [sessionId]: true } : {},
+        // §2.1 契约里的旧名，保留为 persona 的别名（客户端 store 用 persona，旧消费方读 overridesPersona）。
+        overridesPersona: personaOn ? { [sessionId]: true } : {},
+        // Q9 角标：本轮生效的三态 / 被丢弃的 kind（4 个字段够客户端画角标，seenKinds/texts 等大字段一律不传）。
+        snapshots: (() => {
+          if (sessionId === '') return {}
+          const snap = snapshotsAll[sessionId]
+          if (!isObject(snap)) return {}
+          return {
+            [sessionId]: {
+              state: typeof snap.state === 'string' ? snap.state : null,
+              turn: Number(snap.turn) || 0,
+              step: Number(snap.step) || 0,
+              droppedKinds: Array.isArray(snap.droppedKinds) ? snap.droppedKinds.filter((kind) => typeof kind === 'string').slice(0, 12) : [],
+            },
+          }
+        })(),
+        // 纯净模式首次说明看没看过（全局标量）。
+        noticeSeen: state?.noticeSeen === true,
+        // 全局偏好：motion 给 null = 跟随系统（客户端 setMotionPref 认这个）；experimental 只在开时为 true。
+        ui: {
+          experimental: isObject(state?.ui) && state.ui.experimental === true,
+          motion: isObject(state?.ui) && typeof state.ui.motion === 'string' ? state.ui.motion : null,
+        },
+      }
+    }
+
+    scope.effect(
+      () =>
+        register({
+          path: SUMMARY_ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body
+            try {
+              body = await request?.json?.()
+            } catch {
+              body = undefined
+            }
+            const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+            try {
+              // 只读：绝不 patchState / reprimeAll（首轮锁定和迁移由闸门负责，轮询路由不该写盘）。
+              return Response.json(summaryOf(sessionId), noStore)
+            } catch (error) {
+              note({ seat: 'summary-route', error: String(error?.message ?? error) })
+              return Response.json({ ok: false, rev: stateRevision(), sessionId, reason: String(error?.message ?? error) }, noStore)
+            }
+          },
+        }),
+      'dsh-prefill: summary route',
+    )
+
     scope.effect(
       () => register({ path: PING_ROUTE, methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(envelope(), noStore) }),
       'dsh-prefill: ping route',
@@ -2248,46 +2575,74 @@ export function apply(ctx) {
             } catch {
               patch = undefined
             }
-            // 「恢复开局时的预设」（issue #19 B）：`{ restoreOpening: 会话 }` ⇒ 用 state.locked[会话] 里的快照换回配置，
-            // 下一轮生效，历史不动。补丁由服务端按最新状态现算（别的键一概不收）；每轮注入沿用快照自己的 since。
-            let restored
-            if (typeof patch?.restoreOpening === 'string' && patch.restoreOpening !== '') {
-              const sid = patch.restoreOpening
-              const current = readState()
-              const built = restorePatch(withLegacyView(current), sid, lockOf(current, sid), lastTurnOf(sessionEvents(liveAgents.get(sid), sid)))
-              if (built === undefined) return Response.json({ ...envelope(), ok: false, reason: 'not-locked' }, noStore)
-              patchState(built)
-              // 沙盒那一格（受控档 / 包开关 / 单条规则）旧字段表达不了，按快照原样换回；在旧字段吸收之后写，以快照为准。
-              const sandbox = restoreSandbox(readState().sandbox, sid, lockOf(current, sid))
-              if (sandbox !== undefined) patchState({ sandbox })
-              note({ restoreOpening: sid, everyTurn: built.everyTurn?.[sid] ? { since: built.everyTurn[sid].since, mode: built.everyTurn[sid].mode } : null })
-              restored = sid
-              patch = undefined
-              await reprimeAll('restore-opening')
-            }
-            if (patch !== null && typeof patch === 'object' && Object.keys(patch).length > 0) {
-              if (patch.everyTurn !== null && typeof patch.everyTurn === 'object') {
-                const previous = readState()?.everyTurn ?? {}
-                // 不在册的会话按落盘日志算；没有日志 / 读不了才返回 undefined（= 不知道轮数，#44）。
-                // 只在 0.17.0 那样一律返回 undefined 会让编辑历史会话时改正文 / 下一轮发一次 / 立即恢复暂停失效。
-                const lastTurnFor = (key) => stampLastTurn(liveAgents.get(key), key)
-                patch = { ...patch, everyTurn: stampEveryTurn(previous, patch.everyTurn, lastTurnFor) }
+            // 写状态这一路要落盘 + 重挂 + 预热，任何一步抛都不该把 reject 冒到宿主（那是 500，
+            // 面板只看到「网络错误」）。包一层：失败回 `{ ok:false, reason }` 并记一笔。
+            // `sessionId` 只当路由提示（决定回哪份 summary），**不进 state**：状态里有未知会话级 map 才是有意义的键。
+            const summarySession = (() => {
+              if (patch !== null && typeof patch === 'object' && typeof patch.sessionId === 'string') {
+                const sid = patch.sessionId
+                delete patch.sessionId
+                return sid
               }
-              patchState(patch)
-              // 【关键】写状态后当场重新挂载：让"点完开关再发"在该轮装配之前就位。
-              await reprimeAll('state-write')
-              // 系统提示可能变了（套人格 / 接管）：首轮前要物化的预填装轮得用**新**提示，
-              // 否则合成轮里记着旧系统提示（实测：合成轮 5766 字无人格、真实轮 5971 字有人格）。
-              const gate = await loadGate()
-              for (const [, live] of liveAgents) {
-                try {
-                  if (typeof gate?.preparePrefillPrompt === 'function') await gate.preparePrefillPrompt(api(), live)
-                } catch {
-                  // 预热失败不影响写状态。
+              return typeof patch?.restoreOpening === 'string' ? patch.restoreOpening : ''
+            })()
+            try {
+              // 「恢复开局时的预设」（issue #19 B）：`{ restoreOpening: 会话 }` ⇒ 用 state.locked[会话] 里的快照换回配置，
+              // 下一轮生效，历史不动。补丁由服务端按最新状态现算（别的键一概不收）；每轮注入沿用快照自己的 since。
+              let restored
+              if (typeof patch?.restoreOpening === 'string' && patch.restoreOpening !== '') {
+                const sid = patch.restoreOpening
+                const current = readState()
+                const built = restorePatch(withLegacyView(current), sid, lockOf(current, sid), lastTurnOf(sessionEvents(liveAgents.get(sid), sid)))
+                if (built === undefined) return Response.json({ ...envelope(), ok: false, reason: 'not-locked' }, noStore)
+                patchState(built)
+                // 沙盒那一格（受控档 / 包开关 / 单条规则）旧字段表达不了，按快照原样换回；在旧字段吸收之后写，以快照为准。
+                const sandbox = restoreSandbox(readState().sandbox, sid, lockOf(current, sid))
+                if (sandbox !== undefined) patchState({ sandbox })
+                note({ restoreOpening: sid, everyTurn: built.everyTurn?.[sid] ? { since: built.everyTurn[sid].since, mode: built.everyTurn[sid].mode } : null })
+                restored = sid
+                patch = undefined
+                await reprimeAll('restore-opening')
+              }
+              if (patch !== null && typeof patch === 'object' && Object.keys(patch).length > 0) {
+                if (patch.everyTurn !== null && typeof patch.everyTurn === 'object') {
+                  const previous = readState()?.everyTurn ?? {}
+                  // 不在册的会话按落盘日志算；没有日志 / 读不了才返回 undefined（= 不知道轮数，#44）。
+                  // 只在 0.17.0 那样一律返回 undefined 会让编辑历史会话时改正文 / 下一轮发一次 / 立即恢复暂停失效。
+                  const lastTurnFor = (key) => stampLastTurn(liveAgents.get(key), key)
+                  patch = { ...patch, everyTurn: stampEveryTurn(previous, patch.everyTurn, lastTurnFor) }
+                }
+                patchState(patch)
+                // 【关键】写状态后当场重新挂载：让"点完开关再发"在该轮装配之前就位。
+                await reprimeAll('state-write')
+                // 系统提示可能变了（套人格 / 接管）：首轮前要物化的预填装轮得用**新**提示，
+                // 否则合成轮里记着旧系统提示（实测：合成轮 5766 字无人格、真实轮 5971 字有人格）。
+                const gate = await loadGate()
+                for (const [, live] of liveAgents) {
+                  try {
+                    if (typeof gate?.preparePrefillPrompt === 'function') await gate.preparePrefillPrompt(api(), live)
+                  } catch {
+                    // 预热失败不影响写状态。
+                  }
                 }
               }
+              // 写成功后顺手附上当前会话的 summary（客户端 applySummaryWrite 直接喂 store，省一次往返，规划 §2.2）。
+              const summary = (() => {
+                try {
+                  return summaryOf(summarySession)
+                } catch (error) {
+                  note({ seat: 'state-route', summary: 'failed', error: String(error?.message ?? error) })
+                  return undefined
+                }
+              })()
+              return Response.json(
+                { ...envelope(), ...(restored !== undefined ? { restored } : {}), ...(summary === undefined ? {} : { summary }) },
+                noStore,
+              )
+            } catch (error) {
+              note({ seat: 'state-route', error: String(error?.message ?? error) })
+              return Response.json({ ok: false, rev: stateRevision(), reason: String(error?.message ?? error) }, noStore)
             }
-            return Response.json(restored !== undefined ? { ...envelope(), restored } : envelope(), noStore)
           },
         }),
       'dsh-prefill: state route',
@@ -2489,203 +2844,223 @@ export function apply(ctx) {
             const workspace = liveAgents.get(sessionId)?.session?.header?.cwd
             const op = typeof body?.op === 'string' ? body.op : 'list'
             const file = packFileFor(workspace)
-            let packs = readPacks(workspace)
-            let reason = ''
-            // 工作台 4 个 op 的返回附加值（id / affected）。以前只赋值没声明也没返回：ESM 严格模式下
-            // 给未声明变量赋值会抛 ReferenceError，而 patchState 已经执行 ⇒ 界面报错但状态已写。
-            let extra = {}
+            // 整个 op 分支包一层：读包 / 写盘 / 加载闸门任何一步抛，都不该把 reject 冒到宿主（500）。
+            try {
+              let packs = readPacks(workspace)
+              let reason = ''
+              // 工作台 4 个 op 的返回附加值（id / affected）。以前只赋值没声明也没返回：ESM 严格模式下
+              // 给未声明变量赋值会抛 ReferenceError，而 patchState 已经执行 ⇒ 界面报错但状态已写。
+              let extra = {}
 
-            const upsert = (name, items, overrides, tools, gate, extra = {}) => {
-              // 预设 = 预填装内容 + 注入改写 + **工具放行**（§4-M5：换包=换权限）。
-              const pack = {
-                name,
-                updatedAt: new Date().toISOString(),
-                // 基于角色卡的预设（0.14）可以不带 items：没写的格套用时从卡现编译。
-                ...(items === undefined ? {} : { items }),
-                ...(overrides === undefined ? {} : { overrides }),
-                ...(tools === undefined ? {} : { tools }),
-                ...(gate === 'pure' || gate === 'pass' || gate === 'replace' ? { gate } : {}),
-                ...(extra.everyTurn === undefined ? {} : { everyTurn: extra.everyTurn }),
-                ...(extra.memorySeed === undefined ? {} : { memorySeed: extra.memorySeed }),
-                ...(extra.card === undefined ? {} : { card: extra.card }),
-                // 改过的世界书（0.15+）：只在带着角色卡时存（世界书跟卡走）；角色卡文件本身不动。
-                ...(extra.lore === undefined || extra.card === undefined ? {} : { lore: extra.lore }),
-                // 左栏启用开关（v0.10）：只存关掉的项；全开 = 不存。
-                ...(extra.enabled === undefined ? {} : { enabled: extra.enabled }),
-                // 工作区说明（AGENTS.md / CLAUDE.md）：只存模式 + 改写正文，从不存文件原文；原样 = 不存。
-                ...(extra.workspaceInstructions === undefined ? {} : { workspaceInstructions: extra.workspaceInstructions }),
-                // 约束承接：这份预设是从会话存下来的（开场里带着那段历史）。
-                ...(extra.fromSession === true ? { fromSession: true } : {}),
-              }
-              const at = packs.findIndex((entry) => entry.name === name)
-              if (at >= 0) packs[at] = pack
-              else packs = [...packs, pack]
-              writePacks(workspace, packs)
-            }
-
-            if (op === 'list') {
-              // 无操作，直接回列表。
-            } else if (op === 'block-save') {
-              // v0.15：新建 / 覆盖「我的积木」（含遮内置的「我的版本」）。
-              const block = sanitizeBlock(body?.block)
-              if (block === undefined) reason = 'invalid block'
-              else {
-                patchState({ blocks: { ...(readState()?.blocks ?? {}), [block.id]: block } })
-                extra = { id: block.id }
-              }
-            } else if (op === 'block-delete') {
-              const id = typeof body?.id === 'string' ? body.id : ''
-              const state = readState()
-              const blocks = state?.blocks ?? {}
-              const towers = state?.towers ?? {}
-              const affected = Object.values(towers)
-                .filter((tower) => (Array.isArray(tower?.items) ? tower.items : []).some((item) => item?.ref === id))
-                .map((tower) => tower.id)
-              if (id === '') reason = 'missing id'
-              else if (body?.dryRun === true) {
-                // 只报影响面（面板先拿列表做确认）。
-              } else if (blocks[id] === undefined) reason = 'not found'
-              else {
-                const gone = blocks[id]
-                const nextBlocks = { ...blocks }
-                delete nextBlocks[id]
-                // 塔里保留文字快照：原积木删了，塔照常能发。
-                const snapshot = { name: gone.name, first: gone.first, text: gone.text, checks: [...gone.checks] }
-                const nextTowers = {}
-                for (const [key, tower] of Object.entries(towers)) {
-                  nextTowers[key] = {
-                    ...tower,
-                    items: (Array.isArray(tower?.items) ? tower.items : []).map((item) =>
-                      item?.ref === id ? { ...item, snap: item.snap ?? snapshot } : item,
-                    ),
-                  }
+              const upsert = (name, items, overrides, tools, gate, extra = {}) => {
+                // 预设 = 预填装内容 + 注入改写 + **工具放行**（§4-M5：换包=换权限）。
+                const pack = {
+                  name,
+                  updatedAt: new Date().toISOString(),
+                  // 基于角色卡的预设（0.14）可以不带 items：没写的格套用时从卡现编译。
+                  ...(items === undefined ? {} : { items }),
+                  ...(overrides === undefined ? {} : { overrides }),
+                  ...(tools === undefined ? {} : { tools }),
+                  ...(gate === 'pure' || gate === 'pass' || gate === 'replace' ? { gate } : {}),
+                  ...(extra.everyTurn === undefined ? {} : { everyTurn: extra.everyTurn }),
+                  ...(extra.memorySeed === undefined ? {} : { memorySeed: extra.memorySeed }),
+                  ...(extra.card === undefined ? {} : { card: extra.card }),
+                  // 改过的世界书（0.15+）：只在带着角色卡时存（世界书跟卡走）；角色卡文件本身不动。
+                  ...(extra.lore === undefined || extra.card === undefined ? {} : { lore: extra.lore }),
+                  // 左栏启用开关（v0.10）：只存关掉的项；全开 = 不存。
+                  ...(extra.enabled === undefined ? {} : { enabled: extra.enabled }),
+                  // 工作区说明（AGENTS.md / CLAUDE.md）：只存模式 + 改写正文，从不存文件原文；原样 = 不存。
+                  ...(extra.workspaceInstructions === undefined ? {} : { workspaceInstructions: extra.workspaceInstructions }),
+                  // 约束承接：这份预设是从会话存下来的（开场里带着那段历史）。
+                  ...(extra.fromSession === true ? { fromSession: true } : {}),
                 }
-                patchState({ blocks: nextBlocks, towers: nextTowers })
+                const at = packs.findIndex((entry) => entry.name === name)
+                if (at >= 0) packs[at] = pack
+                else packs = [...packs, pack]
+                // 写盘失败只记 note + reason，不抛（内存里的列表照旧用于本次响应）。
+                if (!writePacks(workspace, packs)) reason = 'packs write failed'
               }
-              extra = { affected }
-            } else if (op === 'tower-save') {
-              const tower = sanitizeTower(body?.tower)
-              if (tower === undefined) reason = 'invalid tower'
-              else {
-                patchState({ towers: { ...(readState()?.towers ?? {}), [tower.id]: tower } })
-                extra = { id: tower.id }
-              }
-            } else if (op === 'tower-delete') {
-              const id = typeof body?.id === 'string' ? body.id : ''
-              const towers = { ...(readState()?.towers ?? {}) }
-              if (id === '' || towers[id] === undefined) reason = 'not found'
-              else {
-                delete towers[id]
-                patchState({ towers })
-              }
-            } else if (op === 'hidden-set') {
-              // 隐藏的内置积木 / 塔（设置里可找回）。
-              const ids = Array.isArray(body?.ids) ? body.ids.filter((value) => typeof value === 'string' && value !== '').slice(0, 200) : []
-              patchState({ hiddenBuiltins: ids })
-            } else if (op === 'builtin') {
-              const id = typeof body?.id === 'string' ? body.id : ''
-              const preset = builtinPreset(id)
-              note({ seat: 'packs-route', op, id, hit: preset !== undefined })
-              return Response.json({ ok: true, op, id, pack: preset ?? null, ...envelope() }, noStore)
-            } else if (op === 'get') {
-              const name = typeof body?.name === 'string' ? body.name : ''
-              const found = packs.find((entry) => entry.name === name)
-              note({ seat: 'packs-route', op, name, hit: found !== undefined })
-              return Response.json({ ok: true, op, name, pack: found ?? null, file, ...envelope() }, noStore)
-            } else if (op === 'from-session') {
-              // 把当前会话已发生的对话转成开场条目（只读，不存）；客户端预览后再走 save。
-              // 范围「第 N 轮 到 第 M 轮」（v0.10.1）：fromTurn 缺省 1，toTurn 缺省 = 到最后；旧调用只给 toTurn 照旧。
-              const range = turnRange(body)
-              const events = sessionEvents(liveAgents.get(sessionId), sessionId)
-              const result = historyToItems(events, {
-                reasoning: body?.reasoning === true,
-                fromTurn: range.from,
-                toTurn: range.to,
-              })
-              // 本会话的每轮注入配置（只认本会话自己那格，不认 '*'）和故事记忆摘要，给「带上……」两个复选框。
-              const everyTurn = sanitizeEveryTurn(readState()?.everyTurn?.[sessionId]) ?? null
-              // 约束承接：会话里实际发过的每轮注入 → 当时生效的积木（不论来自本会话、'*' 还是角色卡），面板默认勾上带进预设。
-              const { constraints } = detectConstraints(events, readState(), sessionId, { fromTurn: range.from, toTurn: range.to, catalog: everyTurnBlocks() })
-              const stored = memoryStore.read(sessionId)
-              const memory = typeof stored?.text === 'string' && stored.text.trim() !== '' ? { text: stored.text.trim(), throughTurn: Number(stored.throughTurn) || 0 } : null
-              const toTurn = range.to
-              // 截了轮次、而摘要覆盖到截取末轮 M 之后 ⇒ 不许带（摘要里有分支点之后的剧情）。
-              const memoryAllowed = memory !== null && (toTurn === 0 || memory.throughTurn <= toTurn)
-              note({ seat: 'packs-route', op, sessionId, items: result.items.length, turnCount: result.turnCount, lastTurn: result.lastTurn, toolCalls: result.toolCalls, everyTurn: everyTurn?.mode ?? null, memory: memory?.throughTurn ?? null, memoryAllowed })
-              return Response.json({ ok: true, op, ...result, fromTurn: range.from, toTurn: range.to, everyTurn, constraints, memory, memoryAllowed, ...envelope() }, noStore)
-            } else if (op === 'every-turn-status') {
-              // 面板状态行：本会话每轮注入的自动判定（只读）。
-              const gate = await loadGate()
-              const status =
-                typeof gate?.everyTurnStatus === 'function'
-                  ? gate.everyTurnStatus(applyEnabled(readState()), sessionId, sessionEvents(liveAgents.get(sessionId), sessionId))
-                  : { enabled: false }
-              return Response.json({ ok: true, op, status, ...envelope() }, noStore)
-            } else if (op === 'save') {
-              const name = typeof body?.name === 'string' ? body.name.trim() : ''
-              // 基于角色卡（0.14）：只存和卡不一样的格；没写的格 = 从卡来，null = 明确用默认。
-              const layered = isLayered(body)
-              const items = layered && body?.items === undefined ? undefined : sanitizeItems(body?.items)
-              const overrides = sanitizeOverrides(body?.overrides)
-              const tools = sanitizeTools(body?.tools)
-              // 约束承接：「从当前会话取」后勾上的约束（carried）编成每轮注入，并记下 fromSession。
-              const { everyTurn, fromSession } = carriedPresetFields(body, { layered })
-              const memorySeed = sanitizeMemorySeed(body?.memorySeed)
-              const cut = Number(body?.toTurn) > 0 ? Math.floor(Number(body.toTurn)) : 0
-              if (name === '') reason = 'missing name'
-              else if (items === undefined && !layered) reason = 'invalid items[]'
-              else if (memorySeed !== undefined && cut > 0 && memorySeed.throughTurn > cut) reason = 'memory summary covers turns after the cut'
-              else upsert(name, items, overrides, tools, body?.gate, { everyTurn, fromSession, memorySeed, card: sanitizeCardRef(body?.card), lore: sanitizeLore(body?.lore), enabled: sanitizeEnabled(body?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(body?.workspaceInstructions) })
-            } else if (op === 'delete') {
-              const name = typeof body?.name === 'string' ? body.name : ''
-              const next = packs.filter((entry) => entry.name !== name)
-              if (next.length === packs.length) reason = 'not found'
-              else {
-                packs = next
-                writePacks(workspace, packs)
-              }
-            } else if (op === 'import') {
-              let parsed
-              try {
-                parsed = typeof body?.json === 'string' ? JSON.parse(body.json) : body?.json
-              } catch (error) {
-                parsed = undefined
-                reason = `bad json: ${String(error?.message ?? error)}`
-              }
-              if (parsed !== undefined) {
-                const layered = isLayered(parsed)
-                const items = layered && parsed?.items === undefined ? undefined : sanitizeItems(parsed?.items ?? parsed)
-                const overrides = sanitizeOverrides(parsed?.overrides)
-                const tools = sanitizeTools(parsed?.tools)
-                const raw = parsed?.name ?? body?.name
-                const name = typeof raw === 'string' ? raw.trim() : ''
-                if ((items === undefined && !layered) || name === '') reason = 'import needs { name, items[] }'
-                else upsert(name, items, overrides, tools, parsed?.gate, { ...carriedPresetFields(parsed, { layered }), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), lore: sanitizeLore(parsed?.lore), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
-              }
-            } else {
-              reason = `unknown op "${op}"`
-            }
 
-            note({ seat: 'packs-route', op, sessionId, workspace: workspace ?? '(global)', count: packs.length, reason })
-            return Response.json(
-              {
-                ok: true,
-                op,
-                packs: packSummaries(packs),
-                builtins: builtinSummaries(),
-                everyTurnPresets: everyTurnPresets(),
-                everyTurnTowers: everyTurnTowers(),
-                everyTurnBlocks: everyTurnBlocks(),
-                blocks: Object.values(readState()?.blocks ?? {}),
-                towers: Object.values(readState()?.towers ?? {}),
-                hiddenBuiltins: Array.isArray(readState()?.hiddenBuiltins) ? readState().hiddenBuiltins : [],
-                file,
-                reason,
-                ...extra,
-                ...envelope(),
-              },
-              noStore,
-            )
+              if (op === 'list') {
+                // 无操作，直接回列表。
+              } else if (op === 'block-save') {
+                // v0.15：新建 / 覆盖「我的积木」（含遮内置的「我的版本」）。
+                const block = sanitizeBlock(body?.block)
+                if (block === undefined) reason = 'invalid block'
+                else {
+                  patchState({ blocks: { ...(readState()?.blocks ?? {}), [block.id]: block } })
+                  extra = { id: block.id }
+                }
+              } else if (op === 'block-delete') {
+                const id = typeof body?.id === 'string' ? body.id : ''
+                const state = readState()
+                const blocks = state?.blocks ?? {}
+                const towers = state?.towers ?? {}
+                const affected = Object.values(towers)
+                  .filter((tower) => (Array.isArray(tower?.items) ? tower.items : []).some((item) => item?.ref === id))
+                  .map((tower) => tower.id)
+                if (id === '') reason = 'missing id'
+                else if (body?.dryRun === true) {
+                  // 只报影响面（面板先拿列表做确认）。
+                } else if (blocks[id] === undefined) reason = 'not found'
+                else {
+                  const gone = blocks[id]
+                  const nextBlocks = { ...blocks }
+                  delete nextBlocks[id]
+                  // 塔里保留文字快照：原积木删了，塔照常能发。
+                  const snapshot = { name: gone.name, first: gone.first, text: gone.text, checks: [...gone.checks] }
+                  const nextTowers = {}
+                  for (const [key, tower] of Object.entries(towers)) {
+                    nextTowers[key] = {
+                      ...tower,
+                      items: (Array.isArray(tower?.items) ? tower.items : []).map((item) =>
+                        item?.ref === id ? { ...item, snap: item.snap ?? snapshot } : item,
+                      ),
+                    }
+                  }
+                  patchState({ blocks: nextBlocks, towers: nextTowers })
+                }
+                extra = { affected }
+              } else if (op === 'tower-save') {
+                const tower = sanitizeTower(body?.tower)
+                if (tower === undefined) reason = 'invalid tower'
+                else {
+                  patchState({ towers: { ...(readState()?.towers ?? {}), [tower.id]: tower } })
+                  extra = { id: tower.id }
+                }
+              } else if (op === 'tower-delete') {
+                const id = typeof body?.id === 'string' ? body.id : ''
+                const towers = { ...(readState()?.towers ?? {}) }
+                if (id === '' || towers[id] === undefined) reason = 'not found'
+                else {
+                  delete towers[id]
+                  patchState({ towers })
+                }
+              } else if (op === 'hidden-set') {
+                // 隐藏的内置积木 / 塔（设置里可找回）。
+                const ids = Array.isArray(body?.ids) ? body.ids.filter((value) => typeof value === 'string' && value !== '').slice(0, 200) : []
+                patchState({ hiddenBuiltins: ids })
+              } else if (op === 'builtin') {
+                const id = typeof body?.id === 'string' ? body.id : ''
+                const preset = builtinPreset(id)
+                note({ seat: 'packs-route', op, id, hit: preset !== undefined })
+                return Response.json({ ok: true, op, id, pack: preset ?? null, ...envelope() }, noStore)
+              } else if (op === 'get') {
+                const name = typeof body?.name === 'string' ? body.name : ''
+                const found = packs.find((entry) => entry.name === name)
+                note({ seat: 'packs-route', op, name, hit: found !== undefined })
+                return Response.json({ ok: true, op, name, pack: found ?? null, file, ...envelope() }, noStore)
+              } else if (op === 'from-session') {
+                // 把当前会话已发生的对话转成开场条目（只读，不存）；客户端预览后再走 save。
+                // 范围「第 N 轮 到 第 M 轮」（v0.10.1）：fromTurn 缺省 1，toTurn 缺省 = 到最后；旧调用只给 toTurn 照旧。
+                const range = turnRange(body)
+                const events = sessionEvents(liveAgents.get(sessionId), sessionId)
+                const result = historyToItems(events, {
+                  reasoning: body?.reasoning === true,
+                  fromTurn: range.from,
+                  toTurn: range.to,
+                })
+                // 本会话的每轮注入配置（只认本会话自己那格，不认 '*'）和故事记忆摘要，给「带上……」两个复选框。
+                const everyTurn = sanitizeEveryTurn(readState()?.everyTurn?.[sessionId]) ?? null
+                // 约束承接：会话里实际发过的每轮注入 → 当时生效的积木（不论来自本会话、'*' 还是角色卡），面板默认勾上带进预设。
+                const { constraints } = detectConstraints(events, readState(), sessionId, { fromTurn: range.from, toTurn: range.to, catalog: everyTurnBlocks() })
+                const stored = memoryStore.read(sessionId)
+                const memory = typeof stored?.text === 'string' && stored.text.trim() !== '' ? { text: stored.text.trim(), throughTurn: Number(stored.throughTurn) || 0 } : null
+                const toTurn = range.to
+                // 截了轮次、而摘要覆盖到截取末轮 M 之后 ⇒ 不许带（摘要里有分支点之后的剧情）。
+                const memoryAllowed = memory !== null && (toTurn === 0 || memory.throughTurn <= toTurn)
+                note({ seat: 'packs-route', op, sessionId, items: result.items.length, turnCount: result.turnCount, lastTurn: result.lastTurn, toolCalls: result.toolCalls, everyTurn: everyTurn?.mode ?? null, memory: memory?.throughTurn ?? null, memoryAllowed })
+                return Response.json({ ok: true, op, ...result, fromTurn: range.from, toTurn: range.to, everyTurn, constraints, memory, memoryAllowed, ...envelope() }, noStore)
+              } else if (op === 'every-turn-status') {
+                // 面板状态行：本会话每轮注入的自动判定（只读）。
+                // **只回 {ok, op, status}**：这里以前带 ...envelope()（整份 state 1 MB 级），而这个接口
+                // 是卡片打开时每 4 s 一次的常驻轮询 —— 客户端只读 data.status，别的字段纯属白烧带宽。
+                const gate = await loadGate()
+                const status =
+                  typeof gate?.everyTurnStatus === 'function'
+                    ? gate.everyTurnStatus(applyEnabled(readState()), sessionId, sessionEvents(liveAgents.get(sessionId), sessionId))
+                    : { enabled: false }
+                return Response.json({ ok: true, op, status }, noStore)
+              } else if (op === 'save') {
+                const name = typeof body?.name === 'string' ? body.name.trim() : ''
+                // 基于角色卡（0.14）：只存和卡不一样的格；没写的格 = 从卡来，null = 明确用默认。
+                const layered = isLayered(body)
+                const items = layered && body?.items === undefined ? undefined : sanitizeItems(body?.items)
+                const overrides = sanitizeOverrides(body?.overrides)
+                const tools = sanitizeTools(body?.tools)
+                // 约束承接：「从当前会话取」后勾上的约束（carried）编成每轮注入，并记下 fromSession。
+                const { everyTurn, fromSession } = carriedPresetFields(body, { layered })
+                const memorySeed = sanitizeMemorySeed(body?.memorySeed)
+                const cut = Number(body?.toTurn) > 0 ? Math.floor(Number(body.toTurn)) : 0
+                if (name === '') reason = 'missing name'
+                else if (items === undefined && !layered) reason = 'invalid items[]'
+                else if (memorySeed !== undefined && cut > 0 && memorySeed.throughTurn > cut) reason = 'memory summary covers turns after the cut'
+                else upsert(name, items, overrides, tools, body?.gate, { everyTurn, fromSession, memorySeed, card: sanitizeCardRef(body?.card), lore: sanitizeLore(body?.lore), enabled: sanitizeEnabled(body?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(body?.workspaceInstructions) })
+              } else if (op === 'delete') {
+                const name = typeof body?.name === 'string' ? body.name : ''
+                const next = packs.filter((entry) => entry.name !== name)
+                if (next.length === packs.length) reason = 'not found'
+                else {
+                  packs = next
+                  if (!writePacks(workspace, packs)) reason = 'packs write failed'
+                }
+              } else if (op === 'import') {
+                let parsed
+                try {
+                  parsed = typeof body?.json === 'string' ? JSON.parse(body.json) : body?.json
+                } catch (error) {
+                  parsed = undefined
+                  reason = `bad json: ${String(error?.message ?? error)}`
+                }
+                if (parsed !== undefined) {
+                  const layered = isLayered(parsed)
+                  const items = layered && parsed?.items === undefined ? undefined : sanitizeItems(parsed?.items ?? parsed)
+                  const overrides = sanitizeOverrides(parsed?.overrides)
+                  const tools = sanitizeTools(parsed?.tools)
+                  const raw = parsed?.name ?? body?.name
+                  const name = typeof raw === 'string' ? raw.trim() : ''
+                  if ((items === undefined && !layered) || name === '') reason = 'import needs { name, items[] }'
+                  else upsert(name, items, overrides, tools, parsed?.gate, { ...carriedPresetFields(parsed, { layered }), memorySeed: sanitizeMemorySeed(parsed?.memorySeed), card: sanitizeCardRef(parsed?.card), lore: sanitizeLore(parsed?.lore), enabled: sanitizeEnabled(parsed?.enabled), workspaceInstructions: sanitizeWorkspaceInstructions(parsed?.workspaceInstructions) })
+                }
+              } else {
+                reason = `unknown op "${op}"`
+              }
+
+              note({ seat: 'packs-route', op, sessionId, workspace: workspace ?? '(global)', count: packs.length, reason })
+              // 写 / 列表成功都附上当前会话的 summary（客户端 applySummaryWrite 直接喂 store，规划 §2.2）。
+              const summary = (() => {
+                try {
+                  return summaryOf(sessionId)
+                } catch (error) {
+                  note({ seat: 'packs-route', summary: 'failed', error: String(error?.message ?? error) })
+                  return undefined
+                }
+              })()
+              return Response.json(
+                {
+                  ok: true,
+                  op,
+                  packs: packSummaries(packs),
+                  builtins: builtinSummaries(),
+                  everyTurnPresets: everyTurnPresets(),
+                  everyTurnTowers: everyTurnTowers(),
+                  everyTurnBlocks: everyTurnBlocks(),
+                  blocks: Object.values(readState()?.blocks ?? {}),
+                  towers: Object.values(readState()?.towers ?? {}),
+                  hiddenBuiltins: Array.isArray(readState()?.hiddenBuiltins) ? readState().hiddenBuiltins : [],
+                  file,
+                  reason,
+                  ...extra,
+                  ...(summary === undefined ? {} : { summary }),
+                  ...envelope(),
+                },
+                noStore,
+              )
+            } catch (error) {
+              // 读包 / 写盘 / 加载闸门任何一步抛：回 ok:false 而不是让宿主 500（面板至少能看到原因）。
+              note({ seat: 'packs-route', op, error: String(error?.message ?? error) })
+              return Response.json({ ok: false, op, reason: String(error?.message ?? error), file }, noStore)
+            }
           },
         }),
       'dsh-prefill: packs route',

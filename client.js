@@ -453,17 +453,27 @@ window.__ModuleLoader__.load({
       return Math.max(0, Math.round(scrollTop + below))
     }
     /**
-     * toast 的位置（P1-8，相对卡片）：贴着触发它的控件（右边对齐），放在控件上方 6px；
-     * 上方放不下（离内容区顶不到一行）就放在控件下方。没有触发点 ⇒ null（卡片底部居中）。
+     * toast 的位置（P1-8，相对卡片）：贴着触发它的控件，放在控件上方 6px；上方放不下就放下方。
+     * 贴边方式按触发点所在半区选：卡片左半 ⇒ 从左边起排（left），右半 ⇒ 从右边起排（right），
+     * 这样 toast 永远在卡片内（v0.21.1 修：左栏开关触发时原来只算 right，长文案会伸到卡片左边界外被裁掉）。
+     * 没有触发点 ⇒ null（卡片底部居中）。
      */
     const TOAST_H = 28
+    const TOAST_EDGE = 8
     function toastPlace(card, trigger, area) {
       if (!card || !trigger || !Number.isFinite(trigger.top)) return null
       if (trigger.bottom < card.top || trigger.top > card.bottom) return null
-      const right = Math.round(Math.max(10, Math.min(card.right - trigger.right, card.width - 140)))
+      const hasLeft = Number.isFinite(trigger.left)
+      const center = hasLeft ? (trigger.left + trigger.right) / 2 - card.left : card.width - (card.right - trigger.right)
+      const side = hasLeft && center < card.width / 2 ? 'left' : 'right'
+      // 贴边距离：不超出卡片两侧，也不把 toast 挤到只剩一点点宽（至少留 140px 起排空间）。
+      const offset =
+        side === 'left'
+          ? Math.round(Math.max(TOAST_EDGE, Math.min(hasLeft ? trigger.left - card.left : TOAST_EDGE, card.width - 140)))
+          : Math.round(Math.max(TOAST_EDGE, Math.min(card.right - trigger.right, card.width - 140)))
       const topLimit = (area ?? card).top + 4
-      if (trigger.top - 6 - TOAST_H >= topLimit) return { right, bottom: Math.round(Math.min(card.bottom - trigger.top + 6, card.height - TOAST_H - 4)) }
-      return { right, top: Math.round(Math.min(Math.max(trigger.bottom - card.top + 6, 4), card.height - TOAST_H - 4)) }
+      if (trigger.top - 6 - TOAST_H >= topLimit) return { side, offset, bottom: Math.round(Math.min(card.bottom - trigger.top + 6, card.height - TOAST_H - 4)) }
+      return { side, offset, top: Math.round(Math.min(Math.max(trigger.bottom - card.top + 6, 4), card.height - TOAST_H - 4)) }
     }
     // 关键帧（只动 transform / opacity；简洁档由 play() 去掉位移，只剩淡入淡出）
     const PILL_ENTER = [{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }]
@@ -1298,13 +1308,22 @@ window.__ModuleLoader__.load({
       }, [text])
       if (shown === null) return null
       const at = placeRef.current
+      // 贴边容器：左半区从左边起排、右半区从右边起排；另一侧留 8px 兜底 ⇒ 长文案只会 ellipsis，不会被卡片裁掉。
       const outer = at
-        ? { position: 'absolute', zIndex: 6, right: at.right, ...(at.top !== undefined ? { top: at.top } : { bottom: at.bottom }), pointerEvents: 'none', maxWidth: 'calc(100% - 20px)' }
+        ? {
+            position: 'absolute',
+            zIndex: 6,
+            ...(at.side === 'left' ? { left: at.offset, right: TOAST_EDGE } : { right: at.offset, left: TOAST_EDGE }),
+            ...(at.top !== undefined ? { top: at.top } : { bottom: at.bottom }),
+            display: 'flex',
+            justifyContent: at.side === 'left' ? 'flex-start' : 'flex-end',
+            pointerEvents: 'none',
+          }
         : { position: 'absolute', zIndex: 6, left: 10, right: 10, bottom: 'var(--pf-toast-bottom, 10px)', display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
       return h(
         'div',
-        { 'data-prefill-toast-wrap': at ? (at.top !== undefined ? 'below' : 'above') : 'bottom', style: outer },
-        h('div', { ref, 'data-prefill-toast': '', 'aria-hidden': 'true', style: { padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)', boxShadow: '0 2px 8px rgba(0,0,0,.15)' } }, shown),
+        { 'data-prefill-toast-wrap': at ? (at.top !== undefined ? 'below' : 'above') : 'bottom', 'data-prefill-toast-side': at?.side ?? 'center', style: outer },
+        h('div', { ref, 'data-prefill-toast': '', 'aria-hidden': 'true', style: { padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, maxWidth: 420, flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: 'var(--dsw-alias-label-primary)', color: 'var(--dsw-alias-bg-base)', boxShadow: '0 2px 8px rgba(0,0,0,.15)' } }, shown),
       )
     }
     /**
@@ -1698,7 +1717,7 @@ window.__ModuleLoader__.load({
      * blocked（拦截数）变多 ⇒「拦 N」pop。countText 为空不画「拦 N」。memo（会话 id）：卸下再挂上时和上次画的比（sbxSeen）。
      */
     function SandboxBadge(props) {
-      const { tone, blocked = 0, label, countText = '', countColor, memo, defer = false, style, ...rest } = props
+      const { tone, blocked = 0, label, countText = '', countColor, memo, defer = false, style, as = 'button', flat = false, ...rest } = props
       const toneRef = React.useRef(null)
       const countRef = React.useRef(null)
       const seen = React.useRef(undefined)
@@ -1725,9 +1744,10 @@ window.__ModuleLoader__.load({
       React.useLayoutEffect(() => {
         if (memo !== undefined && memo !== null) sbxSeen.set(memo, { tone, blocked })
       }, [memo, tone, blocked])
+      const tag = as === 'span' ? 'span' : 'button'
       return h(
-        'button',
-        { type: 'button', ...rest, style: { ...style, position: 'relative', isolation: 'isolate', border: `1px solid ${tint(tone, 40)}`, background: tint(tone, 10), color: tone } },
+        tag,
+        { ...(as === 'span' ? {} : { type: 'button' }), ...rest, style: { ...style, position: 'relative', isolation: 'isolate', ...(flat ? { border: 'none', background: 'transparent', color: 'inherit', padding: 0, font: 'inherit' } : { border: `1px solid ${tint(tone, 40)}`, background: tint(tone, 10), color: tone }) } },
         oldTone === null ? null : h('span', { key: 'was', ref: toneRef, 'aria-hidden': 'true', 'data-prefill-sbx-tone-was': '', style: { position: 'absolute', inset: -1, zIndex: -1, borderRadius: 999, border: `1px solid ${tint(oldTone.tone, 40)}`, background: tint(oldTone.tone, 10), pointerEvents: 'none' } }),
         label,
         countText === '' ? null : h('span', { key: 'count', ref: countRef, 'data-prefill-sbx-blocked': String(blocked), style: { display: 'inline-block', color: countColor } }, countText),
@@ -1943,6 +1963,460 @@ window.__ModuleLoader__.load({
         // 忽略。
       }
     }
+
+    // <summary-store>
+    /**
+     * 客户端轻量数据层（docs/规划-界面重构-v1.md §2.2）。
+     *
+     * 为什么要有它：以前三个常驻组件（输入框芯片 / 纯净芯片 / 顶栏徽标）各自每 2.5s 拉一次**整封**
+     * envelope（state.json 一变大就是 ~1.28MB），而且卡片关着也照跑。现在它们只订阅这里的一份
+     * summary（< 10KB）：
+     *   · 全页**只有一个**定时器（卡片开 3s / 关 5s），没人订阅就清掉（一个请求都不发）；
+     *   · 单飞（上一次还在飞就不再发）+ 15s 超时 + 失败退避 2.5→5→10→20→30s（成功清零）；
+     *   · 页面在后台（document.hidden）暂停，回到前台立刻补一次；
+     *   · 写接口（/state、/packs）的响应本来就是整封 envelope ⇒ applyEnvelope() 直接切出摘要喂进来，
+     *     写完不用再等下一轮轮询；
+     *   · rev 没变直接复用旧对象（不 emit）；写接口来的切片没有 rev，用内容指纹对账，避免无谓重渲染。
+     *
+     * ── 服务端扁平字段（契约 §2.1）→ 迷你 envelope（这里归一；消费方按旧 envelope 的读法取）──
+     *   rev / sessionId                             → rev / sessionId
+     *   prefill / gate / activePreset / armed / levers / ui
+     *                                               → state.{prefill, gate, activePreset, armed, levers, ui}
+     *   locked（可选扩展：本会话的**原记录**）        → state.locked     （组件读 lockRec.items，别改成条数）
+     *   noticeSeen（可选扩展：全局布尔）              → state.noticeSeen
+     *   turns / materialized                        → turns / materialized
+     *   pendingReprime / running                    → pendingReprime / running
+     *   sandbox（{ level, blocked }）                → sandbox
+     *   tools（数字 = 该会话工具数）                  → tools
+     *   snapshots（可选扩展：本会话那格 Q9 快照）     → snapshots
+     *   persona（可选扩展：本会话有没有人格段）        → persona（布尔）
+     * 整封 envelope 走 extractSummary() 做同一套归一（字段映射写在那函数上边）。
+     * 这一段只依赖 React / window / document / fetch，单测切出来配假件直接跑（tests/summary-store.test.mjs）。
+     */
+    const SUMMARY_ROUTE = '/api/dsh-prefill/summary'
+    /** 单次请求上限：弱网下宁可失败退避，也不许一个请求挂 25s 拖住 UI。 */
+    const SUMMARY_TIMEOUT_MS = 15000
+    /** 卡片开着时刷得快一点（用户在卡片里看数字），关着只维持芯片 / 徽标。 */
+    const SUMMARY_OPEN_MS = 3000
+    const SUMMARY_CLOSED_MS = 5000
+    /** 失败退避（第 n 次失败取第 n 项，之后一直 30s）；成功一次就清零。 */
+    const SUMMARY_BACKOFF_MS = [2500, 5000, 10000, 20000, 30000]
+    /**
+     * 人格段的名字。**故意写成字面量**：真的 PERSONA_SECTION 定义在本段之后（模块级 const 有 TDZ），
+     * 而这一段要被单测切片单独执行 ⇒ 不能引用后面的 const。值与 PERSONA_SECTION 相同（tests 里比对）。
+     */
+    const SUMMARY_PERSONA_SECTION = 'prefill:persona'
+    /**
+     * 单例（契约 §2.2 的字段 + 几个实现用的）：
+     *   sessionId   当前订阅的会话（换会话 ⇒ 旧数据立刻清掉，别让新会话看见旧会话的摘要）
+     *   data        归一后的迷你 envelope（null = 还没到）
+     *   rev         上一份 summary 响应带的 rev（相同 = 直接复用旧对象）
+     *   sig         data 的内容指纹（写接口来的切片没有 rev，用它对账）
+     *   listeners   Set<() => void>（React 的 onStoreChange）
+     *   timer       下一个轮询的 setTimeout（全页唯一）
+     *   inFlight    单飞标记
+     *   failures    连续失败次数（退避用）
+     *   cardOpen    卡片开没开（3s / 5s）
+     *   hidden      页面在后台（暂停轮询）
+     *   watching    页面可见性 / 状态事件监听挂过没有
+     *   restart     换会话时正有一个请求在飞 ⇒ 它回来后再补一次
+     */
+    const summaryStore = {
+      sessionId: '',
+      data: null,
+      rev: '',
+      sig: '',
+      listeners: new Set(),
+      timer: null,
+      inFlight: false,
+      failures: 0,
+      cardOpen: false,
+      hidden: false,
+      watching: false,
+      restart: false,
+    }
+    /**
+     * 整封 envelope 才有、summary 路由暂时没有的几项（Q9 快照 / 首轮锁定 / 首次说明 / 人格段）。
+     * 卡片打开时的 /state 与所有写接口都会经过 applyEnvelope ⇒ 顺手记下来，summary 轮询到了再合进去，
+     * 免得它们被一冲就没（服务端补了这些字段时以响应为准）。
+     */
+    const summaryExtras = { locked: undefined, noticeSeen: undefined, snapshots: undefined, persona: undefined }
+    /** 换会话：按会话过滤的那几项立刻作废（noticeSeen 是全局的，留着）。 */
+    function summaryExtrasReset() {
+      summaryExtras.locked = undefined
+      summaryExtras.snapshots = undefined
+      summaryExtras.persona = undefined
+    }
+    /** 有订阅者、有会话才轮询（卡片没开 / 会话界面没挂 ⇒ 一个请求都不发）。 */
+    function summaryWanted() {
+      return summaryStore.listeners.size > 0 && summaryStore.sessionId !== ''
+    }
+    /** 页面在后台？没有 document（Node 单测）⇒ 当作前台。 */
+    function summaryPageHidden() {
+      try {
+        return typeof document !== 'undefined' && document !== null && document.hidden === true
+      } catch {
+        return false
+      }
+    }
+    /** 下一次隔多久：有失败先按退避，否则卡片开 3s / 关 5s。 */
+    function summaryDelay() {
+      if (summaryStore.failures > 0) {
+        return SUMMARY_BACKOFF_MS[Math.min(summaryStore.failures - 1, SUMMARY_BACKOFF_MS.length - 1)]
+      }
+      return summaryStore.cardOpen === true ? SUMMARY_OPEN_MS : SUMMARY_CLOSED_MS
+    }
+    function summaryCancel() {
+      if (summaryStore.timer === null) return
+      clearTimeout(summaryStore.timer)
+      summaryStore.timer = null
+    }
+    /** 排下一次：全页只有这一个定时器；没订阅者 / 在后台就不排（回到前台由 resumeSummary 补上）。 */
+    function summarySchedule(delay) {
+      summaryCancel()
+      summaryStore.hidden = summaryPageHidden()
+      if (summaryWanted() !== true || summaryStore.hidden === true) return
+      summaryStore.timer = setTimeout(() => {
+        summaryStore.timer = null
+        void refreshSummary('poll')
+      }, typeof delay === 'number' ? delay : summaryDelay())
+    }
+    /** 通知订阅者（React 的 useSyncExternalStore 靠它重渲染）：单个订阅者出错不拖垮别人。 */
+    function summaryEmit() {
+      for (const listener of [...summaryStore.listeners]) {
+        try {
+          listener()
+        } catch {
+          // 忽略。
+        }
+      }
+    }
+    /** 内容指纹：排掉 rev（那是「文件变过」的标记，不是内容本身），其余原样 JSON。 */
+    function summarySignature(next) {
+      try {
+        return JSON.stringify(next, (key, value) => (key === 'rev' ? undefined : value))
+      } catch {
+        return ''
+      }
+    }
+    /**
+     * 可选扩展字段容错：服务端可以整段给「会话 → 值」的表，也可以只给请求会话那一条。
+     * 有 sid 这格 ⇒ 当表；否则 single(值) 为真 ⇒ 包成 { sid: 值 }。都认不出来就原样带过去。
+     */
+    function summaryFieldMap(value, sessionId, single) {
+      if (value === null || value === undefined || typeof value !== 'object') return undefined
+      if (sessionId !== '' && Object.prototype.hasOwnProperty.call(value, sessionId)) return { [sessionId]: value[sessionId] }
+      if (sessionId !== '' && typeof single === 'function' && single(value) === true) return { [sessionId]: value }
+      return value
+    }
+    /** 契约扁平字段 + 可选扩展 ⇒ 迷你 envelope（见段头映射表）。extras 只在响应没带时补位。 */
+    function normalizeSummary(raw) {
+      if (raw === null || typeof raw !== 'object') return null
+      const sid = typeof raw.sessionId === 'string' && raw.sessionId !== '' ? raw.sessionId : summaryStore.sessionId
+      const pick = (value, extra) => (value !== undefined ? value : extra)
+      const locked = summaryFieldMap(pick(raw.locked, summaryExtras.locked), sid, (value) => Array.isArray(value.items) || typeof value.at === 'string' || typeof value.turn === 'number')
+      const snapshots = summaryFieldMap(pick(raw.snapshots, summaryExtras.snapshots), sid, (value) => typeof value.state === 'string' || typeof value.turn === 'number')
+      const noticeSeen = pick(raw.noticeSeen, summaryExtras.noticeSeen)
+      // 人格段：服务端给的是 { 会话: true } 的扁平表，整封 envelope 那边算出来的是布尔 —— 两种都归一成布尔，
+      // 消费方只认 `persona === true`（值缺失 = 不知道，别当成 false）。
+      const personaRaw = pick(raw.persona, summaryExtras.persona)
+      const persona =
+        personaRaw === undefined
+          ? undefined
+          : typeof personaRaw === 'boolean'
+            ? personaRaw
+            : personaRaw !== null && typeof personaRaw === 'object'
+              ? sid !== '' && personaRaw[sid] === true
+              : false
+      const state = {
+        prefill: raw.prefill ?? {},
+        gate: raw.gate ?? {},
+        activePreset: raw.activePreset ?? {},
+        armed: Array.isArray(raw.armed) ? raw.armed : [],
+        levers: raw.levers ?? {},
+        ui: raw.ui ?? {},
+        ...(locked !== undefined ? { locked } : {}),
+        ...(noticeSeen !== undefined ? { noticeSeen } : {}),
+      }
+      return {
+        ok: raw.ok !== false,
+        rev: typeof raw.rev === 'string' || typeof raw.rev === 'number' ? String(raw.rev) : '',
+        sessionId: sid,
+        state,
+        turns: raw.turns ?? {},
+        materialized: raw.materialized ?? {},
+        pendingReprime: Array.isArray(raw.pendingReprime) ? raw.pendingReprime : [],
+        running: Array.isArray(raw.running) ? raw.running : [],
+        snapshots: snapshots ?? {},
+        sandbox: raw.sandbox ?? {},
+        tools: raw.tools ?? {},
+        ...(persona !== undefined ? { persona } : {}),
+      }
+    }
+    /**
+     * 整封 envelope（/state、/packs 的响应）⇒ summary 切片。字段映射（与服务端 summaryOf 同形，
+     * 这样「写响应切出来的」和「summary 路由拉回来的」两份数据内容一致，不会来回 emit）：
+     *   envelope.state.{prefill,gate,activePreset}                   → 同名（只留本会话那格；gate 的 'pass' 省略）
+     *   envelope.state.armed                                        → 只留本会话 + '*'（与服务端一致）
+     *   envelope.state.{levers,ui}                                  → 同名（ui 只留 experimental / motion）
+     *   envelope.turns / materialized                                → 同名（只留本会话那格）
+     *   envelope.pendingReprime / running                            → 只留本会话（数组）
+     *   envelope.tools.sessions[会话]（工具名数组）                   → tools[会话] = 个数（契约是数字）
+     *   envelope.sandboxView[会话]                                   → sandbox[会话] = { level, levelFrom, blocked }
+     *   envelope.snapshots[会话]（Q9 本轮三态 / 丢弃计数）             → 扩展项 snapshots（裁成 4 个字段）
+     *   envelope.state.locked[会话]（首轮锁定原记录）                  → 扩展项 locked（原样，组件读 .items）
+     *   envelope.state.noticeSeen（首次说明）                         → 扩展项 noticeSeen（全局）
+     *   envelope.state.overrides[会话].sections['prefill:persona']    → 扩展项 persona（有非空正文 = true）
+     * sid 为空（还没订阅）时按会话过滤的那几张表给空表：宁可空，也别把别会话的数据当成自己的。
+     */
+    function extractSummary(envelope) {
+      if (envelope === null || typeof envelope !== 'object') return null
+      const sid = summaryStore.sessionId
+      const state = envelope.state !== null && typeof envelope.state === 'object' ? envelope.state : {}
+      const has = (map) => sid !== '' && map !== null && typeof map === 'object' && Object.prototype.hasOwnProperty.call(map, sid)
+      const one = (map) => (has(map) ? map[sid] : undefined)
+      const only = (map) => (has(map) ? { [sid]: map[sid] } : {})
+      const listOf = (value) => (Array.isArray(value) ? value : [])
+      /** 只留本会话那一格（'*' 是全局默认，arm 判定要用）。 */
+      const mineOf = (value) => (Array.isArray(value) ? value.filter((id) => id === sid || id === '*') : [])
+      const toolList = one(envelope.tools?.sessions)
+      const sandboxEntry = one(envelope.sandboxView)
+      const personaText = one(state.overrides)?.sections?.[SUMMARY_PERSONA_SECTION]
+      // gate：只有 pure / replace 才算（'pass' 省略 = 默认，和 summary 路由一致）。
+      const gateMode = one(state.gate)
+      const gate = typeof gateMode === 'string' && gateMode !== '' && gateMode !== 'pass' ? { [sid]: gateMode } : {}
+      // Q9 快照裁成角标真正要的 4 个字段（整封 envelope 里还有 seenKinds / texts 等大字段）。
+      const snap = one(envelope.snapshots)
+      const snapshots = snap !== null && typeof snap === 'object' && sid !== ''
+        ? { [sid]: { state: typeof snap.state === 'string' ? snap.state : null, turn: Number(snap.turn) || 0, step: Number(snap.step) || 0, droppedKinds: listOf(snap.droppedKinds).filter((kind) => typeof kind === 'string').slice(0, 12) } }
+        : {}
+      const ui = state.ui !== null && typeof state.ui === 'object' ? state.ui : {}
+      // 可选扩展：记进 summaryExtras，summary 响应不带这些字段时补位（换会话时清掉）。
+      summaryExtras.locked = has(state.locked) ? { [sid]: state.locked[sid] } : undefined
+      summaryExtras.snapshots = Object.keys(snapshots).length > 0 ? snapshots : undefined
+      summaryExtras.persona = sid === '' ? undefined : typeof personaText === 'string' && personaText.trim() !== ''
+      summaryExtras.noticeSeen = typeof state.noticeSeen === 'boolean' ? state.noticeSeen : summaryExtras.noticeSeen
+      return normalizeSummary({
+        ok: envelope.ok !== false,
+        rev: '',
+        sessionId: sid,
+        prefill: only(state.prefill),
+        gate,
+        activePreset: only(state.activePreset),
+        armed: mineOf(state.armed),
+        levers: state.levers ?? {},
+        ui: { experimental: ui.experimental === true, motion: typeof ui.motion === 'string' ? ui.motion : null },
+        turns: only(envelope.turns),
+        materialized: only(envelope.materialized),
+        pendingReprime: mineOf(envelope.pendingReprime),
+        running: mineOf(envelope.running),
+        sandbox: sandboxEntry !== null && typeof sandboxEntry === 'object' && sid !== ''
+          ? { [sid]: { level: sandboxEntry.level, levelFrom: sandboxEntry.levelFrom, blocked: sandboxEntry.blocked ?? 0 } }
+          : {},
+        tools: Array.isArray(toolList) && sid !== '' ? { [sid]: toolList.length } : {},
+      })
+    }
+    /** 采纳一份归一后的摘要：rev 相同 / 内容指纹相同 ⇒ 复用旧对象、不 emit（返回 false）。 */
+    function adoptSummary(next) {
+      if (next === null) return false
+      const prev = summaryStore.data
+      // rev 相同：服务端说状态文件没动过 ⇒ 直接复用旧对象（最便宜的判断，summary 轮询主要走这条）。
+      if (prev !== null && next.rev !== '' && next.rev === summaryStore.rev) {
+        summaryStore.rev = next.rev
+        return false
+      }
+      const sig = summarySignature(next)
+      if (prev !== null && sig === summaryStore.sig) {
+        if (next.rev !== '') summaryStore.rev = next.rev
+        return false
+      }
+      summaryStore.data = next
+      summaryStore.sig = sig
+      if (next.rev !== '') summaryStore.rev = next.rev
+      summaryEmit()
+      return true
+    }
+    /**
+     * 写接口返回的数据 ⇒ 直接喂 store，写完不用再拉一次 summary。两种形态都认（契约 §2.2）：
+     *   · `data.summary`（扁平 summary：/packs 与后续的 /state 写响应会附上）⇒ 优先用它；
+     *   · 整封 envelope（带 `state` 对象）⇒ extractSummary 切一刀。
+     * 两者都没有（比如瘦身后的 every-turn-status 只回 { ok, op, status }）⇒ **什么都不做**：
+     * 拿一份没有 state 的响应当摘要会把 store 清空（芯片/徽标集体闪成"未开"）。
+     */
+    function applyEnvelope(envelope) {
+      if (envelope === null || typeof envelope !== 'object') return false
+      if (envelope.ok === false) return false
+      if (envelope.summary !== null && typeof envelope.summary === 'object') {
+        const summary = envelope.summary
+        if (summary.ok === false) return false
+        // 服务端按**请求体里的 sessionId** 算这份 summary：胶囊 / 徽标写的 patch 会带上它；
+        // 没带（空 = 全局摘要）或不是本会话的，一律不采纳 —— 全局摘要里按会话的几格是空的，
+        // 拿它喂 store 会把当前会话的开关状态冲成「未开」。
+        const summarySession = typeof summary.sessionId === 'string' ? summary.sessionId : ''
+        if (summarySession === '' || summarySession !== summaryStore.sessionId) return false
+        return adoptSummary(normalizeSummary(summary))
+      }
+      if (envelope.state === null || typeof envelope.state !== 'object') return false
+      return adoptSummary(extractSummary(envelope))
+    }
+    /**
+     * 拉一次轻量摘要（单飞）：
+     *   · 没有订阅者 / 页面在后台 ⇒ 不发；
+     *   · 上一次还在飞 ⇒ 直接返回（不排队、不叠加）；
+     *   · AbortSignal.timeout(15s)：弱网下超时算一次失败、进退避；
+     *   · 成功清零退避；失败只累计次数（组件继续显示旧数据，不闪空）。
+     */
+    async function refreshSummary(reason) {
+      if (summaryWanted() !== true || summaryStore.inFlight === true) return null
+      if (summaryPageHidden() === true) {
+        summaryStore.hidden = true
+        return null
+      }
+      summaryStore.inFlight = true
+      const sid = summaryStore.sessionId
+      try {
+        const init = {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId: sid }),
+        }
+        if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') init.signal = AbortSignal.timeout(SUMMARY_TIMEOUT_MS)
+        const response = await fetch(SUMMARY_ROUTE, init)
+        if (response === null || response === undefined || response.ok !== true) throw new Error(`HTTP ${response?.status ?? '?'}`)
+        const raw = await response.json()
+        // 请求期间换了会话：这份是旧会话的，丢掉（别让新会话看见旧数据）。
+        if (summaryStore.sessionId === sid) {
+          // ok:false（state.json 坏了 / 读不出来）是「状态不可用」，不是「空状态」——
+          // 不能拿它把旧数据冲掉，记一次失败走退避，等文件修好。
+          if (raw !== null && typeof raw === 'object' && raw.ok === false) {
+            summaryStore.failures += 1
+            return null
+          }
+          const next = normalizeSummary(raw)
+          if (next !== null) {
+            summaryStore.failures = 0
+            adoptSummary(next)
+          }
+        }
+        return summaryStore.data
+      } catch {
+        // 失败（含超时）：保留旧数据，退避交给 summaryDelay()。
+        summaryStore.failures += 1
+        return null
+      } finally {
+        summaryStore.inFlight = false
+        const restart = summaryStore.restart === true
+        summaryStore.restart = false
+        if (restart === true) void refreshSummary('restart')
+        else summarySchedule()
+      }
+    }
+    /**
+     * 订阅一个会话的摘要。返回 subscribe 函数（给 React.useSyncExternalStore 用）：
+     * 第一个订阅者挂上时立刻拉一次并按 3s / 5s 轮询；最后一个走了就清定时器。
+     */
+    function summarySubscribe(sessionId) {
+      return (onChange) => {
+        const id = typeof sessionId === 'string' ? sessionId : ''
+        if (id === '') return () => {}
+        const switched = summaryStore.sessionId !== id
+        if (switched) {
+          // 换会话：旧数据立刻作废（先让组件渲染空，再等新数据）；在飞的那次回来自己会丢。
+          summaryStore.sessionId = id
+          summaryStore.data = null
+          summaryStore.rev = ''
+          summaryStore.sig = ''
+          summaryStore.failures = 0
+          summaryExtrasReset()
+          if (summaryStore.inFlight === true) summaryStore.restart = true
+        }
+        summaryStore.listeners.add(onChange)
+        summaryWatch()
+        // 第一个订阅者 / 换了会话（数据已清空）⇒ 立刻拉一次，别等下一轮。
+        if (switched === true || summaryStore.listeners.size === 1) void refreshSummary('subscribe')
+        summarySchedule()
+        return () => summaryUnsubscribe(onChange)
+      }
+    }
+    function summaryUnsubscribe(onChange) {
+      summaryStore.listeners.delete(onChange)
+      if (summaryStore.listeners.size > 0) return
+      // 没有订阅者：定时器必须清掉（卡片没开 / 会话界面切走时一个请求都不发）。
+      summaryCancel()
+      summaryStore.hidden = summaryPageHidden()
+    }
+    /** 只挂一次：页面可见性（后台暂停 / 回前台补一次）+ 插件内部状态事件（写完立刻刷，别等下一轮）。 */
+    function summaryWatch() {
+      if (summaryStore.watching === true) return
+      summaryStore.watching = true
+      try {
+        if (typeof document !== 'undefined' && document !== null && typeof document.addEventListener === 'function') {
+          document.addEventListener('visibilitychange', () => {
+            if (summaryPageHidden() === true) pauseSummary()
+            else resumeSummary()
+          })
+        }
+      } catch {
+        // 没有 document（非浏览器）：只当没这回事。
+      }
+      try {
+        if (typeof window !== 'undefined' && window !== null && typeof window.addEventListener === 'function') {
+          // 设置页 / 其它组件写完之后广播 STATE_EVENT：要一次 summary（< 10KB），别等 3s。
+          window.addEventListener(STATE_EVENT, () => {
+            if (summaryWanted() !== true) return
+            void refreshSummary('state-event')
+          })
+        }
+      } catch {
+        // 忽略。
+      }
+    }
+    /** 页面切到后台：暂停轮询（回来由 resumeSummary 补一次）。 */
+    function pauseSummary() {
+      summaryStore.hidden = true
+      summaryCancel()
+    }
+    function resumeSummary() {
+      summaryStore.hidden = false
+      if (summaryWanted() !== true) return
+      void refreshSummary('resume')
+      summarySchedule()
+    }
+    /**
+     * 卡片开合（Dock 里已有的 cardOpen 喂进来）：开着刷 3s、关着 5s；
+     * 打开时立刻补一次（用户正看着卡片，数字别等 3s）。
+     */
+    function setSummaryCardOpen(open) {
+      const next = open === true
+      if (summaryStore.cardOpen === next) return
+      summaryStore.cardOpen = next
+      if (next === true) void refreshSummary('card-open')
+      summarySchedule()
+    }
+    /**
+     * React 18+ 有 useSyncExternalStore；假的 React / 老宿主没有 ⇒ 用 useState + useEffect 垫上
+     * （语义一样：订阅回调里 setState 触发重渲染；返回值恒为 store.data，不用额外缓存）。
+     */
+    const useSyncExternalStore =
+      typeof React.useSyncExternalStore === 'function'
+        ? (subscribe, getSnapshot, getServer) => React.useSyncExternalStore(subscribe, getSnapshot, getServer)
+        : (subscribe, getSnapshot) => {
+            const [value, setValue] = React.useState(getSnapshot)
+            React.useEffect(() => subscribe(() => setValue(getSnapshot())), [subscribe])
+            return value
+          }
+    /**
+     * 订阅本会话的轻量摘要（返回迷你 envelope；还没到 = null）。
+     * ⚠️ 必须在组件早退（`return null`）之前调用 —— 否则 hook 数量会变（React #310）。
+     * 只把**本会话**的摘要给出去：store 全页只有一个「当前会话」，订阅切换的那一瞬也不许串会话。
+     */
+    function useSummary(sessionId) {
+      const id = typeof sessionId === 'string' ? sessionId : ''
+      const subscribe = React.useCallback((onChange) => summarySubscribe(id)(onChange), [id])
+      const getSnapshot = () => (id !== '' && summaryStore.sessionId === id ? summaryStore.data : null)
+      return useSyncExternalStore(subscribe, getSnapshot, () => null)
+    }
+    // </summary-store>
 
     /**
      * PR3：左侧页 ↔ 卡片的官方导航。
@@ -2212,8 +2686,8 @@ window.__ModuleLoader__.load({
       devHide: '收起开发者选项',
       armedTitle: '生效会话',
       armedHint: '勾选＝让插件干预这个会话；一个都不勾＝不干预任何会话（安全默认）。',
-      armedEmpty: '当前没有在册会话。',
-      armedNotLive: '不在册',
+      armedEmpty: '当前没有运行中的会话。',
+      armedNotLive: '未载入',
       armedAll: '全部会话（*）',
       armedAllTip: '探针用：匹配任意会话 id。',
       armedNoneNote: 'armed 为空 ⇒ 本插件此刻不干预任何会话（安全默认）。',
@@ -2413,7 +2887,7 @@ window.__ModuleLoader__.load({
       labError: '操作失败：{reason}',
       // ── PR3（公开 issue #44）：跨会话总览 + 双向跳转 ──
       overviewTitle: '总览',
-      overviewHint: '在册会话与它们的当前配置。「默认」= 这个会话没单独设置、跟随下面的新会话默认；「本会话」= 这个会话自己设过。「打开」= 切到那个会话并弹出预填装卡片。',
+      overviewHint: '运行中会话与它们的当前配置。「默认」= 这个会话没单独设置、跟随下面的新会话默认；「本会话」= 这个会话自己设过。「打开」= 切到那个会话并弹出预填装卡片。',
       overviewOn: '开',
       overviewOff: '关',
       overviewFromDefault: '默认',
@@ -2423,23 +2897,23 @@ window.__ModuleLoader__.load({
       everyTurnSetDefault: '设为新会话默认',
       everyTurnSetDefaultTip: '把本会话的每轮注入（含工作台、注入方式）复制成新会话默认：所有没单独设置的会话都会改用它。',
       everyTurnSetDefaultDone: '已设为新会话默认',
-      overviewEmpty: '当前没有在册会话。',
+      overviewEmpty: '当前没有运行中的会话。',
       overviewOpen: '打开',
       overviewCopy: '复制 id',
       overviewPreset: '预设',
       overviewNone: '未套用',
-      overviewSandbox: '沙盒',
+      overviewSandbox: '拦截',
       overviewEveryTurn: '每轮注入',
       overviewManual: '待发注入',
-      overviewLive: '在册',
-      overviewNotLive: '不在册',
+      overviewLive: '运行中',
+      overviewNotLive: '未载入',
       openDefault: '改默认 ↗',
       copied: '已复制',
       // ── PR4（公开 issue #44）：库管理搬到左侧页 ──
       libraryTitle: '库',
       libraryHint: '预设 / 角色卡 / 自定义积木·塔 的管理都在这里；卡片里只保留「套用」和「存为」。库按工作区存，先用上面的会话定位工作区。',
       librarySession: '工作区',
-      libraryNoSession: '当前没有在册会话：先在会话里用一次预填装，库才有工作区可定位。',
+      libraryNoSession: '当前没有运行中的会话：先在会话里用一次预填装，库才有工作区可定位。',
       libraryPacks: '预设',
       libraryCards: '角色卡',
       libraryBlocks: '我的积木',
@@ -2526,7 +3000,7 @@ window.__ModuleLoader__.load({
       packNamePlaceholder: '预设名',
       exportFile: '导出为文件',
       importFile: '从文件导入',
-      fileHint: '预设文件 = 完整预对话记录 + 预注入改写',
+      fileHint: '预设文件 = 完整预对话记录 + 每轮注入改写',
       injectIgnored: '工具类注入已忽略（改了会让工具失效）',
       injectToolHint: '工具说明也可改：不影响调用格式（schema 不在这里），但别删干净',
       injectOriginalHint: '框里显示的是**当前原文**；改动即覆盖，改回原文 / 留空 = 不修改',
@@ -2632,8 +3106,8 @@ window.__ModuleLoader__.load({
       devHide: 'Hide developer options',
       armedTitle: 'Affected sessions',
       armedHint: 'Checked = the plugin may act on this session; none checked = it touches nothing (safe default).',
-      armedEmpty: 'No live sessions right now.',
-      armedNotLive: 'not live',
+      armedEmpty: 'No running sessions right now.',
+      armedNotLive: 'not loaded',
       armedAll: 'All sessions (*)',
       armedAllTip: 'For probes: matches any session id.',
       armedNoneNote: 'armed is empty ⇒ the plugin currently touches no session (safe default).',
@@ -2833,7 +3307,7 @@ window.__ModuleLoader__.load({
       labError: 'Failed: {reason}',
       // ── PR3 (public issue #44): cross-session overview + two-way navigation ──
       overviewTitle: 'Overview',
-      overviewHint: 'Live sessions and their current setup. “default” = the session has no setting of its own and follows the new-session default below; “this session” = set on the session itself. “Open” switches to that session and opens the Prefill card.',
+      overviewHint: 'Running sessions and their current setup. “default” = the session has no setting of its own and follows the new-session default below; “this session” = set on the session itself. “Open” switches to that session and opens the Prefill card.',
       overviewOn: 'on',
       overviewOff: 'off',
       overviewFromDefault: 'default',
@@ -2843,23 +3317,23 @@ window.__ModuleLoader__.load({
       everyTurnSetDefault: 'Set as new-session default',
       everyTurnSetDefaultTip: 'Copy this session’s every-turn setup (workbench and mode included) to the new-session default: every session without its own setting will use it.',
       everyTurnSetDefaultDone: 'Set as new-session default',
-      overviewEmpty: 'No live sessions right now.',
+      overviewEmpty: 'No running sessions right now.',
       overviewOpen: 'Open',
       overviewCopy: 'Copy id',
       overviewPreset: 'Preset',
       overviewNone: 'none',
-      overviewSandbox: 'Sandbox',
+      overviewSandbox: 'Blocking',
       overviewEveryTurn: 'Every-turn',
       overviewManual: 'Queued',
-      overviewLive: 'live',
-      overviewNotLive: 'not live',
+      overviewLive: 'running',
+      overviewNotLive: 'not loaded',
       openDefault: 'Edit default ↗',
       copied: 'Copied',
       // ── PR4 (public issue #44): library management moved to the left page ──
       libraryTitle: 'Library',
       libraryHint: 'Presets / character cards / custom blocks & towers are managed here; the card keeps only “Apply” and “Save”. The library is per workspace — pick a session above to locate it.',
       librarySession: 'Workspace',
-      libraryNoSession: 'No live session: use prefill once in a session so the library has a workspace.',
+      libraryNoSession: 'No running session: use prefill once in a session so the library has a workspace.',
       libraryPacks: 'Presets',
       libraryCards: 'Character cards',
       libraryBlocks: 'My blocks',
@@ -3301,7 +3775,7 @@ window.__ModuleLoader__.load({
       noteSwitch: '切换预设 / 纯净 / 接管的那一轮，系统提示变了，缓存基本不命中，下一轮恢复。',
       noteMinCache: '很短的请求（例如纯净模式的头几轮）可能达不到服务商的最小缓存长度，命中 0% 属正常。',
       guideShow: '新手指南',
-      moreTitle: '更多设置',
+      moreTitle: '更多',
       errPill: '{op}失败',
       errDismiss: '关掉这条错误提示',
       errDetailTitle: '点开看详情',
@@ -3659,7 +4133,7 @@ window.__ModuleLoader__.load({
       noteSwitch: 'The turn where you switch preset / pure / take over changes the system prompt and mostly misses the cache; the next turn recovers.',
       noteMinCache: 'Very short requests may be below the provider minimum cache length; 0% is normal then.',
       guideShow: 'Guide',
-      moreTitle: 'More settings',
+      moreTitle: 'More',
       errPill: '{op} failed',
       errDismiss: 'Dismiss this error',
       errDetailTitle: 'Show details',
@@ -3965,7 +4439,7 @@ window.__ModuleLoader__.load({
     // ── 首轮锁定 / 开跑后套预设（issue #19 A / B）──
     Object.assign(zh, {
       lockBadge: '已锁定',
-      lockOpenBadge: '首轮未发',
+      lockOpenBadge: '首轮未发送',
       lockBadgeTip: '会话已开跑：开场对话已写进历史，只影响首轮的设置（开场对话、每轮注入的「只在首轮」段）锁住了，改了也不会在下一轮重发。系统提示、每轮注入、工具、世界书照常可改，下一轮生效。',
       lockOpenTip: '还没发第一条消息：开场对话会在你发出第一条消息时写成历史，之后锁定。',
       lockItemsTitle: '已写入历史 · 第 {range} 轮 · {n} 条开场对话（已锁定）',
@@ -3990,7 +4464,7 @@ window.__ModuleLoader__.load({
     })
     Object.assign(en, {
       lockBadge: 'Locked',
-      lockOpenBadge: 'Turn 1 not sent',
+      lockOpenBadge: 'First turn not sent',
       lockBadgeTip: 'This session has started: the opening dialogue is in history and first-turn-only settings (opening dialogue, the "first turn only" part of every-turn injection) are locked, so editing them will not resend anything next turn. System prompt, every-turn injection, tools and lorebook can still be changed and apply from the next turn.',
       lockOpenTip: 'No message sent yet: the opening dialogue becomes history when you send the first message, then it locks.',
       lockItemsTitle: 'Written to history · turn {range} · {n} opening rows (locked)',
@@ -4064,6 +4538,54 @@ window.__ModuleLoader__.load({
       reasoningCatalogValueOne: '{n} tool · {kb} KB',
     })
 
+    // ── 界面重构 v1（UI 工作流 C）：状态胶囊 / 芯片计数 / 设置页 KPI / inject 停用态 ──
+    Object.assign(zh, {
+      chipConfigured: '已配置 {n}/{total}',
+      chipFallbackTip: '点开卡片开始配置',
+      collapseTip: '缩成右下角标记，点标记展开',
+      statusTitle: '状态详情',
+      statusLock: '首轮状态',
+      statusTools: '工具',
+      statusToolsHint: '本会话作用域',
+      statusModel: '模型',
+      statusModelUnknown: '—（v2 接 summary.model）',
+      statusOpenInject: '打开拦截设置',
+      sbxOffTitle: '本会话的拦截已停用。',
+      sbxOffBody: '左栏「会话沙盒」开关关着：这里的档位与规则不生效；要改就先打开那个开关。',
+      kpiLive: '运行中会话',
+      kpiPreset: '已套预设',
+      kpiEveryTurn: '每轮注入开',
+      kpiBlocked: '拦截中',
+      kpiLiveTip: '当前已加载的会话数',
+      kpiPresetTip: '套用了预设的会话数',
+      kpiEveryTurnTip: '每轮注入开着的会话数',
+      kpiBlockedTip: '当前累计拦截数（观察档不计，无时间窗）',
+      tocDefaultSandbox: '新会话默认 · 沙盒',
+    })
+    Object.assign(en, {
+      chipConfigured: 'configured {n}/{total}',
+      chipFallbackTip: 'Open the card to start configuring',
+      collapseTip: 'Shrinks to the corner marker; click the marker to expand',
+      statusTitle: 'Status details',
+      statusLock: 'First turn',
+      statusTools: 'Tools',
+      statusToolsHint: 'session scope',
+      statusModel: 'Model',
+      statusModelUnknown: '— (v2: summary.model)',
+      statusOpenInject: 'Open blocking settings',
+      sbxOffTitle: 'Blocking is off for this session.',
+      sbxOffBody: 'The Sandbox switch in the left column is off, so the level and rules here do not apply; turn it on to edit them.',
+      kpiLive: 'Running',
+      kpiPreset: 'Preset applied',
+      kpiEveryTurn: 'Every-turn on',
+      kpiBlocked: 'Blocked now',
+      kpiLiveTip: 'Sessions currently loaded',
+      kpiPresetTip: 'Sessions with a preset applied',
+      kpiEveryTurnTip: 'Sessions with every-turn injection on',
+      kpiBlockedTip: 'Current blocked items (observe level excluded; no time window)',
+      tocDefaultSandbox: 'New-session default · Sandbox',
+    })
+
     const S = {
       page: {
         display: 'flex',
@@ -4094,6 +4616,8 @@ window.__ModuleLoader__.load({
         border: '1px solid var(--dsw-alias-border-l1)',
         borderRadius: 10,
         background: 'var(--dsw-alias-bg-layer-1)',
+        // v1：TOC sticky 之后，scrollIntoView 的目标要闪开吸顶目录，否则节标题被盖住。
+        scrollMarginTop: 44,
       },
       cardTitle: { fontWeight: 600 },
       group: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 },
@@ -4124,8 +4648,20 @@ window.__ModuleLoader__.load({
       sessionMeta: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 },
       // 内容列：最宽 960px（宿主「插件」页的版心），窄屏时撑满。
       pageColumn: { display: 'flex', flexDirection: 'column', gap: 14, width: '100%', maxWidth: 960, paddingTop: 24, boxSizing: 'border-box' },
-      // 页顶小节目录：一排轻量链接，点了滚到对应小节。
-      toc: { display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', paddingBottom: 2, borderBottom: '1px solid var(--dsw-alias-border-l1)' },
+      // 页顶小节目录：一排轻量链接，点了滚到对应小节；v1 起吸顶 + 滚动联动（scroll-spy）。
+      toc: {
+        position: 'sticky',
+        top: 0,
+        zIndex: 4,
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 4,
+        alignItems: 'center',
+        padding: '6px 0',
+        marginTop: -6,
+        background: 'var(--dsw-alias-bg-base)',
+        borderBottom: '1px solid var(--dsw-alias-border-l1)',
+      },
       tocLink: {
         padding: '3px 10px',
         border: 'none',
@@ -4135,6 +4671,18 @@ window.__ModuleLoader__.load({
         fontSize: 12,
         cursor: 'pointer',
       },
+      tocLinkActive: {
+        color: 'var(--dsw-alias-label-primary)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        fontWeight: 700,
+        // v1.1：aria-current 之外再加可见高亮（左边条），色弱 / 屏幕放大时也看得出当前节。
+        boxShadow: 'inset 2px 0 0 var(--dsw-alias-brand-primary)',
+      },
+      // v1：总览顶部的 4 个 KPI（只读；会话行不动，卡片化留 v2）。
+      kpiBar: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))', gap: 8 },
+      kpi: { display: 'flex', flexDirection: 'column', gap: 2, padding: '10px 12px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 10, background: 'var(--dsw-alias-bg-layer-1)', minWidth: 0 },
+      kpiValue: { fontSize: 20, fontWeight: 600, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' },
+      kpiLabel: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' },
       // 勾选框 / 短输入框和它的文字贴在一起（不再 space-between 拉到两端）。
       checkRow: { display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-start', flexWrap: 'wrap' },
       numberInput: {
@@ -4827,6 +5375,17 @@ window.__ModuleLoader__.load({
         const node = typeof document !== 'undefined' ? document.querySelector('[data-prefill-anchor="' + anchor + '"]') : null
         if (node !== null && node !== undefined && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'start' })
       }
+      // v1：TOC 吸顶 + scroll-spy（点目录 / 滚动都让 aria-current 跟上）。
+      const pageRef = React.useRef(null)
+      const [tocActive, setTocActive] = React.useState(PREFILL_TOC[0].anchor)
+      const onPageScroll = (event) => {
+        const next = tocActiveOf(event?.currentTarget ?? pageRef.current)
+        if (next !== '') setTocActive((current) => (current === next ? current : next))
+      }
+      const jumpTo = (anchor) => {
+        setTocActive(anchor)
+        scrollToAnchor(anchor)
+      }
       // 已挂载：照旧接 ANCHOR_EVENT（顺手把 panelAnchor 读走，免得下次挂载又滚一次）。
       React.useEffect(() => {
         const onAnchor = (event) => {
@@ -5252,7 +5811,7 @@ window.__ModuleLoader__.load({
           h('div', { style: S.note }, t('errDetailReason') + '：', h('code', null, error.detail || t('errDetailUnknown'))),
           h('div', { style: S.note }, t('errDetailAt') + '：' + (error.at ? new Date(error.at).toLocaleTimeString() : '—')),
           h('div', { style: S.note }, t('errDetailHint')),
-          h('div', { style: S.chipRow }, h('button', { type: 'button', style: S.button, 'data-prefill-error-detail-dismiss': '', onClick: () => reduceSectionError(section, { type: 'dismiss' }) }, t('errDismiss'))),
+          h('div', { style: S.chipRow }, h('button', { type: 'button', style: S.button, 'data-prefill-error-detail-dismiss': '', 'aria-label': t('errDismiss'), onClick: () => reduceSectionError(section, { type: 'dismiss' }) }, t('errDismiss'))),
         )
       }
 
@@ -5549,9 +6108,16 @@ window.__ModuleLoader__.load({
         ),
       ]
 
+      // v1：总览顶部 4 个 KPI（只读；无时间窗 ⇒ 第 4 格叫「拦截中」= 当前 blocked 合计、观察档不计）。
+      const kpi = {
+        live: overviewRows.filter((row) => row.live).length,
+        preset: overviewRows.filter((row) => row.preset !== '').length,
+        everyTurn: overviewRows.filter((row) => row.everyTurn).length,
+        blocked: overviewRows.reduce((sum, row) => sum + (row.level === 'observe' || row.level === '' ? 0 : row.blocked), 0),
+      }
       return h(
         'div',
-        { style: S.page, 'data-prefill-page': 'prefill' },
+        { ref: pageRef, onScroll: onPageScroll, style: S.page, 'data-prefill-page': 'prefill' },
         // PR D（#45 第 21 条）：和宿主「插件」页一样 —— 左右留白、内容列限宽居中。
         h(
           'div',
@@ -5563,7 +6129,36 @@ window.__ModuleLoader__.load({
             'nav',
             { style: S.toc, 'data-prefill-toc': '', 'aria-label': t('tocLabel') },
             ...PREFILL_TOC.map((item) =>
-              h('button', { key: item.anchor, type: 'button', style: S.tocLink, 'data-prefill-toc-link': item.anchor, onClick: () => scrollToAnchor(item.anchor) }, t(item.key)),
+              h(
+                'button',
+                {
+                  key: item.anchor,
+                  type: 'button',
+                  style: { ...S.tocLink, ...(tocActive === item.anchor ? S.tocLinkActive : null) },
+                  'data-prefill-toc-link': item.anchor,
+                  'aria-current': tocActive === item.anchor ? 'location' : undefined,
+                  onClick: () => jumpTo(item.anchor),
+                },
+                t(item.key),
+              ),
+            ),
+          ),
+          // v1：总览顶部 4 个 KPI（在册 → 运行中 / 已套预设 / 每轮注入开 / 拦截中）。
+          h(
+            'div',
+            { style: S.kpiBar, 'data-prefill-kpi-bar': '' },
+            ...[
+              ['live', t('kpiLive'), kpi.live, t('kpiLiveTip')],
+              ['preset', t('kpiPreset'), kpi.preset, t('kpiPresetTip')],
+              ['everyTurn', t('kpiEveryTurn'), kpi.everyTurn, t('kpiEveryTurnTip')],
+              ['blocked', t('kpiBlocked'), kpi.blocked, t('kpiBlockedTip')],
+            ].map(([key, label, value, tip]) =>
+              h(
+                'div',
+                { key, style: S.kpi, 'data-prefill-kpi': key, 'data-prefill-kpi-value': String(value), title: tip },
+                h('b', { style: key === 'blocked' && value > 0 ? { ...S.kpiValue, color: 'var(--dsw-alias-state-warn-primary, #f59e0b)' } : S.kpiValue }, String(value)),
+                h('span', { style: S.kpiLabel }, label),
+              ),
             ),
           ),
 
@@ -5592,7 +6187,8 @@ window.__ModuleLoader__.load({
             const label = title !== '' ? title : t('overviewUntitled')
             const sandboxText =
               (row.level === '' ? t('overviewNone') : t(row.level === 'controlled' ? 'sbxLevelControlled' : row.level === 'strict' ? 'sbxLevelStrict' : 'sbxLevelObserve')) +
-              (row.blocked > 0 ? ' · ' + t('sbxBlockedN').replace('{n}', String(row.blocked)) : '')
+              // v1：观察档不报「拦 N」（与 sandboxSummary 同一口径）。
+              (row.blocked > 0 && row.level !== 'observe' && row.level !== '' ? ' · ' + t('sbxBlockedN').replace('{n}', String(row.blocked)) : '')
             const sandboxFrom = row.levelFrom === 'global' ? ' · ' + t('overviewFromDefault') : row.levelFrom === 'session' ? ' · ' + t('overviewFromSession') : ''
             const everyTurnFrom = row.everyTurnFrom === 'default' ? ' · ' + t('overviewFromDefault') : row.everyTurnFrom === 'session' ? ' · ' + t('overviewFromSession') : ''
             return h(
@@ -6157,12 +6753,39 @@ window.__ModuleLoader__.load({
     const PREFILL_TOC = [
       { anchor: 'overview', key: 'tocOverview' },
       { anchor: 'default-everyturn', key: 'tocDefaults' },
+      { anchor: 'default-sandbox', key: 'tocDefaultSandbox' },
       { anchor: 'library', key: 'tocLibrary' },
       { anchor: 'prefs', key: 'tocPrefs' },
       { anchor: 'experimental', key: 'tocExperimental' },
       { anchor: 'reasoning', key: 'tocExperiment' },
       { anchor: 'dev', key: 'tocDev' },
     ]
+    /**
+     * 目录联动（纯计算，方便单测）：anchors = [{ anchor, top }]（top 相对滚动容器内容区，按 DOM 顺序），
+     * 返回「最后一个 top <= scrollTop + lead」的锚点。
+     */
+    function tocActiveAt(anchors, scrollTop, lead = 32) {
+      if (!Array.isArray(anchors) || anchors.length === 0) return ''
+      let active = anchors[0].anchor
+      for (const item of anchors) {
+        if (item.top > (Number(scrollTop) || 0) + lead) break
+        active = item.anchor
+      }
+      return active
+    }
+    /** 从滚动容器现算一遍（8 个锚点，开销可忽略；不用 IntersectionObserver，避免和宿主容器耦合）。 */
+    function tocActiveOf(scroller) {
+      if (scroller === null || scroller === undefined || typeof scroller.querySelectorAll !== 'function') return ''
+      const nodes = [...scroller.querySelectorAll('[data-prefill-anchor]')]
+      if (nodes.length === 0) return ''
+      const outer = typeof scroller.getBoundingClientRect === 'function' ? scroller.getBoundingClientRect() : { top: 0 }
+      const scrollTop = Number(scroller.scrollTop) || 0
+      const anchors = nodes.map((node) => ({ anchor: node.getAttribute('data-prefill-anchor'), top: node.getBoundingClientRect().top - outer.top + scrollTop }))
+      const active = tocActiveAt(anchors, scrollTop)
+      // 页底：最后一节可能永远到不了 lead（锚点已贴底），直接高亮最后一项。
+      if (scrollTop + (Number(scroller.clientHeight) || 0) >= (Number(scroller.scrollHeight) || 0) - 4) return anchors[anchors.length - 1].anchor
+      return active
+    }
     /** packs list 回包里的内置积木 / 塔 / 预设：id → 显示名。 */
     function builtinNamesOf(data) {
       const names = {}
@@ -6256,10 +6879,12 @@ window.__ModuleLoader__.load({
     function PrefillToggle(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      // 存**整封信**而不是 `data.state`：模式判定要 `turns`、写入状态要 `materialized`，
-      // 这两个都在 envelope 上（不在插件状态里）。
-      const [envelope, setEnvelope] = React.useState(null)
+      // 轻量摘要（模块级 store，规划 §2.2）：预填装开没开 / 轮次 / 已写入 / 正在跑 / 首轮锁定都在里面。
+      // 数据来源 = 全页唯一的那份 summary 轮询（不再是「自己每 2.5s 拉一次整封 ~1.28MB envelope」）；
+      // hook 必须在早退（`sessionId === ''` 的 return null）之前。
+      const live = useSummary(sessionId)
 
+      // 写还是走 /state：写接口返回整封 envelope，成功后就地 applyEnvelope 喂回 store（写完不用再拉）。
       const call = React.useCallback(async (body) => {
         const response = await fetch(STATE_ROUTE, {
           method: 'POST',
@@ -6270,34 +6895,11 @@ window.__ModuleLoader__.load({
         return await response.json()
       }, [])
 
-      React.useEffect(() => {
-        void call(undefined)
-          .then((data) => setEnvelope(data))
-          .catch(() => {})
-      }, [call, sessionId])
-
-      // ⚠️ 光在挂载时取一次是不够的：**跑完一轮**要自动改名（预填装 → 预注入），
-      // 而"跑了一轮"这件事不会产生状态事件。所以照角标的做法轻量轮询（2.5s），
-      // 外加插件内部状态事件用于即时刷新。
-      React.useEffect(() => {
-        const refresh = () => {
-          void call(undefined)
-            .then((data) => setEnvelope(data))
-            .catch(() => {})
-        }
-        const timer = setInterval(refresh, 2500)
-        window.addEventListener(STATE_EVENT, refresh)
-        return () => {
-          clearInterval(timer)
-          window.removeEventListener(STATE_EVENT, refresh)
-        }
-      }, [call, sessionId])
-
       // 动效档位：芯片箭头受它控制；顺手把 state.ui.motion 交给模块级档位（没开卡片时也认得用户手选）。
       const motion = useMotionLevel()
       React.useEffect(() => {
-        if (envelope !== null) setMotionPref(envelope?.state?.ui?.motion)
-      }, [envelope])
+        if (live !== null) setMotionPref(live?.state?.ui?.motion)
+      }, [live])
 
       // P0-2：首次点芯片（先开预填装再弹卡片）是异步的：>150ms 显示进行中、重复点击忽略；失败在芯片上说清楚。
       const chipBusy = useBusy()
@@ -6323,14 +6925,15 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const onCue = (event) => {
           const detail = event?.detail
-          if (detail?.sessionId !== sessionId || !Array.isArray(detail.keys)) return
-          for (const key of detail.keys) play(chipRef.current?.querySelector(`[data-prefill-chip-dot="${key}"]`) ?? null, DOT_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer: detail.defer === true, prio: 1, cueKey: `chip:${key}` })
+          if (detail?.sessionId !== sessionId || !Array.isArray(detail.keys) || detail.keys.length === 0) return
+          // v1：芯片只有一个状态点，后台变化统一闪它（原来是按 key 闪对应彩点）。
+          play(chipRef.current?.querySelector('[data-prefill-chip-dot]') ?? null, DOT_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer: detail.defer === true, prio: 1, cueKey: 'chip:status' })
         }
         window.addEventListener(CUE_EVENT, onCue)
         return () => window.removeEventListener(CUE_EVENT, onCue)
       }, [sessionId])
       // §5：模型正在输出时芯片也标 stream（小点的闪攒着）；跑完统一放掉。
-      const chipStreaming = Array.isArray(envelope?.running) && envelope.running.includes(sessionId)
+      const chipStreaming = Array.isArray(live?.running) && live.running.includes(sessionId)
       const chipStreamRef = React.useRef(false)
       React.useLayoutEffect(() => {
         const ended = chipStreamRef.current && !chipStreaming
@@ -6348,26 +6951,42 @@ window.__ModuleLoader__.load({
       }, [compact])
 
       if (sessionId === '') return null
-      const state = envelope?.state ?? null
+      const state = live?.state ?? null
       const map = state?.prefill !== null && typeof state?.prefill === 'object' ? state.prefill : {}
       const on = typeof map[sessionId] === 'string' && map[sessionId] !== ''
       // 首轮锁定（issue #19 A）：state.locked 落盘了，DSH 重启后不用等下一步就知道已开跑 / 已写入历史。
       const lockRec = state?.locked?.[sessionId]
-      const injectMode = (envelope?.turns?.[sessionId] ?? 0) > 0 || (lockRec !== null && typeof lockRec === 'object')
-      const written = (envelope?.materialized?.[sessionId] ?? 0) > 0 || (Array.isArray(lockRec?.items) && lockRec.items.length > 0)
+      const injectMode = (live?.turns?.[sessionId] ?? 0) > 0 || (lockRec !== null && typeof lockRec === 'object')
+      const written = (live?.materialized?.[sessionId] ?? 0) > 0 || (Array.isArray(lockRec?.items) && lockRec.items.length > 0)
       const cardOpen = cardOpenMap.get(sessionId) === true
       const summary = on ? chipSummary.get(sessionId) : undefined
       const fallback = injectMode ? (written ? t('prefillWritten') : t('injectOff')) : on ? t('prefillOn') : t('prefillOff')
-      const title = on ? `${t('chipCardTip')}${summary?.tip ? `\n${summary.tip}` : ''}` : t('prefillTitleOff')
+      // v1.1：未开预填装 / 新会话时 tooltip 补一句下一步（点开卡片开始配置）。
+      const title = on ? `${t('chipCardTip')}${summary?.tip ? `\n${summary.tip}` : ''}` : `${t('prefillTitleOff')}\n${t('chipFallbackTip')}`
+      /**
+       * 打开本会话的预填装。**底稿必须是整封 state**：/state 的 patch 是整表替换
+       * （impl.js patchState = { ...current, ...patch }），而 summary 只带本会话那格 ——
+       * 拿它整表回写会抹掉别的会话的开启状态（#26 的同一类坑），所以先读一次再写。
+       */
+      const openPrefill = async () => {
+        const fresh = await call(undefined)
+        const base = fresh?.state?.prefill !== null && typeof fresh?.state?.prefill === 'object' ? fresh.state.prefill : null
+        if (base === null) throw new Error('state unavailable')
+        // 带 sessionId：服务端拿它算写响应里的 `summary`（只当路由提示、不写进 state），
+        // 成功后 applyEnvelope 直接采纳，芯片不用等下一轮轮询。
+        return await call({ prefill: { ...base, [sessionId]: 'default' }, sessionId })
+      }
 
       const opening = chipBusy.pending('open')
       const openingShown = chipBusy.shown('open')
+      // v1：芯片只有 1 个状态点 +「已配置 N/8」；老摘要（没 status）时按空态兜底。
+      const chipStatus = summary?.status ?? { tone: 'empty', configured: 0, total: FEATURE_NAV.length }
 
       // 常驻提示：本会话被勾进「生效会话」且至少一个开发者开关为 true（待生效时交给 Q9 角标）。
       const sessionArmed =
-        Array.isArray(envelope?.state?.armed) && (envelope.state.armed.includes(sessionId) || envelope.state.armed.includes('*'))
-      const pendingHere = Array.isArray(envelope?.pendingReprime) && envelope.pendingReprime.includes(sessionId)
-      const devActive = devInterventionOf(sessionArmed, envelope?.state?.levers ?? {}, pendingHere)
+        Array.isArray(live?.state?.armed) && (live.state.armed.includes(sessionId) || live.state.armed.includes('*'))
+      const pendingHere = Array.isArray(live?.pendingReprime) && live.pendingReprime.includes(sessionId)
+      const devActive = devInterventionOf(sessionArmed, live?.state?.levers ?? {}, pendingHere)
       const devBadge =
         devActive.length === 0
           ? null
@@ -6417,11 +7036,11 @@ window.__ModuleLoader__.load({
             if (Date.now() - (autoClosedAt.get(sessionId) ?? 0) < 400) return
             if (!on) {
               setChipError('')
-              const running = chipBusy.run('open', () => call({ prefill: { ...map, [sessionId]: 'default' } }))
+              const running = chipBusy.run('open', openPrefill)
               if (running === null) return
               void running
                 .then((data) => {
-                  setEnvelope(data)
+                  applyEnvelope(data)
                   notifyStateChanged()
                   setCardOpen(sessionId, true)
                   reportOk(sessionId, 'chip')
@@ -6454,23 +7073,34 @@ window.__ModuleLoader__.load({
               h('span', { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, summary.name || fallbackName(t, injectMode, written)),
               h(
                 'span',
-                { key: 'dots', style: { display: 'inline-flex', gap: 3, marginLeft: 2, flex: '0 0 auto' }, 'data-prefill-chip-dots': '1' },
-                ...summary.dots.map((dot) =>
-                  h('i', {
-                    key: dot.key,
-                    'data-prefill-chip-dot': dot.key,
-                    'data-on': dot.on ? 'true' : 'false',
-                    style: {
-                      width: 7,
-                      height: 7,
-                      borderRadius: '50%',
-                      display: 'inline-block',
-                      boxSizing: 'border-box',
-                      background: dot.on && dot.filled ? dot.color : dot.on ? 'transparent' : 'var(--pf-off)',
-                      border: `1.5px solid ${dot.on ? dot.color : 'var(--pf-off)'}`,
-                    },
-                  }),
-                ),
+                {
+                  key: 'status',
+                  // 钩子兼容：旧工具/截图脚本还找 data-prefill-chip-dots；v1 里它只包 1 个点。
+                  'data-prefill-chip-dots': '1',
+                  'data-prefill-chip-status': chipStatus.tone,
+                  'data-prefill-chip-configured': `${chipStatus.configured}/${chipStatus.total}`,
+                  style: { display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 2, flex: '0 0 auto' },
+                },
+                h('i', {
+                  'data-prefill-chip-dot': 'status',
+                  'data-state': chipStatus.tone,
+                  style: {
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    display: 'inline-block',
+                    flex: '0 0 auto',
+                    background:
+                      chipStatus.tone === 'full'
+                        ? 'var(--dsw-alias-state-success-primary, #22a06b)'
+                        : chipStatus.tone === 'partial'
+                          ? 'var(--dsw-alias-brand-primary)'
+                          : chipStatus.tone === 'warn'
+                            ? 'var(--dsw-alias-state-warn-primary, #f59e0b)'
+                            : 'var(--pf-off)',
+                  },
+                }),
+                h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, t('chipConfigured').replace('{n}', String(chipStatus.configured)).replace('{total}', String(chipStatus.total))),
               ),
               h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
             ],
@@ -6495,9 +7125,12 @@ window.__ModuleLoader__.load({
     function GateToggle(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      const [envelope, setEnvelope] = React.useState(null)
+      // 轻量摘要（模块级 store，规划 §2.2）：闸门模式 / Q9 本轮快照 / 待生效的重挂 / 首次说明标记都在里面。
+      // 数据来源 = 全页唯一的那份 summary 轮询（不再是「自己每 2.5s 拉一次整封 envelope」）；
+      // hook 必须在早退之前（React #310）。
+      const live = useSummary(sessionId)
       const [confirming, setConfirming] = React.useState(false)
-      const state = envelope?.state ?? null
+      const state = live?.state ?? null
 
       const call = React.useCallback(async (body) => {
         const response = await fetch(STATE_ROUTE, {
@@ -6509,39 +7142,25 @@ window.__ModuleLoader__.load({
         return await response.json()
       }, [])
 
-      const refresh = React.useCallback(() => {
-        void call(undefined)
-          .then((data) => setEnvelope(data))
-          .catch(() => {})
-      }, [call])
-
-      // Q9 角标要显示**本轮**的生效快照，而快照是插件私有的宿主状态 ——
-      // 没有推送通道，所以轻量轮询（2.5s，随组件卸载即停）。
-      React.useEffect(() => {
-        refresh()
-        const timer = setInterval(refresh, 2500)
-        window.addEventListener(STATE_EVENT, refresh)
-        return () => {
-          clearInterval(timer)
-          window.removeEventListener(STATE_EVENT, refresh)
-        }
-      }, [refresh, sessionId])
-
       if (sessionId === '') return null
       const gate = state?.gate !== null && typeof state?.gate === 'object' ? state.gate : {}
       const on = gate[sessionId] === 'pure'
 
       const write = async (mode, markSeen) => {
-        // 先取最新 state 再组 patch：面板是 2.5s 轮询快照，刚在别的面板写过的 sessionTools /
-        // overrides 可能还没刷新；拿旧快照整表回写会把它们抹掉（#26）。
-        let base = state
+        // 先取最新 state 当底稿再组 patch：/state 的 patch 是**整表替换**（impl.js patchState =
+        // { ...current, ...patch }），而 summary 只带本会话那几格 —— 拿它整表回写会把别的会话的
+        // gate / 工具清单 / armed 抹掉（#26 的同一类坑，实测踩过会话工具白名单被旧快照覆盖）。
+        let base = null
         try {
-          base = (await call(undefined))?.state ?? state
+          base = (await call(undefined))?.state ?? null
         } catch {
-          base = state
+          base = null
         }
+        // 拿不到整封 state 就不写：宁可这次点击不生效，也别拿本会话的切片去覆盖整张表。
+        if (base === null || typeof base !== 'object') return
         const gateMap = base?.gate !== null && typeof base?.gate === 'object' ? base.gate : {}
-        const patch = { gate: { ...gateMap, [sessionId]: mode } }
+        // sessionId 只当路由提示（服务端拿它算写响应里的 `summary`，不进 state）：写完 applyEnvelope 直接采纳。
+        const patch = { gate: { ...gateMap, [sessionId]: mode }, sessionId }
         if (markSeen === true) patch.noticeSeen = true
         if (mode !== 'pure') {
           // 关闭时把旧版「纯净模式」留下的 armed / 工具清单一并撤掉，否则看着关了、实际仍纯净。
@@ -6557,7 +7176,7 @@ window.__ModuleLoader__.load({
         }
         try {
           const data = await call(patch)
-          setEnvelope(data)
+          applyEnvelope(data)
           notifyStateChanged()
         } catch {
           // 写失败保持原样，下个轮询会刷新。
@@ -6591,8 +7210,8 @@ window.__ModuleLoader__.load({
       // ⚠️ 轮内翻开关**不会**影响正在跑的这一轮（Q18：本轮 levers 已冻结，重挂延后到
       // `agent/turn-stopping`）—— 所以当宿主报"该会话有待生效的重挂"时，角标必须明说，
       // 否则用户会以为"纯净没关掉工具"（实测踩过：轮内点纯净，本轮仍带工具跑到结束）。
-      const snap = envelope?.snapshots?.[sessionId]
-      const pending = Array.isArray(envelope?.pendingReprime) && envelope.pendingReprime.includes(sessionId)
+      const snap = live?.snapshots?.[sessionId]
+      const pending = Array.isArray(live?.pendingReprime) && live.pendingReprime.includes(sessionId)
       const dropped = Array.isArray(snap?.droppedKinds) ? snap.droppedKinds : []
       const badgeLabel =
         snap?.state === 'pure' ? t('statePure') : snap?.state === 'filter' ? t('stateFilter') : snap?.state === 'replace' ? t('stateReplace') : t('statePass')
@@ -6611,6 +7230,23 @@ window.__ModuleLoader__.load({
               `${badgeLabel}${dropped.length > 0 ? ` · 丢${dropped.length}` : ''}${pending ? ` · ${t('nextTurn')}` : ''}`,
             )
 
+      /**
+       * 首次开启纯净模式的说明看 state.noticeSeen。summary 里带了这个可选字段就直接用；
+       * 没带（旧服务端）就点下去现取一次整封 state（只有首次点击会走到，取回来的整封 applyEnvelope
+       * 进 store，之后不再重复取）。
+       */
+      const readNoticeSeen = async () => {
+        const known = state?.noticeSeen
+        if (typeof known === 'boolean') return known
+        try {
+          const data = await call(undefined)
+          applyEnvelope(data)
+          return data?.state?.noticeSeen === true
+        } catch {
+          return false
+        }
+      }
+
       return h(
         'div',
         { style: S.gateWrap },
@@ -6623,20 +7259,21 @@ window.__ModuleLoader__.load({
             style: S.gatePill(on),
             onClick: () => {
               if (on) {
-                write('pass')
+                void write('pass')
                 return
               }
-              if (state?.noticeSeen === true) {
-                write('pure', true)
-                return
-              }
-              setConfirming(true)
+              void readNoticeSeen().then((seen) => {
+                if (seen === true) {
+                  void write('pure', true)
+                  return
+                }
+                setConfirming(true)
+              })
             },
           },
           h('span', { style: S.gateDot(on) }),
           on
-            ? typeof state?.overrides?.[sessionId]?.sections?.['prefill:persona'] === 'string' &&
-              state.overrides[sessionId].sections['prefill:persona'].trim() !== ''
+            ? live?.persona === true
               ? t('gateOnTakeover')
               : t('gateOn')
             : t('gateOff'),
@@ -6718,10 +7355,23 @@ window.__ModuleLoader__.load({
     }
     // </fetch-helpers>
 
-    /** 1234 → "1.2K"。 */
+    /** 1234 → "1.2K"；大数自动升档 K / M / G（一位小数），不会出现 1185933.7K。 */
     function fmt(value) {
-      if (!Number.isFinite(value)) return '—'
-      return value >= 10000 ? `${(value / 1000).toFixed(1)}K` : value >= 1000 ? `${(value / 1000).toFixed(2)}K` : String(value)
+      const n = Number(value)
+      if (!Number.isFinite(n)) return '—'
+      const units = [
+        [1e9, 'G'],
+        [1e6, 'M'],
+        [1e3, 'K'],
+      ]
+      for (let at = 0; at < units.length; at += 1) {
+        const [size, suffix] = units[at]
+        if (Math.abs(n) < size) continue
+        const scaled = n / size
+        // 999.96K 这类四舍五入会变成 1000.0K：升到上一档（G 档封顶）。
+        return Math.abs(scaled) >= 999.95 && at > 0 ? `${(n / units[at - 1][0]).toFixed(1)}${units[at - 1][1]}` : `${scaled.toFixed(1)}${suffix}`
+      }
+      return String(Math.round(n) === n ? n : Number(n.toFixed(1)))
     }
 
     async function postJson(path, body) {
@@ -6732,6 +7382,28 @@ window.__ModuleLoader__.load({
       })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       return await response.json()
+    }
+
+    /**
+     * 轮询用的 POST：15s 上限（AbortController），超时当失败 —— 一个挂住的请求不许把轮询叠起来。
+     * 轮询数据过期一点没关系，下一轮再取；写接口（可能真的慢：套预设要重挂 + 预热）仍走 postJson。
+     */
+    async function postJsonWithTimeout(path, body, timeoutMs = 15000) {
+      const init = {
+        method: 'POST',
+        headers: body === undefined ? {} : { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }
+      const controller = typeof AbortController === 'function' ? new AbortController() : null
+      if (controller !== null) init.signal = controller.signal
+      const timer = controller === null ? null : setTimeout(() => controller.abort(), timeoutMs)
+      try {
+        const response = await fetch(path, init)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return await response.json()
+      } finally {
+        if (timer !== null) clearTimeout(timer)
+      }
     }
 
     /** 从 state 的"会话 → 值"表里删掉一个会话。 */
@@ -7437,11 +8109,12 @@ window.__ModuleLoader__.load({
         for (const ctl of exiting.current.values()) ctl.abort()
       }, [])
       // 有待发的就轮询，等它被领取（领取后从列表消失，提示写进了第几轮）。
+      // 轮询走带 15s 上限的 postJson（挂住的请求不许把下一轮叠上来）；卡片关着时本组件已卸载，不跑。
       React.useEffect(() => {
         if (sessionId === '' || pending.length === 0) return undefined
-        const timer = setInterval(() => void call({ op: 'list' }).catch(() => {}), 2500)
+        const timer = setInterval(() => void postJsonWithTimeout(INJECT_ROUTE, { sessionId, op: 'list' }).then(absorb).catch(() => {}), 2500)
         return () => clearInterval(timer)
-      }, [sessionId, pending.length, call])
+      }, [sessionId, pending.length, absorb])
 
       if (sessionId === '') return null
       const failText = (result) =>
@@ -7761,7 +8434,17 @@ window.__ModuleLoader__.load({
       const [cardUser, setCardUser] = React.useState('')
       const [avatars, setAvatars] = React.useState({})
       const [cardPreview, setCardPreview] = React.useState(null)
-      const [envelope, setEnvelope] = React.useState(null)
+      const [envelopeRaw, setEnvelopeRaw] = React.useState(null)
+      /**
+       * 卡片自己的整封 envelope。`setEnvelope` 除了存本地，还顺手喂模块级 summary store
+       * （写接口 / 卡片打开时的 /state 都是整封 ⇒ applyEnvelope 直接切出轻量摘要，写完不用再拉一次）。
+       * 名字保持 setEnvelope：卡片里几十处调用点、以及 tests/sidebar-defaults.test.mjs 的切片都按它。
+       */
+      const setEnvelope = (data) => {
+        setEnvelopeRaw(data)
+        applyEnvelope(data)
+      }
+      const envelope = envelopeRaw
       const [toast, setToast] = React.useState('')
       const [open, setOpen] = React.useState({ guide: false })
       const [hovered, setHovered] = React.useState('')
@@ -7920,6 +8603,20 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener(CARD_EVENT, onCard)
       }, [sessionId])
       const closeCard = React.useCallback(() => setCardOpen(sessionId, false), [sessionId])
+      // a11y（v1.1）：卡片关闭后焦点还给输入框里的芯片，键盘 / 读屏用户不迷路（芯片不在就什么也不做）。
+      const focusChipBack = React.useCallback(() => {
+        try {
+          const chip = typeof document !== 'undefined' ? document.querySelector('[data-prefill-chip]') : null
+          if (chip instanceof HTMLElement) chip.focus({ preventScroll: true })
+        } catch {
+          // 焦点还不了不影响关闭。
+        }
+      }, [])
+      // 数据层（规划 §2.2）：卡片开合喂给模块级 summary store —— 开着刷 3s、关着 5s；卸载时按关处理。
+      React.useEffect(() => {
+        setSummaryCardOpen(cardOpen)
+      }, [cardOpen])
+      React.useEffect(() => () => setSummaryCardOpen(false), [])
       // P1-8：打开下拉菜单 / 弹层时，之前那条 toast 已经和眼前无关，先收掉（否则它叠在菜单上面挡住选项）。
       React.useEffect(() => {
         if (menu !== '') setToast('')
@@ -8018,7 +8715,10 @@ window.__ModuleLoader__.load({
             setFetchPending(null)
             return
           }
-          if (!pinned) closeCard()
+          if (!pinned) {
+            closeCard()
+            focusChipBack()
+          }
         }
         document.addEventListener('pointerdown', onDown, true)
         document.addEventListener('mousedown', onDown, true)
@@ -8063,6 +8763,19 @@ window.__ModuleLoader__.load({
         if (holdOpen) restoreCard()
       }, [holdOpen, restoreCard])
       React.useEffect(() => () => clearTimeout(shrinkTimer.current), [])
+
+      // v1：收起 = 缩成右下角标记（钉住 + 卡片不渲染）；关闭 = 真的关。两个按钮不再共用一个 onClick。
+      const collapseCard = React.useCallback(() => {
+        setMenu('')
+        setPinned(true)
+        setShrunk(true)
+      }, [])
+      const closeCardFully = React.useCallback(() => {
+        setMenu('')
+        setPinned(false)
+        closeCard()
+        focusChipBack()
+      }, [closeCard, focusChipBack])
       React.useEffect(() => {
         if (!holdOpen && pinned && cardOpen && !hoverRef.current) scheduleShrink()
         // 只在「菜单 / 确认关上」这一刻补一次：鼠标早已在外面时也会缩。
@@ -8120,19 +8833,20 @@ window.__ModuleLoader__.load({
       }, [])
 
       const refreshEnvelope = React.useCallback(() => {
-        void postJson(STATE_ROUTE, undefined)
+        // 轮询一律带 15s 上限：挂住的请求不许把下一轮叠上来。
+        void postJsonWithTimeout(STATE_ROUTE, undefined)
           .then((data) => setEnvelope(data))
           .catch(() => {})
       }, [])
 
-      // 打开 / 换会话：读开关 + 草稿 + 系统提示。
+      // 打开 / 换会话 / 卡片重新打开：读开关 + 草稿 + 系统提示。**卡片关着不读**（关着时界面不渲染，读了白花流量）。
       React.useEffect(() => {
-        if (sessionId === '') return undefined
+        if (!cardOpen || sessionId === '') return undefined
         let alive = true
         staged.current = false
         void (async () => {
           try {
-            const snapshot = await postJson(STATE_ROUTE, undefined)
+            const snapshot = await postJsonWithTimeout(STATE_ROUTE, undefined)
             if (!alive) return
             setEnvelope(snapshot)
             const map = snapshot?.state?.prefill
@@ -8142,7 +8856,7 @@ window.__ModuleLoader__.load({
               setItems(null)
               return
             }
-            const draft = await postJson(DRAFT_ROUTE, { sessionId })
+            const draft = await postJsonWithTimeout(DRAFT_ROUTE, { sessionId })
             if (!alive) return
             // 本地有没落盘的编辑（debounce 中）时不要用 host 的旧草稿覆盖它（套预设时实测踩到）。
             if (!dirty.current) setItems(Array.isArray(draft?.draft) ? draft.draft : [])
@@ -8157,7 +8871,7 @@ window.__ModuleLoader__.load({
         return () => {
           alive = false
         }
-      }, [sessionId, revision])
+      }, [cardOpen, sessionId, revision])
 
       // 流式输出（§5）：宿主说这个会话正在跑 ⇒ 卡片根节点标 data-prefill-busy="stream"，play() 把自动提示攒起来；
       // 跑完（running → 否）在 layout 阶段统一放掉（flushCues，最多 3 个、错开 60ms）。
@@ -8166,12 +8880,13 @@ window.__ModuleLoader__.load({
       // 这一次提交是不是「刚跑完」（渲染里只读 ref；ref 在 layout effect 里更新）。
       const turnEnded = streamingRef.current && !streaming
 
-      // 状态轮询：轮次数 / 闸门 / 注入数会在别处变（跑完一轮、点了芯片）。跑着的时候勤一点，好及时认出「跑完了」。
+      // 状态轮询：轮次数 / 闸门 / 注入数会在别处变（跑完一轮、点了芯片）。**只在卡片打开时跑**，周期 5s
+      // （规划 §2.2 验收：30s 内 /state ≤ 6 次；关卡片一个请求都不发）。
       React.useEffect(() => {
-        if (!enabled || sessionId === '') return undefined
-        const timer = setInterval(refreshEnvelope, streaming ? 1500 : 3000)
+        if (!cardOpen || !enabled || sessionId === '') return undefined
+        const timer = setInterval(refreshEnvelope, 5000)
         return () => clearInterval(timer)
-      }, [enabled, refreshEnvelope, sessionId, streaming])
+      }, [cardOpen, enabled, refreshEnvelope, sessionId])
       // 「刷」（第 4 步）：渲染时算好左栏状态签名和变化（cueInfoRef），提交后在这里按「谁引起的」分别提示。
       //   user（P0-4）：变了的项扫光（简洁档闪底色），toast 列出连带改动（当前节和刚点的开关自己不算「连带」）。
       const navSigRef = React.useRef(null)
@@ -8208,7 +8923,8 @@ window.__ModuleLoader__.load({
             for (const key of info.bgChanged) for (const host of card.querySelectorAll(`[data-prefill-flash="${key}"]`)) play(host, NAV_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 1, cueKey: `nav:${key}` })
           } else {
             const marker = markerRef.current
-            if (marker !== null && info.shrunk) for (const key of info.bgChanged) play(marker.querySelector(`[data-prefill-marker-dot="${key}"]`), DOT_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 1, cueKey: `marker:${key}` })
+            // v1：标记上只剩 1 个语义点（8 个分类彩点收掉了）⇒ 任一后台变化都闪这同一个点。
+            if (marker !== null && info.shrunk && info.bgChanged.length > 0) play(marker.querySelector('[data-prefill-marker-dot]'), DOT_FLASH, { duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 1, cueKey: 'marker' })
             try {
               window.dispatchEvent(new CustomEvent(CUE_EVENT, { detail: { sessionId: info.sessionId, keys: info.bgChanged, defer } }))
             } catch {
@@ -8254,7 +8970,7 @@ window.__ModuleLoader__.load({
         if (enabled && sessionId !== '') void packsCall({ op: 'list' }).then(adoptPacks).catch(failed())
       }, [enabled, packsCall, sessionId])
       const cardsCall = React.useCallback((payload) => postJson(CARDS_ROUTE, { sessionId, ...payload }), [sessionId])
-      // 故事记忆（三期）：本会话开着记忆时，每 15 秒取一次摘要状态（总结在后台跑，几轮才变一次）。
+      // 故事记忆（三期）：本会话开着记忆、且卡片打开时，每 15 秒取一次摘要状态（总结在后台跑，几轮才变一次）。
       const memoryConfig = envelope?.state?.memory?.[sessionId] ?? null
       const memoryOn = memoryConfig !== null && typeof memoryConfig === 'object' && memoryConfig.enabled === true
       const [memoryView, setMemoryView] = React.useState(null)
@@ -8262,13 +8978,14 @@ window.__ModuleLoader__.load({
       const [memoryDraft, setMemoryDraft] = React.useState(null)
       const memoryCall = React.useCallback((payload) => postJson(MEMORY_ROUTE, { sessionId, ...payload }), [sessionId])
       React.useEffect(() => {
-        if (!enabled || !memoryOn || sessionId === '') {
+        // 卡片关着看不到记忆摘要 ⇒ 不轮询（十五秒一次也是流量）。
+        if (!cardOpen || !enabled || !memoryOn || sessionId === '') {
           setMemoryView(null)
           return undefined
         }
         let alive = true
         const pull = () =>
-          void memoryCall({ op: 'get' })
+          void postJsonWithTimeout(MEMORY_ROUTE, { sessionId, op: 'get' })
             .then((data) => {
               if (alive) setMemoryView(data ?? null)
             })
@@ -8279,7 +8996,7 @@ window.__ModuleLoader__.load({
           alive = false
           clearInterval(timer)
         }
-      }, [enabled, memoryOn, memoryCall, sessionId])
+      }, [cardOpen, enabled, memoryOn, sessionId])
       // 已套用的卡（0.14）：按引用现编译一份，开场对话的开场白下拉和每轮注入 / 系统提示里的卡片选项用它。
       const appliedCardId = envelope?.state?.cardRef?.[sessionId]?.id ?? ''
       const appliedUser = String(envelope?.state?.cardRef?.[sessionId]?.opts?.userName ?? '')
@@ -8384,12 +9101,12 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [systemDraft, sessionId])
 
-      // 用量：展开时每 4 秒刷新一次。
+      // 用量：卡片打开时每 4 秒刷新一次（关着看不到用量，不跑）。
       React.useEffect(() => {
         if (!cardOpen || sessionId === '') return undefined
         let alive = true
         const load = () =>
-          void postJson(USAGE_ROUTE, { sessionId })
+          void postJsonWithTimeout(USAGE_ROUTE, { sessionId })
             .then((data) => {
               if (alive) setUsage(data)
             })
@@ -8402,23 +9119,25 @@ window.__ModuleLoader__.load({
         }
       }, [cardOpen, sessionId])
 
-      // 每轮注入的自动判定（v0.9）：每 4 秒刷新一次（只读，算一次很便宜）。折叠时也刷，节标题上要显示状态。
+      // 每轮注入的自动判定（v0.9）：只在「卡片打开 + 本会话开着每轮注入」时每 15 秒刷一次（只读，算一次很便宜）。
+      // 关着卡片 / 没开每轮注入 ⇒ 不跑：这数据只给卡片里那节用（规划 §2.2 的收敛项）。
+      const everyTurnOn = everyTurnSwitchOn(state, sessionId)
       React.useEffect(() => {
-        if (sessionId === '') return undefined
+        if (!cardOpen || !enabled || !everyTurnOn || sessionId === '') return undefined
         let alive = true
         const load = () =>
-          void postJson(PACKS_ROUTE, { sessionId, op: 'every-turn-status' })
+          void postJsonWithTimeout(PACKS_ROUTE, { sessionId, op: 'every-turn-status' })
             .then((data) => {
               if (alive) setEveryTurnStatus(data?.status ?? null)
             })
             .catch(() => {})
         load()
-        const timer = setInterval(load, 4000)
+        const timer = setInterval(load, 15000)
         return () => {
           alive = false
           clearInterval(timer)
         }
-      }, [sessionId])
+      }, [cardOpen, enabled, everyTurnOn, sessionId])
 
       // P2-1：左栏 / 窄屏标签的「当前」高亮层：换节时从上一项滑过来。渲染里记下这次的节（navNow），提交后和上次比；
       // 起点 = 上一项本身的框（它还在，只是不再高亮），终点 = 新高亮层的框。
@@ -9202,6 +9921,16 @@ window.__ModuleLoader__.load({
             { type: 'button', style: V.btnGhost, 'data-prefill-open-prefill': 'library', onClick: () => openPrefillPanel('library') },
             t('manageLibrary'),
           ),
+          // v1：取消预设从头部收进预设下拉底部（高风险动作离开常驻区，挨着「管理库」）。
+          activePreset === ''
+            ? null
+            : h(
+                'button',
+                { type: 'button', style: { ...V.btnGhost, ...(busyCtl.shown('clear') ? BUSY_LOOK : {}) }, 'data-prefill-preset-clear': '', ...busyAttrs(busyCtl, 'clear'), onClick: () => act('clear', t('errOpClear'), clearPreset) },
+                busyCtl.shown('clear') ? h(Spinner, { key: 'spin' }) : null,
+                busyCtl.shown('clear') ? ' ' : null,
+                t('presetClear'),
+              ),
         ),
         h('div', { style: { ...V.hint, maxWidth: '68ch' }, 'data-prefill-preset-content': '' }, t('presetContentHint')),
       )
@@ -11204,9 +11933,10 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
+        // v1.1：这一行原来是整宽 bg-layer-2 浅底块，暗色下比亮色显眼得多（主题不一致）⇒ 改成边框 + 透明底。
         h(
           'div',
-          { style: { ...V.row, gap: 8, alignItems: 'center', marginTop: 10, padding: '6px 10px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2)', fontSize: 12 }, 'data-prefill-bench-cost-row': '' },
+          { style: { ...V.row, gap: 8, alignItems: 'center', marginTop: 10, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--dsw-alias-border-l1)', background: 'transparent', fontSize: 12 }, 'data-prefill-bench-cost-row': '' },
           h('span', { 'data-prefill-bench-cost': '' }, t('benchCost').replace('{first}', String(benchSummaryNow.firstTok)).replace('{rest}', String(benchSummaryNow.restTok))),
           benchSummaryNow.checks.length > 0
             ? h('span', { style: V.sectionMeta }, t('benchChecks').replace('{list}', benchSummaryNow.checks.map((id) => t('check_' + id) || id).join('、')))
@@ -11429,7 +12159,15 @@ window.__ModuleLoader__.load({
           offBody: t('injectOffBody'),
         },
         // 会话沙盒（issue #15 第 3 步）：档位 + 来源包 + 未归属 + 审计；旧的按名改写 / 工具白名单收进「高级」。
-        h(SandboxSection, { t, sessionId }),
+        // v1（缺陷 #14）：左栏开关关着时只渲染停用说明，不渲染整份可用态控件（规则不生效，改了也没用）。
+        isOn('inject')
+          ? h(SandboxSection, { t, sessionId })
+          : h(
+              'div',
+              { 'data-prefill-sbx-disabled': '1', style: { ...V.callout('warn'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' } },
+              h('b', null, t('sbxOffTitle')),
+              h('div', { style: { ...V.hint, fontSize: 12 } }, t('sbxOffBody')),
+            ),
       )
 
       const usageSection = h(
@@ -11876,6 +12614,17 @@ window.__ModuleLoader__.load({
         lab: true,
       }
       const featureTitle = { card: t('cardsTitle'), lore: t('loreTitle'), memory: t('memoryTitle'), system: t('systemTitle'), everyTurn: t('everyTurnTitle'), items: t('itemsNavTitle'), workspace: t('wsTitle'), inject: t('injectTitle'), lab: t('labTitle') }
+      // v1 左栏副文本前的「内容状态点」：○ 空 / ● 已填 / ⚠ 冲突 / — 停用。
+      // 冲突（complete-section = 接管系统提示撞上别的 complete 段）只标在「系统提示」这一项上。
+      const NAV_GLYPH = { empty: '○', filled: '●', conflict: '⚠', off: '—' }
+      const CONFLICT_PANE = { 'complete-section': 'system' }
+      const conflictPane = conflict !== undefined && typeof conflict?.kind === 'string' ? CONFLICT_PANE[conflict.kind] ?? '' : ''
+      const contentState = (key) => {
+        if (key === 'usage' || key === 'lab') return ''
+        if (conflictPane === key) return 'conflict'
+        if (!isOn(key) || offBy[key] === true) return 'off'
+        return hasContent[key] === true ? 'filled' : 'empty'
+      }
       // 「刷」：左栏状态签名（navStatus + isOn + offBy）和上一次提交比，变了哪些、谁引起的；提交后由 layout effect 提示。
       {
         const navSig = navSignature(FEATURE_NAV.map(([key]) => key), (key) => navStatus[key], isOn, offBy)
@@ -11916,13 +12665,18 @@ window.__ModuleLoader__.load({
         lab: experimentalOn ? h(ExperimentalPanel, { t, sessionId }) : null,
       }
 
-      // 芯片的摘要：预设名 + 每项一个点（关 = 灰；开但没内容 = 空心）。
+      // 芯片的摘要：预设名 + 1 个状态点 +「已配置 N/8」（v1：8 个分类彩点收成一个语义点）。
+      // 钉住后的标记（data-prefill-marker）同样只画 1 个语义点（同一套 tone），不再重复 8 个彩点。
       const summaryDots = FEATURE_NAV.map(([key, , color]) => ({ key, color, on: isOn(key) && offBy[key] !== true, filled: hasContent[key] === true }))
+      const configuredN = summaryDots.filter((dot) => dot.on && dot.filled).length
+      const summaryTone = conflict !== undefined ? 'warn' : configuredN === FEATURE_NAV.length ? 'full' : configuredN > 0 ? 'partial' : 'empty'
       summaryRef.current = {
         name: activeName,
         dots: summaryDots,
         // P2-9：缩成标记时芯片收成紧凑样子（标记上已有名字和小点）。
         marker: cardOpen && shrunk,
+        // 芯片用（新）：1 个状态点 +「已配置 N/8」；tone = full | partial | empty | warn。
+        status: { tone: summaryTone, configured: configuredN, total: FEATURE_NAV.length },
         tip: FEATURE_NAV.map(([key]) => `${featureTitle[key]}：${!isOn(key) ? t('chipOff') : offBy[key] ? t('chipOffByCard') : hasContent[key] ? t('chipOn') : t('chipEmpty')}`).join('\n'),
       }
 
@@ -11967,7 +12721,8 @@ window.__ModuleLoader__.load({
             padding: 0,
             cursor: 'pointer',
             position: 'relative',
-            background: on ? color : 'var(--pf-off)',
+            // v1：开关统一语义色（品牌 on / 灰 off）；分类色只留给左侧 3px 色条。
+            background: on ? 'var(--dsw-alias-brand-primary)' : 'var(--pf-off)',
             transition: motion === 'off' ? 'none' : `background ${MOTION.fast}ms ease`,
             ...(busyCtl.shown(busyKey) ? BUSY_LOOK : {}),
           },
@@ -11988,7 +12743,8 @@ window.__ModuleLoader__.load({
       const navItem = (key, paneId, color, parent) => {
         const selected = shownPane === paneId
         const off = key !== 'usage' && key !== 'lab' && (!isOn(key) || offBy[key] === true)
-        const stripe = key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? 'var(--pf-off)' : color
+        // v1：3px 色条保留分类色；停用时压暗（不再用分类色兼任开关状态色）。
+        const stripe = key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? `color-mix(in srgb, ${color} 45%, var(--pf-off))` : color
         return h(
           'div',
           {
@@ -12020,16 +12776,24 @@ window.__ModuleLoader__.load({
           h('span', { style: { position: 'absolute', left: parent ? 16 : 4, top: parent ? 7 : 9, bottom: parent ? 7 : 9, width: 3, borderRadius: 2, background: stripe } }),
           h(
             'div',
-            { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: off ? 'var(--dsw-alias-label-tertiary)' : selected ? `color-mix(in srgb, ${color} 70%, var(--dsw-alias-label-primary))` : 'var(--dsw-alias-label-primary)' } },
+            { style: { display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)' } },
             h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, key === 'usage' ? t('usageTitle') : featureTitle[key]),
             key === 'usage' || key === 'lab' ? null : switchEl(key, color),
           ),
           h(
             'div',
-            { style: { fontSize: 11.5, lineHeight: 1.45, marginTop: 1, color: 'var(--dsw-alias-label-tertiary)', opacity: off ? 0.85 : 1 }, 'data-prefill-nav-status': paneId },
+            { style: { display: 'flex', alignItems: 'baseline', gap: 4, fontSize: 11.5, lineHeight: 1.45, marginTop: 1, color: 'var(--dsw-alias-label-tertiary)', opacity: off ? 0.85 : 1 }, 'data-prefill-nav-status': paneId },
+            // v1：内容状态点（○ 空 / ● 已填 / ⚠ 冲突 / — 停用），glyph 不并进 navStatus（那是变化签名）。
+            (() => {
+              const state = contentState(key)
+              return state === ''
+                ? null
+                : h('span', { 'data-prefill-nav-dot': state, 'aria-hidden': 'true', style: { fontWeight: 700, color: state === 'conflict' ? 'var(--dsw-alias-state-warn-primary, #f59e0b)' : state === 'off' ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-secondary)' } }, NAV_GLYPH[state])
+            })(),
             // P1-9：后台变化（自动模式计数、拦截数、锁定……）时状态行上下滚动切换；用户自己点 / 打字引起的不滚。
             (() => {
-              const parts = [...(key === 'usage' ? [turns > 0 ? [B(String(turns)), ` ${t('turnsUnit')}`] : t('usageNoTurns')] : navStatus[key]), off ? ` · ${!isOn(key) ? t('navDisabled') : t('navOffByCard')}` : '']
+              // 开关关着的「—」已由状态点表达，不再重复「 · 已停用」；随角色卡停用是另一个原因，保留文字。
+              const parts = [...(key === 'usage' ? [turns > 0 ? [B(String(turns)), ` ${t('turnsUnit')}`] : t('usageNoTurns')] : navStatus[key]), offBy[key] === true ? ` · ${t('navOffByCard')}` : '']
               return h(RollText, { value: nodeText(parts), still: rollStill, defer: turnEnded, block: true }, ...parts)
             })(),
           ),
@@ -12052,7 +12816,7 @@ window.__ModuleLoader__.load({
         )
       }
 
-      // ── 头部：当前预设 ▾ · 保存 / 另存为… / 取消预设 · 用量徽标 · 钉住 / ✕ ──
+      // ── 头部三区：左（预设 + 保存）/ 中（状态胶囊 + popover）/ 右（⋯ + pin + 收起 + 关闭）──
       const firstTok =
         (isOn('system') && !systemFromCardOff ? systemTok : 0) +
         (isOn('items') && !injectMode ? itemsTok : 0) +
@@ -12063,13 +12827,73 @@ window.__ModuleLoader__.load({
       const usageTotal = usage?.total ?? null
       const usagePrompt = usageTotal ? usageTotal.input + usageTotal.cacheRead : 0
       const cacheHit = usagePrompt > 0 ? Math.round((usageTotal.cacheRead / usagePrompt) * 100) : null
-      // P2-3：读数变了 ⇒ 数字上下滚动（变大往上、变小往下）；打字时边打边变的不滚，刚挂上的头几秒也不滚。
-      const badge = (color, label, value, unit, attr) =>
-        h('span', { key: attr, 'data-prefill-badge': attr, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', background: tint(color, 14), color: 'var(--dsw-alias-label-secondary)' } }, label, h('b', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 700 } }, h(RollText, { value: String(value), still: cueCause === 'typing' || Date.now() - cueSince.current.at < CUE_SETTLE_MS, defer: turnEnded, attr: 'data-prefill-badge-roll' }, value)), unit)
       const narrow = bounds?.narrow === true
-      const header = h(
+      // P2-3：读数变了 ⇒ 数字上下滚动（popover 里沿用同一行；motion-refresh.test.mjs 按字面匹配它）。
+      const badgeValue = (value) =>
+        h(RollText, { value: String(value), still: cueCause === 'typing' || Date.now() - cueSince.current.at < CUE_SETTLE_MS, defer: turnEnded, attr: 'data-prefill-badge-roll' }, value)
+      // 工具数：summary 给的是数字；整封 envelope 那边是 sessionTools[sessionId] 数组。
+      const toolsCount = Array.isArray(envelope?.state?.sessionTools?.[sessionId]) ? envelope.state.sessionTools[sessionId].length : null
+      const headerStatusText = [
+        lock.locked ? t('lockBadge') : t('lockOpenBadge'),
+        `${t('sbxBadge')}${t('labelColon')}${sbxSummary === null ? '—' : sbxLevelLabel(t, sbxSummary.level)}`,
+        `${t('badgeCache')}${t('labelColon')}${cacheHit === null ? '—' : `${cacheHit}%`}`,
+      ].join(' · ')
+      const statRow = (label, value, hint = '') =>
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 } },
+          h('span', { style: { flex: '0 0 auto', fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } }, label + t('labelColon')),
+          h('span', { style: { minWidth: 0, fontSize: 12, color: 'var(--dsw-alias-label-primary)', fontVariantNumeric: 'tabular-nums' } }, value),
+          hint === '' ? null : h('span', { style: { marginLeft: 'auto', fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' } }, hint),
+        )
+      // 状态胶囊：中区唯一控件。（错误 pill 沿用原头部的 fallback 占位机制：ErrorPill 常驻、有错时顶替胶囊，
+      // 进/出场动画与原来一致；无错时 ErrorPill 只渲染 fallback = 胶囊。）
+      const statusPill = h(
+        'button',
+        {
+          type: 'button',
+          'data-prefill-status-pill': '',
+          'aria-haspopup': 'dialog',
+          'aria-expanded': menu === 'status' ? 'true' : 'false',
+          'aria-label': `${t('statusTitle')}${t('labelColon')}${headerStatusText}`,
+          title: headerStatusText,
+          onClick: () => setMenu(menu === 'status' ? '' : 'status'),
+          style: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 24, maxWidth: '100%', minWidth: 0, padding: '0 10px', borderRadius: 999, border: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-secondary)', fontSize: 11.5, fontFamily: 'inherit', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' },
+        },
+        // ① 首轮锁定（原头部独立徽章整段搬进来；闪层选择器 / 样式行保持原样，motion-refresh.test.mjs:391/392 按字面匹配）
+        h(
+          'span',
+          { 'data-prefill-lock-badge': lock.locked ? 'locked' : 'open', style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderRadius: 999, overflow: 'hidden' } },
+          h('span', { 'aria-hidden': 'true', 'data-prefill-flash-bg': '', style: { position: 'absolute', inset: 0, borderRadius: 999, background: lock.locked ? 'var(--pf-ai)' : 'var(--pf-system)', opacity: 0.13, pointerEvents: 'none' } }),
+          h('span', { style: { position: 'relative' } }, h(RollText, { value: lock.locked ? 'locked' : 'open', still: cueCause === 'typing', defer: turnEnded }, lock.locked ? t('lockBadge') : t('lockOpenBadge'))),
+        ),
+        h('span', { 'aria-hidden': 'true', style: { opacity: 0.4 } }, '·'),
+        // ② 拦截档位：复用 SandboxBadge（保留 P2-10 的换档淡色 / 拦截数 pop）；as='span' + flat ⇒ 嵌在胶囊里合法、自身不可点。
+        sbxSummary === null
+          ? h('span', null, `${t('sbxBadge')}${t('labelColon')}—`)
+          : h(SandboxBadge, {
+              key: 'sandbox',
+              'data-prefill-badge': 'sandbox',
+              as: 'span',
+              flat: true,
+              title: `${t('injectTitle')}：${sbxSummary.text}`,
+              tone: sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)',
+              blocked: sbxSummary.blocked,
+              memo: sessionId,
+              defer: turnEnded,
+              label: `${t('sbxBadge')}${t('labelColon')}${sbxLevelLabel(t, sbxSummary.level)}`,
+              countText: sbxSummary.blocked > 0 ? ` · ${t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked))}` : '',
+              countColor: 'var(--dsw-alias-state-error-primary, #e5484d)',
+              style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600 },
+            }),
+        h('span', { 'aria-hidden': 'true', style: { opacity: 0.4 } }, '·'),
+        // ③ 缓存命中（原「缓存 —」胶囊的唯一去处）
+        h('span', null, `${t('badgeCache')}${t('labelColon')}${cacheHit === null ? '—' : `${cacheHit}%`}`),
+        h('span', { 'aria-hidden': 'true', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.55, transform: menu === 'status' ? 'none' : 'rotate(180deg)' } }, h(Icon, { name: 'chevron-down', size: 12 })),
+      )
+      const headerLeft = h(
         'div',
-        { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '9px 12px', borderBottom: '1px solid var(--dsw-alias-border-l1)', flexWrap: 'wrap', rowGap: 6 } },
+        { 'data-prefill-header-zone': 'left', style: { display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0, flex: '0 1 auto', order: 0 } },
         h(
           'button',
           {
@@ -12086,7 +12910,7 @@ window.__ModuleLoader__.load({
           'button',
           {
             type: 'button',
-            style: { ...V.btn, position: 'relative', ...(busyCtl.shown('save') ? BUSY_LOOK : {}) },
+            style: { ...V.btnPrimary, position: 'relative', ...(busyCtl.shown('save') ? BUSY_LOOK : {}) },
             'data-prefill-save': '',
             ...busyAttrs(busyCtl, 'save'),
             title: activePreset.startsWith('pack:') ? t('saveOverTip') : t('saveAsTip'),
@@ -12097,69 +12921,16 @@ window.__ModuleLoader__.load({
           t('saveShort'),
           h(SaveCheck, { key: 'saved', tick: savedTick }),
         ),
-        h('button', { type: 'button', style: V.btnGhost, 'data-prefill-save-as': '', 'aria-expanded': menu === 'saveas' ? 'true' : 'false', onClick: () => setMenu(menu === 'saveas' ? '' : 'saveas') }, t('saveAs')),
-        activePreset === '' || narrow
-          ? null
-          : h(
-              'button',
-              { type: 'button', style: { ...V.btnGhost, ...(busyCtl.shown('clear') ? BUSY_LOOK : {}) }, 'data-prefill-preset-clear': '', ...busyAttrs(busyCtl, 'clear'), onClick: () => act('clear', t('errOpClear'), clearPreset) },
-              busyCtl.shown('clear') ? h(Spinner, { key: 'spin' }) : null,
-              busyCtl.shown('clear') ? ' ' : null,
-              t('presetClear'),
-            ),
-        // 首轮锁定徽章（issue #19 A）：首轮未发 / 已锁定，悬停说明原因。
-        h(
-          'span',
-          {
-            'data-prefill-lock-badge': lock.locked ? 'locked' : 'open',
-            title: lock.locked ? t('lockBadgeTip') : t('lockOpenTip'),
-            // 底色放在一层里（常驻 0.13）：P1-9 锁定状态变化时这一层闪到 0.35 再回来（只动 opacity）。
-            style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', color: 'var(--dsw-alias-label-secondary)' },
-          },
-          h('span', { 'aria-hidden': 'true', 'data-prefill-flash-bg': '', style: { position: 'absolute', inset: 0, borderRadius: 999, background: lock.locked ? 'var(--pf-ai)' : 'var(--pf-system)', opacity: 0.13, pointerEvents: 'none' } }),
-          h('span', { style: { position: 'relative' } }, h(RollText, { value: lock.locked ? 'locked' : 'open', still: cueCause === 'typing', defer: turnEnded }, lock.locked ? t('lockBadge') : t('lockOpenBadge'))),
-        ),
-        h('span', { style: { flex: '1 1 auto' } }),
-        // 右侧一组（读数 + ? + 钉住 + 收起 + 关闭）不拆开：窄屏换行时整组挪到第二行靠右，关闭按钮不会单独掉下去。
-        h(
-          'span',
-          { 'data-prefill-header-tools': '', style: { display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap', marginLeft: 'auto' } },
-        h(
-          'span',
-          { style: { display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
-          sbxSummary === null
-            ? null
-            : // P2-10：档位换了底色 / 边框从旧颜色淡过去；「拦 N」变多时 pop（SandboxBadge）。
-              h(SandboxBadge, {
-                key: 'sandbox',
-                'data-prefill-badge': 'sandbox',
-                title: `${t('injectTitle')}：${sbxSummary.text}`,
-                onClick: () => setPane('inject'),
-                tone: sbxSummary.level === 'strict' ? 'var(--dsw-alias-state-error-primary, #e5484d)' : 'var(--pf-system)',
-                blocked: sbxSummary.blocked,
-                memo: sessionId,
-                defer: turnEnded,
-                label: `${t('sbxBadge')} · ${sbxLevelLabel(t, sbxSummary.level)}`,
-                countText: sbxSummary.blocked > 0 ? t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked)) : '',
-                countColor: 'var(--dsw-alias-state-error-primary, #e5484d)',
-                style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11.5, whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 },
-              }),
-          // P0-1：错误 pill 在头部（所有节都看得见）：哪个操作失败、点开看原因、✕ 关掉。
-          // 出现时临时占住 token 读数徽章的位置（头部本来就满，另加一项会折行、把内容整体往下挤）。
-          h(ErrorPill, {
-            t,
-            error,
-            onToggle: () => setError((current) => errorsReduce(current, { type: 'toggle' })),
-            onDismiss: () => setError(null),
-            fallback: [
-              badge('var(--pf-system)', t('badgeFirst'), `+${num(firstTok)}`, 'tok', 'first'),
-              narrow ? null : badge('var(--pf-turn)', t('badgeTurn'), `+${num(perTurnTok)}`, 'tok', 'turn'),
-              narrow ? null : badge('var(--pf-ai)', t('badgeCache'), cacheHit === null ? '—' : `${cacheHit}%`, '', 'cache'),
-            ],
-          }),
-        ),
+      )
+      const headerCenter = h(
+        'div',
+        { 'data-prefill-header-zone': 'center', style: { display: 'flex', alignItems: 'center', justifyContent: narrow ? 'flex-start' : 'center', flex: narrow ? '1 1 100%' : '1 1 auto', minWidth: 0, order: narrow ? 2 : 0 } },
+        h(ErrorPill, { t, error, onToggle: () => setError((current) => errorsReduce(current, { type: 'toggle' })), onDismiss: () => setError(null), fallback: statusPill }),
+      )
+      const headerRight = h(
+        'div',
+        { 'data-prefill-header-tools': '', 'data-prefill-header-zone': 'right', style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', marginLeft: 'auto', order: narrow ? 1 : 0 } },
         h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'data-prefill-more': '', 'aria-haspopup': 'menu', 'aria-expanded': menu === 'more' ? 'true' : 'false', title: t('moreTitle'), 'aria-label': t('moreTitle'), onClick: () => setMenu(menu === 'more' ? '' : 'more') }, '⋯'),
-        h('button', { type: 'button', style: V.btnGhost, 'aria-expanded': open.guide ? 'true' : 'false', title: t('guideShow'), onClick: () => toggle('guide') }, '?'),
         h(
           'button',
           {
@@ -12174,9 +12945,36 @@ window.__ModuleLoader__.load({
           // Lucide pin：未钉住描边，钉住填色（强调色）；图标缺失时回落 📌。
           ICONS.pin ? h(Icon, { name: 'pin', size: 15, fill: pinned ? 'currentColor' : 'none' }) : h('span', { style: { fontSize: 13, lineHeight: 1, opacity: pinned ? 1 : 0.55 } }, '📌'),
         ),
-        h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'aria-label': t('collapseCard'), title: t('collapseCard'), 'data-prefill-collapse': '', onClick: closeCard }, h(Icon, { name: 'chevron-down', size: 15 })),
-        h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 14, padding: '0 6px' }, 'aria-label': t('closeCard'), title: t('closeCard'), 'data-prefill-close': '', onClick: closeCard }, h(Icon, { name: 'x', size: 14 })),
+        h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'aria-label': t('collapseCard'), title: `${t('collapseCard')} · ${t('collapseTip')}`, 'data-prefill-collapse': '', onClick: collapseCard }, h(Icon, { name: 'chevron-down', size: 15 })),
+        h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 14, padding: '0 6px' }, 'aria-label': t('closeCard'), title: t('closeCard'), 'data-prefill-close': '', onClick: closeCardFully }, h(Icon, { name: 'x', size: 14 })),
+      )
+      const header = h(
+        'div',
+        { 'data-prefill-header': '1', style: { display: 'flex', alignItems: 'center', gap: 6, padding: '9px 12px', borderBottom: '1px solid var(--dsw-alias-border-l1)', flexWrap: 'wrap', rowGap: 6 } },
+        headerLeft,
+        headerCenter,
+        headerRight,
+      )
+      // 状态胶囊的 popover：首轮 / 每轮 token、首轮状态、拦截档位、工具数、模型（v1 显示 —，v2 接 summary.model）。
+      const statusPopover = h(
+        'div',
+        { 'data-prefill-menu': 'status', role: 'dialog', 'aria-label': t('statusTitle'), style: { ...V.popover, top: 44, left: '50%', transform: 'translateX(-50%)', width: 'min(380px, calc(100% - 24px))', gap: 8 } },
+        h(
+          'div',
+          { style: { display: 'flex', gap: 14, flexWrap: 'wrap' } },
+          statRow(t('badgeFirst'), ['+', h('b', { style: { fontWeight: 600 } }, badgeValue(num(firstTok))), ' tok']),
+          statRow(t('badgeTurn'), ['+', h('b', { style: { fontWeight: 600 } }, badgeValue(num(perTurnTok))), ' tok']),
+          statRow(t('badgeCache'), cacheHit === null ? '—' : `${cacheHit}%`),
         ),
+        statRow(t('statusLock'), lock.locked ? t('lockBadge') : t('lockOpenBadge'), lock.locked ? t('lockBadgeTip') : t('lockOpenTip')),
+        statRow(
+          t('sbxBadge'),
+          sbxSummary === null ? '—' : `${sbxLevelLabel(t, sbxSummary.level)}${sbxSummary.blocked > 0 ? ` · ${t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked))}` : ''}`,
+          sbxSummary === null || sbxSummary.pending === 0 ? '' : t('sbxPendingN').replace('{n}', String(sbxSummary.pending)),
+        ),
+        statRow(t('statusTools'), toolsCount === null ? '—' : `${toolsCount} ${t('toolsUnit')}`, toolsCount === null ? '' : t('statusToolsHint')),
+        statRow(t('statusModel'), '—', t('statusModelUnknown')),
+        h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-status-open': 'inject', onClick: () => { setMenu(''); setPane('inject') } }, t('statusOpenInject'))),
       )
 
       // 错误详情（P0-1）：点 pill 展开；写清哪个操作、原因、时间，界面已回到操作前。
@@ -12191,15 +12989,18 @@ window.__ModuleLoader__.load({
               h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, `${t('errDetailReason')}：`, h('code', { style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5 } }, error.detail || t('errDetailUnknown'))),
               h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' } }, `${t('errDetailAt')}：${error.at ? new Date(error.at).toLocaleTimeString() : '—'}`),
               h('div', { style: { ...V.hint, fontSize: 12 } }, t('errDetailHint')),
-              h('div', { style: V.row }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-error-detail-dismiss': '', onClick: () => setError(null) }, t('errDismiss'))),
+              h('div', { style: V.row }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-error-detail-dismiss': '', 'aria-label': t('errDismiss'), onClick: () => setError(null) }, t('errDismiss'))),
             )
 
-      // PR2：动效偏好搬到左侧栏「偏好」（一个字段只有一处可编辑）；这里只留一句指路。
+      // PR2：「动效偏好」不再只是一句指路 —— ⋯ 菜单把另存为 / 导出 / 引导 / 动效收进来，头部只留一个入口。
       const moreMenu = h(
         'div',
-        { 'data-prefill-menu': 'more', role: 'menu', style: { ...V.popover, left: 'auto', right: 12, width: 'min(320px, calc(100% - 24px))', gap: 8 } },
-        h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, t('motionTitle')),
-        h('div', { style: { ...V.hint, fontSize: 11.5, whiteSpace: 'normal' } }, t('motionMovedHint')),
+        { 'data-prefill-menu': 'more', role: 'menu', style: { ...V.popover, left: 'auto', right: 12, width: 'min(320px, calc(100% - 24px))', gap: 2, padding: 8 } },
+        h('div', { style: { padding: '2px 6px 4px', fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-tertiary)' } }, t('moreTitle')),
+        h('button', { type: 'button', style: { ...V.btnGhost, width: '100%', textAlign: 'left' }, 'data-prefill-more-save-as': '', 'data-prefill-save-as': '', onClick: () => setMenu('saveas') }, t('saveAs')),
+        h('button', { type: 'button', style: { ...V.btnGhost, width: '100%', textAlign: 'left' }, 'data-prefill-more-export': '', onClick: () => { setMenu(''); void exportFile().catch(failed()) } }, t('exportFile')),
+        h('button', { type: 'button', style: { ...V.btnGhost, width: '100%', textAlign: 'left' }, 'data-prefill-more-guide': '', 'aria-expanded': open.guide ? 'true' : 'false', onClick: () => { setMenu(''); toggle('guide') } }, t('guideShow')),
+        h('button', { type: 'button', style: { ...V.btnGhost, width: '100%', textAlign: 'left' }, 'data-prefill-more-prefs': '', onClick: () => { setMenu(''); openPrefillPanel('prefs') } }, t('motionTitle')),
       )
 
       // 世界书 / 故事记忆是角色卡的子项（0.14）：只在套用的卡带了它们时出现在左栏，缩进挂在「角色卡」下面。
@@ -12262,7 +13063,7 @@ window.__ModuleLoader__.load({
               if (error?.open && !(event.target instanceof Element && event.target.closest('[data-prefill-error-pill],[data-prefill-error-detail]') !== null)) setError((current) => errorsReduce(current, { type: 'close' }))
               if (menu === '') return
               const target = event.target
-              if (target instanceof Element && target.closest('[data-prefill-menu],[data-prefill-preset-select],[data-prefill-save-as],[data-prefill-more]') !== null) return
+              if (target instanceof Element && target.closest('[data-prefill-menu],[data-prefill-preset-select],[data-prefill-save-as],[data-prefill-more],[data-prefill-status-pill]') !== null) return
               setMenu('')
             },
             onMouseEnter: () => {
@@ -12339,7 +13140,7 @@ window.__ModuleLoader__.load({
               t('undo'),
             ),
           }),
-          menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : menu === 'more' ? moreMenu : null,
+          menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : menu === 'more' ? moreMenu : menu === 'status' ? statusPopover : null,
           error?.open ? errorPanel : null,
           // P1-8：toast 贴着触发点、不接收点击；读屏念的是下面常驻的 polite 区域。
           h(Toast, { text: toast, place: toastAt }),
@@ -12386,17 +13187,33 @@ window.__ModuleLoader__.load({
               h('b', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, activeName || t('presetsNone')),
               h(
                 'span',
-                { style: { display: 'inline-flex', gap: 3, flex: '0 0 auto' } },
-                ...summaryDots.map((dot) =>
-                  h('i', {
-                    key: dot.key,
-                    'data-prefill-marker-dot': dot.key,
-                    style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', boxSizing: 'border-box', background: dot.on && dot.filled ? dot.color : dot.on ? 'transparent' : 'var(--pf-off)', border: `1.5px solid ${dot.on ? dot.color : 'var(--pf-off)'}` },
-                  }),
-                ),
+                { style: { display: 'inline-flex', alignItems: 'center', gap: 4, flex: '0 0 auto' } },
+                h('i', {
+                  'data-prefill-marker-dot': summaryTone,
+                  style: {
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    display: 'inline-block',
+                    boxSizing: 'border-box',
+                    background:
+                      summaryTone === 'full'
+                        ? 'var(--dsw-alias-state-success-primary, #22a06b)'
+                        : summaryTone === 'partial'
+                          ? 'var(--dsw-alias-brand-primary)'
+                          : summaryTone === 'warn'
+                            ? 'var(--dsw-alias-state-warn-primary, #f59e0b)'
+                            : 'var(--pf-off)',
+                  },
+                }),
+                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, `${configuredN}/${FEATURE_NAV.length}`),
               ),
-              motion === 'off' ? null : h('style', null, '@keyframes dsh-prefill-pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}@keyframes dsh-prefill-fade{from{opacity:0}to{opacity:1}}'),
             )
+          : null,
+        // v1.1：keyframes 从 button 里移出来（按钮的 textContent / aria 不再包含 @keyframes）：
+        // 挂在锚点容器下、只在缩成标记时存在一次。
+        shrunk && motion !== 'off'
+          ? h('style', { key: 'marker-keyframes' }, '@keyframes dsh-prefill-pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}@keyframes dsh-prefill-fade{from{opacity:0}to{opacity:1}}')
           : null,
       )
     }
@@ -12441,10 +13258,10 @@ window.__ModuleLoader__.load({
           ? h('div', { style: V.hint }, t('usageEmpty'))
           : h(
               'div',
-              { style: { maxHeight: 180, overflowY: 'auto' } },
+              { style: { maxHeight: 180, overflowY: 'auto', overflowX: 'auto' }, 'data-prefill-usage-scroll': '' },
               h(
                 'table',
-                { style: V.table },
+                { style: { ...V.table, minWidth: 560 }, 'data-prefill-usage-table': '' },
                 h(
                   'thead',
                   null,
@@ -12492,7 +13309,7 @@ window.__ModuleLoader__.load({
         sbxWas: '原「改写注入内容」',
         sbxReplacesPure: '替代纯净模式',
         sbxIntro: '本插件自己的东西（角色卡、系统提示、每轮注入、开场对话……）永远放行；别处送进模型的内容按档位和规则处理。工具结果、压缩、回合协议等「功能通道」不拦。',
-        sbxLevelObserve: '观察',
+        sbxLevelObserve: '仅观察',
         sbxLevelObserveSub: '全放行·只记录',
         sbxLevelControlled: '受控',
         sbxLevelControlledSub: '第三方默认拦',
@@ -12552,7 +13369,7 @@ window.__ModuleLoader__.load({
         sbxAuditEmpty: '还没有记录（跑一轮之后这里会列出进了模型、或被拦下的注入）。',
         sbxAdvanced: '高级：按名预先改写 / 本会话工具白名单',
         sbxClear: '清除本会话沙盒设置',
-        sbxBadge: '沙盒',
+        sbxBadge: '拦截',
         sbxBlockedN: '拦 {n}',
         sbxPendingN: '待归属 {n}',
         sbxGroupSections: '段',
@@ -12636,7 +13453,7 @@ window.__ModuleLoader__.load({
         sbxWas: 'formerly “Rewrite injections”',
         sbxReplacesPure: 'replaces Pure mode',
         sbxIntro: "This plugin's own content (card, system prompt, every-turn, opening dialogue…) always passes; everything else that reaches the model follows the level and rules. Functional channels (tool results, compaction, loop protocol) are never blocked.",
-        sbxLevelObserve: 'Observe',
+        sbxLevelObserve: 'Observe only',
         sbxLevelObserveSub: 'allow all · audit',
         sbxLevelControlled: 'Controlled',
         sbxLevelControlledSub: 'third-party blocked',
@@ -12696,7 +13513,7 @@ window.__ModuleLoader__.load({
         sbxAuditEmpty: 'Nothing yet (after a turn this lists injections that reached the model or were blocked).',
         sbxAdvanced: 'Advanced: pre-write rewrites by name / session tool allow-list',
         sbxClear: 'Clear this session’s sandbox settings',
-        sbxBadge: 'Sandbox',
+        sbxBadge: 'Blocking',
         sbxBlockedN: '{n} blocked',
         sbxPendingN: '{n} unassigned',
         sbxGroupSections: 'section',
@@ -12809,11 +13626,14 @@ window.__ModuleLoader__.load({
     function sandboxSummary(t, view) {
       if (view === null || view === undefined || typeof view !== 'object' || view.error) return null
       const pending = (view.unassigned ?? []).length
+      const level = view.level ?? 'observe'
+      // v1：观察档 = 只记录，不在档位摘要里报「拦 N」（完整明细仍在「会话沙盒」节的审计表里）。
+      const blocked = level === 'observe' ? 0 : view.blocked ?? 0
       return {
-        level: view.level ?? 'observe',
-        blocked: view.blocked ?? 0,
+        level,
+        blocked,
         pending,
-        text: [sbxLevelLabel(t, view.level), view.blocked > 0 ? t('sbxBlockedN').replace('{n}', String(view.blocked)) : '', pending > 0 ? t('sbxPendingN').replace('{n}', String(pending)) : '']
+        text: [sbxLevelLabel(t, level), blocked > 0 ? t('sbxBlockedN').replace('{n}', String(blocked)) : '', pending > 0 ? t('sbxPendingN').replace('{n}', String(pending)) : '']
           .filter((part) => part !== '')
           .join(' · '),
       }
@@ -13548,7 +14368,9 @@ window.__ModuleLoader__.load({
         reportError(sessionId, key, op ?? t('errOpSandbox'), err)
       }
 
-      const refresh = React.useCallback(() => postJson(STATE_ROUTE, undefined).then((data) => setEnvelope(data)), [])
+      // 沙盒这页要读宿主私有的规则表 / 审计裁决 ⇒ 只有整封 state 里有；卡片这一节开着时才轮询，
+      // 走带 15s 上限的 postJson（挂住的请求不许把下一轮叠上来）。
+      const refresh = React.useCallback(() => postJsonWithTimeout(STATE_ROUTE, undefined).then((data) => setEnvelope(data)), [])
       React.useEffect(() => {
         if (sessionId === '') return undefined
         void refresh().catch(failed())
@@ -14326,7 +15148,8 @@ window.__ModuleLoader__.load({
       // 用户会看到"工具一个都没有"（实测反馈）。所以定期只刷新 **envelope**、不动 draft。
       React.useEffect(() => {
         const refresh = () => {
-          void call(undefined)
+          // 轮询走带 15s 上限的 postJson（挂住的请求不许把下一轮叠上来）。
+          void postJsonWithTimeout(STATE_ROUTE, undefined)
             .then((data) => setEnvelope(data))
             .catch(() => {})
         }
@@ -14336,7 +15159,7 @@ window.__ModuleLoader__.load({
           clearInterval(timer)
           window.removeEventListener(STATE_EVENT, refresh)
         }
-      }, [call])
+      }, [])
 
       // 改完 800ms 落盘（写 state.json 的 overrides）。
       React.useEffect(() => {
@@ -14767,41 +15590,18 @@ window.__ModuleLoader__.load({
     function SessionModeBadge(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      const [envelope, setEnvelope] = React.useState(null)
-
-      const call = React.useCallback(async () => {
-        const response = await fetch(STATE_ROUTE, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: '{}',
-        })
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return await response.json()
-      }, [])
-
-      React.useEffect(() => {
-        if (sessionId === '') return undefined
-        const refresh = () => {
-          void call()
-            .then((data) => setEnvelope(data))
-            .catch(() => {})
-        }
-        refresh()
-        const timer = setInterval(refresh, 2500)
-        window.addEventListener(STATE_EVENT, refresh)
-        return () => {
-          clearInterval(timer)
-          window.removeEventListener(STATE_EVENT, refresh)
-        }
-      }, [call, sessionId])
+      // 轻量摘要（模块级 store，规划 §2.2）：闸门 / 生效会话 / 开发者开关 / 轮次 / 工具数 / 人格段都在里面。
+      // 数据来源 = 全页唯一的那份 summary 轮询（不再是「自己每 2.5s 拉一次整封 envelope」）；
+      // hook 必须在早退之前（React #310）。
+      const live = useSummary(sessionId)
 
       if (sessionId === '') return null
       // 读**当前配置**而不是"上一轮快照"：模式徽标要跟着开关立刻变，
       // 而快照只在跑过一轮之后才更新（Q9 的语义是"本轮生效值"）。
-      const levers = envelope?.state?.levers ?? {}
-      const armedList = Array.isArray(envelope?.state?.armed) ? envelope.state.armed : []
+      const levers = live?.state?.levers ?? {}
+      const armedList = Array.isArray(live?.state?.armed) ? live.state.armed : []
       const armed = armedList.includes(sessionId) || armedList.includes('*')
-      const gateMap = envelope?.state?.gate ?? {}
+      const gateMap = live?.state?.gate ?? {}
       const pureOn =
         gateMap[sessionId] === 'pure' ||
         armed === true &&
@@ -14811,10 +15611,16 @@ window.__ModuleLoader__.load({
         levers.blockMessages === true
       const filterOn = armed === true && levers.blockMessages === true
       const gate = pureOn ? 'pure' : filterOn ? 'filter' : 'pass'
-      const turns = envelope?.turns?.[sessionId] ?? 0
-      const tools = envelope?.state?.sessionTools?.[sessionId]
-      const persona = envelope?.state?.overrides?.[sessionId]?.sections?.['prefill:persona']
-      const hasPersona = typeof persona === 'string' && persona.trim() !== ''
+      const turns = live?.turns?.[sessionId] ?? 0
+      const materialized = live?.materialized?.[sessionId] ?? 0
+      // 已开跑 = 有轮次，或预填装已写进历史。turns 在旧会话 / 快照缺失时会是 0，
+      // 不能据此断言「还没开跑」（缺陷 #3：开跑 17 轮的会话徽标仍写「写入历史」）。
+      const started = turns > 0 || materialized > 0
+      // 工具数：summary 给的是数字（契约 tools[会话] = 工具个数）；整封 envelope 那边归一时也算成数字。
+      const tools = live?.tools?.[sessionId]
+      const toolCount = Array.isArray(tools) ? tools.length : Number.isFinite(tools) ? tools : undefined
+      // 「有人格段」：summary 的 persona 布尔（整封 envelope / 服务端可选扩展都会给）。
+      const hasPersona = live?.persona === true
       const gateText =
         gate === 'pure'
           ? hasPersona
@@ -14825,8 +15631,8 @@ window.__ModuleLoader__.load({
             : gate === 'filter'
               ? t('stateFilter')
               : t('statePass')
-      const modeText = turns > 0 ? t('itemsAfterRun') : t('modeHistory')
-      const toolsText = Array.isArray(tools) ? (tools.length === 0 ? t('toolsZero') : `${tools.length} ${t('toolsUnit')}`) : ''
+      const modeText = started ? t('itemsAfterRun') : t('modeHistory')
+      const toolsText = toolCount === undefined ? '' : toolCount === 0 ? t('toolsZero') : `${toolCount} ${t('toolsUnit')}`
       const summary = [gateText, modeText, toolsText].filter((part) => part !== '').join(' · ')
 
       return h(

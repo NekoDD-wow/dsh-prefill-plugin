@@ -6,7 +6,7 @@
 // 用假 ctx 注册真实 state 路由，在临时 DSH_HOME 里放真实的多帧 zstd 会话日志。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
@@ -128,6 +128,30 @@ test('#44 不回退：日志读不了（坏的 zstd）也当轮数未知，since
   seed({ 'session-44-bad': entry({ since: 17 }) })
   await post({ everyTurn: { 'session-44-bad': entry({ since: 17 }) } })
   assert.equal(everyTurn()['session-44-bad'].since, 17)
+})
+
+// ── sidecar：最后轮数落盘（写状态时不再重复解压大日志）────────────────────────
+
+test('sidecar：算过最后轮数的会话会落盘，且带日志 stat 做校验凭据', async () => {
+  writeLog('session-side-car-a', 7)
+  await saveTwice('session-side-car-a', entry(), entry({ text: 'A2' }))
+  const sidecar = JSON.parse(readFileSync(join(HOME, 'prefill', 'last-turn.json'), 'utf8'))
+  const saved = sidecar['session-side-car-a']
+  assert.ok(saved, 'sidecar 里有这个会话')
+  assert.equal(saved.last, 7)
+  const stat = statSync(join(HOME, 'sessions', 'ws-test', 'session-side-car-a', 'session.v4.jsonl.zstd'))
+  assert.equal(saved.mtimeMs, stat.mtimeMs)
+  assert.equal(saved.size, stat.size)
+})
+
+test('lastTurnCacheHit：mtime + size 都对上才算命中（日志一变就失效）', () => {
+  const { lastTurnCacheHit } = impl
+  const stat = { mtimeMs: 1000, size: 42 }
+  assert.equal(lastTurnCacheHit({ last: 7, mtimeMs: 1000, size: 42 }, stat), true)
+  assert.equal(lastTurnCacheHit({ last: 7, mtimeMs: 1001, size: 42 }, stat), false, 'mtime 变了 ⇒ 不命中')
+  assert.equal(lastTurnCacheHit({ last: 7, mtimeMs: 1000, size: 43 }, stat), false, 'size 变了 ⇒ 不命中')
+  assert.equal(lastTurnCacheHit(undefined, stat), false)
+  assert.equal(lastTurnCacheHit({ last: 7, mtimeMs: 1000, size: 42 }, undefined), false)
 })
 
 test('轮数未知时改了首轮段：旧 firstOnce 同样去掉（这条不需要轮数）', () => {

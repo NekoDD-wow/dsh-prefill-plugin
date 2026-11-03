@@ -3,6 +3,35 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.21.2 — 2026-11-03
+- **套预设/写状态的冷读优化：每会话最后轮数落盘 sidecar + 启动空闲预热**。
+  - 新增 `<数据目录>/last-turn.json`（sessionId → { last, mtimeMs, size }，上限 300 条）。`stampLastTurn` 先查 sidecar：日志的 **mtime + size** 与记录一致就直接返回，不再 zstd 解压整份会话日志；不一致才回退读日志并回写。进程重启 / 换实例后也直接命中（不再有「冷缓存第一次套预设 1.7s」）。
+  - 写入时机：① 慢路径算出轮数时回写；② `session/event` 的 `turn/end` 尽力回写（带当时日志 stat；日志还在追加导致 mtime 变化时校验自动失效，最坏多读一次，不会给错轮数）。
+  - 启动 5s 后空闲预热 `state.everyTurn` 里各会话（每 120ms 一个，`unref` 定时器），把冷读挪到空闲期。
+  - 新增纯函数 `lastTurnCacheHit(entry, stat)` 供单测与复用。
+- 单测：新增 sidecar 落盘（含 stat 校验凭据）与 mtime/size 失效判定；总计 **672 项 / 671 pass / 1 skip / 0 fail**。
+- 附：本版同时把派生仓 `dsh-prefill-ui` 的 v0.21.0（summary 数据层 + 视觉重构 v1）与 v0.21.1（toast 贴边修复）fast-forward 合入上游 main（670 项测试全绿）。
+
+## 0.21.1 — 2026-11-03
+- **修复：卡片里的 toast 气泡被卡片左边界截断**。根因：`toastPlace()` 只按「触发控件右沿距卡片右边界」算 `right`，左栏开关（距右侧 ~1100px）触发时 toast 从卡片左边界外开始排，长文案（如「已停用（内容保留），从下一条消息起生效」）左边被裁掉。
+- 修法：`toastPlace()` 改为**按触发点半区选贴边方向**——卡片左半 ⇒ 从左边起排（`side:'left'` + `left`），右半 ⇒ 从右边起排；另一侧留 8px 兜底、容器 `display:flex` + 内层 `flexShrink:1/minWidth:0`，长文案只会 ellipsis 不再越界。新增 `data-prefill-toast-side` 钩子。
+- 验证：真机 1440/780 两种宽度下左栏开关触发的 toast 完整落在卡片内（780：toast x 351–599 / 卡片 135–695，`clipped:false`）；状态 popover / 预设菜单 / 更多菜单在 1440 与 780 均未越界；新增 `toastPlace` 左半区/右半区/旧调用方（无 left）三类单测，全量 670 项 / 669 pass / 1 skip / 0 fail。
+
+## 0.21.0 — 2026-11-03 · 界面/流畅度重构 v1（派生仓 dsh-prefill-ui）
+- **数据层：整份 1.28 MB state × 3 个常驻轮询 → 一个轻量 summary 轮询**。新增 `POST /api/dsh-prefill/summary`（单会话 825–900 B、全局 616 B；只读、不 patchState/reprimeAll，只算目标会话的 sandbox/persona/tools 切片）；`/packs` 的 `every-turn-status` 从 1.28 MB 瘦到 152 B；`state`/`packs` 写响应附带当前会话 summary。
+- **客户端 `summaryStore`**：模块级单例 + `React.useSyncExternalStore`；全页唯一轮询（卡片开 3 s / 关 5 s）；单飞 + 15 s `AbortController` 超时 + 失败退避 2.5→5→10→20→30 s + `document.hidden` 暂停；`rev` 未变不 emit；写响应直接喂 store 免二次拉取；无订阅者时清定时器。
+- **迁移**：输入框芯片（`PrefillToggle`）、纯净芯片（`GateToggle`）、顶栏徽标（`SessionModeBadge`）删除各自的 `/state` 轮询，改订阅 summary；`PrefillDock` 的 `/state` 加 `cardOpen` 条件（关闭即停）+ 5 s、`every-turn-status` 收敛为「卡片打开 + 每轮注入开启」15 s；其余 poller 统一 `postJsonWithTimeout`。
+- **实测（3097 vs 3099 同条件）**：卡片关 30 s —— `/state` 34 次 / 51.66 MB decoded → **0 次 / 7 次 summary（5.88 KB）**；卡片开 30 s —— 51.67 MB → **6.79 MB**（其中一次打开时 `/state` 1.12 MB ×6）；弱网 1 Mbps/200 ms 套预设写完成 1659 ms → **660 ms**。
+- **视觉层 v1**：卡片头部三区（预设+保存｜1 个状态胶囊 + popover｜⋯/pin/收起/关闭），可点控件 12 → 7；芯片 8 分类彩点 → 1 语义点 + `已配置 N/8`（钉住标记同口径）；左栏开关统一语义色、分类色只留 3px 色条、副文本加内容状态点；设置页 TOC 8 项（补 default-sandbox）+ sticky + scroll-spy + aria-current，顶部 4 个 KPI。
+- **语义修复**：`收起` 改为缩成标记（不再等同关闭）；顶栏徽标用 `turns || materialized` 判已开跑（不再把 17 轮会话误报「写入历史」）；观察档不再显示「拦 N」；沙盒开关关闭时 inject 节只渲染停用说明；术语统一（在册→运行中/未载入、首轮未发→首轮未发送、沙盒→拦截 等）。
+- **测试**：新增 `summary-route` 12 项、`summary-store` 14 项、`ui-*` 36 项；更新 4 个受影响的旧用例（语义不变）。全量 **663 项 / 662 pass / 1 skip / 0 fail**。
+
+## 0.20.9 — 2026-11-03
+- **修复：套用本地预设 / 写状态慢（1.4–1.7s）**。根因：`stampEveryTurn` 对**整张 `everyTurn` 表**逐条调 `stampLastTurn`（客户端 `put()` 会把表里所有会话原样带回来，用户状态里有 26 个）；不在册的会话要 **zstd 解压 + 解析整份会话日志**，其中最大的一个历史会话解析耗时 ~1.3s，于是每次写状态都卡 1.3–1.5s，套预设总耗时 1.6–1.7s。
+- 修法：`stampLastTurn` 按会话日志 **mtime + size 缓存最后一轮**（上限 300 条，日志没变直接复用；日志一变自动失效）。
+- 实测（同一份真实状态，26 个 everyTurn 会话）：冷缓存第一次套预设 **1736ms**（仍要读一次大日志），**第二次起 232ms**；写状态本身只占 ~18ms（mirror 2 / stringify 5 / writeFile 7 / 回读 15），reprime ~5ms、预热 ~35ms、envelope ~6ms。
+- 备注：首次套用若表里含超大历史会话且该会话不在册，仍会读一次日志；之后走缓存。进一步优化可把「每会话最后轮数」落成 sidecar，但本轮先做缓存（改动小、语义不变）。
+
 ## 0.20.8 — 2026-11-03
 - **思考前缀：静默丢弃 / 截断当成功 / 挂死 / 自己把自己关掉 —— 四类 P0 + 三条 P1 修复**（审查报告：`.review/rp-v020/consolidated.md`）：
   - **P0 上游分帧假设过窄（静默丢整段回复）**：shim 只按 `\n\n` 切 SSE 帧、且不看 content-type。上游用 **CRLF** 分帧（SSE 规范允许）时帧永远切不开，尾帧整段 `JSON.parse` 失败被吞 —— 客户端只收到 `finish_reason:"stop"` + `[DONE]`，正文 / 思维链 / 工具调用全丢，还记 `ok`。现在：切分前把 `\r\n` 归一成 `\n`；**非 SSE 的 200**（网关 200-JSON / 忽略 `stream:true`）整段读进来按同一口径转成 SSE；另加「收到过帧却零增量」的 `no-delta` 审计。

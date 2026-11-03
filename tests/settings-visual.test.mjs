@@ -155,8 +155,8 @@ test('第 22 条：页顶小节目录，点了滚到对应 data-prefill-anchor',
   const tree = h.render()
   const links = h.find(tree, (props) => typeof props['data-prefill-toc-link'] === 'string')
   const order = links.map((node) => node.props['data-prefill-toc-link'])
-  assert.deepEqual(order, ['overview', 'default-everyturn', 'library', 'prefs', 'experimental', 'reasoning', 'dev'])
-  assert.deepEqual(text(links.map((node) => ({ children: node.children }))), ['tocOverview', 'tocDefaults', 'tocLibrary', 'tocPrefs', 'tocExperimental', 'tocExperiment', 'tocDev'])
+  assert.deepEqual(order, ['overview', 'default-everyturn', 'default-sandbox', 'library', 'prefs', 'experimental', 'reasoning', 'dev'])
+  assert.deepEqual(text(links.map((node) => ({ children: node.children }))), ['tocOverview', 'tocDefaults', 'tocDefaultSandbox', 'tocLibrary', 'tocPrefs', 'tocExperimental', 'tocExperiment', 'tocDev'])
   const anchors = new Set(h.find(tree, (props) => typeof props['data-prefill-anchor'] === 'string').map((node) => node.props['data-prefill-anchor']))
   for (const anchor of order) assert.ok(anchors.has(anchor), '目录项都有对应锚点：' + anchor)
 

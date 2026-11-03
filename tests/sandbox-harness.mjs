@@ -57,6 +57,7 @@ export function makeHarness(envelope, { sid: SID, sources, routes = {} }) {
     'S',
     'tint',
     'postJson',
+    'postJsonWithTimeout',
     'STATE_ROUTE',
     'STATE_EVENT',
     'InjectionSection',
@@ -73,7 +74,8 @@ export function makeHarness(envelope, { sid: SID, sources, routes = {} }) {
       this.detail = init?.detail
     }
   }
-  const mod = make(React, h, anything, anything, () => '', postJson, '/api/dsh-prefill/state', 'evt', () => null, window, FakeCustomEvent, () => null, () => 'full', { fast: 120, base: 180, ease: '' })
+  // postJsonWithTimeout = 轮询用的 postJson（假件里两者等价，这里只喂同一个假 IO）。
+  const mod = make(React, h, anything, anything, () => '', postJson, postJson, '/api/dsh-prefill/state', 'evt', () => null, window, FakeCustomEvent, () => null, () => 'full', { fast: 120, base: 180, ease: '' })
   const t = (key) => mod.SBX_TEXT.zh[key] ?? key
   const render = () => {
     cursor = 0

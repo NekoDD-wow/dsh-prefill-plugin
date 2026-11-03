@@ -377,7 +377,7 @@ test('[P2-6] SaveCheck：挂上时已有的 tick 不播；tick 变了 ⇒ ✓ �
 test('[P2-6] 接线：保存 / 另存为成功（savePack 落定后）savedTick +1；「保存」按钮 position: relative 并挂 SaveCheck', () => {
   assert.match(dockSrc, /const \[savedTick, setSavedTick\] = React\.useState\(0\)/)
   assert.match(dockSrc, /setPackName\(name\)\n\s+setMenu\(''\)\n\s+setSavedTick\(\(value\) => value \+ 1\)/)
-  assert.match(dockSrc, /style: \{ \.\.\.V\.btn, position: 'relative', \.\.\.\(busyCtl\.shown\('save'\) \? BUSY_LOOK : \{\}\) \},\n\s+'data-prefill-save': ''/)
+  assert.match(dockSrc, /style: \{ \.\.\.V\.btnPrimary, position: 'relative', \.\.\.\(busyCtl\.shown\('save'\) \? BUSY_LOOK : \{\}\) \},\n\s+'data-prefill-save': ''/)
   assert.match(dockSrc, /t\('saveShort'\),\n\s+h\(SaveCheck, \{ key: 'saved', tick: savedTick \}\)/)
 })
 
@@ -638,7 +638,8 @@ test('[P2-10] SandboxBadge：挂上不播；tone 变了 ⇒ 盖一层旧颜色�
 test('[P2-10] 接线：头部沙盒徽章走 SandboxBadge（tone 按档位：严格红、其余紫；blocked = 拦截数）', () => {
   assert.match(dockSrc, /h\(SandboxBadge, \{\n\s+key: 'sandbox',\n\s+'data-prefill-badge': 'sandbox',/)
   assert.match(dockSrc, /tone: sbxSummary\.level === 'strict' \? 'var\(--dsw-alias-state-error-primary, #e5484d\)' : 'var\(--pf-system\)',\n\s+blocked: sbxSummary\.blocked,/)
-  assert.match(dockSrc, /countText: sbxSummary\.blocked > 0 \? t\('sbxBlockedN'\)/)
+  // v1：胶囊内「拦截：档位 · 拦 N」——挡位数与拦截数之间用 ` · ` 分隔（sandboxSummary 已把观察档归零）。
+  assert.match(dockSrc, /countText: sbxSummary\.blocked > 0 \? ` · \$\{t\('sbxBlockedN'\)/)
   assert.match(dockSrc, /blocked: sbxSummary\.blocked,\n\s+memo: sessionId,/)
 })
 

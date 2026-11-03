@@ -28,7 +28,8 @@ test('devInterventionOf：只有 armed + 至少一个开关 true 才算干预', 
 
 test('芯片渲染接上常驻标与文案（zh / en 都有键）', () => {
   const toggle = cut('function PrefillToggle(props) {', 'function fallbackName(')
-  assert.match(toggle, /devInterventionOf\(sessionArmed, envelope\?\.state\?\.levers \?\? \{\}, pendingHere\)/)
+  // 数据来源从「自己轮询整封 envelope」换成模块级 summary store（规划 §2.2）：读法不变，变量叫 live。
+  assert.match(toggle, /devInterventionOf\(sessionArmed, live\?\.state\?\.levers \?\? \{\}, pendingHere\)/)
   assert.match(toggle, /'data-prefill-dev-badge': devActive\.join\(', '\)/)
   assert.match(toggle, /t\('devBadge'\)/)
   assert.match(toggle, /t\('devBadgeTip'\)/)

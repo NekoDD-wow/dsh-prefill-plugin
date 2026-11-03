@@ -386,7 +386,7 @@ test('小点闪：完整 = 放大 + 变淡；简洁 = 只变淡；文字滚动�
 test('面板接线（P1-9）：后台变化闪左栏 / 标记 / 芯片小点；锁定徽章底色层；状态行 / 自动模式状态 / 手动注入状态用 RollText；宿主给 manualInbox', () => {
   assert.match(dockSrc, /if \(info\.cause === 'background' && info\.bgChanged\.length > 0\)/)
   assert.match(dockSrc, /play\(host, NAV_FLASH, \{ duration: FLASH_MS, easing: 'ease-in-out', cue: 'auto', defer, prio: 1/)
-  assert.match(dockSrc, /data-prefill-marker-dot="\$\{key\}"\]`\), DOT_FLASH/)
+  assert.match(dockSrc, /marker\.querySelector\('\[data-prefill-marker-dot\]'\), DOT_FLASH/)
   assert.match(dockSrc, /new CustomEvent\(CUE_EVENT, \{ detail: \{ sessionId: info\.sessionId, keys: info\.bgChanged, defer \} \}\)/)
   assert.match(dockSrc, /'\[data-prefill-lock-badge\] \[data-prefill-flash-bg\]'\), BADGE_FLASH/)
   assert.match(dockSrc, /'data-prefill-flash-bg': '', style: \{ position: 'absolute', inset: 0, borderRadius: 999, background: lock\.locked \? 'var\(--pf-ai\)' : 'var\(--pf-system\)', opacity: 0\.13/)
@@ -394,7 +394,8 @@ test('面板接线（P1-9）：后台变化闪左栏 / 标记 / 芯片小点；�
   assert.match(dockSrc, /h\(RollText, \{ value: autoStateText, still: rollStill, defer: turnEnded \}/)
   assert.match(dockSrc, /manualInbox\?\.\[sessionId\]/)
   assert.match(chipSrc, /window\.addEventListener\(CUE_EVENT, onCue\)/)
-  assert.match(chipSrc, /data-prefill-chip-dot="\$\{key\}"\]`\) \?\? null, DOT_FLASH/)
+  // v1：8 个分类彩点 → 1 个状态点，后台变化统一闪这一个点（原来按 key 闪对应彩点）。
+  assert.match(chipSrc, /querySelector\('\[data-prefill-chip-dot\]'\) \?\? null, DOT_FLASH/)
   const manual = cut('    function ManualInject(props) {', '    function PrefillDock(props) {')
   assert.match(manual, /h\(RollText, \{ value: status \}, status\)/)
   assert.match(manual, /play\(row\.querySelector\('\[data-prefill-flash-bg\]'\), NAV_FLASH/)

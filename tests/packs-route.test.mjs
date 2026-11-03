@@ -69,3 +69,49 @@ test('对照：hidden-set 等本来正常的 op 行为不变', async () => {
   assert.equal(data.ok, true)
   assert.deepEqual(data.hiddenBuiltins, ['builtin-a'])
 })
+
+// ── 写盘失败 / 路由内部抛错：只回 ok:false 或 reason，绝不让 reject 冒到宿主 ──────────────
+// （规划 §2.1 第 3 条：writePacks 失败只 note 不抛；PACKS_ROUTE / STATE_ROUTE 主逻辑套 try/catch。）
+// 追加在文件末尾：这两条会故意把 packs / state 路径弄成目录，做完自己清理，不影响上面的用例。
+
+test('writePacks 失败（路径被目录占住）：save 不抛，回 ok:true + reason 说明写盘失败', async () => {
+  const { mkdirSync, rmSync } = await import('node:fs')
+  const home = process.env.DSH_HOME
+  // 会话不在册 ⇒ 落全局目录 <DSH_HOME>/prefill/global/.dsh-prefill/packs.json
+  const packsFile = join(home, 'prefill', 'global', '.dsh-prefill', 'packs.json')
+  mkdirSync(packsFile, { recursive: true })
+  try {
+    const data = await call({ op: 'save', name: '写不进去的包', items: [{ role: 'user', text: 'x' }] })
+    assert.equal(data.ok, true, '内存里的列表照旧可用，不把整个路由打挂')
+    assert.equal(data.reason, 'packs write failed')
+    assert.ok(data.packs.some((pack) => pack.name === '写不进去的包'), '本次响应里仍然能看到这份包')
+  } finally {
+    rmSync(packsFile, { recursive: true, force: true })
+  }
+})
+
+test('packs 路由内部抛错：回 ok:false + reason，不把 reject 冒到宿主', async () => {
+  const { mkdirSync, readFileSync, rmSync, writeFileSync } = await import('node:fs')
+  const home = process.env.DSH_HOME
+  const stateFile = join(home, 'prefill', 'state.json')
+  const backup = (() => {
+    try {
+      return readFileSync(stateFile, 'utf8')
+    } catch {
+      return undefined
+    }
+  })()
+  rmSync(stateFile, { force: true })
+  // state.json 变成目录 ⇒ 路由里的 patchState 写盘会抛（block-save 会走到这里）。
+  mkdirSync(stateFile, { recursive: true })
+  try {
+    const data = await call({ op: 'block-save', block: { id: 'b-fail', name: '写不进去', text: 'x' } })
+    assert.equal(data.ok, false)
+    assert.equal(typeof data.reason, 'string')
+    assert.ok(data.reason.length > 0)
+    assert.equal(data.op, 'block-save')
+  } finally {
+    rmSync(stateFile, { recursive: true, force: true })
+    writeFileSync(stateFile, backup ?? `${JSON.stringify({ version: 2, armed: [], levers: {} })}\n`, 'utf8')
+  }
+})
