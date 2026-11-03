@@ -3,6 +3,16 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.21.3 — 2026-11-04
+- **修复：每轮注入静默失效（面板显示「开」，实际一轮都不注入）**。根因：0.21.x 的 `everyTurnFor()` 要求 `state.everyTurn[会话].enabled === true`，而旧预设只写 `mode/text`、没写 `enabled`；套用后被静默跳过，但 `enabled.js everyTurnOn` / 面板开关（缺省算开）仍显示「开」。
+- 修法（三处同语义，缺 `enabled` 一律算开，显式 `false` 才关）：
+  - `gate.js everyTurnFor()`：`enabled === false` 才返回 undefined；
+  - `impl.js sanitizeEveryTurn()`：保存 / 导入预设时缺 `enabled` 自动补 `true`（不再整格丢弃）；
+  - `impl.js normalizeState()`：读状态时把「有内容且没显式关」的旧条目补成 `enabled: true`（显式 false、空条目不碰），旧状态 / 旧预设升级后立即恢复注入。
+  - 面板会话总览的「每轮注入」同步改为 `enabled !== false`，避免显示与注入口径不一致。
+- 回归：`enabled.test.mjs` 新增缺 `enabled` / 显式 false / 空条目三类；全量 **673 项 / 672 pass / 1 skip / 0 fail**。
+- 说明：不需要再手工给 13 个预设补 `enabled`（数据已补的保持原样也不受影响）。
+
 ## 0.21.2 — 2026-11-03
 - **套预设/写状态的冷读优化：每会话最后轮数落盘 sidecar + 启动空闲预热**。
   - 新增 `<数据目录>/last-turn.json`（sessionId → { last, mtimeMs, size }，上限 300 条）。`stampLastTurn` 先查 sidecar：日志的 **mtime + size** 与记录一致就直接返回，不再 zstd 解压整份会话日志；不一致才回退读日志并回写。进程重启 / 换实例后也直接命中（不再有「冷缓存第一次套预设 1.7s」）。

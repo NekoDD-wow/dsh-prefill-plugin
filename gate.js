@@ -248,7 +248,9 @@ export function everyTurnFor(state, agentId) {
   if (all === null || typeof all !== 'object') return undefined
   const exact = typeof agentId === 'string' ? all[agentId] : undefined
   const entry = exact !== undefined && exact !== null && typeof exact === 'object' ? exact : all['*']
-  if (entry === null || typeof entry !== 'object' || entry.enabled !== true) return undefined
+  // 缺 enabled = 开（0.11 前的老配置 / 只写 mode+text 的旧预设都靠这个）；显式 false 才关。
+  // 与 enabled.js 的 everyTurnOn 同一套语义，避免「面板显示开、实际不注入」。
+  if (entry === null || typeof entry !== 'object' || entry.enabled === false) return undefined
   const text = typeof entry.text === 'string' ? entry.text.trim() : ''
   const firstText = typeof entry.firstText === 'string' ? entry.firstText.trim() : ''
   if (text === '' && firstText === '') return undefined

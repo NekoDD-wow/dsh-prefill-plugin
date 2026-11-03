@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { FEATURES, applyEnabled, everyTurnFingerprint, everyTurnOn, fingerprint, isEnabled, sanitizeEnabled, toolsFingerprint } from '../enabled.js'
 import { everyTurnFor, loreFor, memoryFor } from '../gate.js'
+import { normalizeState, sanitizeEveryTurn } from '../impl.js'
 
 const SID = 'session-a'
 const persona = '你是宋知夏。'
@@ -130,6 +131,30 @@ test('每轮注入只有一个开关：旧版 entry.enabled=false 也算关，�
   for (const st of [{}, { enabled: { [S]: { everyTurn: false } } }, { everyTurn: { [S]: { enabled: false } } }, { everyTurn: { [S]: { enabled: true } } }, { everyTurn: { [S]: null } }]) {
     assert.equal(clientFn(st, S), everyTurnOn(st, S), JSON.stringify(st))
   }
+})
+
+test('每轮注入：条目缺 enabled 也算开（旧预设只写 mode/text 的回归）', () => {
+  // 闸门：缺 enabled + 有正文 ⇒ 注入；显式 false 仍然关。
+  const view = { everyTurn: { [SID]: { text: '提醒', mode: 'always', since: 2 } } }
+  const entry = everyTurnFor(view, SID)
+  assert.ok(entry, '缺 enabled 不再静默丢弃')
+  assert.equal(entry.text, '提醒')
+  assert.equal(everyTurnFor({ everyTurn: { [SID]: { enabled: false, text: '提醒' } } }, SID), undefined)
+  // 预设保存 / 导入：缺 enabled 补 true；显式 false 不存。
+  assert.equal(sanitizeEveryTurn({ text: '提醒', mode: 'always' })?.enabled, true)
+  assert.equal(sanitizeEveryTurn({ enabled: false, text: '提醒' }), undefined)
+  assert.equal(sanitizeEveryTurn({ text: '' }), undefined)
+  // 读状态：补 enabled；显式 false 不动；空条目不动。
+  const healed = normalizeState({
+    everyTurn: {
+      [SID]: { text: '提醒' },
+      other: { enabled: false, text: '关' },
+      empty: { text: '' },
+    },
+  })
+  assert.equal(healed.everyTurn[SID].enabled, true)
+  assert.equal(healed.everyTurn.other.enabled, false)
+  assert.equal(healed.everyTurn.empty.enabled, undefined)
 })
 
 test('面板里不再有第二个「启用」勾选框，写入也不再落 enabled:false', () => {

@@ -5512,7 +5512,7 @@ window.__ModuleLoader__.load({
           level: typeof view?.level === 'string' ? view.level : typeof ownLevel === 'string' ? ownLevel : typeof globalLevelOf === 'string' ? globalLevelOf : '',
           levelFrom,
           blocked: Number(view?.blocked) || 0,
-          everyTurn: turnEntry !== undefined && turnEntry.enabled === true && turnText !== '' && everyTurnSwitchOn(state, id),
+          everyTurn: turnEntry !== undefined && turnEntry.enabled !== false && turnText !== '' && everyTurnSwitchOn(state, id),
           everyTurnFrom: isEntryObject(own) ? 'session' : isEntryObject(fallback) ? 'default' : '',
           manual: Number(envelope?.manualQueued?.[id]) || 0,
           live: Object.prototype.hasOwnProperty.call(envelope?.tools?.sessions ?? {}, id),

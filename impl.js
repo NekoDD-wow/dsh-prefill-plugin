@@ -242,6 +242,33 @@ export function sanitizePrefixPresets(raw) {
   return out
 }
 
+/**
+ * 每轮注入条目的 enabled 缺省修复（v0.21.3）：
+ * 0.11 之前「启用」是条目自带的字段；后来开关搬到 state.enabled，条目上的 enabled 只在该会话被旧版面板
+ * 勾过、或从旧预设套进来时才带。旧预设只写 mode/text 没写 enabled ⇒ everyTurnFor 以前要求 === true，
+ * 注入被静默跳过，而面板（everyTurnOn 缺省算开）却显示「每轮注入 · 开」。
+ * 读状态时把「有内容且没显式关」的条目补成 enabled: true；显式 false 保持关。
+ */
+function healEveryTurnEnabled(map) {
+  if (map === null || typeof map !== 'object' || Array.isArray(map)) return map
+  let changed = false
+  const out = {}
+  for (const [key, entry] of Object.entries(map)) {
+    if (entry !== null && typeof entry === 'object' && entry.enabled !== false && entry.enabled !== true) {
+      const text = typeof entry.text === 'string' ? entry.text : ''
+      const firstText = typeof entry.firstText === 'string' ? entry.firstText : ''
+      const hasBench = Array.isArray(entry.bench) && entry.bench.length > 0
+      if (text.trim() !== '' || firstText.trim() !== '' || hasBench) {
+        out[key] = { ...entry, enabled: true }
+        changed = true
+        continue
+      }
+    }
+    out[key] = entry
+  }
+  return changed ? out : map
+}
+
 export function normalizeState(raw) {
   const source = raw !== null && typeof raw === 'object' ? raw : {}
   const levers = source.levers !== null && typeof source.levers === 'object' ? source.levers : {}
@@ -252,6 +279,8 @@ export function normalizeState(raw) {
     // 先摊开原始对象：**保留未知字段**。M2 的按会话闸门映射 `gate`、
     // Q9 的 `noticeSeen` 都靠这一行才不至于被规范化抹掉（否则 UI 写进去就没了）。
     ...source,
+    // 旧预设 / 旧状态里缺 enabled 的每轮注入条目在这里补开（显式 false 不动）。
+    ...(source.everyTurn !== undefined ? { everyTurn: healEveryTurnEnabled(source.everyTurn) } : {}),
     version: 2,
     armed: Array.isArray(source.armed) ? source.armed.filter((id) => typeof id === 'string') : [],
     levers: Object.fromEntries(Object.keys(DEFAULT_LEVERS).map((key) => [key, levers[key] === true])),
@@ -514,7 +543,8 @@ export function sanitizeEveryTurn(raw) {
   const compiled = bench.length > 0 ? compileBench(bench) : null
   const text = compiled !== null ? compiled.text : typeof raw.text === 'string' ? raw.text : ''
   const firstText = compiled !== null ? compiled.firstText : typeof raw.firstText === 'string' ? raw.firstText : ''
-  if (raw.enabled !== true || (text.trim() === '' && firstText.trim() === '')) return undefined
+  // 缺 enabled = 开（旧预设只写 mode/text 的回归）；显式 false 才关。与 gate.js everyTurnFor 同一套语义。
+  if (raw.enabled === false || (text.trim() === '' && firstText.trim() === '')) return undefined
   const untilTurn = Math.max(0, Math.floor(Number(raw.untilTurn) || 0))
   const checks =
     compiled !== null ? compiled.checks : Array.isArray(raw.checks) ? CHECK_IDS.filter((id) => raw.checks.includes(id)) : []
