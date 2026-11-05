@@ -3,6 +3,15 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.21.7 — 2026-11-05
+- **修复：前缀结果行的「代理 ↔ 会话关联」整条不工作（v0.21.6 回归）**。`resolveTraceForBody` 被定义在 `ctx.inject(['connection'], …)` 的**路由作用域**里，而 `ensureReasoningProxy` 的 `getConfig` 闭包在**外层 apply 作用域**调用它 ⇒ 每次调用都 `ReferenceError`，又被代理侧 `catch {}` 吞掉；结果行 `sessionId/turn/step` 永远 `null`、`routeConfidence` 永远 `none`（面板/分析脚本按 `routeConfidence` 分组会全部落到「未关联」）。修法：把定义移回 apply 作用域（`ensureReasoningProxy` 之前）。
+- `llm/stream` 监听改用 `{ global: true, prepend: true }` 注册（与 DSH 自己的 dsh-session-title 同口径），确保在 llm 服务上下文的全局 waterfall 上收到、且在下游构造流之前登记。
+- **真机验收（隔离实例 + 真实模型，2026-11-05）**：
+  - 结果行拿到真实身份：`sessionId=session-5cea…`、`turn=1/3/4`、`step=1`、`routeConfidence:'content'`（修复前全 null / none）。
+  - 面板「本会话路由」三态：切到前缀路由并真实发一轮 ⇒ `data-prefill-lab-session-route="on"`、文案「本会话已走前缀路由 · prefill-think」；切回普通模型再发一轮 ⇒ `off` + 告警文案；芯片 tooltip 同步出现告警（summary store 的 rev 修复也在真机生效）。
+  - 清单去重：`catalogMode=history` 发一轮后切回 `each`，第二轮的 `catalogInjected:false`（代理按文本短路，不再重复注入），`prefill.catalogDuplicates=0`。
+- 回归：新增源码守卫「`resolveTraceForBody` 必须在 `ctx.inject` 之前」；全量 **787 项 / 786 pass / 1 skip / 0 fail**。
+
 ## 0.21.6 — 2026-11-05
 - **修复：shim 不再无视客户端的 `stream`（P1-7）**。shim 分支会伪造 SSE 帧序列，非流式客户端拿到的协议是错的（上游即使回 200-JSON 也照样吐 `data: …`）。现在带 `stream: false` 的请求**直接 400 且不打上游**，不再返回协议不匹配的响应。
   - 判据是 `stream === false`（**缺省当流式**）—— DSH 自己不带该字段，写成 `stream !== true` 会误杀全部现有请求。

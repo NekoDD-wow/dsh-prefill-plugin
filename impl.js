@@ -1601,6 +1601,19 @@ export function apply(ctx) {
   const LATEST_STEP_LIMIT = 200
   /** 结果行尾部读取缓存（mtime + size 命中就复用；面板轮询不能每次都读盘）。 */
   let lastResultCache = { path: '', mtimeMs: -1, size: -1, value: null }
+  /**
+   * F10：把「这请求属于哪个会话」交给代理。代理只拿到 HTTP 请求体，宿主侧才知道 sessionId；
+   * 靠 llm/stream 登记 + 末条消息指纹**唯一命中**认领，认不出返回 null（代理按「无会话身份」记账）。
+   *
+   * ⚠️ 必须定义在 **apply 作用域**：`ensureReasoningProxy` 的 getConfig 闭包会调用它；放进
+   * `ctx.inject(['connection'], …)` 的路由作用域会 ReferenceError，而代理侧是 catch 吞掉的 ⇒
+   * 结果行 sessionId 永远 null、routeConfidence 永远 none（真机实测的教训）。
+   */
+  const resolveTraceForBody = (body) => {
+    const trace = matchPendingTrace(pendingTrace, body, Date.now(), PENDING_TRACE_TTL_MS)
+    if (trace === null) return null
+    return { sessionId: trace.sessionId, turn: trace.turn, step: trace.step, confidence: trace.confidence }
+  }
   /** 用户点了「清空本轮填装」的会话：下一轮第一个请求跳过前缀（记进日志，标明 skipped）。 */
   const prefixSkipQueued = new Set()
   /** 本轮正在跳过前缀的会话 / 轮号：整轮都跳过（多步工具轮也不加），轮结束时清掉。 */
@@ -2059,9 +2072,12 @@ export function apply(ctx) {
   warmLastTurnTimer.unref?.()
 
   /**
-   * F10 关联通道：`llm/stream` 是全局 waterfall，payload 就是完整的请求（含 `sessionId` 与 `messages`，
-   * 见 dsh-agent-loop 组请求处 / dsh-llm 的 `waterfall(this, "llm/stream", options, …)`）。
+   * F10 关联通道：`llm/stream` 是 **llm 服务上下文上的全局 waterfall**，payload 就是完整的请求
+   * （含 `sessionId` 与 `messages`，见 dsh-agent-loop 组请求处 / dsh-llm 的
+   * `waterfall(this, "llm/stream", options, …)`）。
    *
+   * ⚠️ 用 `{ global: true, prepend: true }` 注册：和 DSH 自己的 dsh-session-title 同一口径，
+   * 保证在别的作用域发出的 waterfall 上也能收到、且在下游构造流之前登记。
    * ⚠️ 这里是**只读观测点**：监听器拿到的 options 已经被 Object.freeze，且返回值必须原样是下游的流
    * （返回改过的 options 无效）。所以只登记指纹，绝不改请求。
    * 任何异常都吞掉 —— 观测失败绝不能影响真实请求。
@@ -2085,7 +2101,7 @@ export function apply(ctx) {
       note({ seat: 'reasoning-prefix', trace: String(error?.message ?? error) })
     }
     return next()
-  })
+  }, { global: true, prepend: true })
 
   // ── 座位 1（主）：根级 agent/pre-step，agent 直接来自 payload ──
   // 顺带维护"轮是否开着"，供轮次规则判断（见 reprimeAll）。
@@ -2499,15 +2515,6 @@ export function apply(ctx) {
         reasoningHead: config.logging.reasoningHead,
         snippets: config.logging.snippets,
       }
-    }
-    /**
-     * F10：把「这请求属于哪个会话」交给代理。代理只拿到 HTTP 请求体，宿主侧才知道 sessionId；
-     * 靠 llm/stream 登记 + 末条消息指纹**唯一命中**认领，认不出返回 null（代理按「无会话身份」记账）。
-     */
-    const resolveTraceForBody = (body) => {
-      const trace = matchPendingTrace(pendingTrace, body, Date.now(), PENDING_TRACE_TTL_MS)
-      if (trace === null) return null
-      return { sessionId: trace.sessionId, turn: trace.turn, step: trace.step, confidence: trace.confidence }
     }
     /**
      * F14：读结果行的**最后一条**，只回面板要的 6 个字段（正文片段绝不上行）。

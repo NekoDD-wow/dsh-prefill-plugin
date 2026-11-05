@@ -1,7 +1,23 @@
 // P0-1 前缀实效 / P2-11 前缀轮 step：面板与外部脚本读的就是这几个形状，锁住它们。
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { noteSessionRouteFromEvent, parseLastJsonLine, prefixTurnEntry, reasoningProviderIdOf, resultRowSummaryOf, samplingOf, sessionRouteOf } from '../impl.js'
+
+// ── F10 接线守卫：resolveTraceForBody 的作用域（v0.21.6 真机回归）────────────────
+// 它被 `ensureReasoningProxy` 的 getConfig 闭包调用；如果被写进 `ctx.inject(['connection'], …)`
+// 的路由作用域，闭包拿不到它 ⇒ 每次调用 ReferenceError、被代理侧 catch 吞掉 ⇒ 结果行
+// sessionId 永远 null、routeConfidence 永远 none。这条源码守卫防止再被挪回去。
+test('F10 接线：resolveTraceForBody 必须定义在 ctx.inject 之前（apply 作用域）', () => {
+  const src = readFileSync(new URL('../impl.js', import.meta.url), 'utf8')
+  const def = src.indexOf('const resolveTraceForBody')
+  // 用带 `(scope)` 的完整形态，避开注释里那句 `ctx.inject(['connection'], …)`
+  const inject = src.indexOf("ctx.inject(['connection'], (scope)")
+  assert.ok(def > 0, '找不到 resolveTraceForBody 定义')
+  assert.ok(inject > 0, "找不到 ctx.inject(['connection'])")
+  assert.ok(def < inject, 'resolveTraceForBody 必须在 ctx.inject 之前定义，否则 ensureReasoningProxy 的闭包拿不到')
+  assert.match(src, /resolveTrace: \(body\) => resolveTraceForBody\(body\)/)
+})
 
 // ── P0-1 sessionRouteOf：三态 ────────────────────────────────────────────────
 test('sessionRouteOf：没有 request/header ⇒ null（未知，不得退化成 false）', () => {
