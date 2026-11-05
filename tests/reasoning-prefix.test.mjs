@@ -686,3 +686,50 @@ test('P0-4：透传三态分开记账 —— skipped / ignored 不算失败，�
   }
 })
 
+// ── F7：两条早退路径也要更新 lastRequest ─────────────────────────────────────
+test('F7：透传兜底被上游拒绝时，lastRequest 更新为 passthrough（修复前停在旧值）', async () => {
+  const upstream = await startUpstream(() => ({ status: 400, json: { error: { message: 'bad' } } }))
+  const proxy = createReasoningPrefixProxy({
+    getConfig: () => ({ enabled: true, upstream: 'http://127.0.0.1:' + upstream.port, reasoningPrefix: '他喵', stripTools: true, shim: true, textualize: true, catalog: '清单正文' }),
+  })
+  const port = await proxy.listen(0)
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', connection: 'close' },
+      body: JSON.stringify({ model: 'deepseek-flash', messages: [{ role: 'user', content: '你好' }] }),
+    })
+    // 三个变体（system / user / passthrough）都被上游 400 ⇒ 原样把最后一个状态码透出去。
+    assert.equal(response.status, 400)
+    assert.equal(proxy.stats().lastRequest?.variant, 'passthrough')
+    assert.equal(proxy.stats().lastRequest?.reasoningPrefix, '他喵')
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    upstream.server.closeAllConnections?.()
+    await new Promise((resolve) => upstream.server.close(resolve))
+  }
+})
+
+test('F7：关掉透传后全部变体失败 ⇒ lastRequest.variant 为 none', async () => {
+  const upstream = await startUpstream(() => ({ status: 400, json: { error: { message: 'bad' } } }))
+  const proxy = createReasoningPrefixProxy({
+    getConfig: () => ({ enabled: true, upstream: 'http://127.0.0.1:' + upstream.port, reasoningPrefix: '他喵', stripTools: true, shim: true, textualize: true, catalog: '清单正文', allowPassthrough: false }),
+  })
+  const port = await proxy.listen(0)
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', connection: 'close' },
+      body: JSON.stringify({ model: 'deepseek-flash', messages: [{ role: 'user', content: '你好' }] }),
+    })
+    assert.equal(response.status, 502)
+    assert.equal(proxy.stats().lastRequest?.variant, 'none')
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    upstream.server.closeAllConnections?.()
+    await new Promise((resolve) => upstream.server.close(resolve))
+  }
+})
+

@@ -80,10 +80,78 @@ test('新增 UI 键 zh / en 成对', () => {
     'kpiEveryTurnTip',
     'kpiBlockedTip',
     'tocDefaultSandbox',
+    // F2 会话路由三态（W3 §1.5）：unknown 只做说明、绝不进 S.warn；on 是正面态。
+    'reasoningRouteOn',
+    'reasoningRouteOff',
+    'reasoningRouteOffHint',
+    'reasoningRouteUnknown',
+    // F6 自动停用通知 + 忽略失败开关。
+    'reasoningAutoDisabled',
+    'labKnobIgnoreFailures',
+    // F13/P1-5 实验臂标识 + 采样入口（留空 = 不干预）。
+    'labKnobArmId',
+    'labKnobArmIdPh',
+    'labKnobRunId',
+    'labKnobRunIdPh',
+    'labKnobTemperature',
+    'labKnobTopP',
+    'labKnobSeed',
+    'labSamplingHint',
+    'labSamplingInvalid',
+    // F11/F14 结果行开关 + 最近结果行。
+    'labResultTitle',
+    'labResultEnabled',
+    'labResultFilePh',
+    'labResultReasoningHead',
+    'labResultReasoningHeadHint',
+    'labResultSnippets',
+    'labResultSnippetsHint',
+    'labResultLast',
+    'labResultArm',
+    'labResultRun',
+    'labResultAttempts',
+    'labResultAt',
+    // verdict 八态人话。
+    'labVerdictPrefixKept',
+    'labVerdictPrefixAbsent',
+    'labVerdictNoReasoning',
+    'labVerdictUnknown',
+    'labVerdictPassthrough',
+    'labVerdictSkipped',
+    'labVerdictIgnored',
+    'labVerdictError',
+    // 阶段 C：F15-C 清单重复说明 + F17-C 预设旋钮计数。
+    'labCatalogDuplicates',
+    'labPresetKnobsN',
+    'labPresetKnobsNone',
+    'labPresetKnobsHint',
   ]) {
     assert.equal(keyCount(key), 2, key + ' 需要 zh + en 两份')
   }
   assert.match(src, /kpiBlocked: '拦截中'/, 'KPI 第 4 格按 Lead 拍板叫「拦截中」')
   assert.match(src, /kpiBlockedTip: '当前累计拦截数（观察档不计，无时间窗）'/)
   assert.match(src, /statusModelUnknown: '—（v2 接 summary\.model）'/)
+})
+
+test('F14 · verdict 八态都在面板里映射到人话键，且键中英成对', () => {
+  for (const [verdict, key] of [
+    ['prefix-kept', 'labVerdictPrefixKept'],
+    ['prefix-absent', 'labVerdictPrefixAbsent'],
+    ['no-reasoning', 'labVerdictNoReasoning'],
+    ['unknown', 'labVerdictUnknown'],
+    ['passthrough', 'labVerdictPassthrough'],
+    ['skipped', 'labVerdictSkipped'],
+    ['ignored', 'labVerdictIgnored'],
+    ['error', 'labVerdictError'],
+  ]) {
+    assert.match(src, new RegExp("'?" + verdict + "'?: '" + key + "'"), verdict + ' 要映射到 ' + key)
+    assert.equal(keyCount(key), 2, key + ' 需要 zh + en 两份')
+  }
+})
+
+test('F8 · 思考前缀文案补「切了不一定生效 + 要回头校验」（zh / en 各 1 处）', () => {
+  assert.equal((src.match(/切了不一定生效/g) ?? []).length, 1, 'zh 恰好 1 处')
+  assert.equal((src.match(/not guaranteed to take effect/g) ?? []).length, 1, 'en 恰好 1 处')
+  assert.match(src, /reasoningHint: '[^']*要回头校验是否真的切上了/, 'zh 启用说明里也点明要校验')
+  assert.match(src, /reasoningHint: '[^']*verify the switch actually took effect/, 'en 启用说明里也点明要校验')
 })

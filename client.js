@@ -2040,12 +2040,13 @@ window.__ModuleLoader__.load({
      * 卡片打开时的 /state 与所有写接口都会经过 applyEnvelope ⇒ 顺手记下来，summary 轮询到了再合进去，
      * 免得它们被一冲就没（服务端补了这些字段时以响应为准）。
      */
-    const summaryExtras = { locked: undefined, noticeSeen: undefined, snapshots: undefined, persona: undefined }
+    const summaryExtras = { locked: undefined, noticeSeen: undefined, snapshots: undefined, persona: undefined, sessionRoute: undefined }
     /** 换会话：按会话过滤的那几项立刻作废（noticeSeen 是全局的，留着）。 */
     function summaryExtrasReset() {
       summaryExtras.locked = undefined
       summaryExtras.snapshots = undefined
       summaryExtras.persona = undefined
+      summaryExtras.sessionRoute = undefined
     }
     /** 有订阅者、有会话才轮询（卡片没开 / 会话界面没挂 ⇒ 一个请求都不发）。 */
     function summaryWanted() {
@@ -2117,6 +2118,20 @@ window.__ModuleLoader__.load({
       const locked = summaryFieldMap(pick(raw.locked, summaryExtras.locked), sid, (value) => Array.isArray(value.items) || typeof value.at === 'string' || typeof value.turn === 'number')
       const snapshots = summaryFieldMap(pick(raw.snapshots, summaryExtras.snapshots), sid, (value) => typeof value.state === 'string' || typeof value.turn === 'number')
       const noticeSeen = pick(raw.noticeSeen, summaryExtras.noticeSeen)
+      // F2：会话路由三态（本会话最近一次 request/header 的 provider 是不是前缀路由）。
+      // 服务端给的是**顶层** sessionRoute；写响应那条路（extractSummary）也记一份进 summaryExtras 补位。
+      // 形状不认（缺 matchesPrefix）一律当 null = 不知道 —— 不知道就绝不告警。
+      const routeRaw = pick(raw.sessionRoute, summaryExtras.sessionRoute)
+      const routeMatch = routeRaw !== null && typeof routeRaw === 'object' ? routeRaw.matchesPrefix : undefined
+      const sessionRoute =
+        routeRaw !== null && typeof routeRaw === 'object' && (typeof routeMatch === 'boolean' || routeMatch === null)
+          ? {
+              provider: typeof routeRaw.provider === 'string' ? routeRaw.provider : '',
+              model: typeof routeRaw.model === 'string' ? routeRaw.model : '',
+              matchesPrefix: routeMatch,
+              at: Number(routeRaw.at) || 0,
+            }
+          : null
       // 人格段：服务端给的是 { 会话: true } 的扁平表，整封 envelope 那边算出来的是布尔 —— 两种都归一成布尔，
       // 消费方只认 `persona === true`（值缺失 = 不知道，别当成 false）。
       const personaRaw = pick(raw.persona, summaryExtras.persona)
@@ -2142,6 +2157,7 @@ window.__ModuleLoader__.load({
         ok: raw.ok !== false,
         rev: typeof raw.rev === 'string' || typeof raw.rev === 'number' ? String(raw.rev) : '',
         sessionId: sid,
+        sessionRoute,
         state,
         turns: raw.turns ?? {},
         materialized: raw.materialized ?? {},
@@ -2196,6 +2212,8 @@ window.__ModuleLoader__.load({
       summaryExtras.snapshots = Object.keys(snapshots).length > 0 ? snapshots : undefined
       summaryExtras.persona = sid === '' ? undefined : typeof personaText === 'string' && personaText.trim() !== ''
       summaryExtras.noticeSeen = typeof state.noticeSeen === 'boolean' ? state.noticeSeen : summaryExtras.noticeSeen
+      // F2：整封 envelope（/state 写响应）也可能带顶层 sessionRoute；没有就保留上一次的（别把它冲成 null）。
+      if (envelope.sessionRoute !== undefined) summaryExtras.sessionRoute = envelope.sessionRoute
       return normalizeSummary({
         ok: envelope.ok !== false,
         rev: '',
@@ -2216,15 +2234,16 @@ window.__ModuleLoader__.load({
         tools: Array.isArray(toolList) && sid !== '' ? { [sid]: toolList.length } : {},
       })
     }
-    /** 采纳一份归一后的摘要：rev 相同 / 内容指纹相同 ⇒ 复用旧对象、不 emit（返回 false）。 */
+    /**
+     * 采纳一份归一后的摘要：内容指纹相同 ⇒ 复用旧对象、不 emit（返回 false）。
+     * 注意：**不能**先按 rev 短路。rev 只代表 state.json 变没变，而摘要里还有只在内存里变的字段
+     * （sessionRoute / running / snapshots …）：模型选择器切路由、会话开始跑都不会写 state，
+     * 先按 rev 返回会把新值吞掉 —— 芯片上的路由告警会一直停在旧状态，直到某次无关的 state 写入。
+     * 内容指纹每次比对 ~1KB 字符串，相对一次轮询的网络/归一成本可忽略。
+     */
     function adoptSummary(next) {
       if (next === null) return false
       const prev = summaryStore.data
-      // rev 相同：服务端说状态文件没动过 ⇒ 直接复用旧对象（最便宜的判断，summary 轮询主要走这条）。
-      if (prev !== null && next.rev !== '' && next.rev === summaryStore.rev) {
-        summaryStore.rev = next.rev
-        return false
-      }
       const sig = summarySignature(next)
       if (prev !== null && sig === summaryStore.sig) {
         if (next.rev !== '') summaryStore.rev = next.rev
@@ -2717,7 +2736,7 @@ window.__ModuleLoader__.load({
       motionMovedHint: '动效偏好已移到左侧栏「预填装」页的「偏好」。',
       // ── 实验：思考前缀（DeepSeek Beta）──
       reasoningTitle: '实验 · 思考前缀（DeepSeek Beta）',
-      reasoningHint: '用官方 Chat Prefix Completion 让每轮以指定前缀开头；启用后会创建模型路由「DeepSeek Flash（思考前缀）」，需到模型选择器里切换。',
+      reasoningHint: '用官方 Chat Prefix Completion 让每轮以指定前缀开头；启用后会创建模型路由「DeepSeek Flash（思考前缀）」，需到模型选择器里手动切换，并且要回头校验是否真的切上了。',
       reasoningLoading: '正在读状态…',
       reasoningOn: '已启用',
       reasoningOff: '未启用',
@@ -2740,11 +2759,18 @@ window.__ModuleLoader__.load({
       reasoningRefresh: '刷新状态',
       reasoningRefreshed: '状态已刷新（{time}）',
       reasoningRefreshing: '刷新中…',
-      reasoningRouteHint: '已启用：到输入框下方模型选择器切到「DeepSeek Flash（思考前缀）」，再正常发消息即可。',
+      reasoningRouteHint: '已启用：到输入框下方模型选择器切到「DeepSeek Flash（思考前缀）」，再正常发消息。切了不一定生效——发一轮后回来看这一节：显示「本会话已走前缀路由」才算真的切上。',
       reasoningAudit: '最近审计',
       reasoningAuditEmpty: '暂无失败记录',
       reasoningFailed: '操作失败：{reason}',
       reasoningUnavailable: '后台没有响应：重启一次 DSH 再试。',
+      // F2：会话路由三态（芯片 tooltip + 胶囊弹窗实验面板）；unknown 只说明、绝不告警。
+      reasoningRouteOn: '本会话已走前缀路由',
+      reasoningRouteOff: '本会话没走前缀路由：模型选择器里还选着别的模型。',
+      reasoningRouteOffHint: '到输入框下方模型选择器切到「DeepSeek Flash（思考前缀）」；切完回来看这里有没有变成「已走前缀路由」。',
+      reasoningRouteUnknown: '本会话还没发过消息，暂时判断不了走没走前缀路由。',
+      // F6：连续失败到阈值后自动停用（面板显式通知；ignoreFailures 开着就不会走到这里）。
+      reasoningAutoDisabled: '实验已被自动停用：连续失败达到阈值。排查上游后重新启用，或打开「忽略失败」继续跑。',
       // 模型路由（v0.20.1）：面板要把「路由写没写 / 在不在配置里 / 代理在不在跑」摆出来。
       reasoningRouteLabel: '模型路由',
       reasoningRouteOk: '已写入',
@@ -2796,6 +2822,17 @@ window.__ModuleLoader__.load({
       labFallbackSystem: 'system 优先',
       labFallbackUser: 'user 优先',
       labKnobAllowPassthrough: '允许透传（关掉只试前缀版）',
+      labKnobIgnoreFailures: '忽略失败（不自动停用）',
+      // ── 阶段 B：实验臂标识 + 采样入口（P1-5）。留空 = 不干预，空串 = 清空。 ──
+      labKnobArmId: '实验臂 id（armId，空 = 清空）',
+      labKnobArmIdPh: '例如：A0-default',
+      labKnobRunId: '实验轮次 id（runId，空 = 清空）',
+      labKnobRunIdPh: '例如：r1',
+      labKnobTemperature: 'temperature（0–2，留空 = 不干预）',
+      labKnobTopP: 'top_p（0–1，留空 = 不干预）',
+      labKnobSeed: 'seed（整数 0–4294967295，留空 = 不干预）',
+      labSamplingHint: '采样参数只改「发给上游的请求体」：代理会把实际发出去的值记进结果行，但上游是否尊重 seed 未经验证。留空 = 不干预（不会写成 0）。',
+      labSamplingInvalid: '采样参数要填数字（或留空不干预）：{value}',
       labKnobCatalogInclude: '清单只包含（逗号分隔）',
       labKnobCatalogExclude: '清单排除（逗号分隔）',
       labPrefixVarsHint: '前缀支持模板变量：{{date}} {{time}} {{model}} {{provider}}（认不出的原样保留）',
@@ -2830,6 +2867,27 @@ window.__ModuleLoader__.load({
       labAuditErrorBody: '上游原文',
       labTurns: '前缀轮',
       labPreviewPrefixMsg: '前缀消息（思考 / 内容）',
+      // ── F11/F14：结果行开关 + 最近结果行 + verdict 人话（中英成对）。 ──
+      labResultTitle: '结果行（每请求一行 JSONL）',
+      labResultEnabled: '写结果行（默认开）',
+      labResultFilePh: '留空 = 默认路径',
+      labResultReasoningHead: '收集 reasoning 开头（默认关）',
+      labResultReasoningHeadHint: '不收集时 verdict 只能是 unknown —— 只有采到 reasoning 开头，结果行才判断得了「前缀有没有被延续」。',
+      labResultSnippets: '落正文片段（头 80 / 尾 40 字，默认开）',
+      labResultSnippetsHint: '隐私：开着时结果行会写入模型输出正文的片段（头 80 / 尾 40 字）；关掉它，verdict / 用量 / 时长仍照常记录。',
+      labResultLast: '最近结果',
+      labResultArm: '实验臂',
+      labResultRun: '轮次',
+      labResultAttempts: '尝试次数',
+      labResultAt: '时间',
+      labVerdictPrefixKept: '前缀被延续',
+      labVerdictPrefixAbsent: '前缀没被延续',
+      labVerdictNoReasoning: '没有思考内容',
+      labVerdictUnknown: '判断不了',
+      labVerdictPassthrough: '透传（没加前缀）',
+      labVerdictSkipped: '本轮跳过',
+      labVerdictIgnored: '已忽略',
+      labVerdictError: '失败',
       labLoggingTitle: '代理 JSONL 日志',
       labLoggingOn: '开启（每次请求写一行）',
       labLoggingCopy: '复制路径',
@@ -2849,6 +2907,8 @@ window.__ModuleLoader__.load({
       labRestore: '恢复本轮填装',
       labClearDone: '已清空本轮填装：下一轮不加前缀',
       labRestoreDone: '已恢复：下一轮照常加前缀',
+      // F15-C：清单重复的说明（不是告警）。根因写清：「仅首次进历史」会把清单永久写进会话。
+      labCatalogDuplicates: '本次装配发现 {n} 份重复的工具清单，已只保留最新一份。根因：清单在「仅首次进历史」模式下会永久写进本会话，之后切回「每轮注入」也不会撤销 —— 换一个新会话就干净了。',
       labPresetsTitle: '前缀预设（独立预设，之后可并进整体预设）',
       labPresetName: '预设名',
       labPresetNamePh: '例如：中文思维链',
@@ -2859,6 +2919,10 @@ window.__ModuleLoader__.load({
       labPresetApplied: '预设已套用',
       labPresetDeleted: '预设已删除',
       labPresetEmpty: '还没有前缀预设',
+      // F17-C：预设携带的旋钮数（套用会一并改这些配置）。
+      labPresetKnobsN: '含 {n} 项旋钮',
+      labPresetKnobsNone: '仅前缀',
+      labPresetKnobsHint: '预设可以携带整组实验旋钮（采样 / 清单 / 回退 / 失败阈值…）：套用时会一并恢复；标「仅前缀」的旧预设只改前缀本身。',
       labLogTitle: '前缀日志（逐轮）',
       labLogEmpty: '还没有记录：发一轮消息后这里会出现这一轮实际用的前缀。',
       labLogNext: '本轮（即将发出）',
@@ -3137,7 +3201,7 @@ window.__ModuleLoader__.load({
       motionMovedHint: 'Motion preference moved to the left sidebar (Prefill) → Preferences.',
       // Experimental: reasoning prefix (DeepSeek Beta)
       reasoningTitle: 'Experiment · reasoning prefix (DeepSeek Beta)',
-      reasoningHint: 'Use the official Chat Prefix Completion so every turn starts with a fixed prefix. Enabling creates a model route "DeepSeek Flash (reasoning prefix)"; switch to it in the model picker.',
+      reasoningHint: 'Use the official Chat Prefix Completion so every turn starts with a fixed prefix. Enabling creates a model route "DeepSeek Flash (reasoning prefix)"; you must switch to it manually in the model picker and verify the switch actually took effect.',
       reasoningLoading: 'Reading status…',
       reasoningOn: 'Enabled',
       reasoningOff: 'Disabled',
@@ -3160,11 +3224,18 @@ window.__ModuleLoader__.load({
       reasoningRefresh: 'Refresh',
       reasoningRefreshed: 'Status refreshed ({time})',
       reasoningRefreshing: 'Refreshing…',
-      reasoningRouteHint: 'Enabled: switch to "DeepSeek Flash (reasoning prefix)" in the model picker, then send messages normally.',
+      reasoningRouteHint: 'Enabled: switch to "DeepSeek Flash (reasoning prefix)" in the model picker, then send a message. Switching is not guaranteed to take effect — after one turn, check this section: only "this session is on the prefix route" means it really switched.',
       reasoningAudit: 'Recent audit',
       reasoningAuditEmpty: 'no failures',
       reasoningFailed: 'Failed: {reason}',
       reasoningUnavailable: 'Host did not respond: restart DSH and retry.',
+      // F2: session-route tri-state (chip tooltip + chip popup lab panel); unknown only explains, never warns.
+      reasoningRouteOn: 'This session is on the prefix route',
+      reasoningRouteOff: 'This session is not on the prefix route: the model picker still has another model selected.',
+      reasoningRouteOffHint: 'Switch to "DeepSeek Flash (reasoning prefix)" in the model picker; then come back and check whether this line turns into "on the prefix route".',
+      reasoningRouteUnknown: 'No request from this session yet, so the prefix route cannot be judged.',
+      // F6: auto-disabled after consecutive failures reached the threshold.
+      reasoningAutoDisabled: 'The experiment was auto-disabled after consecutive failures reached the threshold. Fix the upstream and re-enable, or turn on "Ignore failures" to keep going.',
       // Model route (v0.20.1): surface whether the route is written / present / backed by a live proxy.
       reasoningRouteLabel: 'Model route',
       reasoningRouteOk: 'written',
@@ -3216,6 +3287,17 @@ window.__ModuleLoader__.load({
       labFallbackSystem: 'system first',
       labFallbackUser: 'user first',
       labKnobAllowPassthrough: 'Allow passthrough (off = prefixed variants only)',
+      labKnobIgnoreFailures: 'Ignore failures (never auto-disable)',
+      // ── Phase B: experiment arm ids + sampling entry (P1-5). Empty = no intervention; empty string = clear. ──
+      labKnobArmId: 'Experiment arm id (armId, empty = clear)',
+      labKnobArmIdPh: 'e.g. A0-default',
+      labKnobRunId: 'Experiment run id (runId, empty = clear)',
+      labKnobRunIdPh: 'e.g. r1',
+      labKnobTemperature: 'temperature (0-2, empty = no intervention)',
+      labKnobTopP: 'top_p (0-1, empty = no intervention)',
+      labKnobSeed: 'seed (integer 0-4294967295, empty = no intervention)',
+      labSamplingHint: 'Sampling only changes the request body sent upstream: the proxy records the values it actually sent in the result row, but whether the upstream honors seed is unverified. Empty = no intervention (never written as 0).',
+      labSamplingInvalid: 'Sampling values must be numbers (or empty for no intervention): {value}',
       labKnobCatalogInclude: 'Catalog include (comma separated)',
       labKnobCatalogExclude: 'Catalog exclude (comma separated)',
       labPrefixVarsHint: 'Template variables: {{date}} {{time}} {{model}} {{provider}} (unknown ones kept as-is)',
@@ -3250,6 +3332,27 @@ window.__ModuleLoader__.load({
       labAuditErrorBody: 'upstream body',
       labTurns: 'prefix turns',
       labPreviewPrefixMsg: 'Prefix message (reasoning / content)',
+      // ── F11/F14: result-row switches + last result row + human verdict labels (zh/en paired). ──
+      labResultTitle: 'Result row (one JSONL line per request)',
+      labResultEnabled: 'Write result rows (on by default)',
+      labResultFilePh: 'empty = default path',
+      labResultReasoningHead: 'Collect reasoning head (off by default)',
+      labResultReasoningHeadHint: 'Without it verdict can only be "unknown" — only a captured reasoning head lets the result row judge whether the prefix was continued.',
+      labResultSnippets: 'Store text snippets (head 80 / tail 40 chars, on by default)',
+      labResultSnippetsHint: 'Privacy: with this on, result rows include snippets of the model output (head 80 / tail 40 chars). Turning it off still records verdict / usage / timings.',
+      labResultLast: 'Last result',
+      labResultArm: 'arm',
+      labResultRun: 'run',
+      labResultAttempts: 'attempts',
+      labResultAt: 'at',
+      labVerdictPrefixKept: 'prefix continued',
+      labVerdictPrefixAbsent: 'prefix not continued',
+      labVerdictNoReasoning: 'no reasoning',
+      labVerdictUnknown: 'unknown',
+      labVerdictPassthrough: 'passthrough (no prefix)',
+      labVerdictSkipped: 'skipped this turn',
+      labVerdictIgnored: 'ignored',
+      labVerdictError: 'error',
       labLoggingTitle: 'Proxy JSONL log',
       labLoggingOn: 'Enable (one line per request)',
       labLoggingCopy: 'Copy path',
@@ -3269,6 +3372,8 @@ window.__ModuleLoader__.load({
       labRestore: 'Restore this turn',
       labClearDone: 'Cleared: next turn adds no prefix',
       labRestoreDone: 'Restored: next turn adds the prefix again',
+      // F15-C: duplicate-catalog note (not a warning). Root cause is spelled out: "history only" writes it permanently.
+      labCatalogDuplicates: 'This turn found {n} duplicate tool catalogs and kept only the newest one. Why: in "history only" mode the catalog is written into this session permanently; switching back to "every turn" does not undo it — a fresh session starts clean.',
       labPresetsTitle: 'Prefix presets (standalone; ready to merge into full presets)',
       labPresetName: 'Preset name',
       labPresetNamePh: 'e.g. Chinese reasoning',
@@ -3279,6 +3384,10 @@ window.__ModuleLoader__.load({
       labPresetApplied: 'Preset applied',
       labPresetDeleted: 'Preset deleted',
       labPresetEmpty: 'No prefix presets yet',
+      // F17-C: how many knobs a preset carries (applying it changes those settings too).
+      labPresetKnobsN: '{n} knobs',
+      labPresetKnobsNone: 'prefix only',
+      labPresetKnobsHint: 'A preset can carry the whole experiment knob set (sampling / catalog / fallback / failure threshold…): applying it restores them too; legacy presets marked "prefix only" change the prefix alone.',
       labLogTitle: 'Prefix log (per turn)',
       labLogEmpty: 'No entries yet: send a turn and the prefixes actually used appear here.',
       labLogNext: 'This turn (about to send)',
@@ -6961,8 +7070,22 @@ window.__ModuleLoader__.load({
       const cardOpen = cardOpenMap.get(sessionId) === true
       const summary = on ? chipSummary.get(sessionId) : undefined
       const fallback = injectMode ? (written ? t('prefillWritten') : t('injectOff')) : on ? t('prefillOn') : t('prefillOff')
+      /**
+       * F2（会话路由告警）：只认「确实看过一条请求、且 provider 不是前缀路由」这一种。
+       * sessionRoute 为 null（本会话还没发过消息）或 matchesPrefix 为 null（判断不了）一律静默 ——
+       * 那是正常的首轮前状态，不是故障；实验功能没开时整条不参与。判据写死在这里，渲染处只认 routeOff。
+       */
+      const sessionRoute = live?.sessionRoute ?? null
+      const routeOff = live?.state?.ui?.experimental === true && sessionRoute !== null && sessionRoute.matchesPrefix === false
+      const routeUnknown = live?.state?.ui?.experimental === true && (sessionRoute === null || sessionRoute.matchesPrefix === null)
       // v1.1：未开预填装 / 新会话时 tooltip 补一句下一步（点开卡片开始配置）。
       const title = on ? `${t('chipCardTip')}${summary?.tip ? `\n${summary.tip}` : ''}` : `${t('prefillTitleOff')}\n${t('chipFallbackTip')}`
+      // F2：告警只加在 tooltip 里（芯片不加文字、不染红）；unknown 时只说明「暂时判断不了」。
+      const chipTitle = routeOff
+        ? `${title}\n${t('reasoningRouteOff')}\n${t('reasoningRouteOffHint')}`
+        : routeUnknown
+          ? `${title}\n${t('reasoningRouteUnknown')}`
+          : title
       /**
        * 打开本会话的预填装。**底稿必须是整封 state**：/state 的 patch 是整表替换
        * （impl.js patchState = { ...current, ...patch }），而 summary 只带本会话那格 ——
@@ -7015,7 +7138,7 @@ window.__ModuleLoader__.load({
           // 按钮忙碌（首次打开）= 'true'；模型正在输出 = 'stream'（小点的闪攒到回合结束，§5）。
           'data-prefill-busy': openingShown ? 'true' : chipStreaming ? STREAM_BUSY : undefined,
           'data-prefill-chip-error': chipError !== '' ? 'true' : undefined,
-          title: chipError !== '' ? `${t('errPill').replace('{op}', t('errOpChip'))}：${chipError}` : title,
+          title: chipError !== '' ? `${t('errPill').replace('{op}', t('errOpChip'))}：${chipError}` : chipTitle,
           'data-open': cardOpen ? 'true' : 'false',
           style: {
             ...S.gatePill(on),
@@ -7103,6 +7226,20 @@ window.__ModuleLoader__.load({
                 h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, t('chipConfigured').replace('{n}', String(chipStatus.configured)).replace('{total}', String(chipStatus.total))),
               ),
               h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
+              // F2：本会话没走前缀路由时的 7px 告警标记。**新属性名**（`data-prefill-chip-dot` 在芯片里只能有 1 个）；
+              // 只有 routeOff 才渲染，unknown / true 一律是 null（不加属性、不染红）。
+              routeOff
+                ? h(
+                    'span',
+                    {
+                      key: 'route-off',
+                      'data-prefill-chip-route': 'off',
+                      title: `${t('reasoningRouteOff')}\n${t('reasoningRouteOffHint')}`,
+                      style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 7, height: 7, flex: '0 0 auto', color: 'var(--dsw-alias-state-warn-primary, #f59e0b)', fontSize: 7.5, fontWeight: 800, lineHeight: 1 },
+                    },
+                    '!',
+                  )
+                : null,
             ],
         ),
         devBadge,
@@ -13651,6 +13788,8 @@ window.__ModuleLoader__.load({
       const [jsonOpen, setJsonOpen] = React.useState(false)
       const [presetName, setPresetName] = React.useState('')
       const [presetPick, setPresetPick] = React.useState('')
+      /** 采样参数回填：未设（null / 缺键）必须是**空串** —— 空 = 不干预；而 0 是合法取值，两者不能混。 */
+      const samplingText = (value) => (value === null || value === undefined ? '' : String(value))
       const load = React.useCallback(async () => {
         const next = await postJson(EXPERIMENTAL_STATUS_ROUTE, { sessionId })
         setData(next)
@@ -13674,6 +13813,18 @@ window.__ModuleLoader__.load({
           loggingFile: String(knobs.loggingFile ?? ''),
           fallbackOrder: String(knobs.fallbackOrder ?? ''),
           allowPassthrough: knobs.allowPassthrough !== false,
+          ignoreFailures: knobs.ignoreFailures === true,
+          // F13/F14（阶段 B）：实验臂 / 轮次标识 + 采样三参数（缺省 = 空 = 不干预）。
+          armId: String(knobs.armId ?? ''),
+          runId: String(knobs.runId ?? ''),
+          samplingTemperature: samplingText(knobs.sampling?.temperature),
+          samplingTopP: samplingText(knobs.sampling?.topP),
+          samplingSeed: samplingText(knobs.sampling?.seed),
+          // 结果行（F11）：默认开；reasoning 采集默认关（它才让 verdict 判断得了前缀有没有被延续）；正文片段默认开。
+          loggingResultEnabled: knobs.loggingResultEnabled !== false,
+          loggingResultFile: String(knobs.loggingResultFile ?? ''),
+          loggingReasoningHead: knobs.loggingReasoningHead === true,
+          loggingSnippets: knobs.loggingSnippets !== false,
           catalogInclude: (Array.isArray(knobs.catalogInclude) ? knobs.catalogInclude : []).join(','),
           catalogExclude: (Array.isArray(knobs.catalogExclude) ? knobs.catalogExclude : []).join(','),
           loggingDump: knobs.loggingDump === true,
@@ -13703,6 +13854,22 @@ window.__ModuleLoader__.load({
           .finally(() => setBusy(''))
       }
       const patchDraft = (key, value) => setDraft((current) => (current === null ? current : { ...current, [key]: value }))
+      /**
+       * 采样输入 → 提交值（P1-5）：**空 = null = 不干预，绝不是 0**（0 是合法温度，混了就没法表达「不设」）；
+       * 填了但不是合法数字 / 非整数 seed / 超范围，就当场报错拦住 —— 不把 NaN 发出去（那会变成「设了个假值」）。
+       */
+      const samplingValue = (raw, rule) => {
+        const text = String(raw ?? '').trim()
+        if (text === '') return null
+        const value = Number(text)
+        const bad =
+          !Number.isFinite(value) ||
+          (rule?.integer === true && !Number.isInteger(value)) ||
+          (rule?.min !== undefined && value < rule.min) ||
+          (rule?.max !== undefined && value > rule.max)
+        if (bad) throw new Error(t('labSamplingInvalid').replace('{value}', text))
+        return value
+      }
       const save = () =>
         run('save', async () => {
           const result = await postJson(EXPERIMENTAL_CONFIG_ROUTE, {
@@ -13722,6 +13889,19 @@ window.__ModuleLoader__.load({
             loggingFile: draft.loggingFile,
             fallbackOrder: draft.fallbackOrder,
             allowPassthrough: draft.allowPassthrough === true,
+            ignoreFailures: draft.ignoreFailures === true,
+            // 空串 = 清空（**不发 undefined**，服务端按空串清）；采样留空发 null。
+            armId: String(draft.armId ?? '').trim(),
+            runId: String(draft.runId ?? '').trim(),
+            sampling: {
+              temperature: samplingValue(draft.samplingTemperature, { min: 0, max: 2 }),
+              topP: samplingValue(draft.samplingTopP, { min: 0, max: 1 }),
+              seed: samplingValue(draft.samplingSeed, { integer: true, min: 0, max: 4294967295 }),
+            },
+            loggingResultEnabled: draft.loggingResultEnabled === true,
+            loggingResultFile: String(draft.loggingResultFile ?? ''),
+            loggingReasoningHead: draft.loggingReasoningHead === true,
+            loggingSnippets: draft.loggingSnippets === true,
             catalogInclude: draft.catalogInclude.split(',').map((item) => item.trim()).filter((item) => item !== ''),
             catalogExclude: draft.catalogExclude.split(',').map((item) => item.trim()).filter((item) => item !== ''),
             loggingDump: draft.loggingDump === true,
@@ -13793,6 +13973,55 @@ window.__ModuleLoader__.load({
         })
       // ── 填装状态 / 清空本轮 / 预设 / 日志（v0.20.3）──
       const prefill = data?.prefill ?? null
+      // F2/F6：三态 / 告警样式（V 里没有这些变体，用内联串）与「最近一次自动停用」的时间戳。
+      // 两者都防御式读：缺键 / null 一律不渲染，绝不把 undefined 画到面板上。
+      const V_WARN = { color: 'var(--dsw-alias-state-warn-primary, #f59e0b)', fontSize: 12.5, lineHeight: 1.6 }
+      const V_OK = { color: 'var(--dsw-alias-state-success-primary, #22a06b)', fontSize: 12.5, lineHeight: 1.6 }
+      const V_MUTED = { color: 'var(--dsw-alias-label-tertiary)', fontSize: 12.5, lineHeight: 1.6 }
+      const autoDisabledAt = data?.reasoning?.autoDisabledAt
+      const autoDisabledShown = autoDisabledAt !== null && autoDisabledAt !== undefined && Number.isFinite(Number(autoDisabledAt))
+      // F14：最近一条结果行（服务端只回 6 个字段，不含正文片段）。null / 缺键 ⇒ 整行不渲染。
+      const lastResult = prefill?.lastResult !== null && typeof prefill?.lastResult === 'object' ? prefill.lastResult : null
+      // F15-C：最近一次装配丢弃的重复清单条数（缺键 / 0 = 干净 ⇒ 一律不渲染）。
+      const catalogDuplicates = Number(prefill?.catalogDuplicates)
+      const catalogDuplicatesShown = Number.isFinite(catalogDuplicates) && catalogDuplicates > 0
+      /**
+       * F17-C：预设携带的旋钮清单 —— 必须与 impl.js 的 `PREFIX_PRESET_KNOBS`（impl.js:243）逐字一致。
+       * 浏览器半不能 import 服务端，所以靠这条注释 + tests/experimental-panel-render.test.mjs 的漂移断言兜住。
+       * 兼容两种形态：旋钮平铺在预设上（服务端当前形态），或收在 `preset.knobs` 里（旧 / 未来形态）。
+       */
+      const PRESET_KNOB_KEYS = ['shim', 'textualize', 'catalogRole', 'catalogMode', 'catalogDetail', 'catalogPosition', 'fallbackOrder', 'allowPassthrough', 'maxEmittedCalls', 'failureThreshold', 'catalogInclude', 'catalogExclude', 'ignoreFailures', 'sampling']
+      const presetKnobSource = (preset) =>
+        preset === null || typeof preset !== 'object'
+          ? null
+          : preset.knobs !== null && typeof preset.knobs === 'object'
+            ? preset.knobs
+            : preset
+      const presetKnobCount = (preset) => {
+        const source = presetKnobSource(preset)
+        return source === null ? 0 : PRESET_KNOB_KEYS.filter((key) => source[key] !== undefined).length
+      }
+      /** 预设项上的徽标：「含 N 项旋钮」/「仅前缀」（0 项 = 旧预设，套用只改前缀）。 */
+      const presetKnobsText = (preset) => {
+        const count = presetKnobCount(preset)
+        return count === 0 ? t('labPresetKnobsNone') : t('labPresetKnobsN').replace('{n}', String(count))
+      }
+      /** verdict → 人话（中英成对）；认不出的原样显示，空值按 unknown —— 绝不把 undefined 画出来。 */
+      const verdictLabel = (value) => {
+        const verdict = typeof value === 'string' ? value : ''
+        const keys = {
+          'prefix-kept': 'labVerdictPrefixKept',
+          'prefix-absent': 'labVerdictPrefixAbsent',
+          'no-reasoning': 'labVerdictNoReasoning',
+          unknown: 'labVerdictUnknown',
+          passthrough: 'labVerdictPassthrough',
+          skipped: 'labVerdictSkipped',
+          ignored: 'labVerdictIgnored',
+          error: 'labVerdictError',
+        }
+        if (verdict === '') return t('labVerdictUnknown')
+        return keys[verdict] === undefined ? verdict : t(keys[verdict])
+      }
       const log = Array.isArray(data?.log) ? data.log.slice().reverse() : []
       const presets = Array.isArray(data?.presets) ? data.presets : []
       const skip = (on) =>
@@ -13949,6 +14178,46 @@ window.__ModuleLoader__.load({
               : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-clear': '', disabled: busy !== '', onClick: () => void skip(true) }, t('labClear')),
           ),
         ),
+        // ── F2 会话路由：三态显式展示（已走 / 没走 / 还没发过消息）。
+        // 以前只渲染 matchesPrefix === false 的告警，README 让用户「回来看有没有变成已走前缀路由」
+        // 时根本没有正面态可看；unknown 也只能靠芯片 tooltip 猜。三态都占位，判据以服务端为准。
+        (() => {
+          const routeSession = prefill?.sessionRoute
+          if (routeSession !== null && typeof routeSession === 'object') {
+            if (routeSession.matchesPrefix === true) {
+              return h(
+                'div',
+                { style: V_OK, 'data-prefill-lab-session-route': 'on' },
+                t('reasoningRouteOn') + (typeof routeSession.provider === 'string' && routeSession.provider !== '' ? ' · ' + routeSession.provider : ''),
+              )
+            }
+            if (routeSession.matchesPrefix === false) {
+              return h(
+                'div',
+                { style: V_WARN, 'data-prefill-lab-session-route': 'off', 'data-prefill-lab-route-off': '' },
+                t('reasoningRouteOff') + ' ' + t('reasoningRouteOffHint'),
+              )
+            }
+          }
+          // 缺键 / null / matchesPrefix === null：还没发过请求，判断不了 —— 只说明，不告警。
+          return h('div', { style: V_MUTED, 'data-prefill-lab-session-route': 'unknown' }, t('reasoningRouteUnknown'))
+        })(),
+        // ── F6 自动停用通知：reasoning.autoDisabledAt 非 null 才出现 ──
+        autoDisabledShown
+          ? h(
+              'div',
+              { style: V_WARN, 'data-prefill-lab-auto-disabled': '' },
+              t('reasoningAutoDisabled') + ' · ' + new Date(Number(autoDisabledAt)).toLocaleTimeString(),
+            )
+          : null,
+        // ── F15-C 清单重复（**说明性**提示，不是告警）：catalogDuplicates > 0 才出现 ──
+        catalogDuplicatesShown
+          ? h(
+              'div',
+              { style: V.hint, 'data-prefill-lab-catalog-duplicates': String(catalogDuplicates) },
+              t('labCatalogDuplicates').replace('{n}', String(catalogDuplicates)),
+            )
+          : null,
         // ── 前缀预设（独立预设；之后整体预设可直接接这张表）──
         h(
           'div',
@@ -13962,11 +14231,13 @@ window.__ModuleLoader__.load({
               'select',
               { style: { ...V.input, width: 180 }, value: presetPick, 'data-prefill-lab-preset': '', onChange: (event) => setPresetPick(event.target.value) },
               h('option', { value: '' }, '—'),
-              ...presets.map((item) => h('option', { key: item.name, value: item.name }, item.name)),
+              // F17-C：每一项都标出它携带几个旋钮 —— 套用会一并改这些配置，不能只写个名字。
+              ...presets.map((item) => h('option', { key: item.name, value: item.name, 'data-prefill-lab-preset-knobs': String(presetKnobCount(item)) }, item.name + ' · ' + presetKnobsText(item))),
             ),
             h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-preset-apply': '', disabled: busy !== '' || presetPick === '', onClick: () => void applyPreset() }, t('labPresetApply')),
             h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-preset-delete': '', disabled: busy !== '' || presetPick === '', onClick: () => void deletePreset() }, t('labPresetDelete')),
           ),
+          h('div', { style: V.hint, 'data-prefill-lab-preset-knobs-hint': '' }, t('labPresetKnobsHint')),
           h(
             'div',
             { style: V.row },
@@ -14029,6 +14300,19 @@ window.__ModuleLoader__.load({
                 'div',
                 { style: { ...V.hint, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }, 'data-prefill-lab-preview-prefix': '' },
                 t('labPreviewPrefixMsg') + '：' + String(lastRequest.prefixMessage.reasoning ?? '') + ' / ' + String(lastRequest.prefixMessage.content ?? ''),
+              ),
+          // ── F14：最近一条结果行（armId / verdict / status / attempts / 时间）。null ⇒ 不渲染。──
+          lastResult === null
+            ? null
+            : h(
+                'div',
+                { style: { ...V.pills, marginTop: 6 }, 'data-prefill-lab-last-result': '' },
+                pill(t('labResultLast'), verdictLabel(lastResult.verdict)),
+                typeof lastResult.armId === 'string' && lastResult.armId !== '' ? pill(t('labResultArm'), lastResult.armId) : null,
+                typeof lastResult.runId === 'string' && lastResult.runId !== '' ? pill(t('labResultRun'), lastResult.runId) : null,
+                typeof lastResult.status === 'string' || typeof lastResult.status === 'number' ? pill('status', String(lastResult.status)) : null,
+                pill(t('labResultAttempts'), String(lastResult.attemptsLength ?? 0)),
+                Number(lastResult.at) > 0 ? pill(t('labResultAt'), new Date(Number(lastResult.at)).toLocaleTimeString()) : null,
               ),
         ),
         // ── 模型路由 ──
@@ -14113,6 +14397,12 @@ window.__ModuleLoader__.load({
             ),
             h(
               'label',
+              { key: 'ignoreFailures', style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, paddingTop: 16 } },
+              h('input', { type: 'checkbox', checked: draft.ignoreFailures === true, 'data-prefill-lab-toggle': 'ignoreFailures', onChange: (event) => patchDraft('ignoreFailures', event.target.checked) }),
+              t('labKnobIgnoreFailures'),
+            ),
+            h(
+              'label',
               { key: 'catalogInclude', style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
               h('span', null, t('labKnobCatalogInclude')),
               h('input', { style: V.input, value: draft.catalogInclude, placeholder: 'read,write', 'data-prefill-lab-knob': 'catalogInclude', onChange: (event) => patchDraft('catalogInclude', event.target.value) }),
@@ -14123,7 +14413,15 @@ window.__ModuleLoader__.load({
               h('span', null, t('labKnobCatalogExclude')),
               h('input', { style: V.input, value: draft.catalogExclude, placeholder: 'bash,pwsh', 'data-prefill-lab-knob': 'catalogExclude', onChange: (event) => patchDraft('catalogExclude', event.target.value) }),
             ),
+            // ── F13 实验臂标识：空 = 清空（提交空串，不发 undefined）；臂 id 走计划文件名，写错就归不了桶。 ──
+            field('armId', t('labKnobArmId'), draft.armId, (value) => patchDraft('armId', value), { maxLength: '60', placeholder: t('labKnobArmIdPh'), 'data-prefill-lab-knob': 'armId' }),
+            field('runId', t('labKnobRunId'), draft.runId, (value) => patchDraft('runId', value), { maxLength: '60', placeholder: t('labKnobRunIdPh'), 'data-prefill-lab-knob': 'runId' }),
+            // ── P1-5 采样：留空 = 不干预（提交 null）；0 是合法值，不要和「留空」混。 ──
+            field('temperature', t('labKnobTemperature'), draft.samplingTemperature, (value) => patchDraft('samplingTemperature', value), { type: 'number', step: '0.01', min: '0', max: '2', 'data-prefill-lab-knob': 'temperature' }),
+            field('topP', t('labKnobTopP'), draft.samplingTopP, (value) => patchDraft('samplingTopP', value), { type: 'number', step: '0.01', min: '0', max: '1', 'data-prefill-lab-knob': 'topP' }),
+            field('seed', t('labKnobSeed'), draft.samplingSeed, (value) => patchDraft('samplingSeed', value), { type: 'number', step: '1', 'data-prefill-lab-knob': 'seed' }),
           ),
+          h('div', { style: V.hint, 'data-prefill-lab-sampling-hint': '' }, t('labSamplingHint')),
           h('label', { style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } },
             h('span', null, t('labKnobPrefix')),
             h('textarea', { style: { ...V.textarea, minHeight: 48, maxHeight: 120 }, value: draft.prefix, 'data-prefill-lab-knob': 'prefix', onChange: (event) => patchDraft('prefix', event.target.value) }),
@@ -14228,6 +14526,37 @@ window.__ModuleLoader__.load({
                 { style: { ...V.hint, whiteSpace: 'pre-wrap', wordBreak: 'break-all' } },
                 [data.logging.dumpFile, data.logging.rawFile, data.logging.contentFile].filter((path) => typeof path === 'string' && path !== '').join('\n'),
               ),
+        ),
+        // ── 结果行（F11/F14）：每请求一行 JSONL —— 开关 / 路径 / reasoning 采集 / 正文片段。──
+        h(
+          'div',
+          { style: V.section, 'data-prefill-lab-result': '' },
+          h('div', { style: V.sectionTitle }, t('labResultTitle')),
+          h(
+            'label',
+            { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+            h('input', { type: 'checkbox', checked: draft.loggingResultEnabled === true, 'data-prefill-lab-result-toggle': 'enabled', onChange: (event) => patchDraft('loggingResultEnabled', event.target.checked) }),
+            t('labResultEnabled'),
+          ),
+          h(
+            'div',
+            { style: V.row },
+            h('input', { style: { ...V.input, flex: 1 }, value: draft.loggingResultFile, placeholder: t('labResultFilePh'), 'data-prefill-lab-result-file': '', onChange: (event) => patchDraft('loggingResultFile', event.target.value) }),
+          ),
+          h(
+            'label',
+            { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+            h('input', { type: 'checkbox', checked: draft.loggingReasoningHead === true, 'data-prefill-lab-result-toggle': 'reasoningHead', onChange: (event) => patchDraft('loggingReasoningHead', event.target.checked) }),
+            t('labResultReasoningHead'),
+          ),
+          h('div', { style: V.hint, 'data-prefill-lab-result-hint': 'reasoningHead' }, t('labResultReasoningHeadHint')),
+          h(
+            'label',
+            { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+            h('input', { type: 'checkbox', checked: draft.loggingSnippets === true, 'data-prefill-lab-result-toggle': 'snippets', onChange: (event) => patchDraft('loggingSnippets', event.target.checked) }),
+            t('labResultSnippets'),
+          ),
+          h('div', { style: V_WARN, 'data-prefill-lab-result-privacy': '' }, t('labResultSnippetsHint')),
         ),
         // ── 审计 ──
         h(

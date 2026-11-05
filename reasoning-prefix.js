@@ -14,6 +14,114 @@
  */
 import http from 'node:http'
 import { appendFileSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+
+/**
+ * 取一条消息的文本。同一个函数同时吃两侧的形状：
+ *   · DSH 侧：消息对象 `{role, content: [{type:'text',text}]}`（block 数组，也可能直接是 string）；
+ *   · wire 侧：OpenAI 的 `content: string | [{type:'text',text}]`。
+ * 认不出的部分（图片 / tool_use 等）返回空串，不抛错。
+ * @param {unknown} message
+ * @returns {string}
+ */
+export function messageText(message) {
+  if (message === null || message === undefined) return ''
+  if (typeof message === 'string') return message
+  if (Array.isArray(message)) {
+    let out = ''
+    for (const part of message) out += messageText(part)
+    return out
+  }
+  if (typeof message === 'object') {
+    if (typeof message.text === 'string') return message.text
+    if (message.content !== undefined) return messageText(message.content)
+  }
+  return ''
+}
+
+/**
+ * 最后一条消息的内容指纹（sha1 hex）。关联通道靠它把「宿主侧登记的会话」对上「代理收到的请求」。
+ * 没有消息、或最后一条取不出文本 ⇒ 返回 ''（空指纹不参与匹配，避免所有空消息互相撞上）。
+ * @param {unknown} messages
+ * @returns {string}
+ */
+export function lastMessageHash(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return ''
+  const text = messageText(messages[messages.length - 1])
+  if (text === '') return ''
+  return createHash('sha1').update(text, 'utf8').digest('hex')
+}
+
+/**
+ * 从上游响应体里抽「模型正文」（非 shim 转发路径用：结果行的 textHead / textTail）。
+ *   · SSE：逐帧取 `choices[0].delta.content` 拼接；
+ *   · 非流式 JSON：取 `choices[0].message.content`。
+ * 认不出 / 解析失败 ⇒ '' —— 宁可不记，也不把整段 JSON / SSE 原始帧当正文写进结果行。
+ * @param {unknown} contentType
+ * @param {string} text
+ * @returns {string}
+ */
+export function extractResponseText(contentType, text) {
+  if (typeof text !== 'string' || text === '') return ''
+  try {
+    if (String(contentType).includes('text/event-stream')) {
+      let out = ''
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith('data:')) continue
+        const payload = trimmed.slice(5).trim()
+        if (payload === '' || payload === '[DONE]') continue
+        let parsed
+        try {
+          parsed = JSON.parse(payload)
+        } catch {
+          continue
+        }
+        const content = parsed?.choices?.[0]?.delta?.content
+        if (typeof content === 'string') out += content
+      }
+      return out
+    }
+    const parsed = JSON.parse(text)
+    const content = parsed?.choices?.[0]?.message?.content
+    return typeof content === 'string' ? content : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 从宿主侧登记的 pending 表里找出**唯一**匹配本次请求的那条，并消费它。
+ * 绝不猜：0 候选 / 超 TTL / ≥2 条同 hash ⇒ null（宁可 sessionId=null，也不填「最可能」的会话）。
+ * @param {Array<{sessionId?:string, hash?:string, at?:number, turn?:number, step?:number, confidence?:string}>} pending 会被就地消费（命中那条 splice 掉）
+ * @param {{messages?: unknown}} body 代理收到的原始请求体（注入前缀**之前**）
+ * @param {number} now 当前毫秒时间戳
+ * @param {number} ttlMs 登记的有效期
+ * @returns {{sessionId: string, turn: number|null, step: number|null, confidence: 'exact'|'content'} | null}
+ */
+export function matchPendingTrace(pending, body, now, ttlMs) {
+  if (!Array.isArray(pending) || pending.length === 0) return null
+  const hash = lastMessageHash(body?.messages)
+  if (hash === '') return null
+  const ttl = Number.isFinite(ttlMs) ? ttlMs : 0
+  const hits = []
+  for (let index = 0; index < pending.length; index += 1) {
+    const entry = pending[index]
+    if (entry === null || typeof entry !== 'object') continue
+    if (entry.hash !== hash) continue
+    if (!Number.isFinite(entry.at) || now - entry.at > ttl) continue
+    hits.push(index)
+  }
+  // 唯一命中才认：0 条 = 没登记过；≥2 条 = TTL 窗口内有歧义（并发会话 / 重复内容）。
+  if (hits.length !== 1) return null
+  const [hit] = pending.splice(hits[0], 1)
+  return {
+    sessionId: typeof hit.sessionId === 'string' ? hit.sessionId : '',
+    turn: Number.isInteger(hit.turn) ? hit.turn : null,
+    step: Number.isInteger(hit.step) ? hit.step : null,
+    confidence: hit.confidence === 'exact' ? 'exact' : 'content',
+  }
+}
 
 /** 判断一条请求能否加前缀：无工具、有消息、思考前缀 / 内容前缀至少一个非空。 */
 export function canInject(body, reasoningPrefix, contentPrefix = '') {
@@ -381,6 +489,33 @@ export function hasToolCatalogMessage(messages) {
 }
 
 /**
+ * F15-B：历史里是否已经有**同一份**工具清单（文本逐字相同）⇒ 本轮不再注入。
+ *
+ * 为什么必须靠文本相等、而不能只靠 `source.prefill === 'tool-catalog'`：
+ * 代理拿到的是 wire 请求，而 DSH 的消息投影会重建每条消息
+ * （`dsh-llm-pi-ai/lib/index.js` 的 textOnlyContext / toPiContextWithImages 都只 push
+ * `{role, content: flattenText(message), timestamp: 0}`）——**source 根本不会出现在 wire 上**。
+ * 所以 source 只能当「有则更可信」的提示：带 source 且明确不是清单 ⇒ 排除；
+ * 没带 source（wire 的正常情况）⇒ 只能看文本。
+ *
+ * 工具集变了（文本不同）⇒ 返回 false，仍注入新清单（否则模型会拿着旧清单调不存在的工具）。
+ * @param {unknown} messages
+ * @param {string} catalogText 本轮要注入的清单原文
+ * @returns {boolean}
+ */
+export function hasSameToolCatalog(messages, catalogText) {
+  if (!Array.isArray(messages) || typeof catalogText !== 'string' || catalogText === '') return false
+  return messages.some((message) => {
+    if (message === null || typeof message !== 'object') return false
+    // source 只在 DSH 侧形状上存在；wire 上被投影剥掉了。带 source 时要求它**正面**标明是清单，
+    // 否则（比如普通用户消息）一律不认，避免把用户自己写的正文当成清单。
+    const source = message.source
+    if (source !== null && typeof source === 'object' && source.prefill !== 'tool-catalog') return false
+    return messageText(message) === catalogText
+  })
+}
+
+/**
  * 由工具 registry 的 wire schemas 生成「前缀模式」用的文本清单。
  * @param schemas - [{ name, description, parameters }]（parameters 为 JSON Schema 对象）
  * @param options.detail - 'full' 完整（默认）| 'brief' 精简（描述 60 字 + 仅参数名）| 'names' 仅工具名
@@ -446,6 +581,46 @@ export function toolCatalogText() {
   ].join('\n')
 }
 
+/** 结果行里 reasoningHead 的截断长度。 */
+const REASONING_HEAD_CHARS = 200
+
+/**
+ * 采样覆盖补丁（P1-5）：只认 temperature / topP / seed 三个合法字段，非法值静默丢弃。
+ * 空对象 = 本轮不干预（默认路径零变化）。
+ */
+function samplingPatchOf(sampling) {
+  const patch = {}
+  if (sampling === null || typeof sampling !== 'object' || Array.isArray(sampling)) return patch
+  if (Number.isFinite(sampling.temperature)) patch.temperature = sampling.temperature
+  if (Number.isFinite(sampling.topP)) patch.top_p = sampling.topP
+  if (Number.isInteger(sampling.seed)) patch.seed = sampling.seed
+  return patch
+}
+
+/** 结果行的 usage 口径：四键齐全，上游没给就是 0。 */
+function usageRowOf(usage) {
+  if (usage === null || typeof usage !== 'object') return null
+  return {
+    prompt: Number.isFinite(usage.prompt) ? usage.prompt : 0,
+    completion: Number.isFinite(usage.completion) ? usage.completion : 0,
+    cacheHit: Number.isFinite(usage.cacheHit) ? usage.cacheHit : 0,
+    cacheMiss: Number.isFinite(usage.cacheMiss) ? usage.cacheMiss : 0,
+  }
+}
+
+/**
+ * 结果行的 sampling 口径：记**发给上游的值**（覆盖后），不是面板值、也不是"实际生效值"。
+ * 三缺一即 null 成员；三者全无 ⇒ 整体 null。
+ */
+function samplingRowOf(source) {
+  const raw = source !== null && typeof source === 'object' ? source : {}
+  const temperature = Number.isFinite(raw.temperature) ? raw.temperature : null
+  const topP = Number.isFinite(raw.top_p) ? raw.top_p : null
+  const seed = Number.isInteger(raw.seed) ? raw.seed : null
+  if (temperature === null && topP === null && seed === null) return null
+  return { temperature, topP, seed }
+}
+
 /**
  * 起一个只绑定 127.0.0.1 的转发代理。
  * @param options.getConfig - 每次请求时读取当前配置（enabled / upstream / reasoningPrefix / contentPrefix / stripTools）。
@@ -468,6 +643,20 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       // 日志写不进去不影响转发
     }
   }
+  /**
+   * 结构化结果行的独立 sink（F11）。与 record() / audit **完全解耦**：
+   *   · 只在 resultFile 非空时写（代理层默认不写文件，默认路径由 impl.js 的 reasoningConfigOf 填，
+   *     否则单测会污染用户 DATA_DIR）；
+   *   · 「每请求恰好一行」由调用方的 try/finally + wrote 守卫保证，与早退分支数量无关。
+   */
+  const resultLog = (target, row) => {
+    if (typeof target !== 'string' || target === '') return
+    try {
+      appendFileSync(target, JSON.stringify(row) + '\n')
+    } catch {
+      // 结果行写不进去不影响转发
+    }
+  }
   const record = (event) => {
     const entry = { at: Date.now(), ...event }
     audit.push(entry)
@@ -480,6 +669,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     ok: 0,
     failed: 0,
     variants: {},
+    // P0-3：按 armId 分桶（臂级实验直接看这里，不用事后切日志）。
+    // 用 null 原型：armId 来自用户输入，'__proto__' 这类键不能落到 Object.prototype 上。
+    arms: Object.create(null),
     calls: 0,
     firstDeltaMs: { sum: 0, count: 0 },
     ms: { sum: 0, count: 0 },
@@ -534,7 +726,49 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     const at = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)
     return sorted[at]
   }
-  const bump = ({ ok, variant, ms, firstDeltaMs, calls } = {}) => {
+  /** 臂数上限：臂名手抖（或脚本传错）不会撑爆内存，满则丢最旧。 */
+  const ARM_LIMIT = 32
+  const emptyArmBucket = () => ({
+    requests: 0,
+    ok: 0,
+    failed: 0,
+    ms: { sum: 0, count: 0 },
+    firstDeltaMs: { sum: 0, count: 0 },
+    usage: { requests: 0, prompt: 0, completion: 0, cacheHit: 0, cacheMiss: 0 },
+  })
+  /**
+   * 把一次请求记进它的臂桶。armId 必须由调用方按**请求局部**传入
+   * （代理并发处理多会话，闭包层共享会串台）。
+   */
+  const bucketArm = (armId, { ok, ms, firstDeltaMs, usage } = {}) => {
+    if (typeof armId !== 'string' || armId === '') return
+    if (!Object.hasOwn(stats.arms, armId)) {
+      const keys = Object.keys(stats.arms)
+      if (keys.length >= ARM_LIMIT) delete stats.arms[keys[0]]
+      stats.arms[armId] = emptyArmBucket()
+    }
+    const bucket = stats.arms[armId]
+    bucket.requests += 1
+    if (ok === true) {
+      bucket.ok += 1
+      if (Number.isFinite(ms)) {
+        bucket.ms.sum += ms
+        bucket.ms.count += 1
+      }
+      if (Number.isFinite(firstDeltaMs)) {
+        bucket.firstDeltaMs.sum += firstDeltaMs
+        bucket.firstDeltaMs.count += 1
+      }
+    } else bucket.failed += 1
+    if (usage !== null && typeof usage === 'object') {
+      bucket.usage.requests += 1
+      bucket.usage.prompt += usage.prompt ?? 0
+      bucket.usage.completion += usage.completion ?? 0
+      bucket.usage.cacheHit += usage.cacheHit ?? 0
+      bucket.usage.cacheMiss += usage.cacheMiss ?? 0
+    }
+  }
+  const bump = ({ ok, variant, ms, firstDeltaMs, calls, armId, usage } = {}) => {
     stats.requests += 1
     stats.lastAt = Date.now()
     if (ok === true) {
@@ -550,6 +784,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       }
       if (Number.isFinite(calls)) stats.calls += calls
     } else stats.failed += 1
+    bucketArm(armId, { ok, ms, firstDeltaMs, usage })
   }
   const server = http.createServer(async (req, res) => {
     // 客户端在请求体发完之前断开时 for await(req) 会抛 aborted；漏出去就是 unhandledRejection，
@@ -599,9 +834,119 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         prefixMessage: requestShape.prefixMessage,
       }
     }
+    /**
+     * ── 结构化结果行（F11）──────────────────────────────────────────────
+     * 每请求**恰好一行**（主键 requestId），走独立 sink，不碰 record() / audit 的语义。
+     * 行是请求局部变量；写盘由 transport 的 try/finally + wrote 守卫兜底 —— 与早退分支
+     * 的数量解耦，所以「一次全失败」不再落多行。
+     */
+    const resultEnabled = config.resultEnabled !== false
+    const resultFile = String(config.resultFile ?? '')
+    const snippets = config.snippets !== false
+    const reasoningHeadEnabled = config.reasoningHeadEnabled === true
+    // armId / runId 在 getConfig 时快照成请求局部量（并发多会话时闭包层共享会串台）。
+    const armId = typeof config.armId === 'string' ? config.armId : ''
+    const runId = typeof config.runId === 'string' ? config.runId : ''
+    const samplingPatch = samplingPatchOf(config.sampling)
+    const samplingOverridden = Object.keys(samplingPatch).length > 0
+    const row = {
+      at: Date.now(),
+      requestId: randomUUID(),
+      sessionId: null,
+      turn: null,
+      step: null,
+      armId: armId === '' ? null : armId,
+      runId: runId === '' ? null : runId,
+      ok: false,
+      status: 0,
+      variant: null,
+      attempts: [],
+      ms: null,
+      firstDeltaMs: null,
+      catalogBytes: 0,
+      catalogInjected: null,
+      catalogMode: null,
+      catalogPosition: null,
+      catalogDetail: null,
+      catalogRole: null,
+      prefix: { reasoningLen: 0, contentLen: 0 },
+      sampling: null,
+      usage: null,
+      textHead: '',
+      textTail: '',
+      reasoningHead: null,
+      routeConfidence: 'none',
+      autoDisabled: false,
+      verdict: 'error',
+    }
+    let wrote = false
+    // 结果行要用到的请求局部中间量。
+    let bodyForRow = null // 解析成功的原始请求体（采样覆盖 / 关联指纹用）
+    let finalVariantKind = null // 最终生效变体的原始 kind
+    let reportedVariantName = null // 对外记账名（system/user/prefixed/skipped/ignored/passthrough/none）
+    let okFlag = false
+    let collectedText = '' // 模型正文：shim 路径 = 解析后的增量拼接；透传路径 = 原始字节文本
+    let collectedReasoning = '' // 思维链正文（能拿到时才非空）
+    let reasoningCollectible = false // 本轮是否具备采集 reasoning 的能力（非 shim 透传路径采不到）
+    let rowUsage = null
+    const writeRow = () => {
+      if (wrote) return
+      wrote = true
+      row.ok = okFlag === true
+      row.ms = Date.now() - started
+      row.usage = usageRowOf(rowUsage)
+      row.textHead = snippets ? collectedText.slice(0, 80) : ''
+      row.textTail = snippets ? collectedText.slice(-40) : ''
+      row.reasoningHead =
+        reasoningHeadEnabled && collectedReasoning !== '' ? collectedReasoning.slice(0, REASONING_HEAD_CHARS) : null
+      if (okFlag !== true || finalVariantKind === null) {
+        row.verdict = 'error'
+      } else if (reportedVariantName === 'passthrough' || reportedVariantName === 'skipped' || reportedVariantName === 'ignored') {
+        row.verdict = reportedVariantName
+      } else if (reasoningHeadEnabled !== true || reasoningCollectible !== true) {
+        // 没采集 ⇒ 不能下结论。'no-reasoning' 只留给"采了但返回里没有 reasoning_content"。
+        row.verdict = 'unknown'
+      } else if (row.reasoningHead === null) {
+        row.verdict = 'no-reasoning'
+      } else {
+        const probe = String(requestShape?.reasoningPrefix ?? '').slice(0, 8)
+        // 没配思考前缀（只配内容前缀 / 都没配）时，reasoningHead 与「思考前缀」无从比较：
+        // 拿空探针去比会把「判断不了」说成 prefix-absent（内容前缀的延续落在正文里，不在 reasoning）。
+        row.verdict = probe === '' ? 'unknown' : row.reasoningHead.startsWith(probe) ? 'prefix-kept' : 'prefix-absent'
+      }
+      if (resultEnabled) resultLog(resultFile, row)
+    }
+    /**
+     * onOutcome 的返回值（autoDisabled）必须在写行**之前**取用。
+     * 回调异常不得影响转发（它只是记账方）。
+     */
+    const reportOutcome = (payload) => {
+      try {
+        const outcome = onOutcome?.(payload)
+        if (outcome !== null && typeof outcome === 'object' && outcome.autoDisabled === true) row.autoDisabled = true
+      } catch (error) {
+        // 记账方抛错不影响转发（以前它会冒泡到 transport catch，在响应已发出后再 writeHead 502）
+        logger?.warn?.('dsh-prefill: reasoning-prefix onOutcome 回调抛错: ' + String(error?.message ?? error))
+      }
+    }
     if (isChat && config.enabled !== false) {
       try {
         const body = JSON.parse(incoming.toString('utf8'))
+        bodyForRow = body
+        // 采样：记**发给上游的值**（覆盖后）。覆盖对所有变体统一生效，见 prepare / 透传臂。
+        row.sampling = samplingRowOf(samplingOverridden ? { ...body, ...samplingPatch } : body)
+        // 关联通道：宿主侧登记表唯一命中才认；解析失败绝不影响转发。
+        try {
+          const trace = typeof config.resolveTrace === 'function' ? config.resolveTrace(body) : null
+          if (trace !== null && typeof trace === 'object') {
+            row.sessionId = typeof trace.sessionId === 'string' && trace.sessionId !== '' ? trace.sessionId : null
+            row.turn = Number.isInteger(trace.turn) ? trace.turn : null
+            row.step = Number.isInteger(trace.step) ? trace.step : null
+            row.routeConfidence = trace.confidence === 'exact' ? 'exact' : 'content'
+          }
+        } catch {
+          // 关联失败 ⇒ 保持 routeConfidence='none'，sessionId 留 null（安全侧）
+        }
         const match = typeof config.match === 'string' && config.match !== '' ? config.match : process.env.DSH_PREFILL_SPIKE_MATCH
         if (typeof match === 'string' && match !== '') {
           const last = Array.isArray(body.messages) ? body.messages[body.messages.length - 1] : undefined
@@ -622,6 +967,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             delete draft.tools
             delete draft.tool_choice
           }
+          // P1-5：采样覆盖对**所有变体**统一生效 —— system / user / prefixed 三个变体共用同一份
+          // draft，透传臂单独重序列化（见变体链）。臂间采样不同本身就是一个混淆变量。
+          if (samplingOverridden) Object.assign(draft, samplingPatch)
           if (config.textualize === true || process.env.DSH_PREFILL_SPIKE_TEXTUALIZE === '1') {
             const textualized = textualizeToolHistory(draft)
             draft.messages = textualized.body.messages
@@ -652,13 +1000,26 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             catalogMode: config.catalogMode === 'history' ? 'history' : 'each',
             catalogDetail: config.catalogDetail === 'brief' || config.catalogDetail === 'names' ? config.catalogDetail : 'full',
             catalogPosition: config.catalogPosition === 'tail' ? 'tail' : 'head',
-            catalogInjected: config.catalogMode !== 'history' || !hasToolCatalogMessage(result.body.messages),
+            // F15-B：短路不再限定 history 模式 —— 历史里有**同一份**清单（逐字相同）就不重复注入。
+            // 「用过 history 又切回 each」的会话以前会拿到两份清单（历史那份 + 每轮这份）。
+            catalogInjected: !hasSameToolCatalog(result.body.messages, catalog),
             // P0 预览正文片段：清单前几行 + 实际注入的前缀消息（面板展开看）。
             catalogHead: catalog.split('\n').slice(0, 8).join('\n').slice(0, 900),
             prefixMessage: {
               reasoning: String(interpolatedConfig.reasoningPrefix ?? '').slice(0, 200),
               content: String(interpolatedConfig.contentPrefix ?? '').slice(0, 200),
             },
+          }
+          // 结果行的清单 / 前缀口径（面板与实验分析同源）。
+          row.catalogBytes = requestShape.catalogBytes
+          row.catalogInjected = requestShape.catalogInjected
+          row.catalogMode = requestShape.catalogMode
+          row.catalogPosition = requestShape.catalogPosition
+          row.catalogDetail = requestShape.catalogDetail
+          row.catalogRole = catalogRole
+          row.prefix = {
+            reasoningLen: requestShape.reasoningPrefix.length,
+            contentLen: requestShape.contentPrefix.length,
           }
           const shim = config.shim === true || process.env.DSH_PREFILL_SPIKE_SHIM === '1'
           if (shim) {
@@ -667,7 +1028,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             const base = messages.slice(0, -1)
             // catalogMode=history：插件已把清单一次性注入会话历史（含在 messages 里）⇒ 这里不再重复注入；
             // 万一历史里没有（注入失败 / 被压缩掉），退回每轮注入兜底。
-            const injectCatalog = !(config.catalogMode === 'history' && hasToolCatalogMessage(messages))
+            // F15-B：改成按**文本相同**短路，且不再限定模式（切回 each 后历史那份还在，否则会重复注入）。
+            const injectCatalog = !hasSameToolCatalog(messages, catalog)
             if (injectCatalog) {
               if (config.catalogPosition === 'tail') {
                 // 老行为：紧贴 prefix 消息。尾部会被后面增长的历史顶开 ⇒ 每轮都不进缓存。
@@ -726,7 +1088,13 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     }
     if (systemBody !== null && !shimActive) variants.push({ kind: 'prefixed', body: systemBody });
     // 是否允许透传（P1 可配）：关掉后只试前缀版本；若本轮没有任何前缀版本（比如「清空填装」），兜底仍透传。
-    if (config.allowPassthrough !== false || variants.length === 0) variants.push({ kind: 'passthrough', body: incoming });
+    // P1-5：有采样覆盖时透传臂**必须重新序列化** —— 否则前缀臂带了覆盖、透传臂没带，
+    // 臂间采样参数不同本身就成了新的混淆变量。没有覆盖时原样用 incoming 字节（零变化）。
+    const passthroughBody =
+      samplingOverridden && bodyForRow !== null
+        ? Buffer.from(JSON.stringify({ ...bodyForRow, ...samplingPatch }), 'utf8')
+        : incoming
+    if (config.allowPassthrough !== false || variants.length === 0) variants.push({ kind: 'passthrough', body: passthroughBody });
     /**
      * 透传有三种完全不同的含义，面板与「连续失败自动停用」必须分开看 ——
      * 以前一律叫 passthrough，于是「用户主动跳过」「触发标记未命中」都被算成失败，
@@ -744,14 +1112,37 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     }
     const started = Date.now()
     try {
+      /**
+       * F16（P1-7）：shim 分支会**伪造 SSE 帧序列**，非流式客户端拿到的协议是错的
+       * （上游即使回 200-JSON，这里也照样吐 `data: ...`）。fail-fast，不做非流式聚合。
+       *
+       * 判据写 `stream === false`：缺省当流式 —— DSH 自己不带该字段，写成 `stream !== true`
+       * 会把所有不带 stream 的请求（含全部现有 shim 用例）误杀。
+       * 只在 shim 真的会生效时拦：shim 关掉时是原样转发，非流式客户端本来就能正常工作。
+       */
+      if (isChat && shimActive && bodyForRow?.stream === false) {
+        const message = 'reasoning-prefix proxy: 本代理只支持流式请求（stream:true）。本轮请求带 stream:false，已拒绝且未转发上游。'
+        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: { message, type: 'invalid_request_error', code: 'non_streaming_unsupported' } }))
+        okFlag = false
+        reportedVariantName = 'none'
+        row.status = 400
+        row.variant = 'none'
+        bump({ ok: false, armId })
+        logger?.warn?.('dsh-prefill: reasoning-prefix 拒绝非流式请求（shim 只支持 stream:true）')
+        return;
+      }
       let final = null
       let finalVariant = null
       for (const variant of variants) {
+        const attemptStarted = Date.now()
         const response = await fetch(target, {
           method: req.method,
           headers,
           body: req.method === 'GET' || req.method === 'HEAD' ? undefined : variant.body,
         })
+        // 结果行逐次记账：一次请求试过谁、各自什么状态、最后谁生效，都在这一行里。
+        row.attempts.push({ variant: variant.kind, status: response.status, ok: response.status < 400, ms: Date.now() - attemptStarted })
         if (response.status < 400) {
           final = response
           finalVariant = variant.kind
@@ -761,16 +1152,32 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         record({ kind: 'upstream-error', variant: variant.kind, status: response.status, bodyHead: text.slice(0, 300) })
         logger?.warn?.(`dsh-prefill: reasoning-prefix ${variant.kind} 上游 ${response.status}: ${text.slice(0, 300)}`)
         if (variant.kind === 'passthrough') {
+          // F7：整条回退链走到透传兜底仍被上游拒绝时，也要记账 —— 与成功路径一致。
+          // 以前这里直接 return，stats.lastRequest 会停在更早一次成功请求的形态上，
+          // 面板「上次请求形态」显示的是一轮早已过去的请求。
+          const reportedPassthrough = outcomeVariant('passthrough')
+          markRequest(reportedPassthrough)
+          okFlag = false
+          reportedVariantName = reportedPassthrough
+          row.status = response.status
+          row.variant = reportedPassthrough
           res.writeHead(response.status, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(text) }).end(text)
-          bump({ ok: false })
-          onOutcome?.({ ok: false, variant: outcomeVariant('passthrough'), status: response.status })
+          bump({ ok: false, armId })
+          reportOutcome({ ok: false, variant: reportedPassthrough, status: response.status })
           return;
         }
       }
       if (final === null) {
+        // F7：所有变体都被上游拒绝（例如关掉透传且前缀版全挂）时同样记账，
+        // variant 用 'none'，与 onOutcome / 传输错误路径同名，便于面板区分「一次都没成」。
+        markRequest('none')
+        okFlag = false
+        reportedVariantName = 'none'
+        row.status = 502
+        row.variant = 'none'
         res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('reasoning-prefix proxy: no variant succeeded')
-        bump({ ok: false })
-        onOutcome?.({ ok: false, variant: 'none', status: 502 })
+        bump({ ok: false, armId })
+        reportOutcome({ ok: false, variant: 'none', status: 502 })
         return;
       }
       const outHeaders = {}
@@ -811,6 +1218,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         let firstDeltaMs = null
         let finished = false
         const collected = []
+        // P2-12：思维链正文以前只转发、不落任何集合 ⇒ 结果行的 reasoningHead / verdict 无从判定。
+        const collectedReasoningParts = []
+        reasoningCollectible = true
         // P0 审计详情：记下每次工具调用的名字与参数摘要（面板展开看）。
         const callDetails = []
         let requestUsage = null
@@ -902,6 +1312,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             if (typeof delta.reasoning_content === 'string' && delta.reasoning_content !== '') {
               sawPayload = true
               if (firstDeltaMs === null) firstDeltaMs = Date.now() - started
+              collectedReasoningParts.push(delta.reasoning_content)
               writeChunk({ reasoning_content: delta.reasoning_content })
             }
             if (typeof delta.content === 'string' && delta.content !== '') {
@@ -937,6 +1348,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
                 if (typeof message.reasoning_content === 'string' && message.reasoning_content !== '') {
                   sawPayload = true
                   if (firstDeltaMs === null) firstDeltaMs = Date.now() - started
+                  collectedReasoningParts.push(message.reasoning_content)
                   writeChunk({ reasoning_content: message.reasoning_content })
                 }
                 if (typeof message.content === 'string' && message.content !== '') {
@@ -991,12 +1403,22 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           if (stats.firstDeltaSamples.length > 100) stats.firstDeltaSamples.shift()
         }
         markRequest(reportedVariant)
+        // 结果行口径：无论成功还是流中断，正文 / 思维链 / usage 都已收齐，统一在这里落定。
+        finalVariantKind = finalVariant
+        reportedVariantName = reportedVariant
+        row.status = final.status
+        row.variant = reportedVariant
+        collectedText = collected.join('')
+        collectedReasoning = collectedReasoningParts.join('')
+        row.firstDeltaMs = Number.isFinite(firstDeltaMs) ? firstDeltaMs : null
+        rowUsage = requestUsage
         if (streamError !== null) {
           // 上游中途断流：尾巴已经尽量补成 finish + [DONE]（不让客户端挂死），但必须记成失败 ——
           // 以前这里 bump ok，面板全绿，用户完全不知道回复被截断了。
+          okFlag = false
           record({ kind: 'stream-error', variant: reportedVariant, status: final.status, error: String(streamError?.message ?? streamError), ms: Date.now() - started, firstDeltaMs })
-          bump({ ok: false })
-          onOutcome?.({ ok: false, variant: reportedVariant, status: final.status, error: 'stream' })
+          bump({ ok: false, armId })
+          reportOutcome({ ok: false, variant: reportedVariant, status: final.status, error: 'stream' })
           logger?.warn?.('dsh-prefill: reasoning-prefix shim 流中断: ' + String(streamError?.message ?? streamError))
           return;
         }
@@ -1005,7 +1427,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           record({ kind: 'no-delta', variant: reportedVariant, status: final.status, bytes: collected.join('').length })
         }
         record({ kind: 'shim', variant: reportedVariant, status: final.status, calls: callCount, callsDetail: callDetails.slice(0, 8), usage: requestUsage, ms: Date.now() - started, firstDeltaMs })
-        bump({ ok: true, variant: reportedVariant, ms: Date.now() - started, firstDeltaMs, calls: callCount })
+        okFlag = true
+        bump({ ok: true, variant: reportedVariant, ms: Date.now() - started, firstDeltaMs, calls: callCount, armId, usage: requestUsage })
         const shimLog = process.env.DSH_PREFILL_SPIKE_LOG
         if (typeof shimLog === 'string' && shimLog !== '') {
           try {
@@ -1014,7 +1437,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             // 日志失败不影响转发
           }
         }
-        onOutcome?.({ ok: true, variant: reportedVariant, status: final.status, calls: callCount })
+        reportOutcome({ ok: true, variant: reportedVariant, status: final.status, calls: callCount })
         logger?.info?.('dsh-prefill: reasoning-prefix shim 流式转换完成，文本首块 ' + String(firstDeltaMs ?? '-') + 'ms，工具调用 ' + callCount + ' 个')
         return;
       }
@@ -1041,17 +1464,30 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         })
         if (forwardError !== null) {
           markRequest(reportedVariant)
+          okFlag = false
+          finalVariantKind = finalVariant
+          reportedVariantName = reportedVariant
+          row.status = final.status
+          row.variant = reportedVariant
+          collectedText = extractResponseText(contentType, collected)
           record({ kind: 'stream-error', variant: reportedVariant, status: final.status, error: String(forwardError?.message ?? forwardError), ms: Date.now() - started })
-          bump({ ok: false })
-          onOutcome?.({ ok: false, variant: reportedVariant, status: final.status, error: 'stream' })
+          bump({ ok: false, armId })
+          reportOutcome({ ok: false, variant: reportedVariant, status: final.status, error: 'stream' })
           logger?.warn?.('dsh-prefill: reasoning-prefix 转发流中断: ' + String(forwardError?.message ?? forwardError))
           return;
         }
         forwardUsage = collectUsageFromBody(contentType, collected)
+        collectedText = extractResponseText(contentType, collected)
       } else res.end()
       markRequest(reportedVariant)
+      okFlag = true
+      finalVariantKind = finalVariant
+      reportedVariantName = reportedVariant
+      row.status = final.status
+      row.variant = reportedVariant
+      rowUsage = forwardUsage
       record({ kind: 'forward', variant: reportedVariant, status: final.status, usage: forwardUsage, ms: Date.now() - started })
-      bump({ ok: true, variant: reportedVariant, ms: Date.now() - started })
+      bump({ ok: true, variant: reportedVariant, ms: Date.now() - started, armId, usage: forwardUsage })
       const logPath = process.env.DSH_PREFILL_SPIKE_LOG
       if (typeof logPath === 'string' && logPath !== '') {
         try {
@@ -1060,14 +1496,21 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           // 日志写不进去不影响转发
         }
       }
-      onOutcome?.({ ok: true, variant: reportedVariant, status: final.status })
+      reportOutcome({ ok: true, variant: reportedVariant, status: final.status })
       logger?.info?.(`dsh-prefill: reasoning-prefix ${applied ? '已加前缀(' + reportedVariant + ')' : '透传(' + reason + ')'} → ${target} [${final.status}] ${Date.now() - started}ms`)
     } catch (error) {
       logger?.warn?.(`dsh-prefill: reasoning-prefix 转发失败: ${String(error?.message ?? error)}`)
       record({ kind: 'transport-error', error: String(error?.message ?? error) })
-      bump({ ok: false })
-      onOutcome?.({ ok: false, variant: 'none', status: 0 })
+      okFlag = false
+      reportedVariantName = 'none'
+      row.status = 502
+      row.variant = 'none'
+      bump({ ok: false, armId })
+      reportOutcome({ ok: false, variant: 'none', status: 0 })
       res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('reasoning-prefix proxy error: ' + String(error?.message ?? error))
+    } finally {
+      // 每请求恰好一行：无论从哪条早退分支离开，都只在这里落一次盘。
+      writeRow()
     }
   })
   return {
@@ -1077,6 +1520,13 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     stats: () => ({
       ...stats,
       variants: { ...stats.variants },
+      // arms 必须**逐层**展开：调用方拿到的是快照，改它不能影响内部桶。
+      arms: Object.fromEntries(
+        Object.entries(stats.arms).map(([key, bucket]) => [
+          key,
+          { ...bucket, ms: { ...bucket.ms }, firstDeltaMs: { ...bucket.firstDeltaMs }, usage: { ...bucket.usage } },
+        ]),
+      ),
       ms: { ...stats.ms },
       firstDeltaMs: { ...stats.firstDeltaMs },
       usage: { ...stats.usage },
@@ -1090,6 +1540,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       stats.ok = 0
       stats.failed = 0
       stats.variants = {}
+      stats.arms = Object.create(null)
       stats.calls = 0
       stats.firstDeltaMs = { sum: 0, count: 0 }
       stats.ms = { sum: 0, count: 0 }

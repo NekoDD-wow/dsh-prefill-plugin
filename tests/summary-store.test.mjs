@@ -190,7 +190,7 @@ test('单飞：并发两次 summary 只发一个请求', async () => {
   assert.equal(env.requests.length, 2)
 })
 
-test('rev 未变：复用旧对象、不 emit；rev 变了才 emit', async () => {
+test('内容指纹：同 rev 同内容不 emit；同 rev 但内容变了要采纳；rev 变了也采纳', async () => {
   const env = makeEnv()
   const mod = env.load()
   env.push({ ok: true, rev: 'r1', sessionId: 's1', prefill: { s1: 'A' } })
@@ -198,17 +198,41 @@ test('rev 未变：复用旧对象、不 emit；rev 变了才 emit', async () =>
   await env.settle()
   assert.equal(sub.emits, 1)
   const before = mod.summaryStore.data
-  // 同一个 rev：服务端说状态文件没动过 ⇒ 内容就算不一样也不采纳（省一次重渲染）。
-  env.push({ ok: true, rev: 'r1', sessionId: 's1', prefill: { s1: 'B' } })
+  // 同一个 rev、同一份内容：复用旧对象、不 emit（最省的一次轮询）
+  env.push({ ok: true, rev: 'r1', sessionId: 's1', prefill: { s1: 'A' } })
   await mod.refreshSummary('same')
-  assert.equal(sub.emits, 1, 'rev 相同不 emit')
+  assert.equal(sub.emits, 1, '内容没变不 emit')
   assert.equal(mod.summaryStore.data, before, '直接复用旧对象')
-  assert.equal(mod.summaryStore.data.state.prefill.s1, 'A')
-  // rev 变了 ⇒ 采纳并 emit
-  env.push({ ok: true, rev: 'r2', sessionId: 's1', prefill: { s1: 'B' } })
-  await mod.refreshSummary('changed')
-  assert.equal(sub.emits, 2)
+  // 同一个 rev、但内容变了（非 state 字段，如 sessionRoute / running）：必须采纳。
+  // rev 只代表 state.json 没变，不能拿它当「摘要内容没变」的判据。
+  env.push({ ok: true, rev: 'r1', sessionId: 's1', prefill: { s1: 'B' } })
+  await mod.refreshSummary('same-rev-changed')
+  assert.equal(sub.emits, 2, 'rev 相同但内容变了要 emit')
   assert.equal(mod.summaryStore.data.state.prefill.s1, 'B')
+  // rev 变了、内容也变 ⇒ 采纳
+  env.push({ ok: true, rev: 'r2', sessionId: 's1', prefill: { s1: 'C' } })
+  await mod.refreshSummary('changed')
+  assert.equal(sub.emits, 3)
+  assert.equal(mod.summaryStore.data.state.prefill.s1, 'C')
+})
+
+test('P0-1 回归：sessionRoute 变化但 state rev 未变，摘要也要更新（芯片路由告警依赖它）', async () => {
+  const env = makeEnv()
+  const mod = env.load()
+  env.push({ ok: true, rev: 'r1', sessionId: 's1', prefill: {}, sessionRoute: null })
+  const sub = subscribe(mod)
+  await env.settle()
+  assert.equal(mod.summaryStore.data.sessionRoute, null, '没发过请求 ⇒ 未知')
+  // 用户切到前缀路由并发消息：request/header 只改内存里的 sessionRoute，state 文件没动 ⇒ rev 不变。
+  env.push({ ok: true, rev: 'r1', sessionId: 's1', prefill: {}, sessionRoute: { provider: 'prefill-think', model: 'deepseek-flash', matchesPrefix: true, at: 2 } })
+  await mod.refreshSummary('route-on')
+  assert.equal(sub.emits, 2)
+  assert.equal(mod.summaryStore.data.sessionRoute?.matchesPrefix, true, 'sessionRoute 应随摘要更新')
+  // 切回别的模型：同样不写 state，也要能反映
+  env.push({ ok: true, rev: 'r1', sessionId: 's1', prefill: {}, sessionRoute: { provider: 'deepseek-official', model: 'deepseek-chat', matchesPrefix: false, at: 3 } })
+  await mod.refreshSummary('route-off')
+  assert.equal(sub.emits, 3)
+  assert.equal(mod.summaryStore.data.sessionRoute?.matchesPrefix, false)
 })
 
 test('applyEnvelope：整封 envelope → 迷你 envelope（字段映射 + 只留本会话）', async () => {

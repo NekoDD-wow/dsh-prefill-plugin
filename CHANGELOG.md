@@ -3,6 +3,55 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.21.6 — 2026-11-05
+- **修复：shim 不再无视客户端的 `stream`（P1-7）**。shim 分支会伪造 SSE 帧序列，非流式客户端拿到的协议是错的（上游即使回 200-JSON 也照样吐 `data: …`）。现在带 `stream: false` 的请求**直接 400 且不打上游**，不再返回协议不匹配的响应。
+  - 判据是 `stream === false`（**缺省当流式**）—— DSH 自己不带该字段，写成 `stream !== true` 会误杀全部现有请求。
+  - 只在 shim 真的会生效时拦：关掉「流式改写」时是原样转发，非流式客户端本来就能正常工作；空前缀（本轮不加前缀）也不拦。
+- **修复：清单在提示词里出现两份（F15）**。根因：`catalogMode=history` 把清单**永久**写进会话日志，切回 `each` 也不撤销，代理又每轮注入一份。两处一起修：
+  - **装配出口去重**（`impl.js`）：装配里多于一份清单时只保留**时间序最后一份**（会话历史是追加的，最新在最后；能走到去重说明本轮没有新注入 —— 只有一份都没有时才会注入），并记审计 + 在 `prefill.catalogDuplicates` 里给面板。**永不删除唯一那份** —— 会话没切到前缀路由时，它是模型唯一的工具认知来源。
+  - **代理侧同文本短路**（`reasoning-prefix.js`）：短路不再限定 `history` 模式，历史里已有**逐字相同**的清单就不重复注入；工具集变了（文本不同）仍注入新的，否则模型会拿着旧清单调用已不存在的工具。
+  - 顺带修正一个认知：DSH 的 wire 投影会重建消息（`{role, content, timestamp}`），`source` **不会**出现在 wire 上 ⇒ 代理侧只能按**文本**比对，`source` 只当「有则更可信」的提示。
+- **新增：预设携带全量实验旋钮（P2-10）**。保存预设时服务端快照当时的全部实验旋钮（改写开关 / 清单三旋钮 / 回退链顺序 / 透传 / 调用上限 / 失败阈值 / 清单包含排除 / 忽略失败 / 采样），套用时一起恢复 —— 换机器或换 profile 后能还原出产生某批数据的配置。刻意不含 `port`（机器相关）与 `logging`（调试）。
+  - 旧预设（只有 `name/prefix/contentPrefix`）读进来照旧，套用只换前缀、什么都不改。
+  - 面板预设列表标出「含 N 项旋钮 / 仅前缀」，并加了一条**漂移告警**测试：`client.js` 的旋钮清单必须与 `impl.js` 的 `PREFIX_PRESET_KNOBS` 逐字一致（不同步就会给用户数错）。
+- 回归：新增 `preset-knobs.test.mjs`（11）、`shim-stream.test.mjs`（15）；`experimental-panel-render.test.mjs`、`ui-terms.test.mjs` 扩充。全量 **786 项 / 785 pass / 1 skip / 0 fail**。
+- **审查修复**：装配出口去重原来按「第一份 = 最新」保留，但会话历史是**追加**的（最新在最后），且本轮只有在一份都没有时才会注入 ⇒ 旧实现会留下**最旧**的清单、丢掉新清单，与「工具集变了要以新的为准」相反。改为保留时间序最后一份（`keepLatestToolCatalog`），并按时间序重写去重测试（红→绿）。
+- 说明：日志轮转仍未做（结果行/代理日志都是同步 `appendFileSync` 且无上限），登记为已知缺口。
+
+## 0.21.5 — 2026-11-05
+- **新增：结构化结果行（P0-2）**。每发一次前缀请求就往 `<数据目录>/reasoning-result.jsonl` 追加**恰好一条** JSON（默认开、路径可配、显式 `false` 可持久关），跑完一批请求不用再人工逐条开会话日志比对。
+  - 关键字段：`requestId`（去重主键）、`variant` + `attempts[]`（最终生效变体 / 本次实际尝试序列，含每次上游状态码）、`sessionId/turn/step` + `routeConfidence`、`armId/runId`、`catalogBytes/catalogMode`（清单是实验因子）、`sampling`（**发给上游**的值）、`prefix/usage/ms/firstDeltaMs`、`verdict`、`autoDisabled`。
+  - **一行性**：写盘挂在 transport 的 `finally` + `wrote` 守卫上，与早退分支数量解耦 —— 修掉「一次全失败落 3 行」的重复计数。旧 `record()` / audit 语义一字未动。
+  - `verdict` 靠对比返回的思维链开头与前缀来判断前缀有没有被延续；**默认不收集思维链 ⇒ `unknown`**（绝不谎报 `no-reasoning`），要判得准得开「收集思考」。
+  - 隐私：默认带模型输出的头 80 / 尾 40 字（`textHead`/`textTail`），可关。
+- **新增：代理 ↔ 会话关联通道（P0-1 配套）**。代理与插件同进程，但代理只拿到 HTTP 请求体、拿不到会话身份；确定性注入已证不可行（`llm/stream` 是只读观测点、出站头是 settings 级静态值、`agent/request` 的返回值里没有头字段）。改为在 `llm/stream` 登记末条消息指纹，代理**唯一命中才认领**，认不出就 `null` + `routeConfidence:'none'`，绝不猜。
+- **新增：按 `armId` 分桶（P0-3）**。`stats.arms`（上限 32、深拷贝、reset 清空）+ 结果行按 `armId/runId` **发起时快照**落盘（不随后续改配置变化）；面板可填臂名。
+- **新增：采样参数覆盖（P1-5）**。面板可设 temperature / top_p / seed，**留空 = 不干预**（不是 0，0 是合法温度）；覆盖对**所有变体**统一生效（透传臂此时重新序列化），缺省则零变化。面板与结果行都只记「发给上游的值」——上游是否尊重 `seed` 未验证。
+- **新增：面板显示最近一条结果行**（只回 6 个字段，正文片段不上行）。
+- 面板：会话路由改三态显式展示（已走 / 没走 / 还没发过消息），补上「已走前缀路由」的正面态。
+- **审查修复（叠在 #54 的审查提交之上）**：
+  - `verdict` 在「只配内容前缀（`reasoningPrefix` 为空）」时不再拿空探针比出 `prefix-absent`，改为 `unknown` —— 内容前缀的延续落在正文里，用 reasoning 开头根本无从判断。
+  - 非 shim 透传路径的 `textHead`/`textTail` 改为从 JSON / SSE 响应里抽模型正文（`extractResponseText`），不再把整段原始 JSON / SSE 帧当「正文片段」写进结果行。
+  - `latestStepBySession` 淘汰改为 delete+set，按最近一步真正 LRU（与 `latestRouteBySession` 同口径）。
+- 回归：新增 `result-row.test.mjs`（32）/ `sampling.test.mjs`（8）；`observability.test.mjs`、`experimental.test.mjs`、`experimental-panel-render.test.mjs`、`ui-terms.test.mjs` 扩充。全量 **756 项 / 755 pass / 1 skip / 0 fail**。
+- 说明：`purpose` 未纳入结果行 —— 核验后确认 DSH 的请求对象里没有这个字段（三个包全库 0 命中），不落死列。
+- 未做（下一批）：`catalogMode` 历史污染、shim 的 `stream` 语义、预设全量旋钮。
+
+## 0.21.4 — 2026-11-04
+- **修复：前缀实验「以为在跑、其实在对照组」无法被发现（P0-1）**。根因：`prefill.ready` 只看「实验已配置 + 代理在跑 + 路由写进了配置」，**不看本会话实际用的 provider**，所以模型选择器没切上时面板依旧全绿，A/B 会拿到完全错误的结论。
+  - 新增 `sessionRoute`（三态）→ `POST /api/dsh-prefill/summary` **顶层** + `experimental/status` 的 `prefill` 里，形状 `{ provider, model, matchesPrefix, at }`；`null` = 本会话还没发过请求 = **未知**（客户端拿到 null 不告警，绝不退化成 `false`）。
+  - 数据源是 `session/event` 的 `request/header` → `data.header.config`，与 DSH 自己的 `modelSelection` 投影同源；只记内存、按最近一次请求淘汰（上限 200 会话）。
+  - 胶囊弹窗实验面板新增「本会话路由」三态行（已走前缀路由 / 没走 / 还没发过消息）；`matchesPrefix === false` 时才告警，未知态只说明、不告警。芯片 tooltip 同一口径（中英双语）。
+  - `prefill.ready` 语义**不变**：`ready` 是「实验能力就绪」，`sessionRoute` 是「本会话有没有真的在跑」；合并会把「没在用」误报成「坏了」。
+  - **修复：客户端 summary store 的 `rev` 快路径会吞掉 `sessionRoute`（以及 `running` / `snapshots` 等内存字段）的变化**。`rev` 只代表 state.json 没变，而切路由 / 会话开跑都不写 state ⇒ 芯片上的路由告警一直停在旧状态，直到某次无关的 state 写入。现在先比内容指纹、不再用 rev 短路；`summary-store.test.mjs` 补回归（同 rev、`sessionRoute` null→true / true→false 都要 emit）。
+- **修复：代理日志「打开过就关不掉」**。`sanitizeUi` 只放行 `logging.enabled === true`，面板提交的 `false` 被丢弃、盘上旧值留下 ⇒ 显式 `false` 现在能落盘（读侧缺省仍是关，默认行为零变化）。
+- **修复：自动停用静默掐断实验（P1-8）**。新增 `reasoning.autoDisabledAt`（面板显式通知「实验已被自动停用」）与 `ignoreFailures`（实验模式，面板「忽略失败」）⇒ 批量实验不再跑一半被自动停用。停用仍会删 provider 路由，README 已写清会话会报 `NO_ADAPTER`。
+- **修复：面板「上次请求形态」停在旧值（F7）**。代理两条早退路径（透传兜底被上游拒绝 / 全部变体失败）补 `markRequest`，此前 `stats.lastRequest` 会一直显示更早一次成功请求的形状。
+- **修复：前缀轮日志缺 `step`（P2-11）**。`prefix-log.jsonl` 每条补 `step`，与代理日志按 `sessionId + turn + step` 对得上；旧行缺键按「未知」处理，不做回填。
+- **文档**：公开 README 新增「思考前缀（实验，默认关）」章节（六件必须先知道的事 + 排查表）；`实测记录` README 新增「前缀臂为什么必须跨会话串行」（per-session 前缀会串台、奇偶轮有残留效应 ⇒ 跨会话串行 + armId 分桶）。面板文案补「切了不一定生效，要回头校验」。
+- 回归：新增 `observability.test.mjs`（sessionRoute 三态 / `request/header` 事件形状 / `prefixTurnEntry`）；`reasoning-prefix.test.mjs` 补两条 F7 早退用例；`summary-store.test.mjs` 补「同 rev、sessionRoute 变化也要 emit」回归；`experimental-panel-render.test.mjs` 补三态行；`experimental.test.mjs` 的日志开关断言与 `summary-store.test.mjs` 的 rev 断言按新语义更新。全量 **697 项 / 696 pass / 1 skip / 0 fail**。
+- 未做（下一批）：结构化结果行、按 `armId` 分桶、代理↔会话关联通道（`llm/stream` + 内容指纹）、`catalogMode` 历史污染、shim 的 `stream` 语义。
+
 ## 0.21.3 — 2026-11-04
 - **修复：每轮注入静默失效（面板显示「开」，实际一轮都不注入）**。根因：0.21.x 的 `everyTurnFor()` 要求 `state.everyTurn[会话].enabled === true`，而旧预设只写 `mode/text`、没写 `enabled`；套用后被静默跳过，但 `enabled.js everyTurnOn` / 面板开关（缺省算开）仍显示「开」。
 - 修法（三处同语义，缺 `enabled` 一律算开，显式 `false` 才关）：

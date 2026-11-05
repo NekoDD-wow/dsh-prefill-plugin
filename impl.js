@@ -21,7 +21,7 @@
  * @module @local/dsh-prefill
  */
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import https from 'node:https'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -57,7 +57,7 @@ import { surfaceOnRequest, surfaceRoute } from './sandbox-surface.js'
 import { claims as sandboxClaims, installClaimApi } from './sandbox-trace.js'
 import { sanitizeWorkspaceInstructions } from './workspace-instructions.js'
 import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
-import { buildToolCatalog, createReasoningPrefixProxy } from './reasoning-prefix.js'
+import { buildToolCatalog, createReasoningPrefixProxy, lastMessageHash, matchPendingTrace } from './reasoning-prefix.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
 const STAGE = 'M6-shell'
@@ -201,25 +201,136 @@ export function sanitizeUi(raw) {
     // 代理 JSONL 日志：开关 + 路径（默认路径由 config 兜底，这里只存用户改过的）。
     if (reasoning.logging !== null && typeof reasoning.logging === 'object' && !Array.isArray(reasoning.logging)) {
       const logging = {}
-      if (reasoning.logging.enabled === true) logging.enabled = true
+      // F5：显式 false 也要落盘。以前只放行 true，于是「打开过日志再想关掉」是做不到的——
+      // 面板提交的 false 被这里丢掉，旧值留在盘上，读侧（缺省 = 关）也救不回来。
+      // 读侧语义不变：缺省仍是关（config.logging.enabled === true 才开），所以默认行为零变化。
+      if (typeof reasoning.logging.enabled === 'boolean') logging.enabled = reasoning.logging.enabled
       if (typeof reasoning.logging.file === 'string' && reasoning.logging.file.trim() !== '') logging.file = reasoning.logging.file.trim().slice(0, 300)
       // P1：调试用三份文件（请求形态 dump / 原始流 raw / 模型文本 content），空字符串 = 关闭。
       for (const key of ['dumpFile', 'rawFile', 'contentFile']) {
         if (typeof reasoning.logging[key] === 'string' && reasoning.logging[key].trim() !== '') logging[key] = reasoning.logging[key].trim().slice(0, 300)
       }
+      // P0-2 / P2-12：结构化结果行（默认开，显式 false 可持久关）、路径、是否收集 reasoning、是否落正文片段。
+      if (typeof reasoning.logging.resultEnabled === 'boolean') logging.resultEnabled = reasoning.logging.resultEnabled
+      if (typeof reasoning.logging.resultFile === 'string' && reasoning.logging.resultFile.trim() !== '') logging.resultFile = reasoning.logging.resultFile.trim().slice(0, 300)
+      if (typeof reasoning.logging.reasoningHead === 'boolean') logging.reasoningHead = reasoning.logging.reasoningHead
+      if (typeof reasoning.logging.snippets === 'boolean') logging.snippets = reasoning.logging.snippets
       if (Object.keys(logging).length > 0) next.logging = logging
     }
     // 实验面板可调的硬编码：一次响应最多吐几个工具调用 / 连续失败几次自动停用。
     if (Number.isInteger(reasoning.maxEmittedCalls) && reasoning.maxEmittedCalls >= 1 && reasoning.maxEmittedCalls <= 32) next.maxEmittedCalls = reasoning.maxEmittedCalls
     if (Number.isInteger(reasoning.failureThreshold) && reasoning.failureThreshold >= 1 && reasoning.failureThreshold <= 10) next.failureThreshold = reasoning.failureThreshold
+    // P1-8 实验模式：忽略连续失败计数，批量实验不再跑一半被自动掐断。
+    if (reasoning.ignoreFailures === true) next.ignoreFailures = true
+    if (reasoning.ignoreFailures === false) next.ignoreFailures = false
+    // P0-3 / P1-5：实验分臂与采样覆盖。armId/runId 空串 = 显式清空（不是「不改」）；
+    // sampling 为 null 或成员全不合法 ⇒ 存成 {}（= 不干预），这样「清空覆盖」也能落盘。
+    if (typeof reasoning.armId === 'string') next.armId = reasoning.armId.trim().slice(0, 60)
+    if (typeof reasoning.runId === 'string') next.runId = reasoning.runId.trim().slice(0, 60)
+    if (reasoning.sampling === null || (reasoning.sampling !== undefined && typeof reasoning.sampling === 'object' && !Array.isArray(reasoning.sampling))) {
+      next.sampling = samplingOf(reasoning.sampling) ?? {}
+    }
     out.reasoningPrefix = next
   }
   return Object.keys(out).length > 0 ? out : undefined
 }
 
 /**
- * 前缀预设（独立预设，v0.20.3）：[{ name, prefix, contentPrefix }]。
- * 先独立存，之后整体预设要接过来时直接读这张表即可。
+ * 只保留**时间序最后一份**工具清单（纯函数，便于单测）。
+ *
+ * - 为什么是「最后一份」：会话历史是**追加**的，所以时间序最后那份才是**最新**那份（工具集变了要以新的为准）。
+ *   能走到去重说明本轮没有新注入（`ensureCatalogInjected` 只在装配里一份都没有时才注入），
+ *   所以不存在「本轮 prepend 的新清单在最前」这种情况；按第一份留会留下**最旧**的那份。
+ * - 为什么 0/1 份时原样返回：代理没在跑（会话没切到前缀路由）时，清单是模型**唯一**的工具认知来源，
+ *   删掉会让模型彻底不知道有哪些工具 —— 所以只在「≥2 份」时才动手。
+ *
+ * @param {unknown} messages 装配好的消息表
+ * @returns {{ messages: Array<unknown>, dropped: number }}
+ */
+export function keepLatestToolCatalog(messages) {
+  const list = Array.isArray(messages) ? messages : []
+  let latest = -1
+  for (let index = 0; index < list.length; index += 1) {
+    if (list[index]?.source?.prefill === 'tool-catalog') latest = index
+  }
+  if (latest === -1) return { messages: list, dropped: 0 }
+  const drop = []
+  for (let index = 0; index < list.length; index += 1) {
+    if (index !== latest && list[index]?.source?.prefill === 'tool-catalog') drop.push(index)
+  }
+  if (drop.length === 0) return { messages: list, dropped: 0 }
+  const dropped = new Set(drop)
+  return { messages: list.filter((_message, index) => !dropped.has(index)), dropped: drop.length }
+}
+
+/**
+ * 前缀预设携带的旋钮（P2-10）：只带「实验配置」这一类。
+ * 刻意**排除**：`port`（机器相关）、`logging`（调试开关）、`armId`/`runId`（每次运行的身份，不是配置）、
+ * `enabled`（开关本身）、以及已单独处理的 `prefix`/`contentPrefix`/`match`。
+ */
+const PREFIX_PRESET_KNOBS = [
+  'shim', 'textualize', 'catalogRole', 'catalogMode', 'catalogDetail', 'catalogPosition',
+  'fallbackOrder', 'allowPassthrough', 'maxEmittedCalls', 'failureThreshold',
+  'catalogInclude', 'catalogExclude', 'ignoreFailures', 'sampling',
+]
+
+/** 工具名清单（预设里的 include/exclude）：去空、截断、最多 60 个；非法 ⇒ undefined（丢弃该键）。 */
+function presetNameList(value) {
+  if (!Array.isArray(value)) return undefined
+  const out = value.filter((item) => typeof item === 'string' && item.trim() !== '').map((item) => item.trim().slice(0, 80)).slice(0, 60)
+  return out.length > 0 ? out : undefined
+}
+
+/** 单个预设旋钮的取值校验（导入 / 读盘时用）。返回 undefined = 丢弃该键（宁可少存，不存坏值）。 */
+function sanitizePresetKnob(key, value) {
+  switch (key) {
+    case 'shim':
+    case 'textualize':
+    case 'allowPassthrough':
+    case 'ignoreFailures':
+      return typeof value === 'boolean' ? value : undefined
+    case 'catalogRole':
+      return value === 'system' || value === 'user' ? value : undefined
+    case 'catalogMode':
+      return value === 'each' || value === 'history' ? value : undefined
+    case 'catalogDetail':
+      return value === 'full' || value === 'brief' || value === 'names' ? value : undefined
+    case 'catalogPosition':
+      return value === 'head' || value === 'tail' ? value : undefined
+    case 'fallbackOrder':
+      return value === 'system-first' || value === 'user-first' ? value : undefined
+    case 'maxEmittedCalls':
+      return Number.isInteger(value) && value >= 1 && value <= 32 ? value : undefined
+    case 'failureThreshold':
+      return Number.isInteger(value) && value >= 1 && value <= 10 ? value : undefined
+    case 'catalogInclude':
+    case 'catalogExclude':
+      return presetNameList(value)
+    case 'sampling':
+      return samplingOf(value) ?? undefined
+    default:
+      return undefined
+  }
+}
+
+/**
+ * 从一份配置（已归一化的 `reasoningConfigOf()` 或一条已过白名单的预设）里取出要携带的旋钮。
+ * **有才写**：没这个键就不放进结果 —— 这样「套用旧预设」不会把任何旋钮改成 undefined。
+ */
+export function presetKnobsOf(config) {
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) return {}
+  const out = {}
+  for (const key of PREFIX_PRESET_KNOBS) {
+    const value = sanitizePresetKnob(key, config[key])
+    if (value !== undefined) out[key] = value
+  }
+  return out
+}
+
+/**
+ * 前缀预设（独立预设，v0.20.3）：[{ name, prefix, contentPrefix, match?, ...旋钮 }]。
+ * P2-10：除前缀本身外，还把「实验配置」那一组旋钮一起存 —— 否则换机器 / 换 profile 后
+ * 无法还原出产生某批数据的配置。旧预设没有这些键，读进来照旧（套用时什么都不改）。
  */
 export function sanitizePrefixPresets(raw) {
   if (!Array.isArray(raw)) return []
@@ -236,10 +347,151 @@ export function sanitizePrefixPresets(raw) {
       contentPrefix: typeof entry.contentPrefix === 'string' ? entry.contentPrefix.slice(0, 2000) : '',
       // P1：预设也可以带触发标记（套用时一并写入 match；空 = 不改当前触发）。
       ...(typeof entry.match === 'string' && entry.match !== '' ? { match: entry.match.slice(0, 200) } : {}),
+      // P2-10：全量旋钮（有才写）。
+      ...presetKnobsOf(entry),
     })
     if (out.length >= 30) break
   }
   return out
+}
+
+/**
+ * 会话实际路由 → 前缀实效判定（P0-1）。
+ *
+ * `known` 缺失表示**本会话还没发出过 request/header**（新会话、或刚重启），此时返回 `null` = 未知；
+ * 绝不能退化成 `{ matchesPrefix: false }` —— 那会让每个还没发过消息的会话都稳定误报「前缀没生效」。
+ *
+ * @param {{ provider?: string, model?: string, at?: number }|null|undefined} known 最近一次实际发出的 provider/model
+ * @param {string} providerId 当前配置里的前缀路由名
+ * @returns {{ provider: string, model: string, matchesPrefix: boolean, at: number }|null}
+ */
+export function sessionRouteOf(known, providerId) {
+  if (known === null || typeof known !== 'object') return null
+  const provider = typeof known.provider === 'string' ? known.provider : ''
+  if (provider === '') return null
+  return {
+    provider,
+    model: typeof known.model === 'string' ? known.model : '',
+    matchesPrefix: provider === String(providerId ?? ''),
+    at: Number.isFinite(known.at) ? known.at : 0,
+  }
+}
+
+/**
+ * 前缀路由名兜底：`state.ui.reasoningPrefix.providerId` 为空时用 fallback。
+ * 抽出来是为了让只读路由（summary）不必为了一个字段再读一次盘，也保证两处兜底口径一致。
+ * @param {unknown} rawReasoning `state.ui.reasoningPrefix`
+ * @param {string} fallback 默认路由名
+ */
+export function reasoningProviderIdOf(rawReasoning, fallback) {
+  const config = rawReasoning !== null && typeof rawReasoning === 'object' && !Array.isArray(rawReasoning) ? rawReasoning : {}
+  return typeof config.providerId === 'string' && config.providerId !== '' ? config.providerId : String(fallback ?? '')
+}
+
+/**
+ * 从 `session/event` 的 `request/header` 事件里取出「本会话实际用了哪条路由」，写进传入的 Map。
+ *
+ * 事件形状（权威定义在 @deepseek-ai/dsh-session 的 EpochHeader，DSH 自己的 modelSelection 投影
+ * 读的就是同一个字段）：
+ *   `{ type: 'request/header', data: { header: { config: { provider, model } } } }`
+ *
+ * 形状不对时**不写入任何东西**并返回 false —— 宁可不记，也不要记一个 provider 是空的半成品
+ * （那会让面板把「不知道」显示成「没走前缀路由」）。
+ *
+ * @param {Map<string, { provider: string, model: string, at: number }>} routes
+ * @param {string} sessionId
+ * @param {{ type?: string, data?: { header?: { config?: { provider?: unknown, model?: unknown } } } }} event
+ * @param {number} at 记录时间
+ * @returns {boolean} 是否记下了一条
+ */
+export function noteSessionRouteFromEvent(routes, sessionId, event, at) {
+  if (typeof sessionId !== 'string' || sessionId === '') return false
+  if (event?.type !== 'request/header') return false
+  const config = event?.data?.header?.config
+  if (config === null || typeof config !== 'object') return false
+  if (typeof config.provider !== 'string' || config.provider === '') return false
+  // 先删再写：Map 的插入序当 LRU 用 —— 已存在的会话重新请求后要排到队尾，
+  // 否则 >200 个会话时可能先淘汰掉仍活跃的那一个（退化 unknown、不会误报，但没必要）。
+  routes.delete(sessionId)
+  routes.set(sessionId, {
+    provider: config.provider,
+    model: typeof config.model === 'string' ? config.model : '',
+    at: Number(at) || 0,
+  })
+  return true
+}
+
+/**
+ * 采样覆盖（P1-5）：只保留合法成员；一个都不合法 ⇒ `null` = 不干预。
+ *
+ * 口径是「**发给上游的值**」——上游是否尊重 `seed` 本仓库无法验证，所以不叫「实际生效值」。
+ * 留空（成员缺失 / null）不是「设为 0」，而是「这一项不干预」。
+ *
+ * @param {unknown} raw `state.ui.reasoningPrefix.sampling`
+ * @returns {{ temperature?: number, topP?: number, seed?: number }|null}
+ */
+export function samplingOf(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out = {}
+  if (typeof raw.temperature === 'number' && Number.isFinite(raw.temperature) && raw.temperature >= 0 && raw.temperature <= 2) out.temperature = raw.temperature
+  if (typeof raw.topP === 'number' && Number.isFinite(raw.topP) && raw.topP >= 0 && raw.topP <= 1) out.topP = raw.topP
+  if (Number.isInteger(raw.seed) && raw.seed >= 0 && raw.seed <= 4294967295) out.seed = raw.seed
+  return Object.keys(out).length > 0 ? out : null
+}
+
+/**
+ * 结果行 → 面板摘要（F14）。**只回这 6 个字段**：`textHead` / `textTail` 这类正文片段
+ * 绝不上行，免得每轮轮询把模型输出带回浏览器。
+ */
+export function resultRowSummaryOf(row) {
+  if (row === null || typeof row !== 'object' || Array.isArray(row)) return null
+  return {
+    armId: typeof row.armId === 'string' ? row.armId : '',
+    runId: typeof row.runId === 'string' ? row.runId : '',
+    verdict: typeof row.verdict === 'string' ? row.verdict : 'unknown',
+    status: Number.isFinite(row.status) ? row.status : null,
+    attemptsLength: Array.isArray(row.attempts) ? row.attempts.length : 0,
+    at: Number.isFinite(row.at) ? row.at : null,
+  }
+}
+
+/**
+ * 从「文件尾部 N 字节」的文本里取最后一条能解析的 JSON 行。
+ *
+ * 尾部窗口**必然可能从一行中间切开**（第一行是残的），所以从后往前找第一条能解析的；
+ * 文件还在被追加时最后一行也可能不完整，同样靠这个循环兜住。
+ */
+export function parseLastJsonLine(text) {
+  if (typeof text !== 'string' || text === '') return null
+  const lines = text.split('\n')
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim()
+    if (line === '') continue
+    try {
+      return JSON.parse(line)
+    } catch {
+      // 残行 / 半行：继续往前找。
+    }
+  }
+  return null
+}
+
+/**
+ * 前缀轮快照的一条记录（P2-11）。字段是面板与外部脚本的契约，抽成纯函数便于单测。
+ * 旧日志里没有 `step` ⇒ 读取方一律按「缺键 = 未知」处理。
+ */
+export function prefixTurnEntry({ sessionId, turn, step, at, enabled, proxyRunning, reasoningPrefix, contentPrefix, skipped }) {
+  return {
+    sessionId: String(sessionId ?? ''),
+    turn: Number(turn) || 0,
+    step: Number(step) || 1,
+    at: Number(at) || 0,
+    enabled: enabled === true,
+    proxyRunning: proxyRunning === true,
+    reasoningPrefix: String(reasoningPrefix ?? ''),
+    contentPrefix: String(contentPrefix ?? ''),
+    skipped: skipped === true,
+  }
 }
 
 /**
@@ -1319,10 +1571,36 @@ export function apply(ctx) {
    */
   const prefixLog = []
   const PREFIX_LOG_LIMIT = 200
+  /**
+   * 前缀实效（P0-1）：本会话**最近一次真正发出**的 provider/model。
+   * 来源是 `request/header` 事件的 `data.header.config`——与 DSH 自己的 modelSelection 投影同源，
+   * 是「这个会话到底走了哪条路由」的权威事实（见 @deepseek-ai/dsh-api-session-controller 的
+   * model-selection-projection.js）。只记内存、有上限；没发过请求的会话没有这一格 ⇒ 面板按「未知」处理。
+   */
+  const latestRouteBySession = new Map()
+  const LATEST_ROUTE_LIMIT = 200
+  /** 最近一次自动停用的时间（面板要显式告诉用户"实验被掐断了"，而不是静默）。 */
+  let reasoningAutoDisabledAt = null
   /** 前缀轮总数（不受环形 200 上限影响，面板「前缀轮」用）。 */
   let prefixTurnTotal = 0
   /** 代理 JSONL 日志默认落盘路径（面板可改；开关在 state 里）。 */
   const DEFAULT_PROXY_LOG = join(DATA_DIR, 'reasoning-proxy.jsonl')
+  /** 结构化结果行默认落盘路径（默认**开**；面板可改路径或显式关掉）。 */
+  const DEFAULT_RESULT_LOG = join(DATA_DIR, 'reasoning-result.jsonl')
+  /**
+   * 关联通道（F10）：代理与宿主**同进程**，但代理只拿到 HTTP 请求体，拿不到会话身份。
+   * 把会话身份确定性注入到出站请求已证不可行（llm/stream 是只读观测点、出站头是 settings 级静态值、
+   * agent/request 的返回值里没有头字段——见 `前缀功能-修复计划.md` §4）。
+   * 所以这里登记「即将发出的请求」的末条消息指纹，由代理按**唯一命中**认领；认不出就 null，绝不猜。
+   */
+  const pendingTrace = []
+  const PENDING_TRACE_LIMIT = 64
+  const PENDING_TRACE_TTL_MS = 5000
+  /** 会话最近一步的 turn/step（由 agent/pre-step 记；辅助调用没有它 ⇒ 关联时置 null）。 */
+  const latestStepBySession = new Map()
+  const LATEST_STEP_LIMIT = 200
+  /** 结果行尾部读取缓存（mtime + size 命中就复用；面板轮询不能每次都读盘）。 */
+  let lastResultCache = { path: '', mtimeMs: -1, size: -1, value: null }
   /** 用户点了「清空本轮填装」的会话：下一轮第一个请求跳过前缀（记进日志，标明 skipped）。 */
   const prefixSkipQueued = new Set()
   /** 本轮正在跳过前缀的会话 / 轮号：整轮都跳过（多步工具轮也不加），轮结束时清掉。 */
@@ -1349,7 +1627,7 @@ export function apply(ctx) {
       prefix: typeof config.prefix === 'string' ? config.prefix : process.env.DSH_PREFILL_SPIKE_PREFIX || '',
       contentPrefix: typeof config.contentPrefix === 'string' ? config.contentPrefix : process.env.DSH_PREFILL_SPIKE_CONTENT_PREFIX || '',
       port: Number.isInteger(config.port) && config.port > 0 ? config.port : envPort > 0 ? envPort : REASONING_DEFAULT.port,
-      providerId: typeof config.providerId === 'string' && config.providerId !== '' ? config.providerId : REASONING_DEFAULT.providerId,
+      providerId: reasoningProviderIdOf(config, REASONING_DEFAULT.providerId),
       modelId: typeof config.modelId === 'string' && config.modelId !== '' ? config.modelId : REASONING_DEFAULT.modelId,
       match: typeof config.match === 'string' ? config.match : '',
       shim: config.shim !== false,
@@ -1361,6 +1639,8 @@ export function apply(ctx) {
       // 原来是硬编码在代理 / 自动停用里的 8 与 3：搬到状态里，由面板暴露。
       maxEmittedCalls: Number.isInteger(config.maxEmittedCalls) ? config.maxEmittedCalls : 8,
       failureThreshold: Number.isInteger(config.failureThreshold) ? config.failureThreshold : 3,
+      // P1-8 实验模式：为 true 时连续失败只记账、不自动停用（批量实验不跑一半被掐断）。
+      ignoreFailures: config.ignoreFailures === true,
       // P1：回退链顺序 / 允许 passthrough / 清单包含排除。
       fallbackOrder: config.fallbackOrder === 'user-first' ? 'user-first' : config.fallbackOrder === 'system-first' ? 'system-first' : '',
       allowPassthrough: config.allowPassthrough !== false,
@@ -1376,11 +1656,25 @@ export function apply(ctx) {
         dumpFile: config.logging !== null && typeof config.logging === 'object' && typeof config.logging.dumpFile === 'string' ? config.logging.dumpFile : '',
         rawFile: config.logging !== null && typeof config.logging === 'object' && typeof config.logging.rawFile === 'string' ? config.logging.rawFile : '',
         contentFile: config.logging !== null && typeof config.logging === 'object' && typeof config.logging.contentFile === 'string' ? config.logging.contentFile : '',
+        // P0-2：结构化结果行（每请求一条）。**默认开** —— 否则跑完一批请求只能人工逐条开会话日志比对。
+        resultEnabled: config.logging !== null && typeof config.logging === 'object' && config.logging.resultEnabled === false ? false : true,
+        resultFile:
+          config.logging !== null && typeof config.logging === 'object' && typeof config.logging.resultFile === 'string' && config.logging.resultFile !== ''
+            ? config.logging.resultFile
+            : DEFAULT_RESULT_LOG,
+        // P2-12：是否收集返回的 reasoning_content（默认关；开了 verdict 才能判断「前缀是否被延续」）。
+        reasoningHead: config.logging !== null && typeof config.logging === 'object' && config.logging.reasoningHead === true,
+        // 正文片段（头 80 / 尾 40 字）是否落盘，默认开；关掉就只剩长度与状态。
+        snippets: config.logging !== null && typeof config.logging === 'object' && config.logging.snippets === false ? false : true,
       },
+      // P0-3 / P1-5：实验分臂与采样覆盖（留空 = 不干预）。
+      armId: typeof config.armId === 'string' ? config.armId : '',
+      runId: typeof config.runId === 'string' ? config.runId : '',
+      sampling: samplingOf(config.sampling),
     }
   }
   /** 每轮第一步记一条前缀快照：这一轮实际会发什么（含是否被跳过），面板按轮显示。 */
-  const recordPrefixTurn = (sessionId, turn) => {
+  const recordPrefixTurn = (sessionId, turn, step) => {
     if (typeof sessionId !== 'string' || sessionId === '') return
     const config = reasoningConfigOf()
     prefixTurnTotal += 1
@@ -1390,16 +1684,19 @@ export function apply(ctx) {
       skipTurnSession = sessionId
       skipTurnNumber = Number(turn) || 0
     }
-    const entry = {
+    const entry = prefixTurnEntry({
       sessionId,
-      turn: Number(turn) || 0,
+      turn,
+      // P2-11：补 step，让「计划发的」（本表）与「实际发的」（代理日志）能按 sessionId+turn+step 对上。
+      // 旧行没有这个键 ⇒ 读取方一律按「缺键 = 未知」处理，不做历史回填。
+      step,
       at: Date.now(),
       enabled: config.enabled,
       proxyRunning: reasoningActive !== null,
       reasoningPrefix: config.prefix,
       contentPrefix: config.contentPrefix,
       skipped,
-    }
+    })
     prefixLog.push(entry)
     if (prefixLog.length > PREFIX_LOG_LIMIT) prefixLog.shift()
     try {
@@ -1417,6 +1714,25 @@ export function apply(ctx) {
    * 但不会当作普通用户消息展示；代理看到历史里已有清单就不再每轮重复注入。
    * @returns {Promise<boolean>} 这一轮是否新注入了清单
    */
+  /**
+   * F15：每会话「最近一次装配丢弃了几份重复清单」（面板提示用；0 = 干净）。
+   * 为什么会有重复：`catalogMode=history` 把清单**永久**写进会话日志，之后切回 `each`
+   * 也不会撤销；工具集变化时 history 模式还会再补一条新的 ⇒ 装配里可能同时出现两份。
+   */
+  const catalogDuplicatesBySession = new Map()
+  const CATALOG_DUP_LIMIT = 200
+  /**
+   * 装配出口去重（F15）：把 `decision.messages` 里的重复清单删掉。
+   * 只改本次装配（in-flight），不动已落盘的会话历史 ⇒ 幂等且可逆。
+   * @returns {number} 丢弃的份数
+   */
+  const dropDuplicateCatalogs = (sessionId, decision) => {
+    const result = keepLatestToolCatalog(decision?.messages)
+    if (result.dropped === 0) return 0
+    decision.messages = result.messages
+    note({ seat: 'reasoning-prefix', catalog: 'duplicate-dropped', id: sessionId, dropped: result.dropped })
+    return result.dropped
+  }
   const ensureCatalogInjected = async (payload, decision) => {
     const config = reasoningConfigOf()
     if (config.enabled !== true || config.catalogMode !== 'history') return false
@@ -1553,6 +1869,10 @@ export function apply(ctx) {
    * 连续失败计数：前缀轮被上游拒绝 / 回退透传达到阈值 ⇒ 自动关实验并记审计。
    * ⚠️ 代理侧现在把透传分成三态（skipped = 用户点了「清空本轮填装」、ignored = 本轮本就不该加前缀、
    * passthrough = 前缀被上游拒绝），只有最后一种该算失败 —— 否则跳过/未命中几次就会把实验自己关掉。
+   *
+   * 返回值：`{ autoDisabled: true }` 表示这一次真的把实验关掉了。代理要把它写进结果行
+   * （**必须在写行之前**取用，否则那一行会漏掉「我这次是被谁关掉的」）。返回 `undefined` = 没关。
+   * @returns {{ autoDisabled: boolean }|undefined}
    */
   let reasoningFailures = 0
   const onReasoningOutcome = (outcome) => {
@@ -1563,16 +1883,26 @@ export function apply(ctx) {
     }
     reasoningFailures += 1
     // 连续失败阈值改为可调（状态里的 failureThreshold，默认 3）。
-    const threshold = Number.isInteger(reasoningConfigOf().failureThreshold) ? reasoningConfigOf().failureThreshold : 3
+    const currentConfig = reasoningConfigOf()
+    const threshold = Number.isInteger(currentConfig.failureThreshold) ? currentConfig.failureThreshold : 3
     if (reasoningFailures < Math.max(1, threshold)) return
     reasoningFailures = 0
+    // P1-8 实验模式：只记账不掐断，批量实验不再跑一半被自动停用。
+    if (currentConfig.ignoreFailures === true) {
+      note({ seat: 'reasoning-prefix', autoDisableSkipped: true, last: outcome })
+      return { autoDisabled: false }
+    }
     note({ seat: 'reasoning-prefix', autoDisable: true, last: outcome })
+    // P1-8：把「被自动停用」这件事留成可查状态 —— 以前只写进 50 条环形审计，面板看不见，
+    // 用户以为实验还在跑，其实后面的请求已经全部退化成对照组。
+    reasoningAutoDisabledAt = Date.now()
     try {
-      patchState({ ui: { reasoningPrefix: { ...reasoningConfigOf(), enabled: false } } })
+      patchState({ ui: { reasoningPrefix: { ...currentConfig, enabled: false } } })
     } catch (error) {
       note({ seat: 'reasoning-prefix', autoDisablePatch: String(error?.message ?? error) })
     }
     void applyReasoningState().catch((error) => note({ seat: 'reasoning-prefix', autoDisable: String(error?.message ?? error) }))
+    return { autoDisabled: true }
   }
   const ensureReasoningProxy = async () => {
     const config = reasoningConfigOf()
@@ -1603,6 +1933,17 @@ export function apply(ctx) {
           contentPrefix: current.contentPrefix,
           catalog: toolCatalogOf(),
           logging: current.logging,
+          // ── 阶段 B：结果行 / 分桶 / 采样 ──
+          // 结果行是**独立** sink（不动旧的 logging.enabled 那条 JSONL）；路径为空则代理不写文件。
+          resultEnabled: current.logging.resultEnabled,
+          resultFile: current.logging.resultEnabled ? current.logging.resultFile : '',
+          snippets: current.logging.snippets,
+          reasoningHeadEnabled: current.logging.reasoningHead,
+          armId: current.armId,
+          runId: current.runId,
+          sampling: current.sampling,
+          // ── F10 关联通道：代理按请求体认领「这请求属于哪个会话」；认不出返回 null，绝不猜 ──
+          resolveTrace: (body) => resolveTraceForBody(body),
         }
       },
       logger: {
@@ -1676,6 +2017,9 @@ export function apply(ctx) {
     reasoningRouteState.at = Date.now()
     const applied = { ok: route.ok === true, enabled: true, proxyRunning: true, port: active.port, ...route }
     reasoningLastApply = applied
+    // 走到这里说明实验是**开着**的（自动停用那条路径会先写 enabled:false，落在上面的分支），
+    // 所以用户重新启用时要清掉「上次被自动停用」的提示，否则面板会一直挂着一条过期的告警。
+    reasoningAutoDisabledAt = null
     return applied
   }
   /** 面板用的模型路由快照：写没写、在不在 llm-pi-ai 配置里、指向哪个端口。 */
@@ -1714,16 +2058,58 @@ export function apply(ctx) {
   }, 5000)
   warmLastTurnTimer.unref?.()
 
+  /**
+   * F10 关联通道：`llm/stream` 是全局 waterfall，payload 就是完整的请求（含 `sessionId` 与 `messages`，
+   * 见 dsh-agent-loop 组请求处 / dsh-llm 的 `waterfall(this, "llm/stream", options, …)`）。
+   *
+   * ⚠️ 这里是**只读观测点**：监听器拿到的 options 已经被 Object.freeze，且返回值必须原样是下游的流
+   * （返回改过的 options 无效）。所以只登记指纹，绝不改请求。
+   * 任何异常都吞掉 —— 观测失败绝不能影响真实请求。
+   */
+  ctx.on('llm/stream', (options, next) => {
+    try {
+      const sessionId = typeof options?.sessionId === 'string' ? options.sessionId : ''
+      const messages = Array.isArray(options?.messages) ? options.messages : []
+      if (sessionId !== '' && messages.length > 0) {
+        const step = latestStepBySession.get(sessionId)
+        pendingTrace.push({
+          sessionId,
+          turn: step === undefined ? null : step.turn,
+          step: step === undefined ? null : step.step,
+          hash: lastMessageHash(messages),
+          at: Date.now(),
+        })
+        while (pendingTrace.length > PENDING_TRACE_LIMIT) pendingTrace.shift()
+      }
+    } catch (error) {
+      note({ seat: 'reasoning-prefix', trace: String(error?.message ?? error) })
+    }
+    return next()
+  })
+
   // ── 座位 1（主）：根级 agent/pre-step，agent 直接来自 payload ──
   // 顺带维护"轮是否开着"，供轮次规则判断（见 reprimeAll）。
   ctx.on(
     'agent/pre-step',
     async (payload, next) => {
       if (typeof payload?.agent?.id === 'string') openTurn.add(payload.agent.id)
+      // F10：记下本会话最近一步的 turn/step —— 代理侧的 llm/stream 登记要用它给结果行补轮次。
+      // 用 pre-step 而不是 agent/request：这里的 turn/step 一定有（agent/request 的 payload 只有 {turn,step,signal}，
+      // 但 pre-step 是本插件已经在用的、带 agent.id 的稳定钩子）。
+      if (typeof payload?.agent?.id === 'string') {
+        // 先删再写：Map 插入序当 LRU 用 —— 老会话重新走一步要排到队尾，否则 >200 会话时可能先淘汰活跃会话。
+        latestStepBySession.delete(payload.agent.id)
+        latestStepBySession.set(payload.agent.id, { turn: Number(payload.turn) || 0, step: Number(payload.step) || 1, at: Date.now() })
+        while (latestStepBySession.size > LATEST_STEP_LIMIT) {
+          const oldest = latestStepBySession.keys().next().value
+          if (oldest === undefined) break
+          latestStepBySession.delete(oldest)
+        }
+      }
       // 前缀日志：每轮第一步记一条（面板逐轮微调用；日志里也标出这轮是否被「清空填装」跳过）。
       if (Number(payload?.step) === 1 && typeof payload?.agent?.id === 'string') {
         try {
-          recordPrefixTurn(payload.agent.id, payload?.turn)
+          recordPrefixTurn(payload.agent.id, payload?.turn, payload?.step)
         } catch (error) {
           note({ seat: 'reasoning-prefix', logTurn: String(error?.message ?? error) })
         }
@@ -1734,6 +2120,23 @@ export function apply(ctx) {
         await ensureCatalogInjected(payload, decision)
       } catch (error) {
         note({ seat: 'reasoning-prefix', catalog: 'inject-failed', error: String(error?.message ?? error) })
+      }
+      // F15：装配出口去重（放在注入之后 —— 新注入的是 prepend 的，去重保留第一份就是保留最新那份）。
+      try {
+        const agentId = typeof payload?.agent?.id === 'string' ? payload.agent.id : ''
+        if (agentId !== '') {
+          const dropped = dropDuplicateCatalogs(agentId, decision)
+          // 每次都覆盖：下一次干净的装配会把计数归 0，面板不会挂着过期的提示。
+          catalogDuplicatesBySession.delete(agentId)
+          catalogDuplicatesBySession.set(agentId, dropped)
+          while (catalogDuplicatesBySession.size > CATALOG_DUP_LIMIT) {
+            const oldest = catalogDuplicatesBySession.keys().next().value
+            if (oldest === undefined) break
+            catalogDuplicatesBySession.delete(oldest)
+          }
+        }
+      } catch (error) {
+        note({ seat: 'reasoning-prefix', catalog: 'dedupe-failed', error: String(error?.message ?? error) })
       }
       return handle(payload, decision, 'root')
     },
@@ -1772,6 +2175,18 @@ export function apply(ctx) {
         if (Number.isFinite(turn) && file !== undefined) recordLastTurn(session.id, turn, statSync(file))
       } catch {
         // 落盘时序 / 日志缺失都不影响功能。
+      }
+    }
+    // 前缀实效（P0-1）：request/header 是「本会话实际用了哪个 provider/model」的权威来源。
+    // 必须放在下面那个 early return 之前 —— 否则闸门模块没就位时这条记录会被一起跳过。
+    if (event?.type === 'request/header' && typeof session?.id === 'string') {
+      if (noteSessionRouteFromEvent(latestRouteBySession, session.id, event, Date.now())) {
+        // Map 按插入序淘汰最旧的一条：目标是内存有界，不追求精确 LRU。
+        while (latestRouteBySession.size > LATEST_ROUTE_LIMIT) {
+          const oldest = latestRouteBySession.keys().next().value
+          if (oldest === undefined) break
+          latestRouteBySession.delete(oldest)
+        }
       }
     }
     const gate = gateCache.module
@@ -1956,6 +2371,9 @@ export function apply(ctx) {
         hasSettings: settings !== undefined,
         hasApiKey: await reasoningKeyReady(),
         failures: reasoningFailures,
+        // P1-8：最近一次自动停用的时间。面板要显式告诉用户"实验被掐断了"，而不是静默换成对照组。
+        autoDisabledAt: reasoningAutoDisabledAt,
+        ignoreFailures: config.ignoreFailures,
         route: reasoningRouteOf(settings),
         applied: reasoningLastApply,
         audit: reasoningActive !== null ? (reasoningActive.proxy.audit?.() ?? []).slice(-10) : [],
@@ -2033,6 +2451,12 @@ export function apply(ctx) {
         match: config.match,
         maxEmittedCalls: config.maxEmittedCalls,
         failureThreshold: config.failureThreshold,
+        // P1-8 实验模式：忽略连续失败计数（批量实验不被自动掐断）。
+        ignoreFailures: config.ignoreFailures,
+        // P0-3 / P1-5：分臂与采样覆盖（sampling 为 null = 不干预）。
+        armId: config.armId,
+        runId: config.runId,
+        sampling: config.sampling,
         fallbackOrder: config.fallbackOrder,
         allowPassthrough: config.allowPassthrough,
         catalogInclude: config.catalogInclude,
@@ -2042,6 +2466,11 @@ export function apply(ctx) {
         loggingDump: String(config.logging.dumpFile ?? '') !== '',
         loggingRaw: String(config.logging.rawFile ?? '') !== '',
         loggingContent: String(config.logging.contentFile ?? '') !== '',
+        // P0-2 / P2-12：结果行（默认开）与它的两个附属开关。
+        loggingResultEnabled: config.logging.resultEnabled,
+        loggingResultFile: config.logging.resultFile,
+        loggingReasoningHead: config.logging.reasoningHead,
+        loggingSnippets: config.logging.snippets,
       }
     }
     /** P0：代理 JSONL 日志状态（开关 / 路径 / 是否已落盘 / 文件大小）。 */
@@ -2065,6 +2494,52 @@ export function apply(ctx) {
         dumpFile: config.logging.dumpFile,
         rawFile: config.logging.rawFile,
         contentFile: config.logging.contentFile,
+        resultEnabled: config.logging.resultEnabled,
+        resultFile: config.logging.resultFile,
+        reasoningHead: config.logging.reasoningHead,
+        snippets: config.logging.snippets,
+      }
+    }
+    /**
+     * F10：把「这请求属于哪个会话」交给代理。代理只拿到 HTTP 请求体，宿主侧才知道 sessionId；
+     * 靠 llm/stream 登记 + 末条消息指纹**唯一命中**认领，认不出返回 null（代理按「无会话身份」记账）。
+     */
+    const resolveTraceForBody = (body) => {
+      const trace = matchPendingTrace(pendingTrace, body, Date.now(), PENDING_TRACE_TTL_MS)
+      if (trace === null) return null
+      return { sessionId: trace.sessionId, turn: trace.turn, step: trace.step, confidence: trace.confidence }
+    }
+    /**
+     * F14：读结果行的**最后一条**，只回面板要的 6 个字段（正文片段绝不上行）。
+     * 只读文件尾部 8KB + 按 mtime/size 缓存 —— 面板是轮询的，不能每次都读整份文件。
+     */
+    const readLastResultRow = (config) => {
+      if (config.logging.resultEnabled !== true) return null
+      const file = config.logging.resultFile
+      if (typeof file !== 'string' || file === '') return null
+      try {
+        const stat = statSync(file)
+        const cached = lastResultCache
+        if (cached.path === file && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.value
+        const start = Math.max(0, stat.size - 8192)
+        const length = stat.size - start
+        let text = ''
+        if (length > 0) {
+          const buffer = Buffer.alloc(length)
+          const fd = openSync(file, 'r')
+          try {
+            readSync(fd, buffer, 0, length, start)
+          } finally {
+            closeSync(fd)
+          }
+          text = buffer.toString('utf8')
+        }
+        const value = resultRowSummaryOf(parseLastJsonLine(text))
+        lastResultCache = { path: file, mtimeMs: stat.mtimeMs, size: stat.size, value }
+        return value
+      } catch {
+        // 文件还没写过 / 读不了：面板按「没有结果行」处理，不是错误。
+        return null
       }
     }
     /** @param {{ sessionId?: string }} [scope] 面板会把当前会话带进来：日志 / 跳过状态按会话给。 */
@@ -2093,6 +2568,15 @@ export function apply(ctx) {
           skipQueued: prefixSkipQueued.has(sessionId),
           skipping: skipTurnSession === sessionId && skipTurnSession !== '',
           ready: config.enabled && reasoningActive !== null && route.ok === true && route.inConfig === true && !(skipTurnSession === sessionId && skipTurnSession !== ''),
+          // P0-1：本会话**实际**用的路由是不是前缀路由。null = 未知（本会话还没发过请求）⇒ 客户端不得据此告警。
+          // 刻意不动上面的 ready：ready 是「实验能力就绪」，sessionRoute 是「本会话有没有真的在跑」，
+          // 合并会让所有尚未切换模型的会话都显示未就绪，把「没在用」误报成「坏了」。
+          sessionRoute: sessionRouteOf(latestRouteBySession.get(sessionId), config.providerId),
+          // F14：最近一条结构化结果行（只有 6 个字段，不含正文片段）。没有就 null，面板不渲染。
+          lastResult: readLastResultRow(config),
+          // F15：最近一次装配丢弃了几份重复清单（0 = 干净）。清单在 history 模式下会永久写进会话，
+          // 切回 each 也不撤销 ⇒ 面板要把这件事说出来，而不是让用户对着两份清单猜。
+          catalogDuplicates: sessionId === '' ? 0 : (catalogDuplicatesBySession.get(sessionId) ?? 0),
         },
       }
     }
@@ -2188,7 +2672,17 @@ export function apply(ctx) {
         if (exclude === null) return reject('清单排除要是字符串数组')
         patch.catalogExclude = exclude
       }
-      if (body.loggingEnabled !== undefined || body.loggingFile !== undefined || body.loggingDump !== undefined || body.loggingRaw !== undefined || body.loggingContent !== undefined) {
+      if (
+        body.loggingEnabled !== undefined ||
+        body.loggingFile !== undefined ||
+        body.loggingDump !== undefined ||
+        body.loggingRaw !== undefined ||
+        body.loggingContent !== undefined ||
+        body.loggingResultEnabled !== undefined ||
+        body.loggingResultFile !== undefined ||
+        body.loggingReasoningHead !== undefined ||
+        body.loggingSnippets !== undefined
+      ) {
         const logging = { ...(base.logging !== null && typeof base.logging === 'object' ? base.logging : {}) }
         if (body.loggingEnabled !== undefined) {
           if (typeof body.loggingEnabled !== 'boolean') return reject('日志开关要是布尔值')
@@ -2209,6 +2703,28 @@ export function apply(ctx) {
           if (body[field] === true) logging[key] = join(DATA_DIR, suffix)
           else delete logging[key]
         }
+        // P0-2：结构化结果行（默认开）。显式 false 要能落盘 —— 否则重演「打开过就关不掉」。
+        if (body.loggingResultEnabled !== undefined) {
+          if (typeof body.loggingResultEnabled !== 'boolean') return reject('结果行开关要是布尔值')
+          logging.resultEnabled = body.loggingResultEnabled
+        }
+        // 空串 = 回到默认路径（不写死路径，便于换机器）。
+        if (body.loggingResultFile !== undefined) {
+          if (typeof body.loggingResultFile !== 'string') return reject('结果行路径要是字符串')
+          const file = body.loggingResultFile.trim()
+          if (file === '') delete logging.resultFile
+          else logging.resultFile = file.slice(0, 300)
+        }
+        // P2-12：收集 reasoning_content（默认关）。
+        if (body.loggingReasoningHead !== undefined) {
+          if (typeof body.loggingReasoningHead !== 'boolean') return reject('思考通道开关要是布尔值')
+          logging.reasoningHead = body.loggingReasoningHead
+        }
+        // 正文片段（头 80 / 尾 40 字，默认开）。
+        if (body.loggingSnippets !== undefined) {
+          if (typeof body.loggingSnippets !== 'boolean') return reject('正文片段开关要是布尔值')
+          logging.snippets = body.loggingSnippets
+        }
         patch.logging = logging
       }
       if (body.maxEmittedCalls !== undefined) {
@@ -2218,6 +2734,33 @@ export function apply(ctx) {
       if (body.failureThreshold !== undefined) {
         if (!isInt(body.failureThreshold, 1, 10)) return reject('连续失败阈值要 1..10 的整数')
         patch.failureThreshold = body.failureThreshold
+      }
+      // P1-8 实验模式：true = 连续失败只记账，不自动停用实验。
+      if (body.ignoreFailures !== undefined) {
+        if (typeof body.ignoreFailures !== 'boolean') return reject('实验模式要是布尔值')
+        patch.ignoreFailures = body.ignoreFailures
+      }
+      // P0-3：实验分臂（空串 = 显式清空）。
+      if (body.armId !== undefined) {
+        if (typeof body.armId !== 'string') return reject('armId 要是字符串')
+        patch.armId = body.armId.trim().slice(0, 60)
+      }
+      if (body.runId !== undefined) {
+        if (typeof body.runId !== 'string') return reject('runId 要是字符串')
+        patch.runId = body.runId.trim().slice(0, 60)
+      }
+      // P1-5 采样覆盖：成员可以是 null（= 该项不干预）；整体 null 或成员全不合法 ⇒ 清空覆盖。
+      // 注意「留空」不是「设为 0」——0 是合法温度，必须能表达。
+      if (body.sampling !== undefined) {
+        if (body.sampling !== null && (typeof body.sampling !== 'object' || Array.isArray(body.sampling))) return reject('采样覆盖要是对象或 null')
+        const raw = body.sampling === null ? {} : body.sampling
+        for (const [key, min, max] of [['temperature', 0, 2], ['topP', 0, 1]]) {
+          const value = raw[key]
+          if (value === undefined || value === null) continue
+          if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) return reject(key + ' 要 ' + min + '..' + max + ' 的数字（留空 = 不干预）')
+        }
+        if (raw.seed !== undefined && raw.seed !== null && !isInt(raw.seed, 0, 4294967295)) return reject('seed 要 0..4294967295 的整数（留空 = 不干预）')
+        patch.sampling = samplingOf(raw) ?? {}
       }
       if (Object.keys(patch).length === 0) return reject('没有可写字段')
       patchState({ ui: { reasoningPrefix: { ...base, ...patch } } })
@@ -2291,6 +2834,9 @@ export function apply(ctx) {
           prefix: typeof body.prefix === 'string' ? body.prefix.slice(0, 2000) : '',
           contentPrefix: typeof body.contentPrefix === 'string' ? body.contentPrefix.slice(0, 2000) : '',
           ...(typeof body.match === 'string' && body.match !== '' ? { match: body.match.slice(0, 200) } : {}),
+          // P2-10：保存时**快照当前全量旋钮**（服务端取，面板不用改协议）。
+          // 目的就是「还原出产生某批数据的配置」—— 所以取的是当下的真实配置，而不是另填一份。
+          ...presetKnobsOf(reasoningConfigOf()),
         }
         const next = [...list.filter((item) => item.name !== name), entry].slice(-30)
         patchState({ reasoningPrefixPresets: next })
@@ -2314,6 +2860,9 @@ export function apply(ctx) {
               prefix: entry.prefix,
               contentPrefix: entry.contentPrefix,
               ...(typeof entry.match === 'string' && entry.match !== '' ? { match: entry.match } : {}),
+              // P2-10：预设带的旋钮一起恢复。旧预设没有这些键 ⇒ presetKnobsOf 返回 {} ⇒ 什么都不改，
+              // 与本次改动前完全一致（不会把用户当前的旋钮清成 undefined）。
+              ...presetKnobsOf(entry),
             },
           },
         })
@@ -2516,6 +3065,10 @@ export function apply(ctx) {
         sessionId,
         // 旧版「本会话在用预填装」的表（值：'default' 等标签；客户端只看有没有字符串）。
         prefill: cell(state?.prefill),
+        // P0-1 前缀实效：本会话**实际**用的路由是不是前缀路由。刻意放顶层——不要塞进下面的 ui，
+        // summary-route 的既有测试对 ui 做 deepEqual。null = 本会话还没发过请求 = 未知，
+        // 客户端拿到 null 时不得告警、不得染红。
+        sessionRoute: sessionId === '' ? null : sessionRouteOf(latestRouteBySession.get(sessionId), reasoningProviderIdOf(state?.ui?.reasoningPrefix, REASONING_DEFAULT.providerId)),
         // 闸门模式：'pure'（严格档 / 纯净 / 接管）| 'replace'（替换系统提示）；'pass' 省略 = 默认不改。
         gate: (() => {
           const mode = sessionId !== '' && isObject(legacy?.gate) ? legacy.gate[sessionId] : undefined

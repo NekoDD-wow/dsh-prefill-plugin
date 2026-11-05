@@ -76,10 +76,52 @@ test('sanitizeUi：清单三个口径（注入方式 / 详略 / 位置）取值�
 test('sanitizeUi：代理日志开关 / 路径白名单校验（P0）', () => {
   const good = sanitizeUi({ reasoningPrefix: { logging: { enabled: true, file: 'D:/x/proxy.jsonl' } } })
   assert.deepEqual(good, { reasoningPrefix: { logging: { enabled: true, file: 'D:/x/proxy.jsonl' } } })
+  // F5：显式 false 必须落盘 —— 以前只放行 true，于是「打开过日志再想关掉」做不到
+  // （面板提交的 false 被丢弃，盘上留着 true）。读侧语义不变：缺省仍是关。
   const off = sanitizeUi({ reasoningPrefix: { logging: { enabled: false, file: 'D:/x/proxy.jsonl' } } })
-  assert.deepEqual(off, { reasoningPrefix: { logging: { file: 'D:/x/proxy.jsonl' } } })
+  assert.deepEqual(off, { reasoningPrefix: { logging: { enabled: false, file: 'D:/x/proxy.jsonl' } } })
   const bad = sanitizeUi({ reasoningPrefix: { logging: { enabled: 'yes', file: 42 } } })
   assert.deepEqual(bad, { reasoningPrefix: {} })
+})
+
+test('sanitizeUi：实验模式（ignoreFailures）可持久，非布尔值被丢', () => {
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { ignoreFailures: true } }), { reasoningPrefix: { ignoreFailures: true } })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { ignoreFailures: false } }), { reasoningPrefix: { ignoreFailures: false } })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { ignoreFailures: 'yes' } }), { reasoningPrefix: {} })
+})
+
+// ── 阶段 B：结果行 / 分桶 / 采样 的白名单（漏一个就是「保存提示成功、值不落盘」） ──
+test('sanitizeUi：结果行开关默认开、显式 false 可持久（否则重演「打开过就关不掉」）', () => {
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { resultEnabled: false } } }), { reasoningPrefix: { logging: { resultEnabled: false } } })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { resultEnabled: true } } }), { reasoningPrefix: { logging: { resultEnabled: true } } })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { resultEnabled: 'yes' } } }), { reasoningPrefix: {} })
+})
+
+test('sanitizeUi：结果行路径 / reasoning 收集 / 正文片段三个键可往返', () => {
+  const out = sanitizeUi({ reasoningPrefix: { logging: { resultFile: 'D:/x/result.jsonl', reasoningHead: true, snippets: false } } })
+  assert.deepEqual(out, { reasoningPrefix: { logging: { resultFile: 'D:/x/result.jsonl', reasoningHead: true, snippets: false } } })
+  // 非布尔 / 非字符串被丢，不会写坏状态。
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { reasoningHead: 1, snippets: 'no', resultFile: 42 } } }), { reasoningPrefix: {} })
+})
+
+test('sanitizeUi：armId / runId 截到 60 字；非字符串被丢', () => {
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { armId: 'A1', runId: 'r-7' } }), { reasoningPrefix: { armId: 'A1', runId: 'r-7' } })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { armId: 'x'.repeat(80) } }), { reasoningPrefix: { armId: 'x'.repeat(60) } })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { armId: 7, runId: [] } }), { reasoningPrefix: {} })
+  // 空串 = 显式清空，要落盘（不然「取消分臂」做不到）。
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { armId: '' } }), { reasoningPrefix: { armId: '' } })
+})
+
+test('sanitizeUi：采样覆盖只留合法成员；null / 全非法 ⇒ 存成 {}（= 不干预，且能覆盖掉旧值）', () => {
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { sampling: { temperature: 0.3, topP: 0.9, seed: 42 } } }), { reasoningPrefix: { sampling: { temperature: 0.3, topP: 0.9, seed: 42 } } })
+  // 0 是合法温度：不能被当成「没设」而丢掉。
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { sampling: { temperature: 0 } } }), { reasoningPrefix: { sampling: { temperature: 0 } } })
+  // 越界成员被丢；剩下的仍然保留。
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { sampling: { temperature: 5, seed: 7 } } }), { reasoningPrefix: { sampling: { seed: 7 } } })
+  // 整体 null / 成员全非法 ⇒ {}（显式清空覆盖，而不是「键不存在导致旧值留在盘上」）。
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { sampling: null } }), { reasoningPrefix: { sampling: {} } })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { sampling: { temperature: 99 } } }), { reasoningPrefix: { sampling: {} } })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { sampling: [] } }), { reasoningPrefix: {} })
 })
 
 test('前缀模板变量：date/time/model 展开，认不出的原样保留', () => {
