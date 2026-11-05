@@ -18,6 +18,15 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
     const h = React.createElement
+    // 官方 2.2rc1 的客户端模块表里有 `react-dom`（web 端静态模块表：react / react-dom / react-dom/client）。
+    // 只有把 fixed 浮层 portal 到 document.body，才能不受活跃会话 .composerSeat 的 will-change 包含块影响；
+    // 老宿主没有这个模块就退回原位渲染（可选依赖，缺了不报错）。
+    let ReactDOM = null
+    try {
+      ReactDOM = require('react-dom')
+    } catch {
+      ReactDOM = null
+    }
 
     // <motion>
     /**
@@ -40,6 +49,13 @@ window.__ModuleLoader__.load({
       spring: 'cubic-bezier(.34,1.56,.64,1)', // 落地、小点弹出（带轻微回弹）
       stagger: 30,
     }
+    // 手机 / 窄屏阈值（2026-11：手机适配）。放在 <motion> 段里是因为 cardGeometry 用它，
+    // 而 tests/motion.test.mjs 会把这一段单独切出来跑。
+    const PHONE_MAX = 480
+    const NARROW_MAX = 820
+    // 手机卡片：官方顶栏 48px（主区 box y=48）+ 8px 呼吸；底部 8px 同样留白。
+    const PHONE_CARD_TOP = 56
+    const PHONE_CARD_INSET = 8
     const MOTION_LEVELS = ['full', 'lite', 'off']
     const MOTION_EVENT = 'dsh-prefill:motion'
     const REDUCE_QUERY = '(prefers-reduced-motion: reduce)'
@@ -263,18 +279,44 @@ window.__ModuleLoader__.load({
      * 高度 = min(70vh, 输入框上方剩余空间 − 20px)，至少 200。**高度固定**（P1-2）：不随小节内容变，
      * 内容区自己滚动 ⇒ 底部锚定时切小节 / 套预设 / 撤销条出现，顶边都不动。窄屏（<820）同一套。
      * box = 输入框外框 { top, left, width } 或 null；inputTop = 找不到外框时的输入框顶。
+     * touchScreen（第 5 参，默认 false）= 当前是手机 / 触屏设备：只有**触屏**的矮视口才切「顶栏之下的浮层（模态）」；
+     * 桌面把窗口拉矮（如 1440×520）只夹 cardTop ≥ 56，形态与版式不变。
      */
-    function cardGeometry(vw, vh, box, inputTop) {
+    function cardGeometry(vw, vh, box, inputTop, touchScreen) {
       const top = box?.top ?? (Number.isFinite(inputTop) ? inputTop : vh - 160)
       const center = box ? box.left + box.width / 2 : vw / 2
+      const touch = touchScreen === true
+      // 手机（≤480）：卡片改成「官方顶栏之下的全宽浮层」。
+      // 原因（实测 320×658 / 412×839）：原来按输入框上方剩余空间算高度，手机竖屏下
+      // 顶边 y≈9 会盖住官方 48px 顶栏（抽屉开关），内容区只剩 62–203px；
+      // 改成整屏高度后内容区可用 500+ px，且不再与顶栏抢位置。
+      if (vw > 0 && vw <= PHONE_MAX) {
+        const width = Math.max(240, vw - PHONE_CARD_INSET * 2)
+        // 矮视口（横屏 / 软键盘弹出）也不能把顶边推到 56 以上：下限给 120，宁可内容区小一点。
+        const height = Math.max(120, vh - PHONE_CARD_TOP - PHONE_CARD_INSET)
+        return { width, left: PHONE_CARD_INSET, bottom: PHONE_CARD_INSET, maxHeight: height, height, narrow: true, phone: true, short: false, vw, vh }
+      }
       const width = Math.round(Math.min(Math.max(560, vw * 0.62), 920, vw - 24))
       const left = Math.round(Math.min(Math.max(12, center - width / 2), vw - 12 - width))
+      const short = vh < 560
+      // 触屏矮视口（横屏手机 915×412）：输入框上方放不下可用高度的卡片（docked 只剩 ~137px），
+      // 改按「顶栏之下的浮层 + 遮罩」处理。**必须带 touch 门**：桌面矮窗口不属于这一类。
+      if (short && touch) {
+        const height = Math.max(160, vh - PHONE_CARD_TOP - PHONE_CARD_INSET)
+        return { width, left, bottom: PHONE_CARD_INSET, maxHeight: height, height, narrow: true, phone: false, short: true, vw, vh }
+      }
       const bottom = Math.round(vh - top + 10)
-      const maxHeight = Math.round(Math.max(200, Math.min(vh * 0.7, top - 20)))
-      return { width, left, bottom, maxHeight, height: maxHeight, narrow: vw < 820, vw }
+      // 窄屏（481–819）与矮视口：保证 cardTop ≥ 56（剩余空间不够就矮一点）；桌面宽窗口（≥820 且高度够）保持原公式。
+      const narrow = vw < NARROW_MAX
+      const clampTop = narrow || short
+      const room = Math.max(120, Math.round(top - 10 - PHONE_CARD_TOP))
+      const maxHeight = clampTop
+        ? Math.max(Math.min(200, room), Math.round(Math.min(vh * 0.7, room)))
+        : Math.round(Math.max(200, Math.min(vh * 0.7, top - 20)))
+      return { width, left, bottom, maxHeight, height: maxHeight, narrow, phone: false, short: false, vw, vh }
     }
     function sameGeometry(a, b) {
-      return a !== null && b !== null && ['width', 'left', 'bottom', 'maxHeight', 'height', 'narrow', 'vw'].every((key) => a[key] === b[key])
+      return a !== null && b !== null && ['width', 'left', 'bottom', 'maxHeight', 'height', 'narrow', 'phone', 'short', 'vw', 'vh'].every((key) => a[key] === b[key])
     }
     /** 入场 / 收起的 transform-origin：对准芯片中心（相对卡片左上角，x 夹在卡片宽度内）；没有芯片 ⇒ 底边中点。 */
     function cardOrigin(chip, geo, vh) {
@@ -4719,6 +4761,84 @@ window.__ModuleLoader__.load({
       tocDefaultSandbox: 'New-session default · Sandbox',
     })
 
+    // <viewport>
+    /**
+     * 手机窄屏适配（2026-11，DSH 0.2.2-rc1）。
+     *
+     * 2.2rc1 起官方在 <768px 把侧栏变成模态抽屉、主区整宽，并在 coarse pointer 上按触控放大控件；
+     * 插件自己的浮层（悬浮卡片）/ 主区页面 / 输入区芯片此前只按「桌面窄屏 768–819」设计，
+     * 手机竖屏（320–430 CSS px）下卡片顶边会盖住官方顶栏、内容区只剩 60–200px，
+     * 输入区芯片长文案还会把工具行挤爆（320px 下「纯净」被裁掉）。这里补三档只读判定。
+     *
+     *   phone   ≤480：手机竖屏（卡片改「顶栏之下的全宽浮层」、芯片收短、TOC/标签单行横滑）
+     *   narrow  <820：既有的窄屏分支（与改前一致：卡片标签横排、工作台隐藏拖柄）
+     *   coarse  ：触控指针（hover 不可用；可点控件按 ≥32–34px 兜底）
+     *
+     * 只读 window，不写任何别人的 DOM；resize / 转屏时广播一次，组件各自 useViewport() 订阅。
+     */
+    const VIEWPORT_EVENT = 'dsh-prefill:viewport'
+    function readViewport() {
+      const vw = typeof window === 'undefined' ? 1440 : Math.round(Number(window.innerWidth) || 0)
+      const vh = typeof window === 'undefined' ? 900 : Math.round(Number(window.innerHeight) || 0)
+      let coarse = false
+      try {
+        coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches === true
+      } catch {
+        coarse = false
+      }
+      return { vw, vh, phone: vw > 0 && vw <= PHONE_MAX, narrow: vw > 0 && vw < NARROW_MAX, coarse }
+    }
+    const viewportCache = { snap: null, wired: false }
+    /** 当前视口快照（模块级缓存：同一尺寸每次拿到同一对象，React 可以直接 bail out）。 */
+    function viewportSnapshot() {
+      if (viewportCache.snap === null) viewportCache.snap = readViewport()
+      return viewportCache.snap
+    }
+    function onViewportResize() {
+      const next = readViewport()
+      const prev = viewportCache.snap
+      if (prev !== null && prev.vw === next.vw && prev.vh === next.vh && prev.coarse === next.coarse) return
+      viewportCache.snap = next
+      try {
+        window.dispatchEvent(new CustomEvent(VIEWPORT_EVENT))
+      } catch {
+        // 广播失败不该拖垮 UI（老环境没有 CustomEvent）。
+      }
+    }
+    function wireViewport() {
+      if (viewportCache.wired) return
+      viewportCache.wired = true
+      try {
+        window.addEventListener('resize', onViewportResize)
+        window.addEventListener('orientationchange', onViewportResize)
+      } catch {
+        // 没有 window（测试 / SSR）时什么都不做。
+      }
+    }
+    /** 组件订阅视口快照（hook 必须在早退之前调用）。 */
+    function useViewport() {
+      const [snap, setSnap] = React.useState(viewportSnapshot)
+      React.useEffect(() => {
+        wireViewport()
+        const onChange = () => {
+          const next = viewportSnapshot()
+          // 触控尺寸跟「手机或触屏设备」走：横屏手机 / 触屏平板宽度 >480 也要点得中（官方 2.2rc1 的
+          // coarse 适配同理：输入 16px、控件放大）。applyTouchStyles 是函数声明，挂载时已初始化。
+          applyTouchStyles(next.phone || (next.coarse === true && next.vw <= 1024))
+          setSnap(next)
+        }
+        window.addEventListener(VIEWPORT_EVENT, onChange)
+        // 挂载时补一次：模块级缓存可能是别的组件在别的尺寸下拍的。
+        onChange()
+        return () => window.removeEventListener(VIEWPORT_EVENT, onChange)
+      }, [])
+      return snap
+    }
+    /** 手机上的可点控件兜底：紧凑控件（24–28px）抬到 34px，别让手指点不中。 */
+    const TAP = { minHeight: 34, minWidth: 34 }
+    const tapStyle = (phone, size = 34) => (phone ? { minHeight: size, minWidth: size } : null)
+    // </viewport>
+
     const S = {
       page: {
         display: 'flex',
@@ -5320,6 +5440,25 @@ window.__ModuleLoader__.load({
      */
     function PrefillSection(props) {
       const t = props.t ?? ((key) => key)
+      // 手机窄屏（<480，2026-11 适配）：页宽只有 320–430，TOC 折行、右侧按钮被挤到单独一行。
+      // 这里统一给页面一套「手机参数」：TOC 单行横滑、KPI 两列、按钮 ≥34px、左右留白 16px。
+      const pageView = useViewport()
+      const phone = pageView.phone
+      const pageStyle = phone ? { ...S.page, padding: '0 16px calc(32px + env(safe-area-inset-bottom, 0px))' } : S.page
+      const pageColumnStyle = phone ? { ...S.pageColumn, gap: 12, paddingTop: 16 } : S.pageColumn
+      const pageTocStyle = phone
+        ? { ...S.toc, flexWrap: 'nowrap', gap: 2, overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', marginTop: -8, paddingTop: 8 }
+        : S.toc
+      // 触屏（含横屏手机 / 触屏平板）按触控尺寸；排版形态（单行横滑）仍只跟 phone 走。
+      const pageTouch = phone || pageView.coarse === true
+      const pageTocLinkStyle = pageTouch ? { ...S.tocLink, flex: '0 0 auto', minHeight: 36, padding: '8px 10px', fontSize: 13, whiteSpace: 'nowrap' } : S.tocLink
+      const pageKpiBarStyle = phone ? { ...S.kpiBar, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' } : S.kpiBar
+      const pageBtn = pageTouch ? { ...S.button, minHeight: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } : S.button
+      const pageInput = pageTouch ? { ...S.input, minHeight: 36, fontSize: 16 } : S.input
+      const pageSelectInput = pageTouch ? { ...S.selectInput, minHeight: 36, fontSize: 16 } : S.selectInput
+      const pageNumberInput = pageTouch ? { ...S.numberInput, minHeight: 34, fontSize: 16 } : S.numberInput
+      const pageSessionRow = phone ? { ...S.sessionRow, flexWrap: 'wrap', alignItems: 'flex-start' } : S.sessionRow
+      const pageChipRow = phone ? { ...S.chipRow, flexWrap: 'wrap' } : S.chipRow
       // PR D（#45 第 25 条）：冒号跟着语言走（中文全角 / 英文半角）。t 缺 key 时回退全角。
       const colonText = t('labelColon')
       const colon = typeof colonText === 'string' && colonText !== '' && colonText !== 'labelColon' ? colonText : '：'
@@ -5510,7 +5649,21 @@ window.__ModuleLoader__.load({
       }
       // v1：TOC 吸顶 + scroll-spy（点目录 / 滚动都让 aria-current 跟上）。
       const pageRef = React.useRef(null)
+      const tocRef = React.useRef(null)
       const [tocActive, setTocActive] = React.useState(PREFILL_TOC[0].anchor)
+      // 手机：TOC 单行横滑后，当前节可能落在可视区外 —— 切节时把它滚到中间（只滚 TOC 自己，block: nearest 不带动页面）。
+      React.useEffect(() => {
+        if (phone !== true) return
+        const host = tocRef.current
+        if (host === null || host === undefined) return
+        const node = host.querySelector(`[data-prefill-toc-link="${tocActive}"]`)
+        if (node === null || typeof node.scrollIntoView !== 'function') return
+        try {
+          node.scrollIntoView({ block: 'nearest', inline: 'center' })
+        } catch {
+          // 老浏览器没有 options 形态：滚不动就算了（不抛）。
+        }
+      }, [phone, tocActive])
       const onPageScroll = (event) => {
         const next = tocActiveOf(event?.currentTarget ?? pageRef.current)
         if (next !== '') setTocActive((current) => (current === next ? current : next))
@@ -5944,7 +6097,7 @@ window.__ModuleLoader__.load({
           h('div', { style: S.note }, t('errDetailReason') + '：', h('code', null, error.detail || t('errDetailUnknown'))),
           h('div', { style: S.note }, t('errDetailAt') + '：' + (error.at ? new Date(error.at).toLocaleTimeString() : '—')),
           h('div', { style: S.note }, t('errDetailHint')),
-          h('div', { style: S.chipRow }, h('button', { type: 'button', style: S.button, 'data-prefill-error-detail-dismiss': '', 'aria-label': t('errDismiss'), onClick: () => reduceSectionError(section, { type: 'dismiss' }) }, t('errDismiss'))),
+          h('div', { style: pageChipRow }, h('button', { type: 'button', style: pageBtn, 'data-prefill-error-detail-dismiss': '', 'aria-label': t('errDismiss'), onClick: () => reduceSectionError(section, { type: 'dismiss' }) }, t('errDismiss'))),
         )
       }
 
@@ -6074,7 +6227,7 @@ window.__ModuleLoader__.load({
           h('div', { style: S.note }, t('allowLabel')),
           h(
             'div',
-            { style: S.chipRow },
+            { style: pageChipRow },
             ...(envelope?.injections?.catalog?.messages ?? []).map((kind) =>
               h(
                 'button',
@@ -6102,7 +6255,7 @@ window.__ModuleLoader__.load({
             : null,
           h(
             'div',
-            { style: S.chipRow },
+            { style: pageChipRow },
             ...(envelope?.tools?.catalog ?? []).map((name) =>
               h(
                 'button',
@@ -6143,13 +6296,13 @@ window.__ModuleLoader__.load({
           ping.data?.stateFile === undefined ? null : h('div', { style: S.label }, t('stateFileLabel') + ': ' + ping.data.stateFile),
           h(
             'div',
-            { style: S.chipRow },
+            { style: pageChipRow },
             h(
               'button',
-              { type: 'button', style: S.button, 'data-prefill-state-json-toggle': jsonOpen ? 'open' : 'closed', 'aria-expanded': jsonOpen ? 'true' : 'false', onClick: () => setJsonOpen((value) => !value) },
+              { type: 'button', style: pageBtn, 'data-prefill-state-json-toggle': jsonOpen ? 'open' : 'closed', 'aria-expanded': jsonOpen ? 'true' : 'false', onClick: () => setJsonOpen((value) => !value) },
               jsonOpen ? t('stateJsonHide') : t('stateJsonShow'),
             ),
-            h('button', { type: 'button', style: S.button, 'data-prefill-state-json-copy': '', onClick: copyStateJson }, t('stateJsonCopy')),
+            h('button', { type: 'button', style: pageBtn, 'data-prefill-state-json-copy': '', onClick: copyStateJson }, t('stateJsonCopy')),
           ),
           jsonOpen ? h('pre', { style: S.pre, 'data-prefill-state-json': '' }, stateJson) : null,
           (state?.armed?.length ?? 0) === 0 ? h('div', { style: S.warn }, t('armedNoneNote')) : null,
@@ -6199,12 +6352,12 @@ window.__ModuleLoader__.load({
           h('div', { style: S.note }, t('resetTip')),
           h(
             'div',
-            { style: S.chipRow },
+            { style: pageChipRow },
             h(
               ConfirmButton,
               {
                 armed: resetArmed,
-                style: S.button,
+                style: pageBtn,
                 title: t('resetTip'),
                 'data-prefill-reset': '',
                 ...busyAttrs(busy, 'reset'),
@@ -6250,24 +6403,24 @@ window.__ModuleLoader__.load({
       }
       return h(
         'div',
-        { ref: pageRef, onScroll: onPageScroll, style: S.page, 'data-prefill-page': 'prefill' },
+        { ref: pageRef, onScroll: onPageScroll, style: pageStyle, 'data-prefill-page': 'prefill' },
         // PR D（#45 第 21 条）：和宿主「插件」页一样 —— 左右留白、内容列限宽居中。
         h(
           'div',
-          { style: S.pageColumn, 'data-prefill-page-column': '' },
+          { style: pageColumnStyle, 'data-prefill-page-column': '' },
           h('div', { style: S.title }, t('title')),
           // PR D（#45 第 17 条）：页头只留一段说明（原 settingsWhere + intro 两段同义）。
           h('div', { style: S.intro, 'data-prefill-intro': '' }, t('settingsWhere')),
           h(
             'nav',
-            { style: S.toc, 'data-prefill-toc': '', 'aria-label': t('tocLabel') },
+            { ref: tocRef, style: pageTocStyle, 'data-prefill-toc': '', 'aria-label': t('tocLabel') },
             ...PREFILL_TOC.map((item) =>
               h(
                 'button',
                 {
                   key: item.anchor,
                   type: 'button',
-                  style: { ...S.tocLink, ...(tocActive === item.anchor ? S.tocLinkActive : null) },
+                  style: { ...pageTocLinkStyle, ...(tocActive === item.anchor ? S.tocLinkActive : null) },
                   'data-prefill-toc-link': item.anchor,
                   'aria-current': tocActive === item.anchor ? 'location' : undefined,
                   onClick: () => jumpTo(item.anchor),
@@ -6279,7 +6432,7 @@ window.__ModuleLoader__.load({
           // v1：总览顶部 4 个 KPI（在册 → 运行中 / 已套预设 / 每轮注入开 / 拦截中）。
           h(
             'div',
-            { style: S.kpiBar, 'data-prefill-kpi-bar': '' },
+            { style: pageKpiBarStyle, 'data-prefill-kpi-bar': '' },
             ...[
               ['live', t('kpiLive'), kpi.live, t('kpiLiveTip')],
               ['preset', t('kpiPreset'), kpi.preset, t('kpiPresetTip')],
@@ -6306,7 +6459,7 @@ window.__ModuleLoader__.load({
           overviewFiltering
             ? h('input', {
                 type: 'search',
-                style: S.input,
+                style: pageInput,
                 value: overviewFilter,
                 placeholder: t('overviewFilter'),
                 'aria-label': t('overviewFilter'),
@@ -6326,7 +6479,7 @@ window.__ModuleLoader__.load({
             const everyTurnFrom = row.everyTurnFrom === 'default' ? ' · ' + t('overviewFromDefault') : row.everyTurnFrom === 'session' ? ' · ' + t('overviewFromSession') : ''
             return h(
               'div',
-              { key: row.id, style: S.sessionRow, 'data-prefill-overview-row': row.id },
+              { key: row.id, style: pageSessionRow, 'data-prefill-overview-row': row.id },
               h(
                 'div',
                 { style: S.sessionLabel },
@@ -6361,9 +6514,9 @@ window.__ModuleLoader__.load({
               ),
               h(
                 'div',
-                { style: S.chipRow },
-                h('button', { type: 'button', style: S.button, 'data-prefill-overview-open': row.id, onClick: () => openSessionAndCard(row.id) }, t('overviewOpen')),
-                h('button', { type: 'button', style: S.button, 'data-prefill-overview-copy': row.id, onClick: () => copySessionId(row.id) }, t('overviewCopy')),
+                { style: pageChipRow },
+                h('button', { type: 'button', style: pageBtn, 'data-prefill-overview-open': row.id, onClick: () => openSessionAndCard(row.id) }, t('overviewOpen')),
+                h('button', { type: 'button', style: pageBtn, 'data-prefill-overview-copy': row.id, onClick: () => copySessionId(row.id) }, t('overviewCopy')),
               ),
             )
           }),
@@ -6394,14 +6547,14 @@ window.__ModuleLoader__.load({
                 { style: S.warn, 'data-prefill-default-turn-bench': 'locked' },
                 t('defaultTurnBenchLocked'),
                 ' ',
-                h('button', { type: 'button', style: S.button, 'data-prefill-default-turn-plain': '', onClick: () => setDefTurn({ plain: true }) }, t('defaultTurnToPlain')),
+                h('button', { type: 'button', style: pageBtn, 'data-prefill-default-turn-plain': '', onClick: () => setDefTurn({ plain: true }) }, t('defaultTurnToPlain')),
               )
             : defHasBench
               ? h('div', { style: S.warn, 'data-prefill-default-turn-bench': 'plain' }, t('defaultTurnBenchWarn'))
               : null,
           h(
             'div',
-            { style: S.chipRow },
+            { style: pageChipRow },
             ...['always', 'until', ...(everyTurnDefault?.mode === 'auto' ? ['auto'] : [])].map((mode) =>
               h(
                 'button',
@@ -6425,7 +6578,7 @@ window.__ModuleLoader__.load({
                   type: 'number',
                   min: 1,
                   value: String(defTurn.untilTurn || ''),
-                  style: S.numberInput,
+                  style: pageNumberInput,
                   placeholder: 'N',
                   'aria-invalid': defTurnUntilInvalid ? 'true' : undefined,
                   'data-prefill-default-turn-until': '',
@@ -6453,12 +6606,12 @@ window.__ModuleLoader__.load({
           }),
           h(
             'div',
-            { style: S.chipRow },
+            { style: pageChipRow },
             h(
               'button',
               {
                 type: 'button',
-                style: S.button,
+                style: pageBtn,
                 'data-prefill-default-turn-save': '',
                 ...busyAttrs(busy, 'default-turn'),
                 ...(defTurnUntilInvalid ? { disabled: true, title: t('defaultTurnUntilNeed') } : {}),
@@ -6467,7 +6620,7 @@ window.__ModuleLoader__.load({
               t('saveDefault'),
             ),
             defTurnDirty
-              ? h('button', { type: 'button', style: S.button, 'data-prefill-default-turn-discard': '', onClick: () => setDefTurnDraft(null) }, t('discardChanges'))
+              ? h('button', { type: 'button', style: pageBtn, 'data-prefill-default-turn-discard': '', onClick: () => setDefTurnDraft(null) }, t('discardChanges'))
               : null,
           ),
         ),
@@ -6481,7 +6634,7 @@ window.__ModuleLoader__.load({
           h('div', { style: S.note }, t('defaultSbxHint')),
           h(
             'div',
-            { style: S.chipRow },
+            { style: pageChipRow },
             h(
               'button',
               { type: 'button', style: S.chip(globalLevel === ''), 'data-prefill-default-sbx-level': 'none', onClick: () => writeGlobalLevel('') },
@@ -6507,7 +6660,7 @@ window.__ModuleLoader__.load({
               h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, localText('sbxPack_' + pack.id, pack.label)),
               h(
                 'div',
-                { style: S.chipRow },
+                { style: pageChipRow },
                 h('button', { type: 'button', style: S.chip(pack.setting?.global === 'allow'), 'data-prefill-default-pack-allow': pack.id, onClick: () => writeGlobalPack(pack.id, 'allow') }, t('sbxAllow')),
                 h('button', { type: 'button', style: S.chip(pack.setting?.global === 'deny'), 'data-prefill-default-pack-deny': pack.id, onClick: () => writeGlobalPack(pack.id, 'deny') }, t('sbxDeny')),
                 h('button', { type: 'button', style: S.chip(pack.setting?.global === undefined), 'data-prefill-default-pack-clear': pack.id, onClick: () => writeGlobalPack(pack.id, undefined) }, t('defaultNone')),
@@ -6531,7 +6684,7 @@ window.__ModuleLoader__.load({
                 h('span', { style: { ...S.label, whiteSpace: 'nowrap', flex: '0 0 auto' } }, t('librarySession')),
                 h(
                   'select',
-                  { style: S.selectInput, value: libSession, 'data-prefill-lib-session': '', onChange: (event) => setLibSid(event.target.value) },
+                  { style: pageSelectInput, value: libSession, 'data-prefill-lib-session': '', onChange: (event) => setLibSid(event.target.value) },
                   ...libOptions.map((row) => h('option', { key: row.id, value: row.id }, (row.title !== '' ? row.title : row.id) + (row.cwd !== '' ? ' · ' + row.cwd : ''))),
                 ),
               ),
@@ -6544,11 +6697,11 @@ window.__ModuleLoader__.load({
               h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, pack.name + ' · ' + String(pack.count ?? 0)),
               h(
                 'div',
-                { style: S.chipRow },
-                h('button', { type: 'button', style: S.button, 'data-prefill-lib-pack-export': pack.name, onClick: () => void exportLibPack(pack.name) }, t('libraryExport')),
+                { style: pageChipRow },
+                h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-pack-export': pack.name, onClick: () => void exportLibPack(pack.name) }, t('libraryExport')),
                 h(
                   ConfirmButton,
-                  { armed: libArmed === 'pack:' + pack.name, style: S.button, 'data-prefill-lib-pack-delete': pack.name, onClick: () => deleteLibPack(pack.name) },
+                  { armed: libArmed === 'pack:' + pack.name, style: pageBtn, 'data-prefill-lib-pack-delete': pack.name, onClick: () => deleteLibPack(pack.name) },
                   libArmed === 'pack:' + pack.name ? t('confirmYes') : t('libraryDelete'),
                 ),
               ),
@@ -6557,8 +6710,8 @@ window.__ModuleLoader__.load({
           // 导入：真按钮（Tab 得到、Enter / 空格可按）点隐藏的 file input（issue #45 第 16 条）。
           h(
             'div',
-            { style: S.chipRow },
-            h('button', { type: 'button', style: S.button, 'data-prefill-lib-pack-import-open': '', ...busyAttrs(busy, 'lib:pack-import'), onClick: () => packImportRef.current?.click?.() }, t('libraryImport')),
+            { style: pageChipRow },
+            h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-pack-import-open': '', ...busyAttrs(busy, 'lib:pack-import'), onClick: () => packImportRef.current?.click?.() }, t('libraryImport')),
             h('input', { ref: packImportRef, type: 'file', accept: '.json', tabIndex: -1, 'aria-hidden': 'true', style: { display: 'none' }, 'data-prefill-lib-pack-import': '', onChange: importLibPack }),
           ),
           h('div', { style: S.group }, t('libraryCards')),
@@ -6570,13 +6723,13 @@ window.__ModuleLoader__.load({
               h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, card.name ?? card.id),
               h(
                 'div',
-                { style: S.chipRow },
+                { style: pageChipRow },
                 card.hasAvatar === true
-                  ? h('button', { type: 'button', style: S.button, 'data-prefill-lib-card-export': card.id, onClick: () => void exportLibCardPng(card.id) }, t('libraryExportPng'))
+                  ? h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-card-export': card.id, onClick: () => void exportLibCardPng(card.id) }, t('libraryExportPng'))
                   : null,
                 h(
                   ConfirmButton,
-                  { armed: libArmed === 'card:' + card.id, style: S.button, 'data-prefill-lib-card-delete': card.id, onClick: () => deleteLibCard(card.id) },
+                  { armed: libArmed === 'card:' + card.id, style: pageBtn, 'data-prefill-lib-card-delete': card.id, onClick: () => deleteLibCard(card.id) },
                   libArmed === 'card:' + card.id ? t('confirmYes') : t('libraryDelete'),
                 ),
               ),
@@ -6584,8 +6737,8 @@ window.__ModuleLoader__.load({
           ),
           h(
             'div',
-            { style: S.chipRow },
-            h('button', { type: 'button', style: S.button, 'data-prefill-lib-card-import-open': '', ...busyAttrs(busy, 'lib:card-import'), onClick: () => cardImportRef.current?.click?.() }, t('libraryImport')),
+            { style: pageChipRow },
+            h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-card-import-open': '', ...busyAttrs(busy, 'lib:card-import'), onClick: () => cardImportRef.current?.click?.() }, t('libraryImport')),
             h('input', { ref: cardImportRef, type: 'file', accept: '.json,.png,application/json,image/png', tabIndex: -1, 'aria-hidden': 'true', style: { display: 'none' }, 'data-prefill-lib-card-import': '', onChange: importLibCard }),
           ),
           h('div', { style: S.group }, t('libraryBlocks')),
@@ -6597,7 +6750,7 @@ window.__ModuleLoader__.load({
               h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, block.name ?? block.id),
               h(
                 ConfirmButton,
-                { armed: libArmed === 'block:' + block.id, style: S.button, 'data-prefill-lib-block-delete': block.id, onClick: () => deleteLibBlock(block.id) },
+                { armed: libArmed === 'block:' + block.id, style: pageBtn, 'data-prefill-lib-block-delete': block.id, onClick: () => deleteLibBlock(block.id) },
                 libArmed === 'block:' + block.id ? t('confirmYes') : t('libraryDelete'),
               ),
             ),
@@ -6611,7 +6764,7 @@ window.__ModuleLoader__.load({
               h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, tower.name ?? tower.id),
               h(
                 ConfirmButton,
-                { armed: libArmed === 'tower:' + tower.id, style: S.button, 'data-prefill-lib-tower-delete': tower.id, onClick: () => deleteLibTower(tower.id) },
+                { armed: libArmed === 'tower:' + tower.id, style: pageBtn, 'data-prefill-lib-tower-delete': tower.id, onClick: () => deleteLibTower(tower.id) },
                 libArmed === 'tower:' + tower.id ? t('confirmYes') : t('libraryDelete'),
               ),
             ),
@@ -6622,7 +6775,7 @@ window.__ModuleLoader__.load({
               'div',
               { key: 'hidden:' + id, style: S.switchRow, 'data-prefill-lib-hidden': id },
               h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: id }, lib.names?.[id] ?? id),
-              h('button', { type: 'button', style: S.button, 'data-prefill-lib-unhide': id, onClick: () => unhideLib(id) }, t('libraryUnhide')),
+              h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-unhide': id, onClick: () => unhideLib(id) }, t('libraryUnhide')),
             ),
           ),
         ),
@@ -6636,7 +6789,7 @@ window.__ModuleLoader__.load({
           h('div', { style: S.note }, t('motionTitle')),
           h(
             'div',
-            { style: S.chipRow },
+            { style: pageChipRow },
             ...MOTION_LEVELS.map((level) =>
               h(
                 'button',
@@ -6649,7 +6802,7 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
-                style: { ...S.button, alignSelf: 'center', marginLeft: 6, opacity: motionNow === null ? 0.5 : 1, cursor: motionNow === null ? 'default' : 'pointer' },
+                style: { ...pageBtn, alignSelf: 'center', marginLeft: 6, opacity: motionNow === null ? 0.5 : 1, cursor: motionNow === null ? 'default' : 'pointer' },
                 disabled: motionNow === null,
                 'data-prefill-pref-motion': 'auto',
                 onClick: () => writeMotion(null),
@@ -6662,7 +6815,7 @@ window.__ModuleLoader__.load({
             'button',
             {
               type: 'button',
-              style: S.button,
+              style: pageBtn,
               'data-prefill-pref-reset-noask': '',
               ...busyAttrs(busy, 'noask'),
               onClick: () => void act('prefs', 'noask', opOf('prefsTitle', 'resetNoAsk'), { ui: { ...(envelope?.state?.ui ?? {}), loreConstWarn: false } }),
@@ -6692,7 +6845,7 @@ window.__ModuleLoader__.load({
                 'data-prefill-experimental-toggle': experimentalOn ? 'on' : 'off',
                 ...busyAttrs(busy, 'experimental'),
                 onClick: () => void toggleExperimental(!experimentalOn),
-                style: { ...S.button, ...(experimentalOn ? { borderColor: 'var(--dsw-alias-brand-primary)', color: 'var(--dsw-alias-brand-primary)' } : {}) },
+                style: { ...pageBtn, ...(experimentalOn ? { borderColor: 'var(--dsw-alias-brand-primary)', color: 'var(--dsw-alias-brand-primary)' } : {}) },
               },
               experimentalOn ? t('expOnLabel') : t('expOffLabel'),
             ),
@@ -6775,13 +6928,13 @@ window.__ModuleLoader__.load({
           h('div', { style: S.note, 'data-prefill-reasoning-content-hint': '' }, t('reasoningContentPrefixHint')),
           h(
             'div',
-            { style: S.chipRow },
+            { style: pageChipRow },
             reasoningEnabled
               ? h(
                   'button',
                   {
                     type: 'button',
-                    style: S.button,
+                    style: pageBtn,
                     'data-prefill-reasoning-enable': '',
                     ...busyAttrs(busy, 'reasoning:enable'),
                     onClick: enableReasoning,
@@ -6792,7 +6945,7 @@ window.__ModuleLoader__.load({
                   ConfirmButton,
                   {
                     armed: reasoningArmed,
-                    style: S.button,
+                    style: pageBtn,
                     title: t('reasoningEnableTip'),
                     'data-prefill-reasoning-enable': '',
                     ...busyAttrs(busy, 'reasoning:enable'),
@@ -6805,7 +6958,7 @@ window.__ModuleLoader__.load({
                   'button',
                   {
                     type: 'button',
-                    style: S.button,
+                    style: pageBtn,
                     'data-prefill-reasoning-disable': '',
                     ...busyAttrs(busy, 'reasoning:disable'),
                     onClick: () => void reasoningAct('reasoning:disable', opOf('secReasoning', 'reasoningDisable'), REASONING_DISABLE_ROUTE, undefined),
@@ -6818,7 +6971,7 @@ window.__ModuleLoader__.load({
                   'button',
                   {
                     type: 'button',
-                    style: S.button,
+                    style: pageBtn,
                     title: t('reasoningRepairTip'),
                     'data-prefill-reasoning-repair': '',
                     ...busyAttrs(busy, 'reasoning:repair'),
@@ -6831,7 +6984,7 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
-                style: S.button,
+                style: pageBtn,
                 'data-prefill-reasoning-refresh': '',
                 ...busyAttrs(busy, 'reasoning:refresh'),
                 onClick: () => void reasoningAct('reasoning:refresh', opOf('secReasoning', 'reasoningRefresh'), REASONING_STATUS_ROUTE, undefined, t('reasoningRefreshed')),
@@ -6862,7 +7015,7 @@ window.__ModuleLoader__.load({
               {
                 key: 'toggle',
                 type: 'button',
-                style: S.button,
+                style: pageBtn,
                 'data-prefill-dev-toggle': devOpen ? 'open' : 'closed',
                 'aria-expanded': devOpen ? 'true' : 'false',
                 onClick: () => setDevOpen((value) => !value),
@@ -7016,6 +7169,11 @@ window.__ModuleLoader__.load({
       // 数据来源 = 全页唯一的那份 summary 轮询（不再是「自己每 2.5s 拉一次整封 ~1.28MB envelope」）；
       // hook 必须在早退（`sessionId === ''` 的 return null）之前。
       const live = useSummary(sessionId)
+      // 手机窄屏（<480）：芯片收成短标签 —— 原来「预填装 · 未套用预设 ● 已配置 0/8 ⌄」整条约 225px，
+      // 320px 手机输入区放不下，会把官方工具行的「纯净」挤出可视区（实测被裁剩一条边）。
+      const view = useViewport()
+      const phone = view.phone
+      const touch = phone || view.coarse === true
 
       // 写还是走 /state：写接口返回整封 envelope，成功后就地 applyEnvelope 喂回 store（写完不用再拉）。
       const call = React.useCallback(async (body) => {
@@ -7168,7 +7326,9 @@ window.__ModuleLoader__.load({
             ...S.gatePill(on),
             ...COLOR_VARS,
             gap: 6,
-            maxWidth: 320,
+            // 手机：短标签（≤200px）+ 30px 高（原来的 24px 在触屏上偏小，且长文案会挤爆工具行）。
+            maxWidth: touch ? 200 : 320,
+            ...(touch ? { height: 30, padding: '0 10px' } : {}),
             ...(cardOpen ? { boxShadow: '0 0 0 2px color-mix(in srgb, var(--dsw-alias-label-primary) 22%, transparent)', background: 'color-mix(in srgb, var(--dsw-alias-label-primary) 8%, var(--dsw-alias-bg-base))' } : {}),
             ...(openingShown ? BUSY_LOOK : {}),
             ...(chipError !== '' ? { color: ERROR_TONE, boxShadow: `0 0 0 1px ${tint(ERROR_TONE, 50)}` } : {}),
@@ -7201,7 +7361,7 @@ window.__ModuleLoader__.load({
             setCardOpen(sessionId, !cardOpen)
           },
         },
-        summary !== undefined && compact
+        summary !== undefined && compact && !phone
           ? [
               h('b', { key: 'name', style: { fontWeight: 700 } }, t('nav')),
               h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
@@ -7216,8 +7376,10 @@ window.__ModuleLoader__.load({
             ]
           : [
               h('b', { key: 'name', style: { fontWeight: 700 } }, t('nav')),
-              h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
-              h('span', { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, summary.name || fallbackName(t, injectMode, written)),
+              // 手机：只留「预填装 + 状态点 + 箭头」。预设名 / 已配置 N/8 收进卡片与 title（触屏点开卡片就能看到），
+              // 否则 320px 下「纯净」会被挤出输入区（实测只剩一条边）。
+              phone ? null : h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
+              phone ? null : h('span', { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, summary.name || fallbackName(t, injectMode, written)),
               h(
                 'span',
                 {
@@ -7247,7 +7409,7 @@ window.__ModuleLoader__.load({
                             : 'var(--pf-off)',
                   },
                 }),
-                h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, t('chipConfigured').replace('{n}', String(chipStatus.configured)).replace('{total}', String(chipStatus.total))),
+                phone ? null : h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, t('chipConfigured').replace('{n}', String(chipStatus.configured)).replace('{total}', String(chipStatus.total))),
               ),
               h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
               // F2：本会话没走前缀路由时的 7px 告警标记。**新属性名**（`data-prefill-chip-dot` 在芯片里只能有 1 个）；
@@ -7290,6 +7452,9 @@ window.__ModuleLoader__.load({
       // 数据来源 = 全页唯一的那份 summary 轮询（不再是「自己每 2.5s 拉一次整封 envelope」）；
       // hook 必须在早退之前（React #310）。
       const live = useSummary(sessionId)
+      // 手机窄屏：芯片抬到 30px（官方工具行量级 28–34），和预填装芯片对齐。
+      const gateView = useViewport()
+      const gatePhone = gateView.phone || gateView.coarse === true
       const [confirming, setConfirming] = React.useState(false)
       const state = live?.state ?? null
 
@@ -7417,7 +7582,7 @@ window.__ModuleLoader__.load({
             type: 'button',
             'aria-pressed': on ? 'true' : 'false',
             title: on ? t('gateTitleOn') : t('gateTitleOff'),
-            style: S.gatePill(on),
+            style: gatePhone ? { ...S.gatePill(on), height: 30, padding: '0 11px' } : S.gatePill(on),
             onClick: () => {
               if (on) {
                 void write('pass')
@@ -8116,6 +8281,67 @@ window.__ModuleLoader__.load({
       }),
     }
 
+    // <touch>
+    /**
+     * 手机触控尺寸（2026-11 手机适配）：把 V 里的紧凑控件就地升级 —— 按钮 24/26px → 34px、
+     * 输入框高 34 / fontSize 16（移动浏览器 <16px 聚焦会放大页面）。
+     *
+     * 为什么改同一份 V 而不是给组件再加一个 phone 参数：卡片/页面/弹出的按钮都读 V.*，
+     * 改一份就全覆盖，桌面（phone=false）恢复原尺寸，也不需要把 phone 一路透传。
+     * 单测切出来的纯函数（benchRowsOf 等）仍引用 V，不受影响。
+     */
+    const V_BASE = {
+      btn: V.btn,
+      btnPrimary: V.btnPrimary,
+      btnGhost: V.btnGhost,
+      input: V.input,
+      textarea: V.textarea,
+      pill: V.pill,
+      card: V.card,
+      segBtn: V.segBtn,
+    }
+    // S 里也有一批紧凑控件（页面 / 卡片共用的 chip / 小按钮 / 输入框）：手机上一并抬到触控尺寸。
+    const S_BASE = {
+      chip: S.chip,
+      chipStatic: S.chipStatic,
+      dockMini: S.dockMini,
+      dockSelect: S.dockSelect,
+      dockName: S.dockName,
+      gateBtn: S.gateBtn,
+      input: S.input,
+      numberInput: S.numberInput,
+      selectInput: S.selectInput,
+      injectBox: S.injectBox,
+      button: S.button,
+    }
+    let V_TOUCH = null
+    function applyTouchStyles(touch) {
+      const want = touch === true
+      if (V_TOUCH === want) return
+      V_TOUCH = want
+      V.btn = want ? { ...V_BASE.btn, height: 34 } : V_BASE.btn
+      V.btnPrimary = want ? { ...V_BASE.btnPrimary, height: 34 } : V_BASE.btnPrimary
+      V.btnGhost = want ? { ...V_BASE.btnGhost, height: 34, minWidth: 34 } : V_BASE.btnGhost
+      V.input = want ? { ...V_BASE.input, height: 34, fontSize: 16 } : V_BASE.input
+      V.textarea = want ? { ...V_BASE.textarea, fontSize: 16 } : V_BASE.textarea
+      V.pill = want ? (active) => ({ ...V_BASE.pill(active), height: 34, padding: '0 12px 0 10px' }) : V_BASE.pill
+      V.card = want ? (active) => ({ ...V_BASE.card(active), padding: '10px 12px' }) : V_BASE.card
+      V.segBtn = want ? (on) => ({ ...V_BASE.segBtn(on), height: 32 }) : V_BASE.segBtn
+      // S：输入 / 文本域 16px（防聚焦缩放）+ 紧凑 chip / 小按钮抬到 30–34。
+      S.chip = want ? (active) => ({ ...S_BASE.chip(active), padding: '6px 12px', minHeight: 30, display: 'inline-flex', alignItems: 'center' }) : S_BASE.chip
+      S.chipStatic = want ? { ...S_BASE.chipStatic, padding: '6px 12px', minHeight: 30, display: 'inline-flex', alignItems: 'center' } : S_BASE.chipStatic
+      S.dockMini = want ? { ...S_BASE.dockMini, width: 30, height: 30 } : S_BASE.dockMini
+      S.dockSelect = want ? { ...S_BASE.dockSelect, height: 32, fontSize: 16 } : S_BASE.dockSelect
+      S.dockName = want ? { ...S_BASE.dockName, height: 32, fontSize: 16 } : S_BASE.dockName
+      S.gateBtn = want ? { ...S_BASE.gateBtn, minHeight: 30, padding: '4px 10px' } : S_BASE.gateBtn
+      S.input = want ? { ...S_BASE.input, minHeight: 34, fontSize: 16 } : S_BASE.input
+      S.numberInput = want ? { ...S_BASE.numberInput, height: 34, fontSize: 16 } : S_BASE.numberInput
+      S.selectInput = want ? { ...S_BASE.selectInput, minHeight: 34, fontSize: 16 } : S_BASE.selectInput
+      S.injectBox = want ? { ...S_BASE.injectBox, fontSize: 16 } : S_BASE.injectBox
+      S.button = want ? { ...S_BASE.button, minHeight: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } : S_BASE.button
+    }
+    // </touch>
+
     /** 角色卡面板选项的默认值（预设里的角色卡引用按它补全）。 */
 
     /**
@@ -8434,6 +8660,13 @@ window.__ModuleLoader__.load({
     function PrefillDock(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+      // 手机窄屏（<480，2026-11 适配）：卡片形态按它分叉。
+      // 用 useViewport 而不是等 bounds 量出来：第一帧就要按手机排版（bounds 首帧还是 null）。
+      // 控件尺寸（V.btn 26px → 34px、输入 16px）走 applyTouchStyles() 对 V 的就地升级，见 V 后面。
+      const dockView = useViewport()
+      const phone = dockView.phone
+      // 触控设备（横屏手机 / 触屏平板）：按钮尺寸与 hover-only 控件按触控处理，即使宽度 >480。
+      const touch = phone || dockView.coarse === true
       const [items, setItems] = React.useState(null)
       const [enabled, setEnabled] = React.useState(false)
       const [status, setStatusRaw] = React.useState('idle')
@@ -8962,7 +9195,8 @@ window.__ModuleLoader__.load({
             }
             node = node.parentElement
           }
-          const geo = cardGeometry(vw, vh, box, input instanceof HTMLElement ? input.getBoundingClientRect().top : undefined)
+          // touch：手机 / 触屏设备才允许「矮视口 → 顶栏之下的浮层（模态）」，桌面矮窗口只夹顶边。
+          const geo = cardGeometry(vw, vh, box, input instanceof HTMLElement ? input.getBoundingClientRect().top : undefined, touch)
           setBounds((current) => (sameGeometry(current, geo) ? current : geo))
           return geo
         }
@@ -8976,7 +9210,7 @@ window.__ModuleLoader__.load({
           window.removeEventListener('resize', measure)
           clearInterval(timer)
         }
-      }, [cardOpen])
+      }, [cardOpen, touch])
       // 入场（P1-3）：位置量好之后、绘制之前开始播（首帧就是动画第一帧，不会先闪一下实心卡片）。
       // 钉住 / 取消钉住、缩成标记再恢复不走这里（不做动画）。卡片还没渲染（items 未到）就等下一次提交。
       React.useLayoutEffect(() => {
@@ -9305,6 +9539,9 @@ window.__ModuleLoader__.load({
       const navRef = React.useRef(null)
       const navNow = React.useRef(null)
       const navWas = React.useRef(null)
+      // 手机 / 矮视口（横屏）用「单行横滑标签」：这个判定必须放在早退之前 ——
+      // 下面的 layout effect 在 bail 之后的那次渲染里仍会跑，晚定义（TDZ）会直接 ReferenceError。
+      const compactNav = phone || bounds?.short === true
       React.useLayoutEffect(() => {
         const now = navNow.current
         const host = navRef.current
@@ -9316,6 +9553,49 @@ window.__ModuleLoader__.load({
         if (from === null || layer === null) return
         NAV_FX.glide(layer, boxIn(from, host), boxIn(layer, host))
       })
+
+      // 手机：卡片标签是单行横滑的，当前节可能是第 4 个（屏外）—— 打开卡片 / 切节后把它滚进可视区。
+      // 用 layout effect + 上次 key 比对：只有「节或开合变了」才滚，打字等无关重渲染不会把用户手动滑到的位置拉回去。
+      const navScrollWas = React.useRef('')
+      React.useLayoutEffect(() => {
+        const now = navNow.current
+        const host = navRef.current
+        if (!compactNav || cardOpen !== true || now === null || host === null) {
+          navScrollWas.current = ''
+          return
+        }
+        const key = now.pane + '|' + (now.narrow ? 'narrow' : 'wide')
+        if (navScrollWas.current === key) return
+        navScrollWas.current = key
+        const node = host.querySelector(`[data-prefill-nav-box="${now.pane}"]`)
+        if (node === null || typeof node.scrollIntoView !== 'function') return
+        try {
+          node.scrollIntoView({ block: 'nearest', inline: 'center' })
+        } catch {
+          // 老浏览器没有 options 形态：滚不动就算了（不影响可点性 —— 标签本来就能横滑）。
+        }
+      })
+
+      // 工作台块 / 塔的右键菜单：点菜单外面 / 按 Esc 都要能关（原来只有菜单底部一行「关闭」，
+      // 手机上从底部块打开菜单时可能整块掉出视口，连这一行都点不到）。
+      React.useEffect(() => {
+        if (benchMenu === null) return undefined
+        const close = () => setBenchMenu(null)
+        const onDown = (event) => {
+          const target = event.target
+          if (target instanceof Element && target.closest('[data-prefill-block-menu]') !== null) return
+          close()
+        }
+        const onKey = (event) => {
+          if (event.key === 'Escape') close()
+        }
+        document.addEventListener('pointerdown', onDown, true)
+        document.addEventListener('keydown', onKey, true)
+        return () => {
+          document.removeEventListener('pointerdown', onDown, true)
+          document.removeEventListener('keydown', onKey, true)
+        }
+      }, [benchMenu])
 
       if (sessionId === '' || !enabled || items === null) return null
       // 「刷」：这次渲染里的变化是谁引起的（changeCause）；只有后台变化才滚动文字（P1-9），刚挂上的头几秒也不滚。
@@ -11880,6 +12160,11 @@ window.__ModuleLoader__.load({
           if (menu.builtin === true) rows.push(row('hidetower', t('benchMenuHide'), () => hideBuiltin(menu.ref)))
           if (menu.ref !== 'card') rows.push(row('removetower', t('benchMenuRemoveTower'), () => removeTowerFromBench(menu.ref)))
         }
+        const vhNow = typeof window === 'undefined' ? 800 : window.innerHeight || 800
+        // 手机上从底部块打开时，菜单按按钮底边落点会整体掉到视口外（旧实现没有纵向夹取）。
+        // 夹到视口内，并给 maxHeight + 自身滚动；菜单里还有「关闭」行，触屏也能退。
+        const menuMaxH = Math.max(180, Math.min(420, vhNow - 24))
+        const menuTop = Math.max(8, Math.min(menu.y, vhNow - 12 - menuMaxH))
         return h(
           GrowMenu,
           {
@@ -11890,10 +12175,12 @@ window.__ModuleLoader__.load({
             style: {
               position: 'fixed',
               left: benchNarrow ? 10 : menu.x,
-              top: menu.y,
+              top: menuTop,
               right: benchNarrow ? 10 : undefined,
               zIndex: 30,
               width: benchNarrow ? undefined : 280,
+              maxHeight: menuMaxH,
+              overflowY: 'auto',
               background: 'var(--dsw-alias-bg-layer-1)',
               border: '1px solid var(--dsw-alias-border-secondary)',
               borderRadius: 10,
@@ -12965,7 +13252,7 @@ window.__ModuleLoader__.load({
         const off = key !== 'usage' && key !== 'lab' && (!isOn(key) || offBy[key] === true)
         return h(
           'span',
-          { key: paneId, 'data-prefill-nav-box': paneId, style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '3px 6px 3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)' } },
+          { key: paneId, 'data-prefill-nav-box': paneId, style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: touch ? '6px 8px 6px 12px' : '3px 6px 3px 10px', minHeight: touch ? 36 : undefined, boxSizing: 'border-box', borderRadius: 999, fontSize: touch ? 13 : 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)' } },
           selected ? navHighlight(999) : null,
           h('span', { role: 'tab', 'aria-selected': selected ? 'true' : 'false', 'data-prefill-nav': paneId, ...(parent ? { 'data-prefill-nav-parent': parent } : {}), 'data-off': off ? 'true' : 'false', onClick: () => setPane(paneId), style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
             key === 'usage' || key === 'lab' ? null : sweepLayer(key, color, 999),
@@ -12973,7 +13260,8 @@ window.__ModuleLoader__.load({
             h('i', { style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', background: key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? 'var(--pf-off)' : color } }),
             key === 'usage' ? t('usageShort') : featureTitle[key],
           ),
-          key === 'usage' || key === 'lab' ? null : h('span', { style: { display: 'inline-flex', transform: 'scale(0.85)' } }, switchEl(key, color)),
+          // 触控设备上控件本身要能点中：不再缩到 0.85（28×16 已经不大，再缩就只有 24×14）。
+          key === 'usage' || key === 'lab' ? null : h('span', { style: { display: 'inline-flex', transform: touch ? 'none' : 'scale(0.85)' } }, switchEl(key, color)),
         )
       }
 
@@ -12989,6 +13277,9 @@ window.__ModuleLoader__.load({
       const usagePrompt = usageTotal ? usageTotal.input + usageTotal.cacheRead : 0
       const cacheHit = usagePrompt > 0 ? Math.round((usageTotal.cacheRead / usagePrompt) * 100) : null
       const narrow = bounds?.narrow === true
+      // phone / compactNav 见组件顶部（早退之前定义，effect 才不会踩 TDZ）。
+      // header 上的钉住 / 收起是 hover 语义（鼠标移开缩标记、钉住防点外面关），手机上没有 hover。
+      const touchToolStyle = touch ? { ...V.btnGhost, minHeight: 34, minWidth: 34, padding: '0 8px' } : { ...V.btnGhost, padding: '0 6px' }
       // P2-3：读数变了 ⇒ 数字上下滚动（popover 里沿用同一行；motion-refresh.test.mjs 按字面匹配它）。
       const badgeValue = (value) =>
         h(RollText, { value: String(value), still: cueCause === 'typing' || Date.now() - cueSince.current.at < CUE_SETTLE_MS, defer: turnEnded, attr: 'data-prefill-badge-roll' }, value)
@@ -13019,7 +13310,7 @@ window.__ModuleLoader__.load({
           'aria-label': `${t('statusTitle')}${t('labelColon')}${headerStatusText}`,
           title: headerStatusText,
           onClick: () => setMenu(menu === 'status' ? '' : 'status'),
-          style: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 24, maxWidth: '100%', minWidth: 0, padding: '0 10px', borderRadius: 999, border: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-secondary)', fontSize: 11.5, fontFamily: 'inherit', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' },
+          style: { display: 'inline-flex', alignItems: 'center', gap: 6, height: touch ? 30 : 24, maxWidth: '100%', minWidth: 0, padding: '0 10px', borderRadius: 999, border: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-secondary)', fontSize: 11.5, fontFamily: 'inherit', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' },
         },
         // ① 首轮锁定（原头部独立徽章整段搬进来；闪层选择器 / 样式行保持原样，motion-refresh.test.mjs:391/392 按字面匹配）
         h(
@@ -13062,7 +13353,7 @@ window.__ModuleLoader__.load({
             'data-prefill-preset-select': '',
             'aria-expanded': menu === 'presets' ? 'true' : 'false',
             onClick: () => setMenu(menu === 'presets' ? '' : 'presets'),
-            style: { display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: narrow ? 200 : 280, height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer' },
+            style: { display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: touch ? 168 : narrow ? 200 : 280, minHeight: touch ? 34 : undefined, height: touch ? 34 : 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer' },
           },
           h('b', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, activeName || t('presetsNone')),
           h('small', { style: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, whiteSpace: 'nowrap' } }, `${activeKind || t('presetsTitle')} ▾`),
@@ -13071,6 +13362,7 @@ window.__ModuleLoader__.load({
           'button',
           {
             type: 'button',
+            // 手机上的高度由 V.btnPrimary 的触控升级给出（applyTouchStyles），这里保持原字面量。
             style: { ...V.btnPrimary, position: 'relative', ...(busyCtl.shown('save') ? BUSY_LOOK : {}) },
             'data-prefill-save': '',
             ...busyAttrs(busyCtl, 'save'),
@@ -13091,27 +13383,33 @@ window.__ModuleLoader__.load({
       const headerRight = h(
         'div',
         { 'data-prefill-header-tools': '', 'data-prefill-header-zone': 'right', style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', marginLeft: 'auto', order: narrow ? 1 : 0 } },
-        h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'data-prefill-more': '', 'aria-haspopup': 'menu', 'aria-expanded': menu === 'more' ? 'true' : 'false', title: t('moreTitle'), 'aria-label': t('moreTitle'), onClick: () => setMenu(menu === 'more' ? '' : 'more') }, '⋯'),
-        h(
-          'button',
-          {
-            type: 'button',
-            style: { ...V.btnGhost, padding: '0 6px', color: pinned ? 'var(--pf-system)' : V.btnGhost.color, background: pinned ? tint('var(--pf-system)', 14) : 'transparent' },
-            'aria-pressed': pinned ? 'true' : 'false',
-            'aria-label': pinned ? t('pinOff') : t('pinOn'),
-            'data-prefill-pin': '',
-            title: `${pinned ? t('pinOff') : t('pinOn')} · ${t('pinTip')}`,
-            onClick: () => setPinned(!pinned),
-          },
-          // Lucide pin：未钉住描边，钉住填色（强调色）；图标缺失时回落 📌。
-          ICONS.pin ? h(Icon, { name: 'pin', size: 15, fill: pinned ? 'currentColor' : 'none' }) : h('span', { style: { fontSize: 13, lineHeight: 1, opacity: pinned ? 1 : 0.55 } }, '📌'),
-        ),
-        h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'aria-label': t('collapseCard'), title: `${t('collapseCard')} · ${t('collapseTip')}`, 'data-prefill-collapse': '', onClick: collapseCard }, h(Icon, { name: 'chevron-down', size: 15 })),
-        h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 14, padding: '0 6px' }, 'aria-label': t('closeCard'), title: t('closeCard'), 'data-prefill-close': '', onClick: closeCardFully }, h(Icon, { name: 'x', size: 14 })),
+        h('button', { type: 'button', style: touchToolStyle, 'data-prefill-more': '', 'aria-haspopup': 'menu', 'aria-expanded': menu === 'more' ? 'true' : 'false', title: t('moreTitle'), 'aria-label': t('moreTitle'), onClick: () => setMenu(menu === 'more' ? '' : 'more') }, '⋯'),
+        // 手机上不出现：钉住 = 「点外面不关 + 鼠标移开缩成标记」，收起 = 缩成右下角标记再点开 ——
+        // 两者都是 hover 语义，触屏没有鼠标移开，留着只会占掉本来就不够的头部宽度（实测 320px 下头部被挤成 3 行）。
+        touch
+          ? null
+          : h(
+              'button',
+              {
+                type: 'button',
+                style: { ...V.btnGhost, padding: '0 6px', color: pinned ? 'var(--pf-system)' : V.btnGhost.color, background: pinned ? tint('var(--pf-system)', 14) : 'transparent' },
+                'aria-pressed': pinned ? 'true' : 'false',
+                'aria-label': pinned ? t('pinOff') : t('pinOn'),
+                'data-prefill-pin': '',
+                title: `${pinned ? t('pinOff') : t('pinOn')} · ${t('pinTip')}`,
+                onClick: () => setPinned(!pinned),
+              },
+              // Lucide pin：未钉住描边，钉住填色（强调色）；图标缺失时回落 📌。
+              ICONS.pin ? h(Icon, { name: 'pin', size: 15, fill: pinned ? 'currentColor' : 'none' }) : h('span', { style: { fontSize: 13, lineHeight: 1, opacity: pinned ? 1 : 0.55 } }, '📌'),
+            ),
+        phone
+          ? null
+          : h('button', { type: 'button', style: { ...V.btnGhost, padding: '0 6px' }, 'aria-label': t('collapseCard'), title: `${t('collapseCard')} · ${t('collapseTip')}`, 'data-prefill-collapse': '', onClick: collapseCard }, h(Icon, { name: 'chevron-down', size: 15 })),
+        h('button', { type: 'button', style: { ...touchToolStyle, fontSize: 14 }, 'aria-label': t('closeCard'), title: t('closeCard'), 'data-prefill-close': '', onClick: closeCardFully }, h(Icon, { name: 'x', size: 14 })),
       )
       const header = h(
         'div',
-        { 'data-prefill-header': '1', style: { display: 'flex', alignItems: 'center', gap: 6, padding: '9px 12px', borderBottom: '1px solid var(--dsw-alias-border-l1)', flexWrap: 'wrap', rowGap: 6 } },
+        { 'data-prefill-header': '1', style: { display: 'flex', alignItems: 'center', gap: 6, padding: touch ? '8px 10px' : '9px 12px', borderBottom: '1px solid var(--dsw-alias-border-l1)', flexWrap: 'wrap', rowGap: 6 } },
         headerLeft,
         headerCenter,
         headerRight,
@@ -13178,7 +13476,9 @@ window.__ModuleLoader__.load({
       const nav = narrow
         ? h(
             'div',
-            { ref: navRef, role: 'tablist', style: { position: 'relative', isolation: 'isolate', display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 10px', borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)', flex: '0 0 auto' } },
+            // 手机：单行横滑（原来 8 个标签在 320px 下折成 4 行、每行 19px 高，吃掉近 100px 且点不中）；
+            // 窄屏平板（481–819）保持原来的换行排布。
+            { ref: navRef, role: 'tablist', style: { position: 'relative', isolation: 'isolate', display: 'flex', flexWrap: compactNav ? 'nowrap' : 'wrap', gap: compactNav ? 6 : 4, padding: '6px 10px', ...(compactNav ? { overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' } : null), borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)', flex: '0 0 auto' } },
             ...navList.map(([key, paneId, color, parent]) => tabItem(key, paneId, color, parent)),
             tabItem('usage', 'usage', 'var(--dsw-alias-label-tertiary)'),
           )
@@ -13192,7 +13492,7 @@ window.__ModuleLoader__.load({
 
       const main = h(
         'div',
-        { 'data-prefill-main': '', style: { flex: '1 1 auto', minWidth: 0, minHeight: 0, overflowY: 'auto', padding: narrow ? '12px 14px' : '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 } },
+        { 'data-prefill-main': '', style: { flex: '1 1 auto', minWidth: 0, minHeight: 0, overflowY: 'auto', padding: touch ? '10px 12px 16px' : narrow ? '12px 14px' : '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 } },
         conflict
           ? h(
               'div',
@@ -13209,9 +13509,21 @@ window.__ModuleLoader__.load({
       // 正在退场：不接收点击、对读屏隐藏，等 presence 卸载。
       const closing = !cardOpen
 
-      return h(
-        'div',
-        { 'data-prefill-anchor': '1', style: { height: 0, width: '100%', position: 'relative' } },
+      // 官方 2.2rc1：活跃会话（data-phase=active）的 .composerSeat 带 will-change:transform，
+      // 会把 position:fixed 的后代变成「相对 seat 定位」（官方 slot 文档因此要求 fixed overlay portal 到
+      // document.body）。插件卡片/遮罩/菜单都挂在 conversation.input.dock 里，不 portal 的话：
+      //   · 手机遮罩只盖住输入区（实测 seat 高 128，不是整屏）；
+      //   · 工作台右键菜单的 fixed 坐标按视口算，落到 seat 里会整体下移（手机上直接出屏）。
+      // 拿不到 react-dom（旧宿主）就退回原位渲染，行为与改前一致。
+      const overlay = h(
+        React.Fragment,
+        null,
+        // 手机：卡片是「近全屏浮层」，底下垫一层遮罩（点遮罩 = 点外面 ⇒ 走既有的 pointerdown 关闭逻辑）。
+        // 矮视口（横屏手机）同样按模态处理：docked 高度只剩 100 多 px，不可用。
+        // 窄屏平板 / 桌面不加：那里卡片只是输入框上方的工具面板，不该挡住对话。
+        (phone || bounds?.short === true) && !shrunk && !closing
+          ? h('div', { 'data-prefill-scrim': '', 'aria-hidden': 'true', style: { position: 'fixed', inset: 0, zIndex: 59, background: 'rgba(0,0,0,0.28)' } })
+          : null,
         h(
           'div',
           {
@@ -13279,8 +13591,8 @@ window.__ModuleLoader__.load({
               background: 'var(--dsw-alias-bg-base)',
               color: 'var(--dsw-alias-label-primary)',
               border: '1px solid var(--dsw-alias-border-l1)',
-              borderRadius: 14,
-              boxShadow: '0 12px 40px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.06)',
+              borderRadius: touch ? 16 : 14,
+              boxShadow: phone ? '0 18px 48px rgba(0,0,0,.2)' : '0 12px 40px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.06)',
               overflow: 'hidden',
               fontSize: 13,
               lineHeight: 1.55,
@@ -13376,6 +13688,14 @@ window.__ModuleLoader__.load({
         shrunk && motion !== 'off'
           ? h('style', { key: 'marker-keyframes' }, '@keyframes dsh-prefill-pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}@keyframes dsh-prefill-fade{from{opacity:0}to{opacity:1}}')
           : null,
+      )
+      // 锚点（零高）留在 slot 里：插件的 slot 座位不变，浮层本体按官方要求挂到 document.body。
+      return h(
+        'div',
+        { 'data-prefill-anchor': '1', style: { height: 0, width: '100%', position: 'relative' } },
+        ReactDOM !== null && typeof ReactDOM.createPortal === 'function' && typeof document !== 'undefined'
+          ? ReactDOM.createPortal(overlay, document.body)
+          : overlay,
       )
     }
 
@@ -16049,8 +16369,13 @@ window.__ModuleLoader__.load({
       // 数据来源 = 全页唯一的那份 summary 轮询（不再是「自己每 2.5s 拉一次整封 envelope」）；
       // hook 必须在早退之前（React #310）。
       const live = useSummary(sessionId)
+      // 手机窄屏：官方移动端会话头很窄（工具栏与标题抢宽度），这条「预填装 · 拦截档位 · 工具数」徽标
+      // 会被挤到换行/溢出；而相同信息在输入区的「预填装」「纯净」芯片和卡片状态胶囊里都有 ⇒ 手机不渲染。
+      const badgeView = useViewport()
+      const phone = badgeView.phone
 
       if (sessionId === '') return null
+      if (phone) return null
       // 读**当前配置**而不是"上一轮快照"：模式徽标要跟着开关立刻变，
       // 而快照只在跑过一轮之后才更新（Q9 的语义是"本轮生效值"）。
       const levers = live?.state?.levers ?? {}

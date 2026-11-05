@@ -126,6 +126,10 @@ export function makeSettingsHarness(envelope, { routes = {}, titleOf, initialAnc
       'const MOTION_LEVELS = ["full", "lite", "off"]\n' +
       normalizeMotionSrc + '\n' +
       'const useBusy = () => createBusy()\n' +
+      // 手机适配（2026-11）：PrefillSection 用 useViewport 取 phone 判定。harness 里固定桌面宽屏，
+      // 这样既有断言（宽屏版式）保持原样；手机版式由 tools/ui-lab/mobile.mjs 在真机视口下验。
+      'const useViewport = () => ({ vw: 1440, vh: 1000, phone: false, narrow: false, coarse: false })\n' +
+      'const applyTouchStyles = () => {}\n' +
       'const Toggle = (props) => h("button", { "data-prefill-toggle": props.label, "data-on": props.on ? "true" : "false", onClick: props.onToggle }, props.label)\n' +
       'const ErrorPill = (props) => (props.error ? h("span", { "data-prefill-error-pill": props.error.key, onClick: props.onToggle }, props.error.op) : (props.fallback ?? null))\n' +
       'const ConfirmButton = ({ armed, children, ...rest }) => h("button", { ...rest, "data-prefill-confirm": armed ? "true" : "false" }, ...[children].flat())\n' +
