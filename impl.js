@@ -1698,7 +1698,7 @@ export function apply(ctx) {
           config.logging !== null && typeof config.logging === 'object' && typeof config.logging.resultFile === 'string' && config.logging.resultFile !== ''
             ? config.logging.resultFile
             : DEFAULT_RESULT_LOG,
-        // P2-12：是否收集返回的 reasoning_content（默认关；开了 verdict 才能判断「前缀是否被延续」）。
+        // P2-12：是否收集返回的 reasoning_content（默认关；开了才采得到思维链正文，verdict 从 unknown 变成 reasoning-collected —— 它只记事实，不判「前缀是否被延续」）。
         reasoningHead: config.logging !== null && typeof config.logging === 'object' && config.logging.reasoningHead === true,
         // 正文片段（头 80 / 尾 40 字）是否落盘，默认开；关掉就只剩长度与状态。
         snippets: config.logging !== null && typeof config.logging === 'object' && config.logging.snippets === false ? false : true,

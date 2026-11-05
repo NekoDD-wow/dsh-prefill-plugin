@@ -151,7 +151,7 @@ test('noteSessionRouteFromEvent：多会话互不干扰', () => {
 
 // ── F14：结果行尾部读取（面板只回 6 字段） ───────────────────────────────────
 test('parseLastJsonLine：取最后一条能解析的行（尾部窗口从行中间切开也要兜住）', () => {
-  const full = '{"at":1,"verdict":"error"}\n{"at":2,"verdict":"prefix-kept"}\n'
+  const full = '{"at":1,"verdict":"error"}\n{"at":2,"verdict":"reasoning-collected"}\n'
   assert.equal(parseLastJsonLine(full).at, 2)
   // 尾部 8KB 窗口的常见形态：第一行是残的，最后一行完整。
   assert.equal(parseLastJsonLine('{残行不能解析\n{"at":3,"verdict":"passthrough"}\n').at, 3)
@@ -169,7 +169,7 @@ test('resultRowSummaryOf：只回 6 个字段，正文片段绝不带上行', ()
     requestId: 'req-1',
     armId: 'A1',
     runId: 'r-7',
-    verdict: 'prefix-kept',
+    verdict: 'reasoning-collected',
     status: 200,
     attempts: [{ variant: 'system', status: 200, ok: true, ms: 12 }],
     textHead: '这里是模型正文的前 80 字……',
@@ -178,7 +178,7 @@ test('resultRowSummaryOf：只回 6 个字段，正文片段绝不带上行', ()
     usage: { prompt: 1, completion: 2, cacheHit: 0, cacheMiss: 1 },
   }
   const summary = resultRowSummaryOf(row)
-  assert.deepEqual(summary, { armId: 'A1', runId: 'r-7', verdict: 'prefix-kept', status: 200, attemptsLength: 1, at: 1793802485339 })
+  assert.deepEqual(summary, { armId: 'A1', runId: 'r-7', verdict: 'reasoning-collected', status: 200, attemptsLength: 1, at: 1793802485339 })
   // 隐私口径：轮询路由不得把正文/思考片段带回浏览器。
   assert.equal(Object.hasOwn(summary, 'textHead'), false)
   assert.equal(Object.hasOwn(summary, 'textTail'), false)

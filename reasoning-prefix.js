@@ -1027,10 +1027,19 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       } else if (row.reasoningHead === null) {
         row.verdict = 'no-reasoning'
       } else {
-        const probe = String(requestShape?.reasoningPrefix ?? '').slice(0, 8)
-        // 没配思考前缀（只配内容前缀 / 都没配）时，reasoningHead 与「思考前缀」无从比较：
-        // 拿空探针去比会把「判断不了」说成 prefix-absent（内容前缀的延续落在正文里，不在 reasoning）。
-        row.verdict = probe === '' ? 'unknown' : row.reasoningHead.startsWith(probe) ? 'prefix-kept' : 'prefix-absent'
+        /**
+         * 只记**事实**：采集到了思维链正文。
+         *
+         * ⚠️ 这里以前是 `prefix-kept` / `prefix-absent`（判据 = 返回的思维链是否以**前缀前 8 字**开头），
+         * 那是**几乎不可能命中、且命中了也不代表生效**的死分支：官方前缀续写**只返回续写部分、前缀不会回显**，
+         * 所以 `startsWith(前缀)` 只有「模型自己复述了前缀」这种巧合才为真 ⇒ 实际每一行都被记成 `prefix-absent`，
+         * 把「前缀其实生效了」误判成「没生效」——比不记更坏。
+         *
+         * 「前缀是否被延续」**无法从单条响应判断**（那是语义判断，不是字符串比对）：
+         * 真正的判据是**跨臂对比**（有前缀 vs 无前缀的思维链开头），也就是 `armId` 分桶的用途。
+         * 所以这里只给事实值，把判断权交给分析脚本 —— 它手里有 `reasoningHead`（以及内容前缀对应的 `textHead`）全文。
+         */
+        row.verdict = 'reasoning-collected'
       }
       if (resultEnabled) resultLog(resultFile, row)
     }

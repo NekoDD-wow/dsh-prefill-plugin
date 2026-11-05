@@ -2872,7 +2872,7 @@ window.__ModuleLoader__.load({
       labResultEnabled: '写结果行（默认开）',
       labResultFilePh: '留空 = 默认路径',
       labResultReasoningHead: '收集 reasoning 开头（默认关）',
-      labResultReasoningHeadHint: '不收集时 verdict 只能是 unknown —— 只有采到 reasoning 开头，结果行才判断得了「前缀有没有被延续」。',
+      labResultReasoningHeadHint: '不收集时 verdict 只能是 unknown。采到 reasoning 开头也只是把事实落进结果行（reasoning-collected）；「前缀有没有被延续」判不了 —— 前缀不回显，要判得靠跨臂对比思维链开头。',
       labResultSnippets: '落正文片段（头 80 / 尾 40 字，默认开）',
       labResultSnippetsHint: '隐私：开着时结果行会写入模型输出正文的片段（头 80 / 尾 40 字）；关掉它，verdict / 用量 / 时长仍照常记录。',
       labResultLast: '最近结果',
@@ -2880,8 +2880,11 @@ window.__ModuleLoader__.load({
       labResultRun: '轮次',
       labResultAttempts: '尝试次数',
       labResultAt: '时间',
+      // legacy：0.21.9 之前（即 ≤ 0.21.8）的结果行里有这两个判定值（前缀不回显 ⇒ 现已不再产生），保留是为了历史行仍能读成人话。
       labVerdictPrefixKept: '前缀被延续',
       labVerdictPrefixAbsent: '前缀没被延续',
+      // 现役：只记事实 —— 采到思维链正文；「前缀是否被延续」无法从响应判断。
+      labVerdictReasoningCollected: '已采集思维链（前缀是否被延续无法从响应判断 —— 前缀不回显，请跨臂对比）',
       labVerdictNoReasoning: '没有思考内容',
       labVerdictUnknown: '判断不了',
       labVerdictPassthrough: '透传（没加前缀）',
@@ -3346,7 +3349,7 @@ window.__ModuleLoader__.load({
       labResultEnabled: 'Write result rows (on by default)',
       labResultFilePh: 'empty = default path',
       labResultReasoningHead: 'Collect reasoning head (off by default)',
-      labResultReasoningHeadHint: 'Without it verdict can only be "unknown" — only a captured reasoning head lets the result row judge whether the prefix was continued.',
+      labResultReasoningHeadHint: 'Without it verdict can only be "unknown". A captured reasoning head only records the fact (reasoning-collected) — whether the prefix was continued cannot be judged: the prefix is never echoed. Compare reasoning heads across arms instead.',
       labResultSnippets: 'Store text snippets (head 80 / tail 40 chars, on by default)',
       labResultSnippetsHint: 'Privacy: with this on, result rows include snippets of the model output (head 80 / tail 40 chars). Turning it off still records verdict / usage / timings.',
       labResultLast: 'Last result',
@@ -3354,8 +3357,11 @@ window.__ModuleLoader__.load({
       labResultRun: 'run',
       labResultAttempts: 'attempts',
       labResultAt: 'at',
+      // legacy: only appears in result rows written before 0.21.9 (i.e. up to 0.21.8) — the prefix is never echoed, so these are no longer produced.
       labVerdictPrefixKept: 'prefix continued',
       labVerdictPrefixAbsent: 'prefix not continued',
+      // Current: records the fact only — reasoning text was captured; whether the prefix was continued is not decidable.
+      labVerdictReasoningCollected: 'reasoning captured (whether the prefix was continued is not decidable from the response — the prefix is never echoed; compare across arms)',
       labVerdictNoReasoning: 'no reasoning',
       labVerdictUnknown: 'unknown',
       labVerdictPassthrough: 'passthrough (no prefix)',
@@ -13894,7 +13900,7 @@ window.__ModuleLoader__.load({
           samplingTemperature: samplingText(knobs.sampling?.temperature),
           samplingTopP: samplingText(knobs.sampling?.topP),
           samplingSeed: samplingText(knobs.sampling?.seed),
-          // 结果行（F11）：默认开；reasoning 采集默认关（它才让 verdict 判断得了前缀有没有被延续）；正文片段默认开。
+          // 结果行（F11）：默认开；reasoning 采集默认关（开了才采得到思维链正文，verdict 才不止 unknown）；正文片段默认开。
           loggingResultEnabled: knobs.loggingResultEnabled !== false,
           loggingResultFile: String(knobs.loggingResultFile ?? ''),
           loggingReasoningHead: knobs.loggingReasoningHead === true,
@@ -14113,8 +14119,12 @@ window.__ModuleLoader__.load({
       const verdictLabel = (value) => {
         const verdict = typeof value === 'string' ? value : ''
         const keys = {
+          // legacy：只出现在 0.21.9 之前（即 ≤ 0.21.8）的结果行里。前缀不回显 ⇒ 那两个判定值已不再产生，
+          // 但历史行（reasoning-result.jsonl）里还有，保留映射是为了它们仍能显示人话而不是原始英文值。
           'prefix-kept': 'labVerdictPrefixKept',
           'prefix-absent': 'labVerdictPrefixAbsent',
+          // 现役：只记事实 —— 采到了思维链正文；「前缀是否被延续」无法从响应判断（前缀不回显）。
+          'reasoning-collected': 'labVerdictReasoningCollected',
           'no-reasoning': 'labVerdictNoReasoning',
           unknown: 'labVerdictUnknown',
           passthrough: 'labVerdictPassthrough',

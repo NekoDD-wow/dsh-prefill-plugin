@@ -111,9 +111,10 @@ test('新增 UI 键 zh / en 成对', () => {
     'labResultRun',
     'labResultAttempts',
     'labResultAt',
-    // verdict 八态人话。
+    // verdict 八态人话（含 legacy 两键：历史结果行仍要能读）。
     'labVerdictPrefixKept',
     'labVerdictPrefixAbsent',
+    'labVerdictReasoningCollected',
     'labVerdictNoReasoning',
     'labVerdictUnknown',
     'labVerdictPassthrough',
@@ -142,10 +143,13 @@ test('新增 UI 键 zh / en 成对', () => {
   assert.match(src, /statusModelUnknown: '—（v2 接 summary\.model）'/)
 })
 
-test('F14 · verdict 八态都在面板里映射到人话键，且键中英成对', () => {
+test('F14 · verdict 现役七态 + 两个 legacy 值都映射到人话键，且键中英成对', () => {
   for (const [verdict, key] of [
+    // legacy：只出现在 0.21.9 之前（即 ≤ 0.21.8）的结果行里 —— 映射必须保留，否则历史行显示原始英文值。
     ['prefix-kept', 'labVerdictPrefixKept'],
     ['prefix-absent', 'labVerdictPrefixAbsent'],
+    // 现役（前缀不回显 ⇒ 只记事实）。
+    ['reasoning-collected', 'labVerdictReasoningCollected'],
     ['no-reasoning', 'labVerdictNoReasoning'],
     ['unknown', 'labVerdictUnknown'],
     ['passthrough', 'labVerdictPassthrough'],
@@ -156,6 +160,22 @@ test('F14 · verdict 八态都在面板里映射到人话键，且键中英成�
     assert.match(src, new RegExp("'?" + verdict + "'?: '" + key + "'"), verdict + ' 要映射到 ' + key)
     assert.equal(keyCount(key), 2, key + ' 需要 zh + en 两份')
   }
+  // 新值的文案必须点明「无法从响应判断 / 前缀不回显 / 跨臂对比」，别写成结论。
+  assert.match(src, /labVerdictReasoningCollected: '已采集思维链（前缀是否被延续无法从响应判断 —— 前缀不回显，请跨臂对比）'/)
+  assert.match(src, /labVerdictReasoningCollected: 'reasoning captured \(whether the prefix was continued is not decidable from the response — the prefix is never echoed; compare across arms\)'/)
+  // 旧两键标注为 legacy（注释里点名 0.21.9），防止后来者顺手删掉。
+  assert.match(src, /legacy：0\.21\.9 之前（即 ≤ 0\.21\.8）的结果行里有这两个判定值/)
+  assert.match(src, /legacy: only appears in result rows written before 0\.21\.9 \(i\.e\. up to 0\.21\.8\)/)
+})
+
+test('F11 · 结果行说明不得再宣称「结果行判断得了前缀有没有被延续」（0.21.9 起只记事实）', () => {
+  // 这条 hint 是现役 tooltip（渲染于 data-prefill-lab-result-hint）——
+  // 0.21.9 之前它宣称「只有采到 reasoning 开头，结果行才判断得了前缀有没有被延续」，
+  // 而那个判定正是本次删掉的。文案回退会重新误导用户，所以锁住。
+  assert.match(src, /labResultReasoningHeadHint: '不收集时 verdict 只能是 unknown。采到 reasoning 开头也只是把事实落进结果行（reasoning-collected）/)
+  assert.match(src, /labResultReasoningHeadHint: 'Without it verdict can only be "unknown"\. A captured reasoning head only records the fact/)
+  assert.doesNotMatch(src, /结果行才判断得了「前缀有没有被延续」/)
+  assert.doesNotMatch(src, /lets the result row judge whether the prefix was continued/)
 })
 
 test('F8 · 思考前缀文案补「切了不一定生效 + 要回头校验」（zh / en 各 1 处）', () => {

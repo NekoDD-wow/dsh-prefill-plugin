@@ -499,10 +499,14 @@ test('F14 面板 · lastResult 有值 ⇒ armId / verdict / status / attempts / 
   assert.doesNotMatch(text, /undefined/)
 })
 
-test('F14 面板 · verdict 八态都映射到人话键；认不出的原样显示且不画 undefined', async () => {
+test('F14 面板 · verdict 现役七态 + 两个 legacy 值都映射到人话键；认不出的原样显示且不画 undefined', async () => {
   for (const [verdict, key] of [
+    // legacy：0.21.9 之前（即 ≤ 0.21.8）的结果行里还有这两个值（前缀不回显 ⇒ 现已不再产生）。
+    // 它们必须仍能渲染成人话 —— 删了映射就会落回原样显示英文值。
     ['prefix-kept', 'labVerdictPrefixKept'],
     ['prefix-absent', 'labVerdictPrefixAbsent'],
+    // 现役：只记事实。
+    ['reasoning-collected', 'labVerdictReasoningCollected'],
     ['no-reasoning', 'labVerdictNoReasoning'],
     ['unknown', 'labVerdictUnknown'],
     ['passthrough', 'labVerdictPassthrough'],
@@ -512,7 +516,9 @@ test('F14 面板 · verdict 八态都映射到人话键；认不出的原样显�
   ]) {
     const { panel, tree } = await mount(statusOf(null, { prefill: { lastResult: { armId: 'a', runId: '', verdict, status: 200, attemptsLength: 1, at: 1 } } }))
     const row = findOne(panel, tree, 'data-prefill-lab-last-result')
-    assert.match(textOf(row), new RegExp(key), verdict + ' → ' + key)
+    const text = textOf(row)
+    assert.match(text, new RegExp(key), verdict + ' → ' + key)
+    assert.doesNotMatch(text, new RegExp('(^|\\s)' + verdict.replace('-', '\\-') + '(\\s|$)'), verdict + ' 不许落回原样显示英文值')
   }
   // 服务端将来加了新 verdict：原样显示，不因为认不出就画 undefined。
   const { panel, tree } = await mount(statusOf(null, { prefill: { lastResult: { verdict: 'brand-new', status: 0, attemptsLength: 0, at: 0 } } }))

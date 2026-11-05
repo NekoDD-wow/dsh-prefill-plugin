@@ -120,7 +120,7 @@ test('结果行：回退链 400→200 ⇒ 文件恰好 1 行，attempts 逐次�
   const upstream = await startUpstream((index) =>
     index === 1
       ? { status: 400, json: { error: { message: 'system not allowed' } } }
-      : { status: 200, contentType: 'text/event-stream', raw: sse('你好', '他喵，我最喜欢的喵，接着想') },
+      : { status: 200, contentType: 'text/event-stream', raw: sse('你好', '先看看用户要什么，再决定怎么答') },
   )
   const proxy = createReasoningPrefixProxy({
     getConfig: () => ({
@@ -159,8 +159,9 @@ test('结果行：回退链 400→200 ⇒ 文件恰好 1 行，attempts 逐次�
     assert.equal(row.armId, 'A1')
     assert.equal(row.runId, 'r-7')
     assert.equal(row.textHead, '你好')
-    assert.equal(row.reasoningHead, '他喵，我最喜欢的喵，接着想')
-    assert.equal(row.verdict, 'prefix-kept', 'reasoningHead 以推理前缀前 8 字开头')
+    // 上游返回的是**续写**（真实形态：前缀不回显）—— 所以只记事实，不做「前缀是否被延续」的判定。
+    assert.equal(row.reasoningHead, '先看看用户要什么，再决定怎么答')
+    assert.equal(row.verdict, 'reasoning-collected')
     assert.ok(Number.isFinite(row.firstDeltaMs), '首块延迟也要落行（面板与实验都要用）')
     assert.ok(Number.isFinite(row.ms))
   } finally {
@@ -385,7 +386,7 @@ test('verdict：采集了但返回里没有 reasoning_content ⇒ no-reasoning',
   assert.equal(row.verdict, 'no-reasoning')
 })
 
-test('verdict：采集到 reasoning 但不以前缀开头 ⇒ prefix-absent', async () => {
+test('verdict：采集到 reasoning ⇒ reasoning-collected（**不做**「前缀是否被延续」的判定）', async () => {
   const file = join(tempDir(), 'result.jsonl')
   await runOnce({
     config: { resultFile: file, shim: true, textualize: true, catalog: '清单正文', reasoningHeadEnabled: true, reasoningPrefix: '他喵，我最喜欢的喵' },
@@ -393,19 +394,37 @@ test('verdict：采集到 reasoning 但不以前缀开头 ⇒ prefix-absent', as
   })
   const row = readRows(file)[0]
   assert.equal(row.reasoningHead, '完全不一样的思考开头')
-  assert.equal(row.verdict, 'prefix-absent')
+  // 前缀不回显 ⇒ 「以前缀开头」恒为假，所以这里**不能**判成「没生效」。
+  // 只记事实：思维链采集到了，判断权交给脚本（跨臂对比）。
+  assert.equal(row.verdict, 'reasoning-collected')
+  // 脚本该看哪个通道，行里自带：reasoningLen>0 看 reasoningHead，contentLen>0 看 textHead。
+  assert.equal(row.prefix.reasoningLen > 0, true)
 })
 
-test('verdict：只配内容前缀（reasoningPrefix 为空）⇒ unknown，不能说成 prefix-absent', async () => {
+test('verdict：即使返回的思维链"看起来"以前缀开头，也只记 reasoning-collected（不再有 kept/absent）', async () => {
+  const file = join(tempDir(), 'result.jsonl')
+  await runOnce({
+    config: { resultFile: file, shim: true, textualize: true, catalog: '清单正文', reasoningHeadEnabled: true, reasoningPrefix: '他喵，我最喜欢的喵' },
+    // 这个 fixture 以前被用来"证明" prefix-kept 可达 —— 其实是模型复述了前缀，不是前缀被遵守。
+    handler: () => ({ status: 200, contentType: 'text/event-stream', raw: sse('正文', '他喵，我最喜欢的喵，接着想') }),
+  })
+  const row = readRows(file)[0]
+  assert.equal(row.reasoningHead, '他喵，我最喜欢的喵，接着想')
+  assert.equal(row.verdict, 'reasoning-collected')
+})
+
+test('verdict：只配内容前缀时同样是 reasoning-collected（判断该看 textHead，由脚本决定）', async () => {
   const file = join(tempDir(), 'result.jsonl')
   await runOnce({
     config: { resultFile: file, shim: true, textualize: true, catalog: '清单正文', reasoningHeadEnabled: true, reasoningPrefix: '', contentPrefix: '喵～' },
     handler: () => ({ status: 200, contentType: 'text/event-stream', raw: sse('正文', '随便想想') }),
   })
   const row = readRows(file)[0]
-  // 采集到了 reasoning，但没有「思考前缀」可比 —— 拿空探针去比会把「无从判断」说成「前缀没被延续」。
   assert.equal(row.reasoningHead, '随便想想')
-  assert.equal(row.verdict, 'unknown')
+  assert.equal(row.verdict, 'reasoning-collected')
+  // 只配内容前缀 ⇒ 脚本要看的是正文（textHead），行里的 prefix.contentLen 指明这一点。
+  assert.equal(row.prefix.contentLen > 0, true)
+  assert.equal(row.prefix.reasoningLen, 0)
 })
 
 test('verdict：前缀臂被拒后透传成功 ⇒ passthrough（不冒充前缀臂结论）', async () => {
