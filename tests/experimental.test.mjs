@@ -124,6 +124,28 @@ test('sanitizeUi：采样覆盖只留合法成员；null / 全非法 ⇒ 存成 
   assert.deepEqual(sanitizeUi({ reasoningPrefix: { sampling: [] } }), { reasoningPrefix: {} })
 })
 
+// ── 日志轮转（单文件上限 + 保留历史数） ──────────────────────────────────────
+test('sanitizeUi：轮转两个键可往返；0 是合法值（= 不轮转 / 不留历史）', () => {
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { maxBytes: 8388608, keepFiles: 3 } } }), {
+    reasoningPrefix: { logging: { maxBytes: 8388608, keepFiles: 3 } },
+  })
+  // 0 = 不轮转（maxBytes）/ 不留历史（keepFiles）：必须能表达，不能被当成「没设」。
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { maxBytes: 0 } } }), { reasoningPrefix: { logging: { maxBytes: 0 } } })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { keepFiles: 0 } } }), { reasoningPrefix: { logging: { keepFiles: 0 } } })
+})
+
+test('sanitizeUi：轮转两个键越界 / 非整数一律丢掉该键（不写坏状态）', () => {
+  // 上限：0..1GB
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { maxBytes: -1 } } }), { reasoningPrefix: {} })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { maxBytes: 1073741825 } } }), { reasoningPrefix: {} })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { maxBytes: 1.5 } } }), { reasoningPrefix: {} })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { maxBytes: '8' } } }), { reasoningPrefix: {} })
+  // 保留数：0..9
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { keepFiles: -1 } } }), { reasoningPrefix: {} })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { keepFiles: 10 } } }), { reasoningPrefix: {} })
+  assert.deepEqual(sanitizeUi({ reasoningPrefix: { logging: { keepFiles: 2.5 } } }), { reasoningPrefix: {} })
+})
+
 test('前缀模板变量：date/time/model 展开，认不出的原样保留', () => {
   assert.equal(interpolatePrefixVars('{{date}} 今天 {{time}}', { date: '2026-11-03', time: '12:00:00' }), '2026-11-03 今天 12:00:00')
   assert.equal(interpolatePrefixVars('模型={{model}}', { model: 'deepseek-flash' }), '模型=deepseek-flash')

@@ -10,6 +10,10 @@ const from = src.indexOf('    function ExperimentalPanel(props) {')
 const to = src.indexOf('\n    function SbxSegment(props) {')
 if (from < 0 || to <= from) throw new Error('找不到 ExperimentalPanel 段')
 const panelSrc = src.slice(from, to)
+// 轮转的纯函数段（client.js 的 <log-rotation-pure>）：面板体在模块作用域里引用它们，
+// 所以假渲染也要把这一段一起注入；边界单测直接用它，两边是同一份源码。
+const rotationPureSrc = src.slice(src.indexOf('    // <log-rotation-pure>'), src.indexOf('    // </log-rotation-pure>'))
+if (rotationPureSrc.length === 0) throw new Error('找不到 <log-rotation-pure> 段')
 
 /** 和 tests/settings-harness.mjs 同一套假 React：hooks 按调用顺序存槽位，useEffect 按 deps 变化执行。 */
 function makeFakeReact() {
@@ -108,8 +112,9 @@ const KNOBS = {
   loggingSnippets: true,
 }
 /** experimental/status 的回包形状（impl.js experimentalStatus）：stats 代理没跑时是 null。
- *  over 可覆盖 knobs / reasoning / prefill / presets —— 默认 prefill **不带** sessionRoute / lastResult /
- *  catalogDuplicates（旧 fixture 的缺键形态，必须走「不告警 / 不渲染」的静默分支）。 */
+ *  over 可覆盖 knobs / reasoning / prefill / presets / logging —— 默认 prefill **不带** sessionRoute /
+ *  lastResult / catalogDuplicates、logging 不带 totalBytes / rotatedFiles（旧 fixture 的缺键形态，
+ *  必须走「不告警 / 不渲染 / 显示 —」的静默分支）。 */
 const statusOf = (stats, over = {}) => ({
   ok: true,
   experimental: true,
@@ -118,7 +123,7 @@ const statusOf = (stats, over = {}) => ({
   reasoning: { route: null, proxyRunning: false, audit: [], autoDisabledAt: null, ...(over.reasoning ?? {}) },
   presets: over.presets ?? [],
   turns: { total: 0, session: 0 },
-  logging: { enabled: false, file: 'x.jsonl', exists: false, bytes: 0, dumpFile: '', rawFile: '', contentFile: '' },
+  logging: { enabled: false, file: 'x.jsonl', exists: false, bytes: 0, dumpFile: '', rawFile: '', contentFile: '', ...(over.logging ?? {}) },
   log: [],
   prefill: { enabled: false, proxyRunning: false, routeOk: false, skipQueued: false, skipping: false, ready: false, ...(over.prefill ?? {}) },
 })
@@ -194,7 +199,7 @@ function makePanel(statusReply, translate) {
     'EXPERIMENTAL_PRESETS_ROUTE',
     'EXPERIMENTAL_SKIP_ROUTE',
     'REASONING_REPAIR_ROUTE',
-    `${panelSrc}\nreturn { ExperimentalPanel }`,
+    `${rotationPureSrc}\n${panelSrc}\nreturn { ExperimentalPanel }`,
   )(
     fake.React,
     h,
@@ -603,6 +608,167 @@ test('F17-C 面板 · 只数认得的键：嵌套 knobs 形态也认，认不出
   const empty = await mount(statusOf(null))
   assert.equal(empty.panel.find(empty.tree, (props) => props['data-prefill-lab-preset-knobs'] !== undefined).length, 0, '没有预设 ⇒ 只有占位')
   assert.match(textOf(findOne(empty.panel, empty.tree, 'data-prefill-lab-preset-knobs-hint')), /labPresetKnobsHint/)
+})
+
+// ── 轮转（log rotation）：纯函数 + 两个输入 + 占用显示 ────────────────────────
+// 换算 / 格式化做成纯函数（client.js 的 <log-rotation-pure> 段，上面已切出），这里做边界单测。
+// eslint-disable-next-line no-new-func
+const rotation = new Function(`${rotationPureSrc}\nreturn { formatBytes, megabytesToBytes, bytesToMegabytesText, keepFilesToText, parseKeepFiles }`)()
+const loggingKnob = (panel, tree, name) => {
+  const node = panel.find(tree, (props) => props['data-prefill-lab-logging-knob'] === name)[0]
+  assert.ok(node, '找不到轮转输入框 ' + name)
+  return node
+}
+
+test('轮转纯函数 · megabytesToBytes：空 / 0 = 不轮转；负数 / 非数字 / 超上限 / 太小 ⇒ null', () => {
+  assert.equal(rotation.megabytesToBytes(''), 0, '空 = 不轮转')
+  assert.equal(rotation.megabytesToBytes(null), 0)
+  assert.equal(rotation.megabytesToBytes(undefined), 0)
+  assert.equal(rotation.megabytesToBytes('0'), 0, '0 = 不轮转')
+  assert.equal(rotation.megabytesToBytes(' 2 '), 2 * 1024 * 1024, '两边空格照收')
+  assert.equal(rotation.megabytesToBytes('0.5'), 524288, '小数 MB')
+  assert.equal(rotation.megabytesToBytes('1.5'), 1572864)
+  assert.equal(rotation.megabytesToBytes('1024'), 1073741824, '上限 = 服务端 max')
+  for (const bad of ['-1', '-0.5', 'abc', 'NaN', 'Infinity', '1025', '1e9', '0.0000001']) {
+    assert.equal(rotation.megabytesToBytes(bad), null, bad + ' 必须判非法（一个请求都不发）')
+  }
+})
+
+test('轮转纯函数 · formatBytes：B / KB / MB / GB 人话；缺键 / 负数 ⇒ 「—」', () => {
+  assert.equal(rotation.formatBytes(null), '—', '缺键显示「—」，不是 undefined')
+  assert.equal(rotation.formatBytes(undefined), '—')
+  assert.equal(rotation.formatBytes('x'), '—')
+  assert.equal(rotation.formatBytes(-1), '—')
+  assert.equal(rotation.formatBytes(0), '0 B')
+  assert.equal(rotation.formatBytes(512), '512 B')
+  assert.equal(rotation.formatBytes(1023), '1023 B')
+  assert.equal(rotation.formatBytes(1024), '1 KB', '整数不留 .0')
+  assert.equal(rotation.formatBytes(1536), '1.5 KB')
+  assert.equal(rotation.formatBytes(1024 * 1024), '1 MB')
+  assert.equal(rotation.formatBytes(1260000), '1.2 MB')
+  assert.equal(rotation.formatBytes(1024 * 1024 * 1024), '1 GB')
+  assert.equal(rotation.formatBytes(1.5 * 1024 * 1024 * 1024), '1.5 GB')
+  assert.equal(rotation.formatBytes(5 * 1024 * 1024 * 1024), '5 GB')
+})
+
+test('轮转纯函数 · bytesToMegabytesText 能来回换算（不动输入框就不会改值）', () => {
+  assert.equal(rotation.bytesToMegabytesText(0), '0')
+  assert.equal(rotation.bytesToMegabytesText(null), '0')
+  assert.equal(rotation.bytesToMegabytesText(-5), '0')
+  assert.equal(rotation.bytesToMegabytesText(1024 * 1024), '1')
+  assert.equal(rotation.bytesToMegabytesText(1572864), '1.5')
+  assert.equal(rotation.bytesToMegabytesText(100 * 1024 * 1024), '100')
+  for (const bytes of [3, 1000, 1234567]) {
+    assert.equal(rotation.megabytesToBytes(rotation.bytesToMegabytesText(bytes)), bytes, bytes + ' 要能原样换回来')
+  }
+  assert.equal(rotation.bytesToMegabytesText(1234567), String(1234567 / (1024 * 1024)), '短写表达不了就给完整精度')
+})
+
+test('轮转纯函数 · 保留历史文件数：只认 0..9 的整数，缺键不画 undefined', () => {
+  assert.equal(rotation.parseKeepFiles(''), 0, '空 ⇒ 0')
+  assert.equal(rotation.parseKeepFiles(' 3 '), 3)
+  assert.equal(rotation.parseKeepFiles('0'), 0)
+  assert.equal(rotation.parseKeepFiles('9'), 9)
+  for (const bad of ['10', '-1', '1.5', 'abc', 'NaN', 'Infinity']) {
+    assert.equal(rotation.parseKeepFiles(bad), null, bad + ' 非法')
+  }
+  assert.equal(rotation.keepFilesToText(3), '3')
+  assert.equal(rotation.keepFilesToText(0), '0')
+  assert.equal(rotation.keepFilesToText(undefined), '0', '缺键 ⇒ 0')
+  assert.equal(rotation.keepFilesToText('x'), '0')
+  assert.equal(rotation.keepFilesToText(12), '0', '越界按 0')
+})
+
+test('轮转面板 · 回填与提交：面板按 MB，提交换算成字节（缺键 ⇒ 0 / 0）', async () => {
+  const filled = await mount(statusOf(null, { knobs: { loggingMaxBytes: 2 * 1024 * 1024, loggingKeepFiles: 3 } }))
+  assert.equal(loggingKnob(filled.panel, filled.tree, 'maxBytesMb').props.value, '2', '字节回填成 MB')
+  assert.equal(loggingKnob(filled.panel, filled.tree, 'keepFiles').props.value, '3')
+  const bodies = await saveAndGetBodies(filled.panel)
+  assert.equal(bodies.length, 1)
+  assert.equal(bodies[0].loggingMaxBytes, 2 * 1024 * 1024, '提交字节，不是 MB')
+  assert.equal(bodies[0].loggingKeepFiles, 3)
+
+  const missing = await mount(statusOf(null, { knobs: { loggingMaxBytes: undefined, loggingKeepFiles: undefined } }))
+  assert.equal(loggingKnob(missing.panel, missing.tree, 'maxBytesMb').props.value, '0', '缺键 ⇒ 0（不轮转）')
+  assert.equal(loggingKnob(missing.panel, missing.tree, 'keepFiles').props.value, '0', '缺键不画 undefined')
+  const missingBodies = await saveAndGetBodies(missing.panel)
+  assert.equal(missingBodies[0].loggingMaxBytes, 0, '0 = 不轮转')
+  assert.equal(missingBodies[0].loggingKeepFiles, 0)
+})
+
+test('轮转面板 · 非法输入当场拦住：一个请求都不发，并各自给出错误', async () => {
+  const reasonT = (key) => (key === 'labError' ? 'labError {reason}' : key)
+  for (const [name, value, key] of [
+    ['maxBytesMb', '-1', 'labLoggingSizeInvalid'],
+    ['maxBytesMb', 'abc', 'labLoggingSizeInvalid'],
+    ['maxBytesMb', '1025', 'labLoggingSizeInvalid'],
+    ['keepFiles', '10', 'labLoggingKeepInvalid'],
+    ['keepFiles', '1.5', 'labLoggingKeepInvalid'],
+  ]) {
+    const { panel, tree } = await mount(statusOf(null), reasonT)
+    loggingKnob(panel, tree, name).props.onChange({ target: { value } })
+    const bodies = await saveAndGetBodies(panel)
+    assert.equal(bodies.length, 0, name + '=' + value + '：非法值不许发出去')
+    assert.match(textOf(findOne(panel, panel.render(), 'data-prefill-lab-error')), new RegExp(key), name + '=' + value)
+  }
+})
+
+test('轮转面板 · 占用显示：两个文件族各一行，人话格式化 + rotatedFiles 两态；缺键显示「—」', async () => {
+  const dict = (key) =>
+    key === 'labLoggingUsage' ? '代理日志：当前占用 {size}' : key === 'labLoggingUsageResult' ? '结果行：当前占用 {size}' : key === 'labLoggingRotated' ? '另有 {n} 个轮转文件' : key
+  const usageOf = async (logging) => {
+    const { panel, tree } = await mount(statusOf(null, { logging }), dict)
+    return {
+      result: textOf(findOne(panel, tree, 'data-prefill-lab-logging-usage-result')),
+      proxy: textOf(findOne(panel, tree, 'data-prefill-lab-logging-usage')),
+    }
+  }
+  // 两个字段都缺（旧服务端）：两行都在、都显示「—」，且没有 undefined
+  const missing = await usageOf({ enabled: false, file: 'x.jsonl', exists: false, bytes: 0 })
+  assert.match(missing.result, /结果行：当前占用 —/, 'resultTotalBytes 缺键 ⇒ 「—」')
+  assert.match(missing.proxy, /代理日志：当前占用 —/, 'totalBytes 缺键 ⇒ 「—」')
+  assert.doesNotMatch(missing.result + missing.proxy, /undefined/)
+  assert.doesNotMatch(missing.result + missing.proxy, /另有/, 'rotatedFiles 缺键 ⇒ 不标「另有 N 个」')
+
+  // 两族各自有值、各自有轮转历史：互不串味（结果行族读 result*，代理族读非 result*）
+  const both = await usageOf({
+    enabled: true,
+    file: 'x.jsonl',
+    exists: true,
+    bytes: 100,
+    totalBytes: 1260000,
+    rotatedFiles: 2,
+    resultTotalBytes: 524288,
+    resultRotatedFiles: 1,
+  })
+  assert.match(both.result, /结果行：当前占用 512 KB/, '结果行族用人话格式化')
+  assert.match(both.result, /另有 1 个轮转文件/)
+  assert.doesNotMatch(both.result, /1\.2 MB|另有 2 个/, '结果行族不能显示代理族的数')
+  assert.match(both.proxy, /代理日志：当前占用 1\.2 MB/)
+  assert.match(both.proxy, /另有 2 个轮转文件/)
+  assert.doesNotMatch(both.proxy, /512 KB|另有 1 个/, '代理族不能显示结果行族的数')
+
+  // 有值但没有轮转历史 ⇒ 不标「另有」
+  const clean = await usageOf({ enabled: true, file: 'x.jsonl', exists: true, bytes: 512, totalBytes: 512, rotatedFiles: 0, resultTotalBytes: 0, resultRotatedFiles: 0 })
+  assert.match(clean.proxy, /代理日志：当前占用 512 B/)
+  assert.match(clean.result, /结果行：当前占用 0 B/)
+  assert.doesNotMatch(clean.proxy + clean.result, /另有/)
+})
+
+test('轮转面板 · 上限提示：按族算（每个日志最多 X），0 / 非法时不渲染，不算合计', async () => {
+  const dict = (key) => (key === 'labLoggingRotateCap' ? '每个日志最多 {size}' : key)
+  const capOf = async (maxMb, keep) => {
+    const { panel, tree } = await mount(statusOf(null, { knobs: { loggingMaxBytes: 0, loggingKeepFiles: 0 } }), dict)
+    if (maxMb !== null) loggingKnob(panel, tree, 'maxBytesMb').props.onChange({ target: { value: maxMb } })
+    if (keep !== null) loggingKnob(panel, tree, 'keepFiles').props.onChange({ target: { value: keep } })
+    const nodes = panel.find(panel.render(), (props) => props['data-prefill-lab-logging-cap'] !== undefined)
+    return nodes.length === 0 ? null : textOf(nodes[0])
+  }
+  assert.equal(await capOf('2', '3'), '每个日志最多 8 MB', '2 MB × (3 + 1)')
+  assert.equal(await capOf('0.5', '1'), '每个日志最多 1 MB', '0.5 MB × 2')
+  assert.equal(await capOf('0', '3'), null, '0 = 不轮转 ⇒ 不显示')
+  assert.equal(await capOf('-1', '3'), null, '非法上限 ⇒ 不显示（保存时才报错）')
+  assert.equal(await capOf(null, null), null, '缺省 0 ⇒ 不显示')
 })
 
 // ── F2 · 芯片（PrefillToggle）源码守卫：新标记只认 routeOff，且不碰唯一的状态点 ──────────

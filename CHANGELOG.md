@@ -3,6 +3,17 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.21.8 — 2026-11-05
+- **新增：日志轮转与上限（8 个写入点统一）**。结果行、代理日志、调试三件套、前缀轮日志以前全是裸 `appendFileSync`、**盘上一个上限都没有**（内存侧早有 5 处上限，盘侧一处都没有 —— 这个不对称就是这次要收的）。现在统一走带大小轮转的写入器：单文件超「单文件上限」就 `file → file.1 → file.2 → …`，只留「保留历史文件数」个历史，新数据继续写原文件名。
+  - 默认单文件 **8 MB** × 保留 **3** 个历史 ⇒ 每个日志最多 32 MB；面板可改这两个数，也能看到**代理日志族与结果行族各自的当前占用**（含轮转历史）。
+  - 三条硬语义：**只在写之前判断** ⇒ 永远在行边界切换、不写半行（结果行仍「每请求恰好一行」）；**轮转失败一律吞掉并继续追加**（宁可日志长大，也不丢行、不把异常抛进请求路径）；**空文件不轮转** ⇒ 单行超限时不会无限轮转。
+  - `readLastResultRow` 兼容轮转：刚轮转完、新文件还空时回退读 `.1`，面板不会闪「没有结果行」。
+  - `proxy-raw.log` 是**原始字节流**（不是按行写），其轮转发生在数据块边界 —— 注释与 README 均已写明。
+- **实测依据**（决定实现形态，不是拍脑袋）：`appendFileSync` 1.2 KB ≈ **241 µs/次**、`statSync` ≈ **29 µs/次**、**append 成本不随文件大小增长**（24 MB 文件仍 228 µs）。所以：① 轮转解决的是**磁盘增长**、不是速度；② 用**内存字节计数器**（首次 stat 播种、之后只累加）而不是每次写前 stat，省掉那约 12%。
+- 规模参考：结果行 ≈ **1.24 KB/请求**（默认开，是唯一「默认就在长」的文件）；代理日志 131 B、content 811 B、dump 73 B（都默认关）。按此推算：默认配置 1 万次请求 ≈ 13 MB。
+- 回归：新增 `log-rotation.test.mjs`（18）；`experimental.test.mjs`、`experimental-panel-render.test.mjs`、`ui-terms.test.mjs` 扩充。全量 **815 项 / 814 pass / 1 skip / 0 fail**。
+- 明确不做：**不改异步写**。0.24 ms/请求 相对一次模型调用（秒级）不值得引入顺序错乱、进程退出丢尾部、「每请求恰好一行」契约被破这三重风险。
+
 ## 0.21.7 — 2026-11-05
 - **修复：前缀结果行的「代理 ↔ 会话关联」整条不工作（v0.21.6 回归）**。`resolveTraceForBody` 被定义在 `ctx.inject(['connection'], …)` 的**路由作用域**里，而 `ensureReasoningProxy` 的 `getConfig` 闭包在**外层 apply 作用域**调用它 ⇒ 每次调用都 `ReferenceError`，又被代理侧 `catch {}` 吞掉；结果行 `sessionId/turn/step` 永远 `null`、`routeConfidence` 永远 `none`（面板/分析脚本按 `routeConfidence` 分组会全部落到「未关联」）。修法：把定义移回 apply 作用域（`ensureReasoningProxy` 之前）。
 - `llm/stream` 监听改用 `{ global: true, prepend: true }` 注册（与 DSH 自己的 dsh-session-title 同口径），确保在 llm 服务上下文的全局 waterfall 上收到、且在下游构造流之前登记。

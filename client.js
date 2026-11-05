@@ -2894,6 +2894,15 @@ window.__ModuleLoader__.load({
       labLoggingEnabled: '已开启',
       labLoggingDisabled: '未开启',
       labLoggingNoFile: '文件还没生成',
+      // 轮转：单文件上限按 MB 填（0 = 不轮转）+ 保留历史文件数；上限 × (保留数 + 1) = 最多占多少磁盘。
+      labLoggingRotateMax: '单文件上限（MB，0 = 不轮转）',
+      labLoggingRotateKeep: '保留历史文件数（0–9）',
+      labLoggingRotateCap: '上限 × (保留数 + 1) = 每个日志最多 {size}。开着的每个日志各自占用一份；调试三件套（dump / raw / content）会各再占一份。',
+      labLoggingUsage: '代理日志：当前占用 {size}',
+      labLoggingUsageResult: '结果行：当前占用 {size}',
+      labLoggingRotated: '另有 {n} 个轮转文件',
+      labLoggingSizeInvalid: '单文件上限要填 0–1024 的数字（MB），留空 = 不轮转：{value}',
+      labLoggingKeepInvalid: '保留历史文件数要填 0–9 的整数：{value}',
       labNoAudit: '暂无审计记录',
       labReasoningTitle: '思考前缀',
       // 填装状态 / 清空 / 预设 / 日志（v0.20.3）
@@ -3359,6 +3368,15 @@ window.__ModuleLoader__.load({
       labLoggingEnabled: 'enabled',
       labLoggingDisabled: 'disabled',
       labLoggingNoFile: 'file not created yet',
+      // Rotation: per-file cap typed in MB (0 = no rotation) + files to keep; cap × (kept + 1) = max disk use.
+      labLoggingRotateMax: 'Max size per file (MB, 0 = no rotation)',
+      labLoggingRotateKeep: 'Files to keep (0-9)',
+      labLoggingRotateCap: 'Max size × (files kept + 1) = up to {size} per log. Each enabled log takes its own share; the three debug files (dump / raw / content) each add one more.',
+      labLoggingUsage: 'Proxy log: using {size} now',
+      labLoggingUsageResult: 'Result rows: using {size} now',
+      labLoggingRotated: '{n} rotated files',
+      labLoggingSizeInvalid: 'Max size per file must be a number 0-1024 (MB); empty = no rotation: {value}',
+      labLoggingKeepInvalid: 'Files to keep must be an integer 0-9: {value}',
       labNoAudit: 'no audit entries',
       labReasoningTitle: 'Reasoning prefix',
       // Prefill status / clear / presets / log (v0.20.3)
@@ -13776,6 +13794,62 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // <log-rotation-pure>
+    /**
+     * 字节 → 人话（B / KB / MB / GB，一位小数；整数值不留 `.0`）。
+     * 缺键 / null / 负数 / 非有限 ⇒ `'—'`：面板要显示「—」，**绝不显示 undefined**。
+     * 纯函数：单测直接切这一段（tests/experimental-panel-render.test.mjs 的 `<log-rotation-pure>` 切片）。
+     */
+    function formatBytes(value) {
+      const bytes = Number(value)
+      if (value === null || value === undefined || !Number.isFinite(bytes) || bytes < 0) return '—'
+      if (bytes < 1024) return String(Math.round(bytes)) + ' B'
+      for (const [size, unit] of [[1024 * 1024 * 1024, 'GB'], [1024 * 1024, 'MB'], [1024, 'KB']]) {
+        if (bytes < size) continue
+        const text = (bytes / size).toFixed(1)
+        return (text.endsWith('.0') ? text.slice(0, -2) : text) + ' ' + unit
+      }
+      return String(Math.round(bytes)) + ' B'
+    }
+    /**
+     * 面板按 MB 填 → 字节（纯函数，**不抛**，非法返回 `null` 由调用方当场报错、不发请求）：
+     *   · 空串 / `0` ⇒ `0`（= 不轮转）；
+     *   · 负数 / 非数字 / 超 1024 MB（服务端上限 1073741824 字节）/ 小到不足 1 字节 ⇒ `null`。
+     */
+    function megabytesToBytes(text) {
+      const raw = String(text ?? '').trim()
+      if (raw === '') return 0
+      const value = Number(raw)
+      if (!Number.isFinite(value) || value < 0 || value > 1024) return null
+      if (value === 0) return 0
+      const bytes = Math.round(value * 1024 * 1024)
+      return bytes === 0 ? null : bytes
+    }
+    /**
+     * 字节 → 输入框里的 MB 文本：0 / 非法 ⇒ `'0'`。
+     * 能短写就短写（`1.5`），否则给完整精度 —— 免得「没动输入框、一保存值就变了」。
+     */
+    function bytesToMegabytesText(value) {
+      const bytes = Number(value)
+      if (!Number.isFinite(bytes) || bytes <= 0) return '0'
+      const mb = bytes / (1024 * 1024)
+      const short = Number(mb.toFixed(3))
+      return short * 1024 * 1024 === bytes ? String(short) : String(mb)
+    }
+    /** 保留历史文件数 → 输入框文本：只认 0..9 的整数，其余（含缺键）按 `'0'` —— 不画 undefined。 */
+    function keepFilesToText(value) {
+      const count = Number(value)
+      return Number.isInteger(count) && count >= 0 && count <= 9 ? String(count) : '0'
+    }
+    /** 面板按「保留历史文件数」填 → 整数 0..9（纯函数，不抛）；空串 ⇒ `0`，其余非法 ⇒ `null`。 */
+    function parseKeepFiles(text) {
+      const raw = String(text ?? '').trim()
+      if (raw === '') return 0
+      const value = Number(raw)
+      return Number.isInteger(value) && value >= 0 && value <= 9 ? value : null
+    }
+    // </log-rotation-pure>
+
     /** 实验面板（胶囊弹窗「实验」页）：累计统计 + 暴露参数 + 模型路由。只有实验性功能开着才会挂载。 */
     function ExperimentalPanel(props) {
       const t = props.t ?? ((key) => key)
@@ -13830,6 +13904,9 @@ window.__ModuleLoader__.load({
           loggingDump: knobs.loggingDump === true,
           loggingRaw: knobs.loggingRaw === true,
           loggingContent: knobs.loggingContent === true,
+          // 轮转：上限按 **MB** 填（提交时换算成字节，0 = 不轮转）+ 保留历史文件数 0..9。
+          loggingMaxBytesMb: bytesToMegabytesText(knobs.loggingMaxBytes),
+          loggingKeepFiles: keepFilesToText(knobs.loggingKeepFiles),
         })
         return next
       }, [sessionId])
@@ -13872,6 +13949,11 @@ window.__ModuleLoader__.load({
       }
       const save = () =>
         run('save', async () => {
+          // 轮转两项：非法值（负数 / 非数字 / 超范围）当场报错，**一个请求都不发**。
+          const loggingMaxBytes = megabytesToBytes(draft.loggingMaxBytesMb)
+          if (loggingMaxBytes === null) throw new Error(t('labLoggingSizeInvalid').replace('{value}', String(draft.loggingMaxBytesMb ?? '')))
+          const loggingKeepFiles = parseKeepFiles(draft.loggingKeepFiles)
+          if (loggingKeepFiles === null) throw new Error(t('labLoggingKeepInvalid').replace('{value}', String(draft.loggingKeepFiles ?? '')))
           const result = await postJson(EXPERIMENTAL_CONFIG_ROUTE, {
             port: Number(draft.port),
             prefix: draft.prefix,
@@ -13907,6 +13989,9 @@ window.__ModuleLoader__.load({
             loggingDump: draft.loggingDump === true,
             loggingRaw: draft.loggingRaw === true,
             loggingContent: draft.loggingContent === true,
+            // 轮转：上限字节（0 = 不轮转）+ 保留历史文件数（已在上方校验过，不会发 null）。
+            loggingMaxBytes,
+            loggingKeepFiles,
             maxEmittedCalls: Number(draft.maxEmittedCalls),
             failureThreshold: Number(draft.failureThreshold),
           })
@@ -13985,6 +14070,24 @@ window.__ModuleLoader__.load({
       // F15-C：最近一次装配丢弃的重复清单条数（缺键 / 0 = 干净 ⇒ 一律不渲染）。
       const catalogDuplicates = Number(prefill?.catalogDuplicates)
       const catalogDuplicatesShown = Number.isFinite(catalogDuplicates) && catalogDuplicates > 0
+      // 轮转：**两个文件族**各自的占用（缺键 ⇒ formatBytes 给「—」）。结果行默认开，排前面。
+      // 代理 JSONL 族 = logging.totalBytes / rotatedFiles；结果行族 = logging.resultTotalBytes / resultRotatedFiles。
+      // 上限按族算（每个日志各占一份），**不算合计** —— 不同开关下文件个数不同，算不准就不承诺。
+      const resultUsageBytes = data?.logging?.resultTotalBytes
+      const resultRotated = Number(data?.logging?.resultRotatedFiles)
+      const resultRotatedShown = Number.isFinite(resultRotated) && resultRotated > 0
+      const proxyUsageBytes = data?.logging?.totalBytes
+      const proxyRotated = Number(data?.logging?.rotatedFiles)
+      const proxyRotatedShown = Number.isFinite(proxyRotated) && proxyRotated > 0
+      /** 一个文件族的占用行：`<族名>：当前占用 X[ · 另有 N 个轮转文件]`。 */
+      const usageLineOf = (labelKey, bytes, rotated, rotatedShown) =>
+        t(labelKey).replace('{size}', formatBytes(bytes)) + (rotatedShown ? ' · ' + t('labLoggingRotated').replace('{n}', String(rotated)) : '')
+      const rotationCapText = (() => {
+        const maxBytes = megabytesToBytes(draft?.loggingMaxBytesMb)
+        const keepFiles = parseKeepFiles(draft?.loggingKeepFiles)
+        if (maxBytes === null || keepFiles === null || maxBytes === 0) return null
+        return formatBytes(maxBytes * (keepFiles + 1))
+      })()
       /**
        * F17-C：预设携带的旋钮清单 —— 必须与 impl.js 的 `PREFIX_PRESET_KNOBS`（impl.js:243）逐字一致。
        * 浏览器半不能 import 服务端，所以靠这条注释 + tests/experimental-panel-render.test.mjs 的漂移断言兜住。
@@ -14503,6 +14606,19 @@ window.__ModuleLoader__.load({
               ' · ' + String(data?.logging?.file ?? draft.loggingFile ?? '') +
               ' · ' + (data?.logging?.exists === true ? String(data?.logging?.bytes ?? 0) + ' B' : t('labLoggingNoFile')),
           ),
+          // ── 轮转：单文件上限（MB）+ 保留历史文件数；上限 × (保留数 + 1) = 这个日志最多占多少磁盘 ──
+          h(
+            'div',
+            { style: V.row },
+            field('loggingMaxBytesMb', t('labLoggingRotateMax'), draft.loggingMaxBytesMb, (value) => patchDraft('loggingMaxBytesMb', value), { type: 'number', step: '0.1', min: '0', max: '1024', 'data-prefill-lab-logging-knob': 'maxBytesMb' }),
+            field('loggingKeepFiles', t('labLoggingRotateKeep'), draft.loggingKeepFiles, (value) => patchDraft('loggingKeepFiles', value), { type: 'number', step: '1', min: '0', max: '9', 'data-prefill-lab-logging-knob': 'keepFiles' }),
+          ),
+          rotationCapText === null
+            ? null
+            : h('div', { style: V.hint, 'data-prefill-lab-logging-cap': '' }, t('labLoggingRotateCap').replace('{size}', rotationCapText)),
+          // 结果行族（默认开 —— 用户最该看到它）排在代理日志族前面；两族吃同一份 policy，各占一份。
+          h('div', { style: V.hint, 'data-prefill-lab-logging-usage-result': '' }, usageLineOf('labLoggingUsageResult', resultUsageBytes, resultRotated, resultRotatedShown)),
+          h('div', { style: V.hint, 'data-prefill-lab-logging-usage': '' }, usageLineOf('labLoggingUsage', proxyUsageBytes, proxyRotated, proxyRotatedShown)),
           h(
             'div',
             { style: V.row },

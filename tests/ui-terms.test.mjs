@@ -125,6 +125,15 @@ test('新增 UI 键 zh / en 成对', () => {
     'labPresetKnobsN',
     'labPresetKnobsNone',
     'labPresetKnobsHint',
+    // 日志轮转：上限 / 保留数 / 上限提示 / 两族占用 / 轮转文件数 / 两条非法提示。
+    'labLoggingRotateMax',
+    'labLoggingRotateKeep',
+    'labLoggingRotateCap',
+    'labLoggingUsage',
+    'labLoggingUsageResult',
+    'labLoggingRotated',
+    'labLoggingSizeInvalid',
+    'labLoggingKeepInvalid',
   ]) {
     assert.equal(keyCount(key), 2, key + ' 需要 zh + en 两份')
   }
@@ -154,4 +163,24 @@ test('F8 · 思考前缀文案补「切了不一定生效 + 要回头校验」�
   assert.equal((src.match(/not guaranteed to take effect/g) ?? []).length, 1, 'en 恰好 1 处')
   assert.match(src, /reasoningHint: '[^']*要回头校验是否真的切上了/, 'zh 启用说明里也点明要校验')
   assert.match(src, /reasoningHint: '[^']*verify the switch actually took effect/, 'en 启用说明里也点明要校验')
+})
+
+test('轮转文案 · 上限按「每个日志」说，并点明多份文件各占一份；不算合计', () => {
+  // zh：必须是「每个日志最多」而不是「最多占用」（后者会被读成所有日志的合计）。
+  assert.match(src, /labLoggingRotateCap: '上限 × \(保留数 \+ 1\) = 每个日志最多 \{size\}/, 'zh 按族说')
+  assert.match(src, /labLoggingRotateCap: '[^']*开着的每个日志各自占用一份/, 'zh 点明各占一份')
+  assert.match(src, /labLoggingRotateCap: '[^']*调试三件套/, 'zh 点明调试三件套再各占一份')
+  assert.doesNotMatch(src, /labLoggingRotateCap: '[^']*最多占用/, 'zh 不许再写「最多占用」（会被读成合计）')
+  // en 同义
+  assert.match(src, /labLoggingRotateCap: 'Max size × \(files kept \+ 1\) = up to \{size\} per log/, 'en 按族说')
+  assert.match(src, /labLoggingRotateCap: '[^']*Each enabled log takes its own share/, 'en 点明各占一份')
+  assert.match(src, /labLoggingRotateCap: '[^']*three debug files/, 'en 点明调试三件套再各占一份')
+  // 两族占用各有自己的键（结果行默认开，单独一行）
+  assert.match(src, /labLoggingUsage: '代理日志：当前占用 \{size\}'/)
+  assert.match(src, /labLoggingUsageResult: '结果行：当前占用 \{size\}'/)
+  assert.match(src, /labLoggingUsage: 'Proxy log: using \{size\} now'/)
+  assert.match(src, /labLoggingUsageResult: 'Result rows: using \{size\} now'/)
+  // 面板：两族分别读各自的字段（不许把 result* 与代理族混用）
+  assert.match(src, /'data-prefill-lab-logging-usage-result': '' \}, usageLineOf\('labLoggingUsageResult', resultUsageBytes, resultRotated, resultRotatedShown\)/)
+  assert.match(src, /'data-prefill-lab-logging-usage': '' \}, usageLineOf\('labLoggingUsage', proxyUsageBytes, proxyRotated, proxyRotatedShown\)/)
 })

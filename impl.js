@@ -57,7 +57,7 @@ import { surfaceOnRequest, surfaceRoute } from './sandbox-surface.js'
 import { claims as sandboxClaims, installClaimApi } from './sandbox-trace.js'
 import { sanitizeWorkspaceInstructions } from './workspace-instructions.js'
 import { cardFromPng, cardId, cardSummary, compileCard, embedCardInPng, parseCard } from './character-cards.js'
-import { buildToolCatalog, createReasoningPrefixProxy, lastMessageHash, matchPendingTrace } from './reasoning-prefix.js'
+import { buildToolCatalog, createReasoningPrefixProxy, createRotatingLog, lastMessageHash, matchPendingTrace } from './reasoning-prefix.js'
 
 /** 壳的代次。核的代次由 gate.js 自己决定，通过诊断暴露。 */
 const STAGE = 'M6-shell'
@@ -215,6 +215,9 @@ export function sanitizeUi(raw) {
       if (typeof reasoning.logging.resultFile === 'string' && reasoning.logging.resultFile.trim() !== '') logging.resultFile = reasoning.logging.resultFile.trim().slice(0, 300)
       if (typeof reasoning.logging.reasoningHead === 'boolean') logging.reasoningHead = reasoning.logging.reasoningHead
       if (typeof reasoning.logging.snippets === 'boolean') logging.snippets = reasoning.logging.snippets
+      // 日志轮转：单文件上限（字节，0 = 不轮转）+ 保留的历史文件数。
+      if (Number.isInteger(reasoning.logging.maxBytes) && reasoning.logging.maxBytes >= 0 && reasoning.logging.maxBytes <= 1073741824) logging.maxBytes = reasoning.logging.maxBytes
+      if (Number.isInteger(reasoning.logging.keepFiles) && reasoning.logging.keepFiles >= 0 && reasoning.logging.keepFiles <= 9) logging.keepFiles = reasoning.logging.keepFiles
       if (Object.keys(logging).length > 0) next.logging = logging
     }
     // 实验面板可调的硬编码：一次响应最多吐几个工具调用 / 连续失败几次自动停用。
@@ -1587,6 +1590,26 @@ export function apply(ctx) {
   const DEFAULT_PROXY_LOG = join(DATA_DIR, 'reasoning-proxy.jsonl')
   /** 结构化结果行默认落盘路径（默认**开**；面板可改路径或显式关掉）。 */
   const DEFAULT_RESULT_LOG = join(DATA_DIR, 'reasoning-result.jsonl')
+  /** 前缀轮日志路径（每轮一行）。 */
+  const PREFIX_LOG_FILE = join(DATA_DIR, 'prefix-log.jsonl')
+  /** 日志轮转默认值：单文件 8 MB、保留 3 个历史 ⇒ 单个日志最多 8 × 4 = 32 MB。 */
+  const DEFAULT_LOG_MAX_BYTES = 8 * 1024 * 1024
+  const DEFAULT_LOG_KEEP_FILES = 3
+  /**
+   * 日志轮转（用户批准的全量方案）：8 个写入点统一走带大小轮转的写入器，
+   * 单文件超 `logging.maxBytes` 就 `file → file.1 → file.2 → …`，只留 `keepFiles` 个历史。
+   *
+   * 为什么按字节而不是按时间：实验场景关心的是「占多少盘」，按大小更可预测。
+   * 为什么用内存计数器而不是每次 statSync：实测 statSync ≈ 29 µs、1.2KB append ≈ 241 µs，
+   * 每次写前 stat 要多花 ~12%（见本次改动的实测记录）。计数器在写入器内部播种并累加。
+   */
+  const prefixLogWriter = createRotatingLog({
+    file: PREFIX_LOG_FILE,
+    policy: () => {
+      const logging = reasoningConfigOf().logging
+      return { maxBytes: logging.maxBytes, keepFiles: logging.keepFiles }
+    },
+  })
   /**
    * 关联通道（F10）：代理与宿主**同进程**，但代理只拿到 HTTP 请求体，拿不到会话身份。
    * 把会话身份确定性注入到出站请求已证不可行（llm/stream 是只读观测点、出站头是 settings 级静态值、
@@ -1679,6 +1702,9 @@ export function apply(ctx) {
         reasoningHead: config.logging !== null && typeof config.logging === 'object' && config.logging.reasoningHead === true,
         // 正文片段（头 80 / 尾 40 字）是否落盘，默认开；关掉就只剩长度与状态。
         snippets: config.logging !== null && typeof config.logging === 'object' && config.logging.snippets === false ? false : true,
+        // 日志轮转：单文件上限（默认 8 MB；0 = 不轮转）+ 保留历史文件数（默认 3）。
+        maxBytes: Number.isInteger(config.logging?.maxBytes) && config.logging.maxBytes >= 0 ? config.logging.maxBytes : DEFAULT_LOG_MAX_BYTES,
+        keepFiles: Number.isInteger(config.logging?.keepFiles) && config.logging.keepFiles >= 0 && config.logging.keepFiles <= 9 ? config.logging.keepFiles : DEFAULT_LOG_KEEP_FILES,
       },
       // P0-3 / P1-5：实验分臂与采样覆盖（留空 = 不干预）。
       armId: typeof config.armId === 'string' ? config.armId : '',
@@ -1714,7 +1740,8 @@ export function apply(ctx) {
     if (prefixLog.length > PREFIX_LOG_LIMIT) prefixLog.shift()
     try {
       mkdirSync(DATA_DIR, { recursive: true })
-      appendFileSync(join(DATA_DIR, 'prefix-log.jsonl'), JSON.stringify(entry) + '\n', 'utf8')
+      // 轮转写入器内部吞异常（写不进去不影响本轮）；这里只保留 mkdir 的失败上报。
+      prefixLogWriter.write(JSON.stringify(entry) + '\n')
     } catch (error) {
       note({ seat: 'reasoning-prefix', prefixLog: String(error?.message ?? error) })
     }
@@ -1946,6 +1973,9 @@ export function apply(ctx) {
           contentPrefix: current.contentPrefix,
           catalog: toolCatalogOf(),
           logging: current.logging,
+          // 日志轮转策略（代理侧 7 个写入点共用；0 = 不轮转）。
+          logMaxBytes: current.logging.maxBytes,
+          logKeepFiles: current.logging.keepFiles,
           // ── 阶段 B：结果行 / 分桶 / 采样 ──
           // 结果行是**独立** sink（不动旧的 logging.enabled 那条 JSONL）；路径为空则代理不写文件。
           resultEnabled: current.logging.resultEnabled,
@@ -2487,26 +2517,59 @@ export function apply(ctx) {
         loggingResultFile: config.logging.resultFile,
         loggingReasoningHead: config.logging.reasoningHead,
         loggingSnippets: config.logging.snippets,
+        // 日志轮转：单文件上限（字节；0 = 不轮转）与保留历史文件数。
+        loggingMaxBytes: config.logging.maxBytes,
+        loggingKeepFiles: config.logging.keepFiles,
       }
     }
     /** P0：代理 JSONL 日志状态（开关 / 路径 / 是否已落盘 / 文件大小）。 */
-    const proxyLoggingStatus = () => {
-      const config = reasoningConfigOf()
-      const file = config.logging.file
-      let exists = false
+    /**
+     * 一个日志文件族（base + `.1`..`.N`）的占用。轮转后 base 是「当前」、`.1` 是最新历史，
+     * 所以面板要显示的是**族总量**，否则用户看到 base 变小会以为日志被清了。
+     */
+    const logFamilyUsage = (file, keepFiles) => {
       let bytes = 0
+      let exists = false
+      let totalBytes = 0
+      let rotatedFiles = 0
       try {
         const stat = statSync(file)
         exists = true
         bytes = stat.size
+        totalBytes += stat.size
       } catch {
         // 还没写过
       }
+      const keep = Number.isInteger(keepFiles) && keepFiles >= 0 ? keepFiles : DEFAULT_LOG_KEEP_FILES
+      for (let index = 1; index <= keep; index += 1) {
+        try {
+          totalBytes += statSync(file + '.' + index).size
+          rotatedFiles += 1
+        } catch {
+          // 该历史文件不存在 = 正常（还没轮转到那一代）
+        }
+      }
+      return { exists, bytes, totalBytes, rotatedFiles }
+    }
+    const proxyLoggingStatus = () => {
+      const config = reasoningConfigOf()
+      const file = config.logging.file
+      const usage = logFamilyUsage(file, config.logging.keepFiles)
+      const resultUsage = config.logging.resultEnabled ? logFamilyUsage(config.logging.resultFile, config.logging.keepFiles) : { exists: false, bytes: 0, totalBytes: 0, rotatedFiles: 0 }
       return {
         enabled: config.logging.enabled,
         file,
-        exists,
-        bytes,
+        exists: usage.exists,
+        bytes: usage.bytes,
+        // 轮转：策略 + 族总量（base + 全部历史）
+        maxBytes: config.logging.maxBytes,
+        keepFiles: config.logging.keepFiles,
+        totalBytes: usage.totalBytes,
+        rotatedFiles: usage.rotatedFiles,
+        // 结果行族（默认开，是唯一「默认就在长」的那个）
+        resultBytes: resultUsage.bytes,
+        resultTotalBytes: resultUsage.totalBytes,
+        resultRotatedFiles: resultUsage.rotatedFiles,
         dumpFile: config.logging.dumpFile,
         rawFile: config.logging.rawFile,
         contentFile: config.logging.contentFile,
@@ -2520,33 +2583,44 @@ export function apply(ctx) {
      * F14：读结果行的**最后一条**，只回面板要的 6 个字段（正文片段绝不上行）。
      * 只读文件尾部 8KB + 按 mtime/size 缓存 —— 面板是轮询的，不能每次都读整份文件。
      */
+    /**
+     * F14 + 轮转：读结果行的**最后一条**，只回面板要的 6 个字段（正文片段绝不上行）。
+     * 只读文件尾部 8KB + 按 mtime/size 缓存 —— 面板是轮询的，不能每次都读整份文件。
+     *
+     * 轮转兼容：刚轮转完、新的 base 文件还是空的时候，最新那行在 `file.1` 里 ⇒ 回退去读它，
+     * 否则面板会在每次轮转后闪一下「没有结果行」。
+     */
     const readLastResultRow = (config) => {
       if (config.logging.resultEnabled !== true) return null
       const file = config.logging.resultFile
       if (typeof file !== 'string' || file === '') return null
-      try {
-        const stat = statSync(file)
+      const readTailOf = (path) => {
+        const stat = statSync(path)
+        if (stat.size === 0) return null
         const cached = lastResultCache
-        if (cached.path === file && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.value
+        if (cached.path === path && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.value
         const start = Math.max(0, stat.size - 8192)
         const length = stat.size - start
-        let text = ''
-        if (length > 0) {
-          const buffer = Buffer.alloc(length)
-          const fd = openSync(file, 'r')
-          try {
-            readSync(fd, buffer, 0, length, start)
-          } finally {
-            closeSync(fd)
-          }
-          text = buffer.toString('utf8')
+        const buffer = Buffer.alloc(length)
+        const fd = openSync(path, 'r')
+        try {
+          readSync(fd, buffer, 0, length, start)
+        } finally {
+          closeSync(fd)
         }
-        const value = resultRowSummaryOf(parseLastJsonLine(text))
-        lastResultCache = { path: file, mtimeMs: stat.mtimeMs, size: stat.size, value }
+        const value = resultRowSummaryOf(parseLastJsonLine(buffer.toString('utf8')))
+        lastResultCache = { path, mtimeMs: stat.mtimeMs, size: stat.size, value }
         return value
+      }
+      try {
+        return readTailOf(file)
       } catch {
-        // 文件还没写过 / 读不了：面板按「没有结果行」处理，不是错误。
-        return null
+        // 还没写过 / 读不了 ⇒ 试最新的历史文件（刚轮转完的窗口期）。
+        try {
+          return readTailOf(file + '.1')
+        } catch {
+          return null
+        }
       }
     }
     /** @param {{ sessionId?: string }} [scope] 面板会把当前会话带进来：日志 / 跳过状态按会话给。 */
@@ -2688,7 +2762,9 @@ export function apply(ctx) {
         body.loggingResultEnabled !== undefined ||
         body.loggingResultFile !== undefined ||
         body.loggingReasoningHead !== undefined ||
-        body.loggingSnippets !== undefined
+        body.loggingSnippets !== undefined ||
+        body.loggingMaxBytes !== undefined ||
+        body.loggingKeepFiles !== undefined
       ) {
         const logging = { ...(base.logging !== null && typeof base.logging === 'object' ? base.logging : {}) }
         if (body.loggingEnabled !== undefined) {
@@ -2731,6 +2807,15 @@ export function apply(ctx) {
         if (body.loggingSnippets !== undefined) {
           if (typeof body.loggingSnippets !== 'boolean') return reject('正文片段开关要是布尔值')
           logging.snippets = body.loggingSnippets
+        }
+        // 日志轮转：单文件上限（0 = 不轮转，最多 1 GB）+ 保留历史文件数（0..9）。
+        if (body.loggingMaxBytes !== undefined) {
+          if (!isInt(body.loggingMaxBytes, 0, 1073741824)) return reject('单文件上限要 0..1073741824 的整数（字节；0 = 不轮转）')
+          logging.maxBytes = body.loggingMaxBytes
+        }
+        if (body.loggingKeepFiles !== undefined) {
+          if (!isInt(body.loggingKeepFiles, 0, 9)) return reject('保留历史文件数要 0..9 的整数')
+          logging.keepFiles = body.loggingKeepFiles
         }
         patch.logging = logging
       }

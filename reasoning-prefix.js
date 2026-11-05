@@ -13,7 +13,7 @@
  * @module @local/dsh-prefill/reasoning-prefix
  */
 import http from 'node:http'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 
 /**
@@ -622,6 +622,111 @@ function samplingRowOf(source) {
 }
 
 /**
+ * 带轮转的追加写入器（F17）。
+ *
+ * 为什么用内存字节计数器、而不是每次写前 `statSync`：本机实测 `statSync` ≈ 29 µs/次，
+ * append 1.2KB ≈ 241 µs/次 ⇒ 每次写前 stat 等于白花约 12%；而 append 的成本**不随文件大小增长**
+ * （24MB 文件仍 228 µs）。所以轮转解决的是**磁盘增长**，不是速度。
+ *
+ * 三条硬语义：
+ *   · 只在**写之前**判断轮转 ⇒ 永远在行边界切换，不写出半行；
+ *   · 轮转失败（EPERM / 磁盘满 / 文件被占用）一律吞掉并继续追加 —— 宁可日志长大，
+ *     也不能丢行、更不能把异常抛进请求路径；
+ *   · 单行本身超过 maxBytes 时不再轮转（空文件不轮转）⇒ 不会无限轮转。
+ *
+ * 命名：`file`（当前）→ `file.1`（最新历史）→ … → `file.keepFiles`（最旧，先删）；
+ * `keepFiles = 0` ⇒ 直接截断当前文件，不留历史。
+ *
+ * @param {{file?: string, policy?: (() => {maxBytes?: number, keepFiles?: number}) | {maxBytes?: number, keepFiles?: number}}} [options]
+ *   `policy` 每次写入时现取（配置可变）；`maxBytes <= 0` = 不轮转。
+ * @returns {{write: (text: string|Buffer) => void, size: () => number, path: () => string}}
+ */
+export function createRotatingLog({ file, policy } = {}) {
+  const target = typeof file === 'string' ? file : ''
+  /** 内存字节计数器；null = 还没播种（首次写入前 statSync 一次）。 */
+  let bytes = null
+  const readPolicy = () => {
+    let raw = null
+    try {
+      raw = typeof policy === 'function' ? policy() : policy
+    } catch {
+      raw = null
+    }
+    const maxBytes = Number.isFinite(raw?.maxBytes) ? raw.maxBytes : 0
+    // keepFiles 缺省按 0 处理（= 只截断）：轮转历史要显式要，免得漏配时反而把磁盘撑起来。
+    const keepFiles = Number.isInteger(raw?.keepFiles) && raw.keepFiles >= 0 ? raw.keepFiles : 0
+    return { maxBytes, keepFiles }
+  }
+  const seed = () => {
+    if (bytes !== null) return bytes
+    try {
+      bytes = statSync(target).size
+    } catch {
+      // 文件还不存在 / 读不到：从 0 起算
+      bytes = 0
+    }
+    return bytes
+  }
+  /** 轮转一次；返回「当前文件是否真的被挪走/清空」（只有真挪走了计数器才归零）。 */
+  const rotate = (keepFiles) => {
+    if (keepFiles <= 0) {
+      try {
+        writeFileSync(target, '')
+        return true
+      } catch {
+        return false
+      }
+    }
+    try {
+      rmSync(target + '.' + keepFiles, { force: true })
+    } catch {
+      // 最旧那份删不掉（被占用等）：不影响后面的搬运
+    }
+    for (let index = keepFiles - 1; index >= 1; index -= 1) {
+      try {
+        renameSync(target + '.' + index, target + '.' + (index + 1))
+      } catch {
+        // 这一代不存在 / 挪不动：跳过
+      }
+    }
+    try {
+      renameSync(target, target + '.1')
+      return true
+    } catch {
+      // 当前文件挪不动 ⇒ 计数器保持原值，继续往同一个文件追加（日志长大，但不丢行）
+      return false
+    }
+  }
+  return {
+    write(text) {
+      if (target === '') return
+      const { maxBytes, keepFiles } = readPolicy()
+      let current = seed()
+      const length = Buffer.byteLength(text ?? '')
+      // 写之前判断：只有「文件非空 + 加上这行会超」才轮转 ⇒ 行边界切换，且单行超限不会无限轮转。
+      if (maxBytes > 0 && current > 0 && current + length > maxBytes) {
+        if (rotate(keepFiles)) {
+          bytes = 0
+          current = 0
+        }
+      }
+      try {
+        appendFileSync(target, text)
+        bytes = current + length
+      } catch {
+        // 写不进去（磁盘满 / 路径不存在 / 被占用）不影响调用方；计数器不动，下次继续试
+      }
+    },
+    size() {
+      return seed()
+    },
+    path() {
+      return target
+    },
+  }
+}
+
+/**
  * 起一个只绑定 127.0.0.1 的转发代理。
  * @param options.getConfig - 每次请求时读取当前配置（enabled / upstream / reasoningPrefix / contentPrefix / stripTools）。
  * @param options.logger - 可选日志。
@@ -632,16 +737,28 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
   const audit = []
   /** 面板开关控制的 JSONL 日志（写文件；开关/路径来自 state，经 getConfig 传进来）。 */
   let currentLogging = null
+  /**
+   * F17：轮转写入器**按路径缓存**（代理实例级）—— 字节计数器必须跨请求存活，
+   * 否则每次请求都从 statSync 重新播种，等于回到"每次 stat"。
+   * policy 每次写入现取（配置可变），所以这里存的是「当前请求读到的策略」。
+   */
+  const logWriters = new Map()
+  let logPolicy = { maxBytes: 0, keepFiles: 0 }
+  const logWriterFor = (target) => {
+    if (typeof target !== 'string' || target === '') return null
+    let writer = logWriters.get(target)
+    if (writer === undefined) {
+      writer = createRotatingLog({ file: target, policy: () => logPolicy })
+      logWriters.set(target, writer)
+    }
+    return writer
+  }
   const proxyLog = (entry) => {
     const logging = currentLogging
     if (logging?.enabled !== true) return
     const target = typeof logging.file === 'string' && logging.file !== '' ? logging.file : ''
     if (target === '') return
-    try {
-      appendFileSync(target, JSON.stringify(entry) + '\n')
-    } catch {
-      // 日志写不进去不影响转发
-    }
+    logWriterFor(target)?.write(JSON.stringify(entry) + '\n')
   }
   /**
    * 结构化结果行的独立 sink（F11）。与 record() / audit **完全解耦**：
@@ -651,11 +768,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
    */
   const resultLog = (target, row) => {
     if (typeof target !== 'string' || target === '') return
-    try {
-      appendFileSync(target, JSON.stringify(row) + '\n')
-    } catch {
-      // 结果行写不进去不影响转发
-    }
+    logWriterFor(target)?.write(JSON.stringify(row) + '\n')
   }
   const record = (event) => {
     const entry = { at: Date.now(), ...event }
@@ -801,6 +914,11 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     }
     const config = getConfig?.() ?? {}
     currentLogging = config.logging !== null && typeof config.logging === 'object' ? config.logging : null
+    // F17：轮转策略每次请求现取（maxBytes <= 0 = 不轮转）。缓存里的写入器读的就是这个值。
+    logPolicy = {
+      maxBytes: Number.isFinite(config.logMaxBytes) ? config.logMaxBytes : 0,
+      keepFiles: Number.isInteger(config.logKeepFiles) && config.logKeepFiles >= 0 ? config.logKeepFiles : 0,
+    }
     // P1：调试文件路径也走 state（面板可开关），环境变量只作兼容兜底。
     const debugPaths = {
       dump: String(currentLogging?.dumpFile ?? '') || process.env.DSH_PREFILL_SPIKE_DUMP || '',
@@ -1066,7 +1184,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     if (typeof dumpPath === 'string' && dumpPath !== '' && isChat && systemBody !== null) {
       try {
         const parsed = JSON.parse(systemBody.toString('utf8'))
-        appendFileSync(dumpPath, JSON.stringify({ at: Date.now(), hasTools: Array.isArray(parsed.tools) && parsed.tools.length > 0, messages: parsed.messages.length, catalogRole: parsed.messages[parsed.messages.length - 2]?.role }) + '\n')
+        logWriterFor(dumpPath)?.write(JSON.stringify({ at: Date.now(), hasTools: Array.isArray(parsed.tools) && parsed.tools.length > 0, messages: parsed.messages.length, catalogRole: parsed.messages[parsed.messages.length - 2]?.role }) + '\n')
       } catch {
         // dump 失败不影响转发
       }
@@ -1285,11 +1403,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           safeWrite('data: [DONE]\n\n')
           try { if (res.writableEnded !== true) res.end() } catch { /* 已经断了 */ }
           if (typeof contentLog === 'string' && contentLog !== '') {
-            try {
-              appendFileSync(contentLog, JSON.stringify({ at: Date.now(), text: collected.join('') }) + '\n')
-            } catch {
-              // 诊断失败不影响转发
-            }
+            logWriterFor(contentLog)?.write(JSON.stringify({ at: Date.now(), text: collected.join('') }) + '\n')
           }
         }
         const handleFrame = (raw) => {
@@ -1431,11 +1545,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         bump({ ok: true, variant: reportedVariant, ms: Date.now() - started, firstDeltaMs, calls: callCount, armId, usage: requestUsage })
         const shimLog = process.env.DSH_PREFILL_SPIKE_LOG
         if (typeof shimLog === 'string' && shimLog !== '') {
-          try {
-            appendFileSync(shimLog, JSON.stringify({ at: Date.now(), applied: true, shim: true, calls: callCount, status: final.status, firstDeltaMs }) + '\n')
-          } catch {
-            // 日志失败不影响转发
-          }
+          logWriterFor(shimLog)?.write(JSON.stringify({ at: Date.now(), applied: true, shim: true, calls: callCount, status: final.status, firstDeltaMs }) + '\n')
         }
         reportOutcome({ ok: true, variant: reportedVariant, status: final.status, calls: callCount })
         logger?.info?.('dsh-prefill: reasoning-prefix shim 流式转换完成，文本首块 ' + String(firstDeltaMs ?? '-') + 'ms，工具调用 ' + callCount + ' 个')
@@ -1453,7 +1563,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           const reader = Readable.fromWeb(final.body)
           reader.on('data', (chunk) => {
             if (typeof rawPathForStream === 'string' && rawPathForStream !== '') {
-              try { appendFileSync(rawPathForStream, chunk) } catch { /* ignore */ }
+              // F17：这里是**按 chunk 写原始 SSE 字节**，不是按行 JSONL —— 轮转因此可能发生在
+              // chunk 边界（半行），这是可接受的：rawFile 只是原始字节留档，不参与解析。
+              logWriterFor(rawPathForStream)?.write(chunk)
             }
             if (collected.length < 4 * 1024 * 1024) collected += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
           })
@@ -1490,11 +1602,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       bump({ ok: true, variant: reportedVariant, ms: Date.now() - started, armId, usage: forwardUsage })
       const logPath = process.env.DSH_PREFILL_SPIKE_LOG
       if (typeof logPath === 'string' && logPath !== '') {
-        try {
-          appendFileSync(logPath, JSON.stringify({ at: Date.now(), applied, reason, variant: reportedVariant, status: final.status, target, ms: Date.now() - started }) + '\n')
-        } catch {
-          // 日志写不进去不影响转发
-        }
+        logWriterFor(logPath)?.write(JSON.stringify({ at: Date.now(), applied, reason, variant: reportedVariant, status: final.status, target, ms: Date.now() - started }) + '\n')
       }
       reportOutcome({ ok: true, variant: reportedVariant, status: final.status })
       logger?.info?.(`dsh-prefill: reasoning-prefix ${applied ? '已加前缀(' + reportedVariant + ')' : '透传(' + reason + ')'} → ${target} [${final.status}] ${Date.now() - started}ms`)
