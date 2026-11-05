@@ -350,6 +350,13 @@ test('代理流式：上游慢慢吐，客户端先收到文本块（不是整�
     assert.match(text, /"usage"/)
     assert.match(text, /"usage":{"prompt_tokens":1/)
     assert.match(text, /data: \[DONE\]/)
+  } finally {
+    proxy.server.closeAllConnections?.()
+    await proxy.close()
+    upstream.closeAllConnections?.()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+})
 
 test('代理：端口被占用时顺序回退到空位（模型路由不再指向死端口）', async () => {
   const blocker = http.createServer((_req, res) => res.end('occupied'))
@@ -373,14 +380,6 @@ test('代理：端口被占用时顺序回退到空位（模型路由不再指�
     await proxy.close()
     blocker.closeAllConnections?.()
     await new Promise((resolve) => blocker.close(resolve))
-  }
-})
-
-  } finally {
-    proxy.server.closeAllConnections?.()
-    await proxy.close()
-    upstream.closeAllConnections?.()
-    await new Promise((resolve) => upstream.close(resolve))
   }
 })
 
