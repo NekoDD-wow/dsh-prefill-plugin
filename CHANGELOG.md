@@ -3,6 +3,9 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- 测试：`tests/reasoning-prefix.test.mjs` 里「端口被占用时顺序回退」被拼进了「上游慢慢吐」测试的中间，成了子测试并被 `cancelledByParent`，实际一直没跑（公开 main 上 `npm test` 1 项失败）。挪回顶层，两条都恢复独立运行。
+
 ## 0.21.7 — 2026-11-05
 - **修复：前缀结果行的「代理 ↔ 会话关联」整条不工作（v0.21.6 回归）**。`resolveTraceForBody` 被定义在 `ctx.inject(['connection'], …)` 的**路由作用域**里，而 `ensureReasoningProxy` 的 `getConfig` 闭包在**外层 apply 作用域**调用它 ⇒ 每次调用都 `ReferenceError`，又被代理侧 `catch {}` 吞掉；结果行 `sessionId/turn/step` 永远 `null`、`routeConfidence` 永远 `none`（面板/分析脚本按 `routeConfidence` 分组会全部落到「未关联」）。修法：把定义移回 apply 作用域（`ensureReasoningProxy` 之前）。
 - `llm/stream` 监听改用 `{ global: true, prepend: true }` 注册（与 DSH 自己的 dsh-session-title 同口径），确保在 llm 服务上下文的全局 waterfall 上收到、且在下游构造流之前登记。
