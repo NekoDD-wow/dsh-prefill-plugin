@@ -3,6 +3,17 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.21.11 — 2026-11-14
+- **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
+- **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：
+  - 消息来源 `action-cards`（0.2.2-rc.3 新增，行动卡状态更新）进 `dsh-core-context` 包（22→23 项）与两份 `KNOWN_MESSAGE_KINDS` —— 否则受控档会把它当未登记注入丢掉、审计还会误报；
+  - required 上下文 `subagent:identity`（模型是 root 还是子代理、名字、队友工具用法）进核心包，原来会落「未归属」且包开关管不到；
+  - Agent Teams 转正：`dsh-experimental-*` → `dsh-tool-agent-team`，`team:identity` 并入核心、`spawn_teammate` 已删、`send_message` / `list_agents` / `wait_agent` / `interrupt_agent` 与 `agent-message` 归核心 ⇒ **拦 Agent Teams 不再连坐这些核心能力**（旧名单会连坐，正是「只拦一半把功能拦坏」的反向事故）；
+  - 3 个新 `tool:*` 段已被 `tool:*` 通配符覆盖，无需改动。
+  - **行为说明（纯净模式）**：`subagent:identity` 是核心常驻 + `required: true`，纯净模式 / 严格档清 required 上下文时**所有会话**都会失去这段提示（模型不自知 agent 名字与队友工具用法）—— 这是纯净模式的固有语义（报告 §7.6「接受」方案），本次不加豁免。
+- 验证：单测 **830 项 / 829 pass / 1 skip / 0 fail**；手机窄屏真机工装（lab 实例已重启到 DSH 0.2.2-rc.3）5 视口全相位，**must 490/490（红 0）**、target 49/80（红 31 = 按设计 31 + 新问题 0）；宿主 DSH 0.2.2-rc.3（桌面端与 CLI 同版本）。
+- 兼容性：插件 manifest 增记 `0.2.2-rc.3` 为已验证宿主；核对报告与两个只读扫描脚本（`tools/injection-*`）留在私人仓，不进公开镜像。
+
 ## 0.21.10 — 2026-11-05
 - **新增：手机窄屏适配（DSH 0.2.2-rc1）**。官方 2.2rc1 把 Web GUI 的手机窄屏做通了（<768 侧栏变模态抽屉、主区整宽、coarse 指针按触控放大），但插件前端仍按「桌面窄屏 768–819」设计，手机竖屏（320–430 CSS px）上实测踩到 5 个 P0 + 一组 P1：卡片顶边 y≈9 盖住官方 48px 顶栏（内容区只剩 62–203px）、320px 下插件芯片把官方「纯净」挤出可视区、横屏手机 915×412 顶边 **−7**、活跃会话里 fixed 卡片/遮罩定位错乱（官方 `.composerSeat` 的 `will-change` 让它成为包含块）、工作台右键菜单从低处块打开时整体出屏且只能靠菜单底部「关闭」退出、触控点 19–27px 点不中。
   - **视口判定**：新增 `<viewport>` 段（`phone ≤480` / `narrow <820` / `coarse` / `short vh<560`），只读 window、resize 与转屏广播、组件 `useViewport()` 订阅；不引 CSS 媒体查询（插件是单文件内联样式，不写宿主 DOM）。

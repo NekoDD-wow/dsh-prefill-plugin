@@ -540,6 +540,7 @@ const KNOWN_MESSAGE_KINDS = [
   'tmux-context',
   'model-notice',
   'compact-checkpoint',
+  'action-cards',
 ]
 
 /** 取全局 prompt 层（段 / 上下文 / 变量的真实注册名都在这里）。 */
@@ -748,9 +749,13 @@ const BLOCKERS = (globalThis[Symbol.for('dsh-prefill.tools-blockers')] ??= new M
  * 官方 `suppressRuntimeContext()` 只抑制可选上下文；required 的会在 `assemble()` 里保留、
  * 在 `refreshContext()` 里"缺了就补回"，在 `system-prompt/assemble` 瀑布里删也删不掉。
  * 对策（只作用于这一个 agent）：
- *   · 注册在**该 agent 自己作用域**里的（如 Agent Teams 的 `team:identity`）：
+ *   · 注册在**该 agent 自己作用域**里的（如 0.2.2-rc.3 的 `subagent:identity` / 旧版 Agent Teams 的
+ *     `team:identity`）：
  *     同作用域不能再注册同名项，只能把那条注册的正文临时换成 ''（空正文的上下文渲染时会被丢掉），
  *     unlatch 时还原；
+ *     （注意 0.2.2-rc.3 起 `subagent:identity` 是**核心常驻 + required** ⇒ 纯净模式下所有会话都会
+ *     失去「我是 root / 自己的名字 / 队友工具用法」这段提示。这是纯净模式的固有语义，见
+ *     docs/调查报告-官方注入渠道-0.2.2-rc.3.md §7.6。）
  *   · 继承来的（全局 / 上层作用域，如 `working-directory:current`）：在 agent 作用域注册一条
  *     同名、**非 required**、空正文的遮蔽项 ⇒ 合并后生效的是我们这条，suppress 自然把它去掉。
  * 恢复动作挂进 latch.disposers，随下一轮 unlatch 一起撤。返回本次新处理的名字。
@@ -917,6 +922,42 @@ export { auditSnapshot }
  * （`dsh-tools:2946-2949` 点名委派运行时就是往子层注册的）——实测残留
  * `subagent` / `list_subagent_models` 两个。
  */
+/**
+ * 人格/改写段兜底（F22）：装配出来的 sections 里没有我方改写段的正文时，把它补进去。
+ * 只看"配了改写"的会话；文本比对用前 40 字的规范化版本，避免被空白差异骗过。
+ * 返回新的 assembly（不改入参）；补过就记一条审计，面板与日志都能看到。
+ */
+function ensureOverrideSections(api, id, assembly) {
+  if (typeof id !== 'string' || id === '') return assembly
+  if (assembly === null || typeof assembly !== 'object' || !Array.isArray(assembly.sections)) return assembly
+  let overrides
+  try {
+    const state = effectiveStateFor(applyEnabled(api.readState?.()), id)
+    overrides = overridesFor(state, id)
+  } catch {
+    return assembly
+  }
+  const sections = overrides?.sections
+  if (sections === null || typeof sections !== 'object' || Array.isArray(sections)) return assembly
+  const norm = (value) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
+  const have = assembly.sections.map((section) => norm(section?.text))
+  const missing = Object.entries(sections).filter(([, text]) => {
+    const probe = norm(text)
+    return probe !== '' && !have.some((entry) => entry === probe || entry.includes(probe))
+  })
+  if (missing.length === 0) return assembly
+  // 恢复出来的段**沿用原名**：它不是"注册进作用域"（注册那条路已经失败了），而是直接补进
+  // 本次 assembly 的返回数组 ⇒ 不会撞 "already registered"，也不存在要由 unlatch 清掉的注册。
+  // 名字加后缀反而会让下游按名字找段（例如面板按 name 列出可改项）对不上。
+  const added = missing.map(([name, text]) => ({
+    name,
+    order: globalOrderOf(api.rootCtx, 'sections', name) ?? 1000,
+    text: String(text),
+  }))
+  api.note({ override_recovered: missing.map(([name]) => name), id })
+  return { ...assembly, sections: [...assembly.sections, ...added] }
+}
+
 function ensureToolsBlocker(api) {
   const rootCtx = api.rootCtx
   if (rootCtx === undefined || rootCtx === null || typeof rootCtx.on !== 'function') return
@@ -959,8 +1000,8 @@ function ensureToolsBlocker(api) {
       // 与"挂载的 lever"不一致（半轮移除、半轮恢复）。
       const latch = typeof id === 'string' ? api.latches.get(id) : undefined
       const frozen = latch?.frozenLevers
-      // 拦上下文：suppressRuntimeContext 只去掉"可选"上下文，`required: true` 的（Agent Teams 的
-      // `team:identity`、工作目录 `working-directory:current` …）照样进运行时快照，而且 0.2.x 的
+      // 拦上下文：suppressRuntimeContext 只去掉"可选"上下文，`required: true` 的（核心的
+      // `subagent:identity`、工作目录 `working-directory:current` …）照样进运行时快照，而且 0.2.x 的
       // agent-loop 在 step() 里会 refreshContext() 重算快照、绕过 pre-step 直接写进会话 ⇒
       // 只能在注册表层面把它们清掉（见 neutralizeRequiredContexts）。
       let neutralized = []
@@ -974,8 +1015,16 @@ function ensureToolsBlocker(api) {
       const filtered = applyAssemblyBlocks(api, id, context?.scope, unrequired, latch)
       const hit = frozen?.blockTools === true
       api.note({ blocker: 'system-prompt/assemble', id: typeof id === 'string' ? id : '(none)', frozen: frozen !== undefined, hit, ...(neutralized.length > 0 ? { neutralized } : {}) })
-      if (!hit) return filtered
-      return { ...filtered, tools: [] }
+      // 【人格段兜底】(F22)：装配结果里没有我方改写段的正文 ⇒ 段没挂上（撞名 / 挂载中断 /
+      // 闩锁被空挂载覆盖）。这里当场把正文补进这次装配，并记审计 —— 宁可多一层兜底，
+      // 也不要让整轮裸奔（事故 7668928d：T6 起人格段连续三轮消失、且无任何告警）。
+      // ⚠️ 只在**有闩锁**时兜：闩锁 = "这个会话的改写本该由我挂"
+      //   · 没有闩锁 = 用户没启用 / 没套预设 / 已停用 ⇒ 不兜（否则会给不该改写的会话凭空塞人格段）；
+      //   · 闩锁被**用户手动撤掉**（点暂停 / 取消勾选）⇒ 不兜（否则"关不掉"）。
+      // 没闩锁而段缺的情况由 step() 的 "空挂载强制重挂" 去治，不靠这里改线上文本。
+      const guarded = latch === undefined ? filtered : ensureOverrideSections(api, id, filtered)
+      if (!hit) return guarded
+      return { ...guarded, tools: [] }
     },
     { prepend: true },
   )
@@ -1118,7 +1167,25 @@ function mountLevers(agent, state, api, sink) {
       for (const [name, text] of Object.entries(overrides.sections)) {
         // 优先显式给的 order，其次沿用全局那段的原 order，最后才默认 1000。
         const order = Number.isFinite(orders[name]) ? orders[name] : (globalOrderOf(rootCtx, 'sections', name) ?? 1000)
-        push(sp.section({ name, order, text: String(text), ...(interpolateOk(text) ? {} : { interpolate: false }) }))
+        // 逐条兜底（F20）：撞名抛 "already registered in this scope" 时，以前整条挂载链中断
+        // ⇒ 人格段没挂上、后面所有 lever 一起没了（事故 7668928d T6-T8）。现在**跳过这一条、
+        // 接着挂别的**，并把缺的段名记进审计。
+        //
+        // ⚠️ 为什么不是"改名重挂"（最初补丁的写法）：把名字加个后缀重试，是**确定性**的 ——
+        // 第一次撞名说明这个 name 在本作用域注册不上，换个名字重试**必然再撞**；就算撞过去了，
+        // 带后缀的段没有任何注册者，unlatch 清不掉 ⇒ 永久泄漏，而 "缺了哪一段" 也报不出来。
+        // 这里要的是"别让一条坏段拖垮整条链"，不是"换个名字硬塞进去"。
+        try {
+          push(sp.section({ name, order, text: String(text), ...(interpolateOk(text) ? {} : { interpolate: false }) }))
+        } catch (thrown) {
+          api.note({
+            section_mount_failed: name,
+            error: String(thrown?.message ?? thrown),
+            // 跳过不影响别的 lever 继续挂；缺了这一段的后果由装配出口的 F22 兜底。
+            skipped: true,
+            id: agent?.id,
+          })
+        }
       }
     }
     if (overrides.contexts !== null && typeof overrides.contexts === 'object' && typeof sp?.context === 'function') {
@@ -1177,6 +1244,18 @@ export async function prime(api, agent) {
   const hasOverrides = overridesFor(state, agent.id) !== undefined
   const hasInjects = queueOf(state, agent.id).length > 0 || everyTurnFor(state, agent.id) !== undefined
   if (!state.armed.includes(agent.id) && !state.armed.includes('*') && !hasOverrides && !hasInjects) return
+  // 【幂等 + 失败不覆盖】(F21)：同一个 id 的 agent 可能被重建（会话继承 / 恢复开局 /
+  // 种子结束都会走一遍 agent/created）。以前这里不查旧闩锁、也不撤就重挂 ⇒ 同名段抛
+  // "already registered in this scope"；更糟的是**抛完照样写闩锁**，把正在生效的那份
+  // 覆盖成 mounted:0 的 pending 键，下一轮的 pre-step 沿用它 ⇒ 整轮无系统提示改写
+  // （事故 7668928d：T6 起人格段连续三轮消失）。
+  const previous = api.latches.get(agent.id)
+  let previousDisposed = false
+  if (previous !== undefined && typeof api.unlatch === 'function') {
+    api.unlatch(agent.id)
+    previousDisposed = true
+    api.note({ prime: 'replaced-existing', id: agent.id, had: previous.disposers?.length ?? 0 })
+  }
   const disposers = []
   let error = ''
   let primedComplete
@@ -1187,6 +1266,17 @@ export async function prime(api, agent) {
     primedSuppressed = mounted.contextsSuppressed === true
   } catch (thrown) {
     error = String(thrown?.message ?? thrown)
+  }
+  if (error !== '' && disposers.length === 0 && previousDisposed) {
+    // 挂载失败且一条都没挂上：**不要**用空挂载覆盖旧闩锁（宁可沿用旧的已挂载集合），
+    // 否则这一轮会静默跑在"无改写"状态。
+    // ⚠️ 只在旧闩锁**已被我撤掉**时才走这里 —— 旧闩锁的 disposers 此刻已经执行过，
+    // 它记的那些注册**已经不在了**，再塞回去只会得到一个「看着有挂载、其实什么都没挂」
+    // 的假闩锁（比空闩锁更坏：step() 的 "空挂载强制重挂" 也会被它骗过去）。
+    // 没撤成（unlatch 不可用）时旧注册其实还在，保留 previous 才是对的；两条分支都用 note 留痕。
+    api.latches.set(agent.id, previous)
+    api.note({ prime: 'kept-previous', id: agent.id, error, stale: true })
+    return
   }
   api.latches.set(agent.id, {
     turn: 'pending',
@@ -1315,7 +1405,11 @@ export async function step(api, payload, decision) {
   // 急切挂载（prime）留下的 `turn:'pending'`：被本轮**沿用**，不重挂
   // （重挂会因同名段已注册而抛 "already registered in this scope"）。
   if (entry?.turn === 'pending') entry.turn = payload?.turn
-  const remounted = entry?.turn !== payload?.turn
+  // 【空挂载强制重挂】(F23)：闩锁在、但一条都没挂上（挂载中途抛错 / 被失败覆盖）——
+  // 以前 remounted=false 会直接沿用它，整轮跑在"无系统提示改写"状态。这里按需重挂一次。
+  const emptyMount = entry !== undefined && (entry.disposers?.length ?? 0) === 0 && (hasOverrides || hasInjects)
+  if (emptyMount) note({ seat: payload?.__seat, turn: payload?.turn, id: agent?.id, remount: 'empty-latch', hasOverrides, hasInjects })
+  const remounted = emptyMount || entry?.turn !== payload?.turn
   let mounted = entry?.disposers.length ?? 0
   let ui = entry?.ui
   let mountError = ''

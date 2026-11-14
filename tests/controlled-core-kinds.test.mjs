@@ -3,7 +3,8 @@
 //   · skill-invocation   —— dsh-tool-skill：用户输入 /技能名 时在 agent/pre-step 里追加技能正文；
 //   · ptc-mode           —— dsh-tools / dsh-spill-policy：PTC 模式下带图片的工具结果作为延后上下文追加；
 //   · cordis-host-runner —— dsh-cordis-host-runner：Cordis 插件激活 / 运行失败的回报；
-//   · webhook            —— dsh-webhook：webhook 触发新会话时的那条开场指令。
+//   · webhook            —— dsh-webhook：webhook 触发新会话时的那条开场指令；
+//   · action-cards       —— dsh-action-cards（0.2.2-rc.3 新增）：行动卡状态更新，form: 'notice'，随轮追加。
 // 0.18.0 的受控档默认只认 dsh-core-context 包里的 kind 和 KNOWN_MESSAGE_KINDS，这几样都不在 ⇒
 // decide() 判 deny、pre-step 把消息丢掉（技能正文不进模型）。
 import test from 'node:test'
@@ -11,9 +12,9 @@ import assert from 'node:assert/strict'
 import { decide } from '../sandbox.js'
 import { BUILTIN_PACKS, CORE_KINDS, packsOf } from '../sandbox-packs.js'
 import { blocksFor, dropBlockedMessages } from '../injection-audit.js'
-import { applyMessageBlocks } from '../gate.js'
+import { applyMessageBlocks, injections } from '../gate.js'
 
-const NEW_CORE = ['skill-invocation', 'ptc-mode', 'cordis-host-runner', 'webhook']
+const NEW_CORE = ['skill-invocation', 'ptc-mode', 'cordis-host-runner', 'webhook', 'action-cards']
 const empty = { messages: new Set(), sections: new Set(), contexts: new Set() }
 const controlled = (scope = 's1') => ({ sandbox: { [scope]: { level: 'controlled' } } })
 const msg = (kind, index) => ({ id: `m${index}`, role: 'user', source: { kind }, content: [{ type: 'text', text: kind }] })
@@ -42,15 +43,20 @@ test('受控档 decide()：技能调用 / PTC 图片结果等放行（按包）�
 })
 
 test('受控档 pre-step：dropBlockedMessages / applyMessageBlocks 不再丢技能正文和 PTC 图片结果', () => {
-  const kinds = ['user', 'skill-invocation', 'ptc-mode', 'cordis-host-runner', 'webhook', 'acme-note']
+  const kinds = ['user', 'skill-invocation', 'ptc-mode', 'cordis-host-runner', 'webhook', 'action-cards', 'acme-note']
   const decision = { kind: 'enter', messages: kinds.map(msg) }
   const blocks = blocksFor(controlled(), 's1', empty)
   for (const kind of NEW_CORE) assert.equal(blocks.messages.has(kind), false, kind)
   const { decision: next, dropped } = dropBlockedMessages(decision, blocks)
   assert.deepEqual(dropped, ['acme-note'])
-  assert.deepEqual(next.messages.map((message) => message.source.kind), ['user', 'skill-invocation', 'ptc-mode', 'cordis-host-runner', 'webhook'])
+  assert.deepEqual(next.messages.map((message) => message.source.kind), ['user', 'skill-invocation', 'ptc-mode', 'cordis-host-runner', 'webhook', 'action-cards'])
   // 走 gate.js 的 pre-step 最外层（插件实际挂的那一层）。
   const api = { readState: () => controlled(), note() {}, latches: new Map(), unlatch() {}, rootCtx: undefined }
   const out = applyMessageBlocks(api, { agent: { id: 's1' } }, decision, decision)
-  assert.deepEqual(out.messages.map((message) => message.source.kind), ['user', 'skill-invocation', 'ptc-mode', 'cordis-host-runner', 'webhook'])
+  assert.deepEqual(out.messages.map((message) => message.source.kind), ['user', 'skill-invocation', 'ptc-mode', 'cordis-host-runner', 'webhook', 'action-cards'])
+})
+
+test('gate.js 的「改写注入」预置清单与已知来源同步（两份 KNOWN_MESSAGE_KINDS 都要有新增渠道）', () => {
+  const messages = injections(undefined).catalog.messages
+  for (const kind of ['runtime-context', 'model-notice', 'compact-checkpoint', 'action-cards']) assert.ok(messages.includes(kind), kind)
 })

@@ -26,12 +26,12 @@ const sources = () => ({
       },
     },
   },
-  tools: { sessions: { [SID]: ['read', 'bash', 'spawn_teammate', 'send_message'] } },
+  tools: { sessions: { [SID]: ['read', 'bash', 'team_task_create', 'send_message'] } },
   audit: {
     [SID]: [
       { group: 'contexts', name: 'team:identity', count: 3, blockable: true, preview: 'You are the Team Lead' },
       { group: 'contexts', name: 'mem:recall', count: 2, blockable: true, preview: '召回' },
-      { group: 'messages', name: 'developer:tool-registry', count: 1, blockable: false, preview: 'tool-addition:spawn_teammate', lastSeq: 41 },
+      { group: 'messages', name: 'developer:tool-registry', count: 1, blockable: false, preview: 'tool-addition:team_task_create', lastSeq: 41 },
       { group: 'messages', name: 'compact-checkpoint', count: 1, blockable: false },
       { group: 'messages', name: 'agent-message', count: 4, blockable: true },
     ],
@@ -51,9 +51,10 @@ test('视图：受控档下各来源包的生效值、单条裁决、未归属�
   assert.equal(pack('agent-teams').effective, 'deny')
   assert.deepEqual(pack('agent-teams').setting, { session: undefined, global: undefined })
   const teamItems = Object.fromEntries(pack('agent-teams').items.map((entry) => [`${entry.group}:${entry.name}`, entry.action]))
-  assert.deepEqual(teamItems, { 'sections:team:policy': 'deny', 'contexts:team:identity': 'deny', 'messages:agent-message': 'allow', 'tools:spawn_teammate': 'deny', 'tools:send_message': 'allow' })
-  assert.ok(pack('agent-teams').items.find((entry) => entry.name === 'agent-message').shared)
-  assert.ok(pack('agent-teams').members.some((member) => member.name === 'team:identity' && member.at?.includes('dsh-experimental-tool-agent-team')))
+  // 0.2.2-rc.3：agent-message / send_message 归核心，不再作为团队包条目出现。
+  assert.deepEqual(teamItems, { 'sections:team:policy': 'deny', 'contexts:team:identity': 'deny', 'tools:team_task_create': 'deny' })
+  assert.equal(pack('agent-teams').items.some((entry) => entry.name === 'agent-message' || entry.name === 'send_message'), false)
+  assert.ok(pack('agent-teams').members.some((member) => member.name === 'team:policy' && member.at?.includes('dsh-tool-agent-team')))
   assert.deepEqual(view.unassigned.map((entry) => `${entry.group}:${entry.name}:${entry.action}`), ['contexts:mem:recall:deny'])
   assert.equal(view.unassigned[0].preview, '召回')
   const handling = Object.fromEntries(view.audit.map((row) => [row.name, row.handling]))
@@ -71,9 +72,7 @@ test('视图：受控档下各来源包的生效值、单条裁决、未归属�
   // 严格档放行 Agent Teams：只有队友消息真的放行，段 / 上下文 / 工具照实显示成被纯净模式拦。
   const strict = sandboxView({ sandbox: { [SID]: { level: 'strict', packs: { 'agent-teams': 'allow' }, rules: [] } } }, SID, sources())
   const strictItems = Object.fromEntries(strict.packs.find((entry) => entry.id === 'agent-teams').items.map((entry) => [entry.name, entry.action]))
-  assert.equal(strictItems['agent-message'], 'allow')
-  assert.equal(strictItems['team:policy'], 'deny')
-  assert.equal(strictItems.spawn_teammate, 'deny')
+  assert.deepEqual(strictItems, { 'team:policy': 'deny', 'team:identity': 'deny', team_task_create: 'deny' }, '放行团队包只影响本包成员；核心消息来源走核心包')
   assert.equal(strict.audit.find((row) => row.name === 'team:identity').handling, 'strict')
   // 观察到的名字不含用户原话 / 本插件。
   assert.deepEqual(observedFor(SID, sources()).messages, ['agent-message', 'compact-checkpoint', 'developer:tool-registry', 'runtime-context', 'time-context'])
@@ -178,12 +177,12 @@ test('面板：来源包 放行 / 拦截 写本会话开关（全局记住已搬
   const [caret] = ui.find(ui.find(tree, (props) => props['data-prefill-sbx-pack'] === 'agent-teams')[0], (props) => props['aria-expanded'] !== undefined)
   caret.props.onClick()
   tree = ui.render()
-  ui.find(tree, (props) => props['data-prefill-sbx-item'] === 'messages:agent-message')[0].props.onClick()
+  ui.find(tree, (props) => props['data-prefill-sbx-item'] === 'sections:team:policy')[0].props.onClick()
   tree = ui.render()
-  const [editor] = ui.find(tree, (props) => props['data-prefill-sbx-item-editor'] === 'messages:agent-message')
+  const [editor] = ui.find(tree, (props) => props['data-prefill-sbx-item-editor'] === 'sections:team:policy')
   ui.find(editor, (props) => props['data-prefill-sbx-option'] === 'deny')[0].props.onClick()
   await ui.settle()
-  assert.deepEqual(ui.posts.at(-1).sandbox[SID].rules.at(-1), { match: { kind: 'agent-message', exact: true }, action: 'deny' })
+  assert.deepEqual(ui.posts.at(-1).sandbox[SID].rules.at(-1), { match: { section: 'team:policy', exact: true }, action: 'deny' })
   // 审计表：直写会话 / 功能通道 两种处理都显示。
   tree = ui.render()
   const audit = ui.find(tree, (props) => typeof props['data-prefill-sbx-audit-row'] === 'string').map((node) => node.props['data-prefill-sbx-audit-row'])

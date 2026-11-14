@@ -17,12 +17,12 @@ const base = (extra = {}) => ({
 const controlled = (extra = {}) => base({ sandbox: { s: { level: 'controlled', rules: [] }, other: { level: 'controlled', rules: [] } }, ...extra })
 const offState = () => controlled({ enabled: { s: { inject: false } } })
 
-// 装配结果：team:* / spawn_teammate 属于 Agent Teams（受控档默认拦）；
+// 装配结果：team:* / team_task_create 属于 Agent Teams（受控档默认拦）；
 // harness:identity / working-directory:current / read 属于 DSH 核心（放行）。
 const assembly = () => ({
   sections: ['harness:identity', 'team:policy', 'prefill:persona'].map((name) => ({ name, text: name })),
   contexts: ['working-directory:current', 'team:identity'].map((name) => ({ name, text: name })),
-  tools: ['read', 'spawn_teammate'].map((name) => ({ name })),
+  tools: ['read', 'team_task_create'].map((name) => ({ name })),
 })
 const names = (list) => list.map((entry) => entry.name)
 
@@ -49,7 +49,7 @@ test('装配：开关开着滤段/上下文/工具；关掉后全部保留', () 
   const off = applyAssemblyBlocks(api(offState()), 's', undefined, assembly(), undefined)
   assert.deepEqual(names(off.sections), ['harness:identity', 'team:policy', 'prefill:persona'])
   assert.deepEqual(names(off.contexts), ['working-directory:current', 'team:identity'])
-  assert.deepEqual(names(off.tools), ['read', 'spawn_teammate'])
+  assert.deepEqual(names(off.tools), ['read', 'team_task_create'])
   // enabled 只按会话 key 生效：别的会话仍按原规则表（全局受控档）拦。
   const other = applyAssemblyBlocks(api(offState()), 'other', undefined, assembly(), undefined)
   assert.deepEqual(names(other.sections), ['harness:identity', 'prefill:persona'])

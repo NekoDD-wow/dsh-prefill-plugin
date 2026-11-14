@@ -46,6 +46,7 @@ export const KNOWN_MESSAGE_KINDS = [
   'tmux-context',
   'model-notice',
   'compact-checkpoint',
+  'action-cards',
 ]
 
 function previewOf(content) {

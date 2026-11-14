@@ -51,6 +51,17 @@ test('本作用域的 required 上下文：正文临时清空，unlatch 后还�
   assert.equal(identity.text(), 'You are the Team Lead named "lead".')
 })
 
+test('核心常驻 required 上下文（0.2.2-rc.3 的 subagent:identity）同样被清掉（纯净模式固有语义，见渠道报告 §7.6）', () => {
+  const { agent, layers } = fakeWorld()
+  const identity = { name: 'subagent:identity', order: 130, required: true, text: () => 'You are the root agent. Your name is "lead".' }
+  layers.global.contexts.set('subagent:identity', identity)
+  const latch = { disposers: [] }
+  assert.deepEqual(neutralizeRequiredContexts({ rootCtx: undefined }, agent, latch), ['subagent:identity'])
+  assert.equal(effective(layers, agent).find((entry) => entry.name === 'subagent:identity').text, '')
+  for (const dispose of latch.disposers) dispose()
+  assert.equal(identity.text(), 'You are the root agent. Your name is "lead".')
+})
+
 test('继承来的 required 上下文：在 agent 作用域注册非 required 的空遮蔽项', () => {
   const { global, agent, layers, registered } = fakeWorld()
   global.contexts.set('working-directory:current', { name: 'working-directory:current', order: 10, required: true, text: 'Current working directory: "/tmp".' })

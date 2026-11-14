@@ -3077,6 +3077,15 @@ export function apply(ctx) {
           mounted: diagnostics.mounted,
           gateLoads: diagnostics.gateLoads,
           gateError: diagnostics.gateError,
+          // 只留**异常类**条目：正常每轮都会产生的审计（blocker / assembly / note / memory）会把真正
+          // 要命的 mountError / section_mount_failed / override_recovered 挤出去（12 条环里轮不到它们）。
+          // 排查"人格段丢了"时先看这里；正常运行时它应当是空的。
+          issues: diagnostics.last.filter((entry) => {
+            if (entry === null || typeof entry !== 'object') return false
+            return entry.error !== undefined || entry.mountError !== undefined || entry.section_mount_failed !== undefined ||
+              entry.section_missing !== undefined || entry.override_recovered !== undefined || entry.remount !== undefined ||
+              entry.prime === 'kept-previous'
+          }).slice(-8),
           last: diagnostics.last.slice(-8),
         },
       }

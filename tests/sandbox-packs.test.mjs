@@ -19,17 +19,28 @@ const base = (extra = {}) => ({
 })
 const known = { messages: new Set(), sections: new Set(['harness:identity', 'acme:global']), contexts: new Set(['working-directory:current', 'acme:global-ctx']) }
 
-test('内置包：Agent Teams 的真实名字（DSH 0.2.1-rc.3 源码）+ shared 成员', () => {
+test('内置包：Agent Teams 转正后的真实名字（DSH 0.2.2-rc.3）+ 核心新增渠道', () => {
   const teams = BUILTIN_PACKS.find((pack) => pack.id === 'agent-teams')
   const names = teams.members.map((member) => member.section ?? member.context ?? member.kind ?? member.tool)
-  for (const name of ['team:policy', 'team:identity', 'agent-message', 'spawn_teammate', 'send_message', 'list_agents', 'wait_agent', 'interrupt_agent', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update']) {
+  for (const name of ['team:policy', 'team:*', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update']) {
     assert.ok(names.includes(name), name)
   }
-  const shared = teams.members.filter((member) => Array.isArray(member.shared)).map((member) => member.kind ?? member.tool)
-  assert.deepEqual(shared.sort(), ['agent-message', 'interrupt_agent', 'list_agents', 'send_message'])
-  for (const kind of ['runtime-context', 'time-context', 'skill-catalog', 'agent-instructions', 'goal', 'schedule', 'subagent-settled']) assert.ok(CORE_KINDS.includes(kind), kind)
+  // 0.2.2-rc.3：team:identity 并入核心 subagent:identity、spawn_teammate 删除、send_message 等核心工具与
+  // agent-message 归 dsh-tool-subagent-control / dsh-subagent ⇒ 不再属于本包（拦团队包不连坐它们）。
+  for (const name of ['team:identity', 'spawn_teammate', 'send_message', 'list_agents', 'wait_agent', 'interrupt_agent', 'agent-message']) {
+    assert.equal(names.includes(name), false, name)
+  }
+  assert.equal(teams.plugin, '@deepseek-ai/dsh-tool-agent-team')
+  assert.equal(teams.profile, '@deepseek-ai/dsh-agent-team')
+  assert.ok(teams.members.some((member) => member.section === 'team:policy' && member.at === 'dsh-tool-agent-team/lib/index.js:140'))
+  // 新增渠道进核心包：消息 action-cards（22 → 23 项）、required 上下文 subagent:identity。
+  for (const kind of ['runtime-context', 'time-context', 'skill-catalog', 'agent-instructions', 'goal', 'schedule', 'subagent-settled', 'action-cards']) assert.ok(CORE_KINDS.includes(kind), kind)
+  const core = BUILTIN_PACKS.find((pack) => pack.id === 'dsh-core-context')
+  assert.ok(core.members.some((member) => member.context === 'subagent:identity' && member.exact === true && member.at === 'dsh-tool-subagent-control/lib/index.js:262'))
   // 同一目标命中多个包：具体的在前，同样具体时第三方在前。
-  assert.deepEqual(packsOf({}, { kind: 'agent-message' }).map(({ pack }) => pack.id), ['agent-teams', 'dsh-core-context'])
+  assert.deepEqual(packsOf({}, { kind: 'agent-message' }).map(({ pack }) => pack.id), ['dsh-core-context'])
+  assert.deepEqual(packsOf({}, { kind: 'action-cards' }).map(({ pack }) => pack.id), ['dsh-core-context'])
+  assert.deepEqual(packsOf({}, { context: 'subagent:identity' }).map(({ pack }) => pack.id), ['dsh-core-context'])
   assert.deepEqual(packsOf({}, { section: 'team:policy' }).map(({ pack }) => pack.id), ['agent-teams'])
   assert.deepEqual(packsOf({}, { section: 'prefill:persona' }), [], '本插件不走包裁决（恒放行）')
 })
@@ -38,11 +49,13 @@ test('受控档：DSH 核心放行、第三方包默认拦、未归属拦、已�
   const state = { sandbox: { s: { level: 'controlled', rules: [] } } }
   const verdict = (target) => decide(state, 's', target, { known })
   assert.deepEqual(verdict({ section: 'team:policy' }), { action: 'deny', by: 'pack', pack: 'agent-teams', scope: 'level' })
-  assert.equal(verdict({ context: 'team:identity' }).action, 'deny')
-  assert.equal(verdict({ tool: 'spawn_teammate' }).action, 'deny')
+  assert.equal(verdict({ context: 'team:identity' }).action, 'deny', 'team:* 通配兜住旧名字')
   assert.equal(verdict({ tool: 'team_task_list' }).action, 'deny')
-  // shared：档位默认不连带（DSH 子代理也用这些名字）。
+  // 0.2.2-rc.3：spawn_teammate 已删除、send_message 归核心 ⇒ 不再被团队包连坐，工具默认放行。
+  assert.equal(verdict({ tool: 'spawn_teammate' }).action, 'allow')
   assert.deepEqual(verdict({ kind: 'agent-message' }), { action: 'allow', by: 'pack', pack: 'dsh-core-context', scope: 'level' })
+  assert.deepEqual(verdict({ kind: 'action-cards' }), { action: 'allow', by: 'pack', pack: 'dsh-core-context', scope: 'level' })
+  assert.deepEqual(verdict({ context: 'subagent:identity' }), { action: 'allow', by: 'pack', pack: 'dsh-core-context', scope: 'level' })
   assert.equal(verdict({ tool: 'send_message' }).action, 'allow')
   // DSH 核心。
   assert.equal(verdict({ section: 'harness:identity' }).action, 'allow')
@@ -66,40 +79,45 @@ test('受控档：DSH 核心放行、第三方包默认拦、未归属拦、已�
   assert.equal(policyActive(state, 'other'), false)
 })
 
-test('包开关：整包放行 / 拦截；会话开关盖过全局；显式规则盖过包；shared 成员跟显式开关走', () => {
+test('包开关：整包放行 / 拦截；会话开关盖过全局；显式规则盖过包；核心能力不被连坐', () => {
   const allow = { sandbox: { s: { level: 'controlled', packs: { 'agent-teams': 'allow' }, rules: [] } } }
-  for (const target of [{ section: 'team:policy' }, { context: 'team:identity' }, { kind: 'agent-message' }, { tool: 'spawn_teammate' }, { tool: 'send_message' }]) {
+  for (const target of [{ section: 'team:policy' }, { context: 'team:identity' }, { tool: 'team_task_create' }, { tool: 'team_task_list' }]) {
     assert.deepEqual(decide(allow, 's', target, { known }), { action: 'allow', by: 'pack', pack: 'agent-teams', scope: 'session' }, JSON.stringify(target))
   }
-  // 观察档 + 全局拦 Agent Teams：shared 的 agent-message / send_message 跟着拦（用户显式点的）。
+  // 0.2.2-rc.3：队友消息 / 核心工具归 DSH 核心，包开关管不到它们。
+  assert.deepEqual(decide(allow, 's', { kind: 'agent-message' }, { known }), { action: 'allow', by: 'pack', pack: 'dsh-core-context', scope: 'level' })
+  assert.equal(decide(allow, 's', { tool: 'send_message' }, { known }).action, 'allow')
+  // 观察档 + 全局拦 Agent Teams：只拦本包成员。
   const deny = { sandbox: { '*': { packs: { 'agent-teams': 'deny' }, rules: [] } } }
-  for (const target of [{ section: 'team:policy' }, { kind: 'agent-message' }, { tool: 'send_message' }, { tool: 'wait_agent' }]) {
+  for (const target of [{ section: 'team:policy' }, { tool: 'team_task_create' }, { tool: 'team_task_update' }]) {
     assert.deepEqual(decide(deny, 'x', target, { known }), { action: 'deny', by: 'pack', pack: 'agent-teams', scope: 'global' }, JSON.stringify(target))
   }
+  assert.equal(decide(deny, 'x', { kind: 'agent-message' }, { known }).action, 'allow', '不再连带核心的队友消息')
+  assert.equal(decide(deny, 'x', { tool: 'send_message' }, { known }).action, 'allow', '不再连带核心工具')
   assert.equal(decide(deny, 'x', { section: 'harness:identity' }, { known }).action, 'allow')
   assert.equal(decide(deny, 'x', { context: 'mem:recall' }, { known }).action, 'allow', '观察档：未归属只记录')
   // 会话放行盖过全局拦截。
   const both = { sandbox: { '*': { packs: { 'agent-teams': 'deny' }, rules: [] }, s: { packs: { 'agent-teams': 'allow' }, rules: [] } } }
-  assert.equal(decide(both, 's', { kind: 'agent-message' }).action, 'allow')
-  assert.equal(decide(both, 'other', { kind: 'agent-message' }).action, 'deny')
-  // 单条另设（显式规则）盖过包：包拦着，但 team:identity 单独放行；包放行，但 wait_agent 单独拦。
+  assert.equal(decide(both, 's', { tool: 'team_task_create' }).action, 'allow')
+  assert.equal(decide(both, 'other', { tool: 'team_task_create' }).action, 'deny')
+  // 单条另设（显式规则）盖过包：包拦着，但 team:policy 单独放行；包放行，但 team_task_list 单独拦。
   const item = {
     sandbox: {
       s: {
         level: 'controlled',
         packs: { 'agent-teams': 'deny' },
         rules: [
-          { match: { context: 'team:identity', exact: true }, action: 'allow' },
-          { match: { tool: 'spawn_teammate', exact: true }, action: 'allow' },
+          { match: { section: 'team:policy', exact: true }, action: 'allow' },
+          { match: { tool: 'team_task_create', exact: true }, action: 'allow' },
         ],
       },
-      t: { packs: { 'agent-teams': 'allow' }, rules: [{ match: { tool: 'wait_agent', exact: true }, action: 'deny' }] },
+      t: { packs: { 'agent-teams': 'allow' }, rules: [{ match: { tool: 'team_task_list', exact: true }, action: 'deny' }] },
     },
   }
-  assert.equal(decide(item, 's', { context: 'team:identity' }, { known }).action, 'allow')
-  assert.equal(decide(item, 's', { section: 'team:policy' }, { known }).action, 'deny')
-  assert.equal(decide(item, 's', { tool: 'spawn_teammate' }, { known }).action, 'allow')
-  assert.equal(decide(item, 't', { tool: 'wait_agent' }).action, 'deny')
+  assert.equal(decide(item, 's', { section: 'team:policy' }, { known }).action, 'allow')
+  assert.equal(decide(item, 's', { tool: 'team_task_list' }, { known }).action, 'deny')
+  assert.equal(decide(item, 's', { tool: 'team_task_create' }, { known }).action, 'allow')
+  assert.equal(decide(item, 't', { tool: 'team_task_list' }).action, 'deny')
   assert.equal(decide(item, 't', { tool: 'team_task_get' }).action, 'allow')
 })
 
@@ -115,7 +133,8 @@ test('闸门阻断名单（blocksFor）：受控档逐条裁决，含 tools；�
   assert.equal(blocks.messages.has('goal'), true, '显式 deny 照拦')
   assert.equal(blocks.messages.has('agent-message'), false)
   assert.equal(blocks.messages.has('acme-note'), true)
-  assert.equal(blocks.tools.has('spawn_teammate'), true)
+  assert.equal(blocks.tools.has('team_task_create'), true)
+  assert.equal(blocks.tools.has('spawn_teammate'), false, '0.2.2-rc.3 已删 / 已归核心，不再被团队包连坐')
   assert.equal(blocks.tools.has('read'), false)
   assert.ok(blocks.sections.size > 0 && blocks.contexts.size > 0)
   // 签名随档位变：闸门据此重挂。
@@ -130,7 +149,8 @@ test('闸门阻断名单（blocksFor）：受控档逐条裁决，含 tools；�
   // 严格档的「档位默认拦」不进名单（那部分由 levers 整份接管，和旧纯净模式一致）。
   const strict = blocksFor({ sandbox: { s: { level: 'strict', packs: { 'agent-teams': 'deny' }, rules: [] } } }, 's', known)
   assert.equal(strict.contexts.has('mem:recall'), false)
-  assert.equal(strict.contexts.has('team:identity'), true)
+  assert.equal(strict.sections.has('team:policy'), true, '包显式拦照旧进名单')
+  assert.equal(strict.contexts.has('team:identity'), true, 'team:* 通配命中包显式拦，照样进名单')
 })
 
 test('pre-step：受控档丢掉第三方 / 未归属消息，DSH 核心、队友消息、用户原话、本插件照发', () => {
@@ -142,10 +162,14 @@ test('pre-step：受控档丢掉第三方 / 未归属消息，DSH 核心、队�
   }
   const next = applyMessageBlocks(api, { agent: { id: 's' } }, decision, decision)
   assert.deepEqual(next.messages.map((message) => message.source.kind), ['user', 'runtime-context', 'time-context', 'agent-message', 'prefill', 'goal'])
-  // 显式拦 Agent Teams：队友消息也丢。
+  // 显式拦 Agent Teams：只影响本包成员；队友消息已归核心，照发（0.2.2-rc.3）。
   const denied = base({ sandbox: { s: { level: 'controlled', packs: { 'agent-teams': 'deny' }, rules: [] } } })
   const out = applyMessageBlocks({ ...api, readState: () => denied }, { agent: { id: 's' } }, decision, decision)
-  assert.equal(out.messages.some((message) => message.source.kind === 'agent-message'), false)
+  assert.equal(out.messages.some((message) => message.source.kind === 'agent-message'), true)
+  // 真要拦就显式拦这条 kind。
+  const dropped = base({ sandbox: { s: { level: 'controlled', rules: [{ match: { kind: 'agent-message', exact: true }, action: 'deny' }] } } })
+  const droppedOut = applyMessageBlocks({ ...api, readState: () => dropped }, { agent: { id: 's' } }, decision, decision)
+  assert.equal(droppedOut.messages.some((message) => message.source.kind === 'agent-message'), false)
 })
 
 function fakeRoot(globalSections, globalContexts) {
@@ -186,7 +210,7 @@ test('装配：受控档滤掉 Agent Teams 的段 / 上下文 / 工具和未归�
   let out = await run()
   assert.deepEqual(out.sections.map((entry) => entry.name), ['harness:identity', 'tool:bash', 'prefill:persona'])
   assert.deepEqual(out.contexts.map((entry) => entry.name), ['working-directory:current'])
-  assert.deepEqual(out.tools.map((tool) => tool.name), ['read', 'bash', 'send_message'])
+  assert.deepEqual(out.tools.map((tool) => tool.name), ['read', 'bash', 'spawn_teammate', 'send_message'], '已删 / 归核心的工具不再被团队包连坐')
   // 放行整包：全回来（未归属的 mem:recall 仍拦）。
   state = base({ sandbox: { [id]: { level: 'controlled', packs: { 'agent-teams': 'allow' }, rules: [] } } })
   out = await run()
@@ -200,21 +224,22 @@ test('装配：受控档滤掉 Agent Teams 的段 / 上下文 / 工具和未归�
   assert.equal(out.contexts.length, 3)
 })
 
-test('严格档 + 放行 Agent Teams：队友消息进白名单（不放行就被纯净模式丢）', async () => {
+test('严格档 + 放行核心包：它的消息来源进白名单（不放行就被纯净模式丢）', async () => {
   const run = async (packs) => {
     const id = `strict-${packs ? 'allow' : 'none'}`
     const state = base({ sandbox: { [id]: { level: 'strict', ...(packs ? { packs } : {}), rules: [] } } })
     const api = { readState: () => state, note() {}, latches: new Map(), unlatch() {}, rootCtx: undefined }
     const agent = { id, ctx: { get: () => undefined }, session: { snapshotEvents: () => [] } }
-    const decision = { kind: 'enter', messages: ['agent-message', 'goal', 'user'].map((kind, index) => ({ id: `k${index}`, role: 'user', source: { kind }, content: [] })) }
+    const decision = { kind: 'enter', messages: ['action-cards', 'goal', 'user'].map((kind, index) => ({ id: `k${index}`, role: 'user', source: { kind }, content: [] })) }
     const out = await step(api, { agent, turn: 1, step: 1 }, applyMessageBlocks(api, { agent }, decision, decision))
     return { kinds: out.messages.map((message) => message.source.kind), snap: snapshots()[id] }
   }
   assert.deepEqual((await run()).kinds, ['user'])
-  const allowed = await run({ 'agent-teams': 'allow' })
-  assert.deepEqual(allowed.kinds, ['agent-message', 'user'])
-  assert.ok(allowed.snap.allowed.includes('agent-message'))
-  assert.ok(resolveSandbox(base({ sandbox: { s: { level: 'strict', packs: { 'agent-teams': 'allow' }, rules: [] } } }), 's').messageAllow.has('agent-message'))
+  // 0.2.2-rc.3：严格档要放行的核心消息来源由「放行核心包」带进白名单（action-cards 是新增的那条）。
+  const allowed = await run({ 'dsh-core-context': 'allow' })
+  assert.deepEqual(allowed.kinds, ['action-cards', 'goal', 'user'])
+  assert.ok(allowed.snap.allowed.includes('action-cards'))
+  assert.ok(resolveSandbox(base({ sandbox: { s: { level: 'strict', packs: { 'dsh-core-context': 'allow' }, rules: [] } } }), 's').messageAllow.has('action-cards'))
 })
 
 test('包开关不丢：迁移 / 写盘镜像往返 / 旧面板写回别的旧字段 都保留；不镜像进旧字段', () => {

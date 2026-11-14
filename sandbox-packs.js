@@ -10,19 +10,19 @@
  * 排在会话 / 全局显式规则之后、档位默认之前（见 sandbox.js decide）。
  *
  * ── 内置包的名字从哪来（不是猜的）────────────────────────────────────────────────
- * 全部取自 `@deepseek-ai/*@0.2.1-rc.5` 的发布包源码（npm 上的同版本包，路径为包内 `lib/index.js:行号`；
- * rc.3 → rc.5 抽查过：包名 / 段名 / 上下文名 / 来源 kind / 工具名都没变，个别行号 ±1，已按 rc.5 调整）：
+ * 全部取自 `@deepseek-ai/*@0.2.2-rc.3` 的发布包源码（本机 `app.asar` 内同版本包，路径为包内 `lib/index.js:行号`）。
+ * 0.2.1-rc.5 → 0.2.2-rc.3 的官方注入渠道 diff 见 docs/调查报告-官方注入渠道-0.2.2-rc.3.md：
+ * 新增 1 个消息来源（`action-cards`）、1 个 required 上下文（`subagent:identity`）、3 个 tool:* 段（通配符已覆盖）；
+ * Agent Teams 转正（`dsh-experimental-*` → `dsh-agent-team` / `dsh-tool-agent-team`），并删掉 `team:identity` / `spawn_teammate`。
  *
- * Agent Teams（`dsh-experimental-agent-team-profile` 把下面两个包插进 profile，同时停用 tool-subagent*）：
- *   · dsh-experimental-tool-agent-team:235  段 `team:policy`（agent 自己作用域注册）
- *   · dsh-experimental-tool-agent-team:240  上下文 `team:identity`（required: true，agent 作用域）
- *   · dsh-experimental-tool-agent-team:251-457 工具 spawn_teammate / send_message / list_agents / wait_agent /
- *     interrupt_agent / team_task_create / team_task_list / team_task_get / team_task_update（agent 作用域注册 ⇒
- *     `tools.restrict` 拦不住，只能在装配结果里过滤）
- *   · dsh-experimental-agent-team:1599     队友消息 `source.kind = 'agent-message'`（form: 'relay'）
- *   ⚠ 同名：`agent-message` 也是 DSH 核心子代理的回传消息（dsh-subagent:446）；send_message / interrupt_agent /
- *     list_agents 也是 dsh-tool-subagent-control 的全局工具名。这几项标 `shared`：只有用户**显式**拦这个包时才跟着拦，
- *     档位默认（受控档默认拦第三方）不连带它们，免得没开 Agent Teams 的会话把子代理拦坏。
+ * Agent Teams（0.2.2-rc.3 起官方转正：官方 bundle 行 `agent-team` + `tool-agent-team`）：
+ *   · dsh-tool-agent-team:140  段 `team:policy`（agent 自己作用域注册）
+ *   · dsh-tool-agent-team:145/181/232/248 工具 team_task_create / team_task_list / team_task_get / team_task_update
+ *     （agent 作用域注册 ⇒ `tools.restrict` 拦不住，只能在装配结果里过滤）
+ *   · 原 `team:identity`（required）已并入核心上下文 `subagent:identity`（dsh-tool-subagent-control:262）；
+ *   · 原 `spawn_teammate` 已删除；`send_message` / `list_agents` / `wait_agent` / `interrupt_agent` 与
+ *     `agent-message` 现在都是核心能力（dsh-tool-subagent-control:222/32/164/285、dsh-subagent:393），
+ *     不再属于本包 —— 拦 Agent Teams 不会连带它们（这正是本文件头「别拦一半」要防的反向事故）。
  *
  * DSH 核心 · 系统提示（段）：dsh-system-prompt:229 `harness:identity`、:59/:61 `deployment:persona-prefix|suffix`；
  *   各工具说明段 `tool:*`（dsh-tool-bash:376 `tool:bash`、dsh-tool-fs:245 `tool:read` …、dsh-tool-subagent:509
@@ -33,8 +33,10 @@
  *
  * DSH 核心 · 运行时上下文（上下文 + 消息来源）：
  *   上下文：dsh-working-directory:42 `working-directory:current`（required）、dsh-user-approval:80 `approval:policy`、
- *   dsh-sandbox-policy:122 `sandbox:policy`、dsh-subagent:385 `subagent:delegation`、dsh-tool-subagent:519
- *   `tool:${toolName}:depth`、dsh-harness-dev-context:104/116 `harness:source` / `app:web-surface`。
+ *   dsh-sandbox-policy:122 `sandbox:policy`、dsh-subagent:385 `subagent:delegation`、
+ *   dsh-tool-subagent-control:262 `subagent:identity`（required；0.2.2-rc.3 新增，原 Agent Teams 的
+ *   `team:identity` 已并入这里）、dsh-tool-subagent:519 `tool:${toolName}:depth`、
+ *   dsh-harness-dev-context:104/116 `harness:source` / `app:web-surface`。
  *   消息：dsh-agent-loop:218 `runtime-context`、dsh-agent-instructions:886 `agent-instructions`、dsh-time-context:102
  *   `time-context`、dsh-tmux-context:2130 `tmux-context`、dsh-session-reference:34 `session-reference`、
  *   dsh-tool-skill:984 `skill-catalog`、dsh-working-directory:145 `working-directory`、dsh-goal-round-driver:147 `goal`、
@@ -45,8 +47,9 @@
  *   dsh-tool-skill:913 `skill-invocation`（用户输入 /技能名 时在 agent/pre-step 里追加的技能正文）、
  *   dsh-tools:1456 / dsh-spill-policy:248 `ptc-mode`（PTC 模式下带图片的工具结果，作为延后上下文追加）、
  *   dsh-cordis-host-runner:2393/2402/2415/2428/2455 `cordis-host-runner`（Cordis 插件激活 / 运行失败的回报）、
- *   dsh-webhook:190 `webhook`（webhook 触发新会话时的开场指令）。
- *   `team-message` 只出现在类型声明和旧会话格式迁移里，0.2.1-rc.5 没有包发出，不算核心。
+ *   dsh-webhook:190 `webhook`（webhook 触发新会话时的开场指令）、
+ *   dsh-action-cards:418 `action-cards`（0.2.2-rc.3 新增：行动卡状态更新，form: 'notice'，随轮追加）。
+ *   `team-message` 只出现在类型声明和旧会话格式迁移里，0.2.1-rc.5 起没有包发出，不算核心。
  *   协议消息（恒放行、规则管不到，见 sandbox.js PROTOCOL_KINDS）：dsh-llm:105 `tool`、dsh-compaction:109
  *   `compact-checkpoint`、墓碑；`model`（dsh-llm:75）/ `system-prompt`（dsh-llm:93）不是注入。
  *
@@ -60,8 +63,7 @@ export const PACK_ACTIONS = ['allow', 'deny']
 /** 包的来源：self = 本插件（恒放行）；core = DSH 核心（受控档默认放行）；third-party = 第三方（受控档默认拦）。 */
 export const ORIGINS = ['self', 'core', 'third-party']
 
-const TEAM_TOOL = 'dsh-experimental-tool-agent-team/lib/index.js'
-const SUBAGENT_CONTROL = '@deepseek-ai/dsh-tool-subagent-control'
+const TEAM_TOOL = 'dsh-tool-agent-team/lib/index.js'
 
 /** 内置来源包（顺序 = 面板里的顺序）。 */
 export const BUILTIN_PACKS = Object.freeze([
@@ -104,6 +106,7 @@ export const BUILTIN_PACKS = Object.freeze([
       { context: 'approval:policy', exact: true },
       { context: 'sandbox:policy', exact: true },
       { context: 'subagent:delegation', exact: true },
+      { context: 'subagent:identity', exact: true, at: 'dsh-tool-subagent-control/lib/index.js:262' },
       { context: 'tool:*' },
       { context: 'harness:source', exact: true },
       { context: 'app:web-surface', exact: true },
@@ -130,32 +133,26 @@ export const BUILTIN_PACKS = Object.freeze([
         'ptc-mode',
         'cordis-host-runner',
         'webhook',
+        'action-cards',
       ].map((kind) => ({ kind, exact: true })),
     ],
   },
   {
     id: 'agent-teams',
     label: 'Agent Teams',
-    plugin: '@deepseek-ai/dsh-experimental-tool-agent-team',
-    profile: '@deepseek-ai/dsh-experimental-agent-team-profile',
+    plugin: '@deepseek-ai/dsh-tool-agent-team',
+    profile: '@deepseek-ai/dsh-agent-team',
     origin: 'third-party',
-    summary: 'team:* 的段 / 上下文 + 队友消息 + 团队工具',
-    note: '拦截后队友消息不会送达；放行时整包一起放（只放一半，队友消息会卡在等待里）',
+    summary: 'team:policy 段 + 团队任务工具（队友身份 / 消息 / 核心工具已归 DSH 核心）',
+    note: 'team:identity 已并入核心 subagent:identity；send_message / list_agents / wait_agent / interrupt_agent 与 agent-message 是核心能力，拦本包不连带它们',
     members: [
-      { section: 'team:policy', exact: true, at: `${TEAM_TOOL}:234` },
-      { context: 'team:identity', exact: true, at: `${TEAM_TOOL}:239` },
+      { section: 'team:policy', exact: true, at: `${TEAM_TOOL}:140` },
       { section: 'team:*' },
       { context: 'team:*' },
-      { kind: 'agent-message', exact: true, shared: ['@deepseek-ai/dsh-subagent'], at: 'dsh-experimental-agent-team/lib/index.js:1599' },
-      { tool: 'spawn_teammate', exact: true, at: `${TEAM_TOOL}:251` },
-      { tool: 'send_message', exact: true, shared: [SUBAGENT_CONTROL], at: `${TEAM_TOOL}:293` },
-      { tool: 'list_agents', exact: true, shared: [SUBAGENT_CONTROL], at: `${TEAM_TOOL}:321` },
-      { tool: 'wait_agent', exact: true, at: `${TEAM_TOOL}:330` },
-      { tool: 'interrupt_agent', exact: true, shared: [SUBAGENT_CONTROL], at: `${TEAM_TOOL}:352` },
-      { tool: 'team_task_create', exact: true, at: `${TEAM_TOOL}:365` },
-      { tool: 'team_task_list', exact: true, at: `${TEAM_TOOL}:400` },
-      { tool: 'team_task_get', exact: true, at: `${TEAM_TOOL}:444` },
-      { tool: 'team_task_update', exact: true, at: `${TEAM_TOOL}:457` },
+      { tool: 'team_task_create', exact: true, at: `${TEAM_TOOL}:145` },
+      { tool: 'team_task_list', exact: true, at: `${TEAM_TOOL}:181` },
+      { tool: 'team_task_get', exact: true, at: `${TEAM_TOOL}:232` },
+      { tool: 'team_task_update', exact: true, at: `${TEAM_TOOL}:248` },
     ],
   },
 ])
@@ -341,7 +338,7 @@ export function packVerdict(state, session, global, target, level) {
   return { action: lead.pack.origin === 'third-party' ? 'deny' : 'allow', by: 'pack', pack: lead.pack.id, scope: 'level' }
 }
 
-/** 一个包里显式放行的消息来源（严格档的消息白名单要加上它们：放行 Agent Teams = 队友消息能送达）。 */
+/** 一个包里显式放行的消息来源（严格档的消息白名单要加上它们：放行核心包 = 它的消息来源能送达）。 */
 export function packKinds(state, packId) {
   const pack = packCatalog(state).find((entry) => entry.id === packId)
   return (pack?.members ?? []).filter((member) => typeof member.kind === 'string').map((member) => ({ name: member.kind, exact: member.exact === true }))
