@@ -1876,15 +1876,41 @@ export function apply(ctx) {
       return { error: String(error?.message ?? error) }
     }
   }
+  /**
+   * llm-pi-ai 里这个 provider 是不是本插件写的：baseURL 指向本机代理（http://127.0.0.1:<端口>/beta/v1）。
+   * 没有这条 ⇒ undefined；有但不是 ⇒ false（用户自己的 provider，比如 deepseek）；读不到配置 ⇒ undefined。
+   */
+  const reasoningRouteIsOurs = (settings, providerId) => {
+    try {
+      const forms = settings.describe() ?? {}
+      const list = Array.isArray(forms) ? forms : Object.values(forms)
+      const nameOf = (entry) => entry?.ns ?? entry?.id ?? entry?.entryId ?? entry?.key ?? ''
+      const entry = list.find((item) => nameOf(item) === 'llm-pi-ai') ?? list.find((item) => String(nameOf(item)).includes('pi-ai'))
+      const providers = entry?.value?.providers ?? entry?.form?.providers ?? entry?.values?.providers ?? entry?.config?.providers
+      if (providers === null || typeof providers !== 'object') return undefined
+      const profile = providers[providerId]
+      if (profile === undefined || profile === null) return undefined
+      return typeof profile.baseURL === 'string' && /^http:\/\/127\.0\.0\.1:\d+\/beta\/v1\/?$/.test(profile.baseURL)
+    } catch {
+      return undefined
+    }
+  }
+  /** 路由名被用户已有的 provider 占用时的提示（面板 / 左栏直接显示）。 */
+  const reasoningRouteTakenError = (providerId) => '模型路由名「' + providerId + '」已被一个现有 provider 占用（不是本插件写的），换一个名字'
+  /** 本进程最近一次成功写进 llm-pi-ai 的路由名：改名后据此删旧路由（null = 当前没有本插件写的路由）。 */
+  let reasoningRouteWritten = null
   const upsertReasoningRoute = async () => {
     const settings = settingsOf()
     if (settings === undefined) return { ok: false, error: 'settings 服务不可用' }
     const config = reasoningConfigOf()
+    // 绝不覆盖用户自己的 provider（路由名撞名时）。
+    if (reasoningRouteIsOurs(settings, config.providerId) === false) return { ok: false, conflict: true, error: reasoningRouteTakenError(config.providerId) }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const form = reasoningFormOf(settings)
       if (form.key === undefined) return { ok: false, error: '没有找到 llm-pi-ai 设置命名空间', keys: form.keys }
       try {
         await settings.update(form.key, { providers: { [config.providerId]: reasoningProviderProfile(config) } }, form.revision)
+        reasoningRouteWritten = config.providerId
         return { ok: true, providerId: config.providerId, providerIds: reasoningFormOf(settings).providerIds }
       } catch (error) {
         if (attempt === 1) return { ok: false, error: String(error?.message ?? error) }
@@ -1892,14 +1918,20 @@ export function apply(ctx) {
     }
     return { ok: false, error: '路由写入重试后仍失败' }
   }
-  const removeReasoningRoute = async () => {
+  /** 删本插件写的路由；不传 id 就删当前配置的路由名。用户自己的同名 provider 一律不碰。 */
+  const removeReasoningRoute = async (providerId) => {
     const settings = settingsOf()
     if (settings === undefined) return { ok: false, error: 'settings 服务不可用' }
-    const config = reasoningConfigOf()
+    const id = typeof providerId === 'string' && providerId !== '' ? providerId : reasoningConfigOf().providerId
+    if (reasoningRouteIsOurs(settings, id) === false) {
+      if (reasoningRouteWritten === id) reasoningRouteWritten = null
+      return { ok: true, skipped: 'not-ours', providerIds: reasoningFormOf(settings).providerIds }
+    }
     const form = reasoningFormOf(settings)
     if (form.key === undefined) return { ok: false, error: '没有找到 llm-pi-ai 设置命名空间' }
     try {
-      await settings.mutate(form.key, [{ op: 'unset', path: ['providers', config.providerId] }], form.revision)
+      await settings.mutate(form.key, [{ op: 'unset', path: ['providers', id] }], form.revision)
+      if (reasoningRouteWritten === id) reasoningRouteWritten = null
       return { ok: true, providerIds: reasoningFormOf(settings).providerIds }
     } catch (error) {
       return { ok: false, error: String(error?.message ?? error) }
@@ -2030,8 +2062,24 @@ export function apply(ctx) {
   }
   /** 最近一次代理 / 路由写入的结果：面板据此显示「模型路由」状态，别再静默失败。 */
   const reasoningRouteState = { ok: null, error: null, at: null }
-  const applyReasoningState = async () => {
+  /**
+   * applyReasoningState 串行化：启用 / 停用 / 自动停用 / 启动自启任意两次重叠时排队执行。
+   * 不串行的话两次都会看到「还没有代理」，各起一个：后一个被端口占用挤到回退端口并写回状态，
+   * 前一个从 reasoningActive 上被覆盖掉，再也不会被关闭（端口常驻占用）。
+   */
+  let reasoningApplyChain = Promise.resolve()
+  const applyReasoningState = () => {
+    const run = reasoningApplyChain.then(() => applyReasoningStateNow())
+    reasoningApplyChain = run.catch(() => {})
+    return run
+  }
+  const applyReasoningStateNow = async () => {
     const config = reasoningConfigOf()
+    // 路由名改过（面板 / 左栏 / 直接改状态）：先删本插件之前写的旧路由，否则它留在模型选择器里、停用后指向死端口。
+    if (reasoningRouteWritten !== null && reasoningRouteWritten !== config.providerId) {
+      const stale = await removeReasoningRoute(reasoningRouteWritten)
+      if (stale.ok !== true) note({ seat: 'reasoning-prefix', staleRoute: reasoningRouteWritten, error: stale.error })
+    }
     if (!config.enabled) {
       const removed = await removeReasoningRoute()
       await stopReasoningProxy()
@@ -2438,6 +2486,15 @@ export function apply(ctx) {
         return Response.json({ ok: false, enabled: false, error: '实验性功能未开启：先在左侧页实验区打开总开关。' }, noStore)
       }
       const current = reasoningConfigOf()
+      if (body.providerId !== undefined && body.providerId !== '') {
+        if (typeof body.providerId !== 'string' || !/^[a-z0-9-]+$/.test(body.providerId)) {
+          return Response.json({ ok: false, error: '模型路由名只能是小写字母/数字/短横线' }, noStore)
+        }
+        const settings = settingsOf()
+        if (settings !== undefined && reasoningRouteIsOurs(settings, body.providerId) === false) {
+          return Response.json({ ok: false, error: reasoningRouteTakenError(body.providerId) }, noStore)
+        }
+      }
       const next = {
         enabled: true,
         prefix: typeof body.prefix === 'string' ? body.prefix : current.prefix,
@@ -2697,6 +2754,8 @@ export function apply(ctx) {
       }
       if (body.providerId !== undefined) {
         if (typeof body.providerId !== 'string' || !/^[a-z0-9-]+$/.test(body.providerId)) return reject('模型路由名只能是小写字母/数字/短横线')
+        const settings = settingsOf()
+        if (settings !== undefined && reasoningRouteIsOurs(settings, body.providerId) === false) return reject(reasoningRouteTakenError(body.providerId))
         patch.providerId = body.providerId
       }
       if (body.modelId !== undefined) {

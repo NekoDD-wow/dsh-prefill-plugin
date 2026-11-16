@@ -3,6 +3,13 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：思考前缀的模型路由只动本插件自己写的那条，并串行化启用 / 停用**。
+  - 路由名撞名：实验面板「模型路由名」或 `POST /reasoning/enable` 的 `providerId` 填成 llm-pi-ai 里已有的 provider（如 `deepseek`）时，以前启用会把用户的 provider 改成指向本机代理，停用 / 关总开关 / 自动停用时再整条 `unset`，原配置不可恢复。现在两个入口都直接拒绝撞名；写路由前、删路由前再按 baseURL（`http://127.0.0.1:<端口>/beta/v1`）判断是不是本插件写的，不是就不覆盖、不删除（覆盖旧版本已经把撞名写进状态文件的情况，此时 `applied.ok=false` 并报原因）。`/reasoning/enable` 的 `providerId` 也补上了与面板相同的格式校验。
+  - 启用中改路由名：以前只写新路由、旧路由留在 llm-pi-ai 里，停用后它还在模型选择器里、指向已关闭的端口。现在记住本进程最后写入的路由名，路由名一变先删旧的（同样只删本插件写的）。
+  - 并发 apply：`applyReasoningState` 以前没有互斥，两次启用重叠（双击保存、面板与左栏同时保存、自动停用撞上用户操作）会各起一个代理，后一个被挤到回退端口并写回状态，前一个永远不会被关闭。现在用 promise 链排队执行。
+  - 测试：新增 `tests/reasoning-route-safety.test.mjs`（5 项）、`tests/reasoning-apply-serial.test.mjs`（1 项）与公共 `tests/impl-mount-harness.mjs`（真实 `impl.apply()` + 假 settings + 真代理，只监听 127.0.0.1，不需要 `--experimental-test-module-mocks`）。
+
 ## 0.21.11 — 2026-11-14
 - **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
 - **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：
