@@ -14194,54 +14194,74 @@ window.__ModuleLoader__.load({
       const [presetPick, setPresetPick] = React.useState('')
       /** 采样参数回填：未设（null / 缺键）必须是**空串** —— 空 = 不干预；而 0 是合法取值，两者不能混。 */
       const samplingText = (value) => (value === null || value === undefined ? '' : String(value))
-      const load = React.useCallback(async () => {
+      /** 服务端旋钮 ⇒ 表单草稿（全是输入框能直接用的形态）。 */
+      const draftOf = (knobs) => ({
+        port: String(knobs.port ?? ''),
+        prefix: String(knobs.prefix ?? ''),
+        contentPrefix: String(knobs.contentPrefix ?? ''),
+        providerId: String(knobs.providerId ?? ''),
+        modelId: String(knobs.modelId ?? ''),
+        match: String(knobs.match ?? ''),
+        shim: knobs.shim === true,
+        textualize: knobs.textualize !== false,
+        catalogRole: knobs.catalogRole === 'user' ? 'user' : 'system',
+        maxEmittedCalls: String(knobs.maxEmittedCalls ?? 8),
+        failureThreshold: String(knobs.failureThreshold ?? 3),
+        catalogMode: knobs.catalogMode === 'history' ? 'history' : 'each',
+        catalogDetail: knobs.catalogDetail === 'brief' || knobs.catalogDetail === 'names' ? knobs.catalogDetail : 'full',
+        catalogPosition: knobs.catalogPosition === 'tail' ? 'tail' : 'head',
+        loggingEnabled: knobs.loggingEnabled === true,
+        loggingFile: String(knobs.loggingFile ?? ''),
+        fallbackOrder: String(knobs.fallbackOrder ?? ''),
+        allowPassthrough: knobs.allowPassthrough !== false,
+        ignoreFailures: knobs.ignoreFailures === true,
+        // F13/F14（阶段 B）：实验臂 / 轮次标识 + 采样三参数（缺省 = 空 = 不干预）。
+        armId: String(knobs.armId ?? ''),
+        runId: String(knobs.runId ?? ''),
+        samplingTemperature: samplingText(knobs.sampling?.temperature),
+        samplingTopP: samplingText(knobs.sampling?.topP),
+        samplingSeed: samplingText(knobs.sampling?.seed),
+        // 结果行（F11）：默认开；reasoning 采集默认关（开了才采得到思维链正文，verdict 才不止 unknown）；正文片段默认开。
+        loggingResultEnabled: knobs.loggingResultEnabled !== false,
+        loggingResultFile: String(knobs.loggingResultFile ?? ''),
+        loggingReasoningHead: knobs.loggingReasoningHead === true,
+        loggingSnippets: knobs.loggingSnippets !== false,
+        catalogInclude: (Array.isArray(knobs.catalogInclude) ? knobs.catalogInclude : []).join(','),
+        catalogExclude: (Array.isArray(knobs.catalogExclude) ? knobs.catalogExclude : []).join(','),
+        loggingDump: knobs.loggingDump === true,
+        loggingRaw: knobs.loggingRaw === true,
+        loggingContent: knobs.loggingContent === true,
+        // 轮转：上限按 **MB** 填（提交时换算成字节，0 = 不轮转）+ 保留历史文件数 0..9。
+        loggingMaxBytesMb: bytesToMegabytesText(knobs.loggingMaxBytes),
+        loggingKeepFiles: keepFilesToText(knobs.loggingKeepFiles),
+      })
+      /**
+       * 上一次从服务端回填进草稿的值（按字段）。用来区分「用户改过的格」和「只是跟着服务端的格」：
+       * 重载时没改过的格跟着服务端走，改过但还没保存的格保留（issue #45 PR A 对左侧页「默认每轮注入草稿被广播冲掉」的同类修法）。
+       */
+      const serverDraft = React.useRef(null)
+      /**
+       * opts.resetDraft：整份草稿换成服务端值 —— 只有首次加载、保存成功、套用前缀预设、点「放弃修改」时才这样；
+       * 状态广播（STATE_EVENT）、清零统计、另存预设、修复路由、清空本轮等重载只刷数据，不冲未保存的修改。
+       */
+      const load = React.useCallback(async (opts) => {
         const next = await postJson(EXPERIMENTAL_STATUS_ROUTE, { sessionId })
         setData(next)
-        const knobs = next?.knobs ?? {}
-        setDraft({
-          port: String(knobs.port ?? ''),
-          prefix: String(knobs.prefix ?? ''),
-          contentPrefix: String(knobs.contentPrefix ?? ''),
-          providerId: String(knobs.providerId ?? ''),
-          modelId: String(knobs.modelId ?? ''),
-          match: String(knobs.match ?? ''),
-          shim: knobs.shim === true,
-          textualize: knobs.textualize !== false,
-          catalogRole: knobs.catalogRole === 'user' ? 'user' : 'system',
-          maxEmittedCalls: String(knobs.maxEmittedCalls ?? 8),
-          failureThreshold: String(knobs.failureThreshold ?? 3),
-          catalogMode: knobs.catalogMode === 'history' ? 'history' : 'each',
-          catalogDetail: knobs.catalogDetail === 'brief' || knobs.catalogDetail === 'names' ? knobs.catalogDetail : 'full',
-          catalogPosition: knobs.catalogPosition === 'tail' ? 'tail' : 'head',
-          loggingEnabled: knobs.loggingEnabled === true,
-          loggingFile: String(knobs.loggingFile ?? ''),
-          fallbackOrder: String(knobs.fallbackOrder ?? ''),
-          allowPassthrough: knobs.allowPassthrough !== false,
-          ignoreFailures: knobs.ignoreFailures === true,
-          // F13/F14（阶段 B）：实验臂 / 轮次标识 + 采样三参数（缺省 = 空 = 不干预）。
-          armId: String(knobs.armId ?? ''),
-          runId: String(knobs.runId ?? ''),
-          samplingTemperature: samplingText(knobs.sampling?.temperature),
-          samplingTopP: samplingText(knobs.sampling?.topP),
-          samplingSeed: samplingText(knobs.sampling?.seed),
-          // 结果行（F11）：默认开；reasoning 采集默认关（开了才采得到思维链正文，verdict 才不止 unknown）；正文片段默认开。
-          loggingResultEnabled: knobs.loggingResultEnabled !== false,
-          loggingResultFile: String(knobs.loggingResultFile ?? ''),
-          loggingReasoningHead: knobs.loggingReasoningHead === true,
-          loggingSnippets: knobs.loggingSnippets !== false,
-          catalogInclude: (Array.isArray(knobs.catalogInclude) ? knobs.catalogInclude : []).join(','),
-          catalogExclude: (Array.isArray(knobs.catalogExclude) ? knobs.catalogExclude : []).join(','),
-          loggingDump: knobs.loggingDump === true,
-          loggingRaw: knobs.loggingRaw === true,
-          loggingContent: knobs.loggingContent === true,
-          // 轮转：上限按 **MB** 填（提交时换算成字节，0 = 不轮转）+ 保留历史文件数 0..9。
-          loggingMaxBytesMb: bytesToMegabytesText(knobs.loggingMaxBytes),
-          loggingKeepFiles: keepFilesToText(knobs.loggingKeepFiles),
+        const fresh = draftOf(next?.knobs ?? {})
+        const before = serverDraft.current
+        serverDraft.current = fresh
+        setDraft((current) => {
+          if (opts?.resetDraft === true || current === null || before === null) return fresh
+          const merged = { ...fresh }
+          for (const key of Object.keys(fresh)) {
+            if (Object.prototype.hasOwnProperty.call(current, key) && current[key] !== before[key]) merged[key] = current[key]
+          }
+          return merged
         })
         return next
       }, [sessionId])
       React.useEffect(() => {
-        void load().catch((err) => setError(String(err?.message ?? err)))
+        void load({ resetDraft: true }).catch((err) => setError(String(err?.message ?? err)))
       }, [load])
       React.useEffect(() => {
         const sync = () => {
@@ -14261,6 +14281,15 @@ window.__ModuleLoader__.load({
           .finally(() => setBusy(''))
       }
       const patchDraft = (key, value) => setDraft((current) => (current === null ? current : { ...current, [key]: value }))
+      /** 有没有还没保存的修改：草稿和上一次服务端回填的值逐格比（改回原值就不算）。 */
+      const draftDirty =
+        draft !== null && serverDraft.current !== null && Object.keys(serverDraft.current).some((key) => draft[key] !== serverDraft.current[key])
+      const discardDraft = () => {
+        if (serverDraft.current === null) return
+        setDraft(serverDraft.current)
+        setError('')
+        setNotice('')
+      }
       /**
        * 采样输入 → 提交值（P1-5）：**空 = null = 不干预，绝不是 0**（0 是合法温度，混了就没法表达「不设」）；
        * 填了但不是合法数字 / 非整数 seed / 超范围，就当场报错拦住 —— 不把 NaN 发出去（那会变成「设了个假值」）。
@@ -14326,7 +14355,12 @@ window.__ModuleLoader__.load({
             failureThreshold: Number(draft.failureThreshold),
           })
           if (result?.ok === false) throw new Error(String(result.error ?? 'save failed'))
-          await load()
+          await load({ resetDraft: true })
+          // 配置已落盘，但代理 / 路由没起来（applied.ok === false）：和左侧页 reasoningAct 同口径进错误提示，不报「已保存」。
+          if (result?.applied?.ok === false) {
+            notifyStateChanged()
+            throw new Error(String(result.applied.error ?? 'apply failed'))
+          }
           setNotice(t('labSaved'))
           notifyStateChanged()
         })
@@ -14482,7 +14516,12 @@ window.__ModuleLoader__.load({
           if (presetPick === '') throw new Error('no preset')
           const result = await postJson(EXPERIMENTAL_PRESETS_ROUTE, { op: 'apply', sessionId, name: presetPick })
           if (result?.ok === false) throw new Error(String(result.error ?? 'apply failed'))
-          await load()
+          await load({ resetDraft: true })
+          // 套用会一并恢复旋钮、可能重建路由：代理 / 路由没起来同样要报出来，不报「已套用」。
+          if (result?.applied?.ok === false) {
+            notifyStateChanged()
+            throw new Error(String(result.applied.error ?? 'apply failed'))
+          }
           setNotice(t('labPresetApplied'))
           notifyStateChanged()
         })
@@ -14895,6 +14934,9 @@ window.__ModuleLoader__.load({
             'div',
             { style: V.row },
             h('button', { type: 'button', style: V.btn, 'data-prefill-lab-save': '', disabled: busy !== '', onClick: save }, busy === 'save' ? t('reasoningRefreshing') : t('labSave')),
+            // 有未保存的修改：标「未保存」+「放弃修改」（与左侧页默认每轮注入同一套，issue #45 PR A/C）。
+            draftDirty ? h('span', { style: { ...V.sectionMeta, color: 'var(--dsw-alias-state-warn-primary)' }, 'data-prefill-lab-unsaved': '' }, t('unsaved')) : null,
+            draftDirty ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-discard': '', disabled: busy !== '', onClick: discardDraft }, t('discardChanges')) : null,
             h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-repair': '', disabled: busy !== '', onClick: repair }, t('reasoningRepair')),
             h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-reset': '', disabled: busy !== '', onClick: resetStats }, t('labResetStats')),
             h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lab-refresh': '', disabled: busy !== '', onClick: refresh }, t('labRefresh')),
@@ -15058,13 +15100,13 @@ window.__ModuleLoader__.load({
           'div',
           { style: V.section, 'data-prefill-lab-log': '' },
           h('div', { style: V.sectionTitle }, t('labLogTitle')),
-          // 本轮即将发出的前缀：直接读当前配置（还没记进日志，所以单独一块，和「已发出」区分）。
+          // 本轮即将发出的前缀：读**已保存**的配置（代理发的是它；没点保存的草稿不会发出）。还没记进日志，所以单独一块，和「已发出」区分。
           h(
             'div',
             { style: { padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--dsw-alias-border-l2)' }, 'data-prefill-lab-log-next': '' },
             h('div', { style: { fontSize: 12.5, fontWeight: 700, color: 'var(--dsw-alias-label-secondary)' } }, t('labLogNext')),
-            h('div', { style: { marginTop: 4 } }, h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } }, t('labLogReasoning')), logValue(draft.prefix, 'reasoning')),
-            h('div', { style: { marginTop: 4 } }, h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } }, t('labLogContent')), logValue(draft.contentPrefix, 'content')),
+            h('div', { style: { marginTop: 4 } }, h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } }, t('labLogReasoning')), logValue(String(data?.knobs?.prefix ?? ''), 'reasoning')),
+            h('div', { style: { marginTop: 4 } }, h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' } }, t('labLogContent')), logValue(String(data?.knobs?.contentPrefix ?? ''), 'content')),
           ),
           log.length === 0 ? h('div', { style: V.hint, 'data-prefill-lab-log-empty': '' }, t('labLogEmpty')) : null,
           ...log.flatMap((entry, index) => logTurn(entry, index)),

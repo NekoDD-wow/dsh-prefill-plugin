@@ -3,6 +3,18 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：「实验」页保存参数 / 套用前缀预设不看 `applied.ok`**。
+  - 触发：改端口 / 路由名 / 模型 id 后保存，或套用带旋钮的前缀预设，服务端 `applyReasoningState()` 失败（代理 listen 失败、路由写失败 ⇒ 响应里 `applied: { ok: false, error }`）。
+  - 影响：面板照样显示「已保存 / 已套用」，用户以为代理已按新参数在跑。0.20.1 修过左侧页同一问题（`reasoningAct` 检查 `applied.ok`），实验页这两条路径漏了（只有「修复路由」检查了）。
+  - 修法：配置照常重载（已落盘），`applied.ok === false` 时进本页错误提示（带服务端给的原因），不报「已保存 / 已套用」。
+- **修复：「实验」页未保存的旋钮草稿被冲掉**。
+  - 触发：改了前缀 / 温度 / 调用上限等还没点保存时，① 任意组件广播 `STATE_EVENT`（点输入框旁的芯片、左侧页任何写入、本页「清空本轮填装」…）；② 点本页「清零统计」「另存为前缀预设」「修复路由」等。
+  - 影响：所有未保存的输入回到服务端值；「另存为前缀预设」存进去的是草稿里的新前缀，存完输入框却变回旧前缀。
+  - 修法（同 issue #45 PR A 对左侧页默认每轮注入草稿的处理）：重载时按格合并 —— 没改过的格跟着服务端走，改过的格保留；只有首次加载、保存成功、套用前缀预设时整份换成服务端值。有未保存修改时「保存」旁标「未保存」，并给「放弃修改」。
+- **修复：「本轮（即将发出）」显示的是未保存的草稿**。代理发的是已保存的 `knobs.prefix / contentPrefix`，现在这一块读已保存的值；草稿与之不同时由上面的「未保存」标记提示。
+- 测试：新增 `tests/experimental-panel-feedback.test.mjs`（8 项，切 `ExperimentalPanel` 段真渲染）与共用的 `tests/client-render-harness.mjs`。
+
 ## 0.21.11 — 2026-11-14
 - **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
 - **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：
