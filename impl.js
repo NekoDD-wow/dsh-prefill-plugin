@@ -1639,9 +1639,13 @@ export function apply(ctx) {
   }
   /** 用户点了「清空本轮填装」的会话：下一轮第一个请求跳过前缀（记进日志，标明 skipped）。 */
   const prefixSkipQueued = new Set()
-  /** 本轮正在跳过前缀的会话 / 轮号：整轮都跳过（多步工具轮也不加），轮结束时清掉。 */
-  let skipTurnSession = ''
-  let skipTurnNumber = 0
+  /**
+   * 本轮正在跳过前缀的会话 → 轮号：整轮都跳过（多步工具轮也不加），轮结束时清掉。
+   * 按会话记（以前是全局单槽：A 跳过时并发会话 B 也被跳过，B 再排队跳过会把 A 的跳过提前结束）。
+   * 复位以 `turn/end` 为准 —— agent-loop 只在正常收尾时发 `agent/turn-stopping`，
+   * 报错 / 被中断 / pre-step reject 都不发，但 finally 里一定会写 `turn/end`。
+   */
+  const skipTurns = new Map()
   /** 最近一次代理启动失败的原因（面板要能看到「为什么模型选择不生效」）。 */
   let reasoningProxyError = null
   /** 最近一次 apply 的结果（enable/disable/repair 路由回给面板）。 */
@@ -1720,8 +1724,7 @@ export function apply(ctx) {
     const skipped = prefixSkipQueued.has(sessionId)
     if (skipped) {
       prefixSkipQueued.delete(sessionId)
-      skipTurnSession = sessionId
-      skipTurnNumber = Number(turn) || 0
+      skipTurns.set(sessionId, Number(turn) || 0)
     }
     const entry = prefixTurnEntry({
       sessionId,
@@ -1953,11 +1956,12 @@ export function apply(ctx) {
     const proxy = createReasoningPrefixProxy({
       getConfig: () => {
         const current = reasoningConfigOf()
-        // 「清空本轮填装」：整轮跳过前缀（多步工具轮也不加）；轮结束时由 turn-stopping 复位。
-        const skipping = skipTurnSession !== '' && current.enabled
         return {
-          enabled: skipping ? false : current.enabled,
-          skipping,
+          enabled: current.enabled,
+          // 「清空本轮填装」按会话生效：代理认领到请求所属会话后问这里（认不出会话的请求不跳过）。
+          // 整轮跳过（多步工具轮也不加）；轮结束（turn/end 或 turn-stopping）时复位。
+          skipping: false,
+          isSkipping: (sessionId) => current.enabled && typeof sessionId === 'string' && skipTurns.has(sessionId),
           stripTools: true,
           textualize: current.textualize,
           shim: current.shim,
@@ -2215,6 +2219,8 @@ export function apply(ctx) {
     // 轮结束：把「最后轮数」+ 当时日志 stat 写进 sidecar（下次写状态不用再解压这份日志）。
     // 这里只尽力而为：日志可能还在追加导致 mtime/size 之后变化，校验失效只会多读一次，不会给错轮数。
     if (event?.type === 'turn/end' && typeof session?.id === 'string') {
+      // 「清空本轮填装」到此为止：turn/end 无论正常结束、报错还是被中断都会写（turn-stopping 只在正常收尾时发）。
+      skipTurns.delete(session.id)
       try {
         const turn = Number(event?.data?.turn)
         const file = sessionLogFile(session.id)
@@ -2250,10 +2256,7 @@ export function apply(ctx) {
     if (typeof id !== 'string') return
     openTurn.delete(id)
     // 轮结束：这一轮若被「清空填装」跳过，到此为止（下一轮恢复正常）。
-    if (skipTurnSession === id) {
-      skipTurnSession = ''
-      skipTurnNumber = 0
-    }
+    skipTurns.delete(id)
     if (pendingReprime.has(id)) await flushPendingReprime()
   })
 
@@ -2647,8 +2650,8 @@ export function apply(ctx) {
           proxyRunning: reasoningActive !== null,
           routeOk: route.ok === true && route.inConfig === true,
           skipQueued: prefixSkipQueued.has(sessionId),
-          skipping: skipTurnSession === sessionId && skipTurnSession !== '',
-          ready: config.enabled && reasoningActive !== null && route.ok === true && route.inConfig === true && !(skipTurnSession === sessionId && skipTurnSession !== ''),
+          skipping: skipTurns.has(sessionId),
+          ready: config.enabled && reasoningActive !== null && route.ok === true && route.inConfig === true && !skipTurns.has(sessionId),
           // P0-1：本会话**实际**用的路由是不是前缀路由。null = 未知（本会话还没发过请求）⇒ 客户端不得据此告警。
           // 刻意不动上面的 ready：ready 是「实验能力就绪」，sessionRoute 是「本会话有没有真的在跑」，
           // 合并会让所有尚未切换模型的会话都显示未就绪，把「没在用」误报成「坏了」。

@@ -1074,6 +1074,12 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         } catch {
           // 关联失败 ⇒ 保持 routeConfidence='none'，sessionId 留 null（安全侧）
         }
+        // 「清空本轮填装」按会话生效：认领到会话身份且该会话这一轮在跳过 ⇒ 本请求透传（记 skipped）。
+        // 认不出会话（routeConfidence none）的请求不跳过 —— 宁可多加一次前缀，也不把别的会话一起跳过。
+        if (row.sessionId !== null && typeof config.isSkipping === 'function' && config.isSkipping(row.sessionId) === true) {
+          config.skipping = true
+          throw { skip: true }
+        }
         const match = typeof config.match === 'string' && config.match !== '' ? config.match : process.env.DSH_PREFILL_SPIKE_MATCH
         if (typeof match === 'string' && match !== '') {
           const last = Array.isArray(body.messages) ? body.messages[body.messages.length - 1] : undefined

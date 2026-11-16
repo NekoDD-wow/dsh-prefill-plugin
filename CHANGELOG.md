@@ -3,6 +3,11 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：「清空本轮填装」卡住后，之后所有会话的所有请求都被静默跳过前缀**。触发：对会话 A 点「清空本轮填装」，A 被跳过的那一轮报错、被用户点停止、或被 pre-step 拦下。根因：DSH agent-loop（0.2.2-rc.3 `turn()`）只在正常收尾时派发 `agent/turn-stopping`，报错 / 中断 / reject 时只在 finally 里写 `turn/end`，而插件只在前者复位。影响：代理 `getConfig()` 对所有会话一直返回 `enabled:false`，A/B 实验整批悄悄变成对照组，面板对其它会话还显示「就绪」；直到 A 某一轮正常结束才恢复。修法：在 `session/event` 的 `turn/end` 上复位（`turn-stopping` 里保留复位）。
+- **修复：「清空本轮填装」是全局单槽，并发会话互相影响**。触发：两个会话同时在跑（DSH Web 多会话）。影响：A 跳过期间 B 的请求也被跳过，而面板对 B 显示没在跳过；A、B 先后排队跳过时，B 的第一步把 A 覆盖掉，A 这一轮剩下的工具步又开始加前缀。修法：跳过状态改为按会话记（`Map<sessionId, turn>`）；`getConfig()` 不再整体关 `enabled`，改给 `isSkipping(sessionId)`，代理在关联通道认领到请求所属会话后判断，命中则透传并记 `skipped`。取舍：关联认不出会话（`routeConfidence: none`）的请求不再被跳过（会照常加前缀）。
+- 测试：新增 `tests/reasoning-skip-scope.test.mjs`（真实 `impl.apply()` + 假代理；用到 `mock.module`，`npm test` 不带 flag 时自动带 `--experimental-test-module-mocks` 在子进程重跑自己）与 `tests/reasoning-skip-proxy.test.mjs`（代理按会话透传）。
+
 ## 0.21.11 — 2026-11-14
 - **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
 - **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：
