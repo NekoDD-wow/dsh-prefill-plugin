@@ -3,6 +3,16 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：reasoning 代理（shim 路径）解析上游响应的几处问题**（`reasoning-prefix.js`，issue #52）。
+  - **`data: null` 打崩宿主进程（P0）**：上游 SSE 里出现一帧 `data: null`（或 `data: 1` / `data: []`）时，`handleFrame` 读 `null.usage` 抛 TypeError；异常发生在 `Readable` 的 data 监听器里，成为未捕获异常，**整个 DSH 进程退出**。现在非对象帧直接跳过；data 监听器里再包一层 try/catch，意外异常按流中断处理（补 finish + [DONE]，结果行记失败）。
+  - **带 `event:` / `id:` 行或注释行的合法 SSE 帧整帧被丢（P0）**：旧代码要求整帧以 `data:` 开头，`event: message\ndata: {…}`、`: keep-alive\ndata: {…}` 这类符合 SSE 规范的帧整帧丢弃；全程都这样发时客户端只收到 `finish + [DONE]`，结果行仍记 `ok:true`。现在逐行解析，只取 `data:` 字段，多条 data 行按规范用换行拼接。DeepSeek 文档说明排队时会发 `: keep-alive` 注释（https://api-docs.deepseek.com/quick_start/rate_limit ）。
+  - **content-type 大小写**：`Text/Event-Stream` 被当成非 SSE，回复全空。三处判断（shim、透传路径的正文 / usage 抽取）都先转小写。
+  - **usage 多帧重复累加**：上游每帧都带（累计）usage 时，`stats.usage` 按帧数翻倍。现在帧里只转发，收尾时按最后一帧记一次。
+  - **非 SSE 200 转换路径**（网关回 200-JSON）：中文切在 chunk 边界上出现 U+FFFD（改为收齐字节再解码）；`finish_reason: length` 被改写成 `stop`（改为透传）；体是 `{error:…}` 时空回复记成功（改为按流中断记失败、留 `stream-error` 审计，**会计入连续失败计数**）。
+  - **上游原生 `tool_calls` 与 DSML 解析出的调用共用 index**：两个调用都是 index 0，客户端拼成一个。原生调用现在重新编号到同一序列。
+- 新增 `tests/proxy-sse-frames.test.mjs`（10 项，在 0.21.11 上全部失败、修复后通过）与共用桩 `tests/proxy-upstream-harness.mjs`。
+
 ## 0.21.11 — 2026-11-14
 - **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
 - **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：
