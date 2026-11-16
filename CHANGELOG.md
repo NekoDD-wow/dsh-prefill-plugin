@@ -3,6 +3,13 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：「连续失败自动停用」把没加前缀的请求也算进去，计数还跨轮次不复位**。
+  - 触发条件：① 本轮本来就不加前缀（触发标记没命中、前缀为空、非 chat 请求等，记为 `ignored`），或用户点了「清空本轮填装」（`skipped`），同时上游返回 429 / 5xx / 断流，次数达到阈值；② 上一轮实验攒了几次失败后停用再重新启用，或点了「清零统计」。
+  - 影响：① 被限流几次，实验就被写成 `enabled:false`、模型路由被删（会话报 NO_ADAPTER），结果行标 `autoDisabled:true`，可这几次请求根本没加前缀；② 重新启用 / 清零统计后第 1 次真失败就可能直接停用，面板「连续失败」也还显示旧数。
+  - 修法：`onReasoningOutcome` 遇到 `ignored` / `skipped` 直接返回 —— 失败不计数，**成功也不再清零**（以前未命中轮的成功会把前缀轮的连续失败清掉，配了触发标记时可能永远凑不满阈值）；新建代理（重新启用 / 换端口）和「清零统计」时把计数归零。前缀轮（`passthrough` / `none`）的计数与阈值逻辑不变。
+  - 测试：新增 `tests/reasoning-autodisable.test.mjs` 6 项（真实 `impl.apply` + 真实代理 + 本地桩上游，不需要 module mocks；修复前 5 项失败）。
+
 ## 0.21.11 — 2026-11-14
 - **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
 - **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：

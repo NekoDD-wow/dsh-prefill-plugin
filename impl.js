@@ -1909,6 +1909,9 @@ export function apply(ctx) {
    * 连续失败计数：前缀轮被上游拒绝 / 回退透传达到阈值 ⇒ 自动关实验并记审计。
    * ⚠️ 代理侧现在把透传分成三态（skipped = 用户点了「清空本轮填装」、ignored = 本轮本就不该加前缀、
    * passthrough = 前缀被上游拒绝），只有最后一种该算失败 —— 否则跳过/未命中几次就会把实验自己关掉。
+   * ignored / skipped 这一轮根本没加前缀：它们**成败都不碰计数** —— 失败（429 / 5xx / 断流）不算，
+   * 成功也不清零（否则配了触发标记时，前缀轮失败和未命中轮交替出现就永远凑不满「连续」）。
+   * 计数在新建代理（停用→重新启用 / 换端口）和「清零统计」时归零，不带上一轮实验的旧账。
    *
    * 返回值：`{ autoDisabled: true }` 表示这一次真的把实验关掉了。代理要把它写进结果行
    * （**必须在写行之前**取用，否则那一行会漏掉「我这次是被谁关掉的」）。返回 `undefined` = 没关。
@@ -1916,6 +1919,7 @@ export function apply(ctx) {
    */
   let reasoningFailures = 0
   const onReasoningOutcome = (outcome) => {
+    if (outcome?.variant === 'ignored' || outcome?.variant === 'skipped') return
     const failed = outcome?.ok !== true || outcome.variant === 'passthrough'
     if (!failed) {
       reasoningFailures = 0
@@ -1996,6 +2000,8 @@ export function apply(ctx) {
       onOutcome: onReasoningOutcome,
     })
     const active = { proxy, port: config.port }
+    // 新代理 = 新一轮实验：上一轮（停用前）攒下的连续失败不带进来。
+    reasoningFailures = 0
     try {
       // listen 自带端口回退：46321 被别的实例 / 残留进程占住时会顺序向后找空位。
       active.port = await proxy.listen(config.port)
@@ -2907,6 +2913,7 @@ export function apply(ctx) {
     }
     const experimentalStatsReset = async (request) => {
       reasoningActive?.proxy?.resetStats?.()
+      reasoningFailures = 0
       const body = await readJsonBody(request)
       return Response.json(await experimentalStatus({ sessionId: body.sessionId }), noStore)
     }
