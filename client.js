@@ -2061,7 +2061,8 @@ window.__ModuleLoader__.load({
      *   cardOpen    卡片开没开（3s / 5s）
      *   hidden      页面在后台（暂停轮询）
      *   watching    页面可见性 / 状态事件监听挂过没有
-     *   restart     换会话时正有一个请求在飞 ⇒ 它回来后再补一次
+     *   restart     换会话 / 写响应 / 状态广播时正有一个请求在飞 ⇒ 它回来后再补一次
+     *   writeGen    写接口响应（applyEnvelope）采纳一次 +1：轮询发出时记下，回来时变了 ⇒ 这份是写入之前读的，丢弃
      */
     const summaryStore = {
       sessionId: '',
@@ -2076,6 +2077,7 @@ window.__ModuleLoader__.load({
       hidden: false,
       watching: false,
       restart: false,
+      writeGen: 0,
     }
     /**
      * 整封 envelope 才有、summary 路由暂时没有的几项（Q9 快照 / 首轮锁定 / 首次说明 / 人格段）。
@@ -2303,10 +2305,16 @@ window.__ModuleLoader__.load({
      *   · 整封 envelope（带 `state` 对象）⇒ extractSummary 切一刀。
      * 两者都没有（比如瘦身后的 every-turn-status 只回 { ok, op, status }）⇒ **什么都不做**：
      * 拿一份没有 state 的响应当摘要会把 store 清空（芯片/徽标集体闪成"未开"）。
+     *
+     * readGen：后台**读**（卡片的 /state 轮询）在发请求时记下的 summaryStore.writeGen。
+     * 不传 = 写响应（或写完之后才发的读）：比任何在飞的轮询都新 ⇒ writeGen +1，在飞的 summary 轮询回来按代号丢弃。
+     * 传了 = 后台读：期间有写响应进过 store（代号变了）⇒ 这份是写入之前读的，不喂 store；读本身不加代号。
      */
-    function applyEnvelope(envelope) {
+    function applyEnvelope(envelope, readGen) {
       if (envelope === null || typeof envelope !== 'object') return false
       if (envelope.ok === false) return false
+      const backgroundRead = typeof readGen === 'number'
+      if (backgroundRead && readGen !== summaryStore.writeGen) return false
       if (envelope.summary !== null && typeof envelope.summary === 'object') {
         const summary = envelope.summary
         if (summary.ok === false) return false
@@ -2315,9 +2323,12 @@ window.__ModuleLoader__.load({
         // 拿它喂 store 会把当前会话的开关状态冲成「未开」。
         const summarySession = typeof summary.sessionId === 'string' ? summary.sessionId : ''
         if (summarySession === '' || summarySession !== summaryStore.sessionId) return false
+        // 写响应比任何「写入之前发出」的轮询都新：记一代，在飞的那次回来按代号丢弃、补拉一次。
+        if (!backgroundRead) summaryStore.writeGen += 1
         return adoptSummary(normalizeSummary(summary))
       }
       if (envelope.state === null || typeof envelope.state !== 'object') return false
+      if (!backgroundRead) summaryStore.writeGen += 1
       return adoptSummary(extractSummary(envelope))
     }
     /**
@@ -2335,6 +2346,7 @@ window.__ModuleLoader__.load({
       }
       summaryStore.inFlight = true
       const sid = summaryStore.sessionId
+      const gen = summaryStore.writeGen
       try {
         const init = {
           method: 'POST',
@@ -2345,8 +2357,11 @@ window.__ModuleLoader__.load({
         const response = await fetch(SUMMARY_ROUTE, init)
         if (response === null || response === undefined || response.ok !== true) throw new Error(`HTTP ${response?.status ?? '?'}`)
         const raw = await response.json()
+        // 请求期间写接口已经喂过更新的摘要：这份是写入之前读的（芯片 / 纯净开关会闪回旧状态），
+        // 丢掉并在 finally 里补拉一次。
+        if (summaryStore.sessionId === sid && summaryStore.writeGen !== gen) summaryStore.restart = true
         // 请求期间换了会话：这份是旧会话的，丢掉（别让新会话看见旧数据）。
-        if (summaryStore.sessionId === sid) {
+        else if (summaryStore.sessionId === sid) {
           // ok:false（state.json 坏了 / 读不出来）是「状态不可用」，不是「空状态」——
           // 不能拿它把旧数据冲掉，记一次失败走退避，等文件修好。
           if (raw !== null && typeof raw === 'object' && raw.ok === false) {
@@ -2425,6 +2440,11 @@ window.__ModuleLoader__.load({
           // 设置页 / 其它组件写完之后广播 STATE_EVENT：要一次 summary（< 10KB），别等 3s。
           window.addEventListener(STATE_EVENT, () => {
             if (summaryWanted() !== true) return
+            // 单飞：在飞的那次可能是写入之前发出的 ⇒ 别吞掉这次广播，回来后补拉一次。
+            if (summaryStore.inFlight === true) {
+              summaryStore.restart = true
+              return
+            }
             void refreshSummary('state-event')
           })
         }
@@ -8838,9 +8858,13 @@ window.__ModuleLoader__.load({
        * （写接口 / 卡片打开时的 /state 都是整封 ⇒ applyEnvelope 直接切出轻量摘要，写完不用再拉一次）。
        * 名字保持 setEnvelope：卡片里几十处调用点、以及 tests/sidebar-defaults.test.mjs 的切片都按它。
        */
-      const setEnvelope = (data) => {
+      /** readGen：后台轮询发请求时记下的 summaryStore.writeGen（见 applyEnvelope）；写响应不传。 */
+      const setEnvelope = (data, readGen) => {
         setEnvelopeRaw(data)
-        applyEnvelope(data)
+        // 卡片的 /state 读写不带 sessionId ⇒ 服务端附的是全局摘要（summary.sessionId === ''），applyEnvelope 会整份拒收。
+        // 卡片手里是整封 envelope（所有会话的 state），按本会话切一刀同样准确 ⇒ 去掉全局摘要、走 extractSummary。
+        const globalSummary = data !== null && typeof data === 'object' && data.summary !== null && typeof data.summary === 'object' && data.summary.sessionId === ''
+        applyEnvelope(globalSummary && data.state !== null && typeof data.state === 'object' ? { ...data, summary: undefined } : data, readGen)
       }
       const envelope = envelopeRaw
       const [toast, setToast] = React.useState('')
@@ -9233,8 +9257,10 @@ window.__ModuleLoader__.load({
 
       const refreshEnvelope = React.useCallback(() => {
         // 轮询一律带 15s 上限：挂住的请求不许把下一轮叠上来。
+        // 记下发请求时的写代号：1MB 的整封 state 在飞时用户点了芯片，回来的这份不能把写响应冲掉。
+        const readGen = summaryStore.writeGen
         void postJsonWithTimeout(STATE_ROUTE, undefined)
-          .then((data) => setEnvelope(data))
+          .then((data) => setEnvelope(data, readGen))
           .catch(() => {})
       }, [])
 
@@ -9245,9 +9271,10 @@ window.__ModuleLoader__.load({
         staged.current = false
         void (async () => {
           try {
+            const readGen = summaryStore.writeGen
             const snapshot = await postJsonWithTimeout(STATE_ROUTE, undefined)
             if (!alive) return
-            setEnvelope(snapshot)
+            setEnvelope(snapshot, readGen)
             const map = snapshot?.state?.prefill
             const on = map !== null && typeof map === 'object' && typeof map[sessionId] === 'string' && map[sessionId] !== ''
             setEnabled(on)

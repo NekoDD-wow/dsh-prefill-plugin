@@ -3,6 +3,15 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：输入框旁的芯片 / 纯净开关点完后闪回旧状态 3–5 秒（summary store 新旧次序）**。
+  - 触发：summary 轮询（3s / 5s）在飞时点了芯片或纯净开关，写响应先进 store，随后那次**写入之前发出**的轮询才回来。
+  - 影响：旧轮询把刚写入的状态冲回去，直到下一轮（退避中最长 30s）才恢复；用户以为没点上再点一次，GateToggle 按当前显示决定写 `pure` 还是 `pass`，就成了反向操作。
+  - 修法：store 加写代号 `writeGen`，写响应采纳时 +1；轮询发出时记下代号，回来时代号变了 ⇒ 丢弃这份并立即补拉一次。
+- **修复：summary 轮询在飞时广播的 `STATE_EVENT` 被单飞吞掉**。在飞那次是写入前发出的，回来后只排下一轮（3–5s，退避时最长 30s）。现在在飞时收到广播会置 `restart`，回来后立即补拉一次（复用换会话时已有的补拉机制）。
+- **修复：卡片（PrefillDock）的 `/state` 读写喂不进 summary store**。卡片的请求不带 `sessionId`，服务端附的是全局摘要（`summary.sessionId === ''`），`applyEnvelope` 连同整封 state 一起拒收 ⇒ 0.21.0「写响应直接喂 store」对卡片写入（以及卡片打开时的 5s `/state`）不生效。现在卡片遇到全局摘要时去掉它、用整封 state 按本会话切一刀喂 store（与 summary 路由同形，不会来回 emit）。卡片的后台读（5s 轮询、打开时那次）同样按写代号判新旧：读在飞期间有写响应进过 store，就不拿这份旧 state 覆盖。
+- 测试：新增 `tests/summary-store-race.test.mjs`（3 项）、`tests/dock-write-feed.test.mjs`（2 项，整模块渲染）、`tests/summary-envelope-parity.test.mjs`（1 项，真服务端两条来源同形）与共用的 `tests/client-render-harness.mjs`。
+
 ## 0.21.11 — 2026-11-14
 - **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
 - **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：
