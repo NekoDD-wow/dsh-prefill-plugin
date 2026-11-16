@@ -234,6 +234,7 @@ DSH 左侧栏（新会话 / 插件 / 自动化任务那一列）里的「预填�
 | `prefix` / `usage` / `ms` / `firstDeltaMs` | 前缀长度 / token 用量 / 总耗时 / 文本首块延迟 |
 | `verdict` | `reasoning-collected` / `no-reasoning` / `unknown` / `passthrough` / `skipped` / `ignored` / `error`（**0.21.9 之前**（即 ≤ 0.21.8）的结果行里还可能是 `prefix-kept` / `prefix-absent`，见下） |
 | `autoDisabled` | 这一条请求是否触发了自动停用 |
+| `clientAborted` | 客户端在响应结束前断开（DSH 里点「停止」）。这时上游已被中止，`ok:false`、`verdict:error`，但**不计入**连续失败自动停用；统计失败率时可按它排除 |
 
 - **`verdict` 只记事实，不判「前缀有没有被延续」**。`reasoning-collected` 的意思是「采集到了思维链正文」；`no-reasoning` = 采了但响应里没有思维链；`unknown` = 没开「收集思考」（默认关）、或本轮是原样透传（「流式改写」关掉）采不到思维链，所以什么都没有。
 - **为什么不做那个判定**：官方前缀续写**只返回续写部分、前缀不会回显**，所以「返回的思维链是否以前缀开头」只有「模型自己复述了前缀」这种巧合才为真 —— 拿它当前缀被遵守的证据是错的。0.21.9 之前（≤ 0.21.8）用这个判据，结果**实际每一条都被记成 `prefix-absent`**，把「前缀其实生效了」误判成「没生效」——比不记更坏。现在把判断权交给脚本。

@@ -3,6 +3,15 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：思考前缀代理在客户端中途断开（DSH 里点「停止」）时的请求生命周期**。
+  - 原样转发路径（「流式改写」关时的所有请求，以及开着时本轮 ignored / skipped / 回退透传的请求）：客户端断开后 `reader.pipe(res)` 停在背压上、`end` 永远不来，处理协程**永久挂起**，结果行、stats、审计都不落，上游连接一直挂着。现在客户端断开即中止上游并收口。
+  - 流式改写路径：以前客户端断开后仍把上游整段读完（继续生成、继续计费），最后还记 `ok:true`。现在立即中止上游。
+  - 两条路径（含等上游响应头时断开）统一记审计 `client-abort`，结果行照常落**一行**、`ok:false`，新增字段 `clientAborted:true` 区分用户停止和真正的失败；用户主动停止**不调用 onOutcome，不计入连续失败自动停用**（以前在等响应头时断开会记成 `transport-error` 并计入）。
+- **修复：客户端用 `Transfer-Encoding: chunked` 发请求体时代理返回 502**。该头和 keep-alive / upgrade / expect 等 hop-by-hop 头以前被原样转给 fetch，undici 直接拒绝。DSH 自带客户端带 content-length，不受影响；curl 流式等其它客户端会触发。现在一并过滤。
+- **修复：代理端口回退每重试一次多挂一个 `listening` 监听器**，回退 11 次起出现 `MaxListenersExceededWarning`。
+- 新增 `tests/proxy-client-abort.test.mjs` 7 项（修复前全部失败）。
+
 ## 0.21.11 — 2026-11-14
 - **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
 - **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：

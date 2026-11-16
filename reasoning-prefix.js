@@ -583,6 +583,11 @@ export function toolCatalogText() {
 
 /** 结果行里 reasoningHead 的截断长度。 */
 const REASONING_HEAD_CHARS = 200
+/**
+ * 不能原样转给 fetch 的请求头：host / content-length / accept-encoding 由 fetch 自己定，
+ * 其余是 hop-by-hop 头 —— undici 遇到 transfer-encoding / keep-alive / upgrade / expect 等会直接抛（⇒ 502）。
+ */
+const HOP_BY_HOP_REQUEST_HEADERS = ['host', 'content-length', 'accept-encoding', 'connection', 'transfer-encoding', 'keep-alive', 'upgrade', 'expect', 'te', 'trailer', 'proxy-connection']
 
 /**
  * 采样覆盖补丁（P1-5）：只认 temperature / topP / seed 三个合法字段，非法值静默丢弃。
@@ -995,6 +1000,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       reasoningHead: null,
       routeConfidence: 'none',
       autoDisabled: false,
+      // 客户端（DSH 里点「停止」）在响应结束前断开：上游已中止，这一行记 ok:false、verdict 'error'，
+      // 靠这个字段和真正的失败区分开（它不进「连续失败自动停用」计数）。
+      clientAborted: false,
       verdict: 'error',
     }
     let wrote = false
@@ -1184,7 +1192,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     }
     const headers = {}
     for (const [key, value] of Object.entries(req.headers)) {
-      if (['host', 'content-length', 'accept-encoding', 'connection'].includes(key)) continue
+      // hop-by-hop 头不能转给 fetch：客户端带 transfer-encoding: chunked（或 keep-alive / upgrade / expect）时
+      // undici 直接抛 ⇒ 502。请求体已经整段读进来了，按 content-length 重新发即可。
+      if (HOP_BY_HOP_REQUEST_HEADERS.includes(key)) continue
       headers[key] = value
     }
     const upstream = String(config.upstream ?? 'https://api.deepseek.com/beta').replace(/\/+$/, '')
@@ -1238,6 +1248,27 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       return 'passthrough'
     }
     const started = Date.now()
+    /**
+     * 客户端在响应结束前断开（典型：DSH 里点「停止」）⇒ 中止上游。
+     *   · 透传路径以前 `reader.pipe(res)` 在目标被销毁后 unpipe、源停在背压上，`end` 永远不来 ⇒
+     *     处理协程永久挂起，结果行 / stats / 审计都不落，上游 body 一直挂着；
+     *   · shim 路径以前把上游整段读完（继续生成、继续计费），写入全被丢弃，最后还记成 ok:true。
+     * 用户主动停止不是上游的错：记 `client-abort`，**不**调用 reportOutcome（不进连续失败计数）。
+     */
+    const upstreamAbort = new AbortController()
+    let clientClosed = false
+    const onClientClose = () => {
+      if (clientClosed || res.writableFinished === true) return
+      clientClosed = true
+      upstreamAbort.abort()
+    }
+    res.on('close', onClientClose)
+    // 读请求体之后、挂监听之前就断了的连接：close 已经错过，这里补一次。
+    if (res.destroyed === true || req.socket?.destroyed === true) onClientClose()
+    const markClientAbort = () => {
+      row.clientAborted = true
+      okFlag = false
+    }
     try {
       /**
        * F16（P1-7）：shim 分支会**伪造 SSE 帧序列**，非流式客户端拿到的协议是错的
@@ -1267,6 +1298,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           method: req.method,
           headers,
           body: req.method === 'GET' || req.method === 'HEAD' ? undefined : variant.body,
+          signal: upstreamAbort.signal,
         })
         // 结果行逐次记账：一次请求试过谁、各自什么状态、最后谁生效，都在这一行里。
         row.attempts.push({ variant: variant.kind, status: response.status, ok: response.status < 400, ms: Date.now() - attemptStarted })
@@ -1535,6 +1567,14 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         collectedReasoning = collectedReasoningParts.join('')
         row.firstDeltaMs = Number.isFinite(firstDeltaMs) ? firstDeltaMs : null
         rowUsage = requestUsage
+        // 客户端中途断开（上游被 abort 而出错，或上游恰好先吐完、读流正常结束）：都按客户端中止记，不算上游失败。
+        if (clientClosed) {
+          markClientAbort()
+          record({ kind: 'client-abort', variant: reportedVariant, status: final.status, ms: Date.now() - started, firstDeltaMs })
+          bump({ ok: false, armId })
+          logger?.info?.('dsh-prefill: reasoning-prefix 客户端中途断开，已中止上游（shim）')
+          return;
+        }
         if (streamError !== null) {
           // 上游中途断流：尾巴已经尽量补成 finish + [DONE]（不让客户端挂死），但必须记成失败 ——
           // 以前这里 bump ok，面板全绿，用户完全不知道回复被截断了。
@@ -1580,9 +1620,32 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           })
           reader.pipe(res)
           reader.on('end', resolve)
+          // 客户端断开：pipe 会 unpipe 并让源停在背压上，'end' 永远不来。abort 只在上游还没吐完时
+          // 让源出错，所以这里直接收口，不依赖源的事件。
+          const onGone = () => {
+            if (res.writableFinished === true) return
+            if (forwardError === null) forwardError = new Error('client closed')
+            try { reader.destroy() } catch { /* 已经结束 */ }
+            resolve()
+          }
+          res.once('close', onGone)
+          if (clientClosed) onGone()
           // 以前只 resolve：pipe 在源出错时不会关目标 ⇒ 客户端响应永不结束（挂死），还记成成功。
           reader.on('error', (error) => { forwardError = error; try { res.destroy() } catch { /* 已经断了 */ } resolve() })
         })
+        if (clientClosed) {
+          markRequest(reportedVariant)
+          markClientAbort()
+          finalVariantKind = finalVariant
+          reportedVariantName = reportedVariant
+          row.status = final.status
+          row.variant = reportedVariant
+          collectedText = extractResponseText(contentType, collected)
+          record({ kind: 'client-abort', variant: reportedVariant, status: final.status, ms: Date.now() - started })
+          bump({ ok: false, armId })
+          logger?.info?.('dsh-prefill: reasoning-prefix 客户端中途断开，已中止上游（转发）')
+          return;
+        }
         if (forwardError !== null) {
           markRequest(reportedVariant)
           okFlag = false
@@ -1616,16 +1679,29 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       reportOutcome({ ok: true, variant: reportedVariant, status: final.status })
       logger?.info?.(`dsh-prefill: reasoning-prefix ${applied ? '已加前缀(' + reportedVariant + ')' : '透传(' + reason + ')'} → ${target} [${final.status}] ${Date.now() - started}ms`)
     } catch (error) {
-      logger?.warn?.(`dsh-prefill: reasoning-prefix 转发失败: ${String(error?.message ?? error)}`)
-      record({ kind: 'transport-error', error: String(error?.message ?? error) })
       okFlag = false
       reportedVariantName = 'none'
-      row.status = 502
       row.variant = 'none'
       bump({ ok: false, armId })
+      if (clientClosed) {
+        // 等上游响应头 / 读错误体时客户端断开：fetch 被 abort 抛出来的，不是传输错误。
+        markClientAbort()
+        row.status = 0
+        record({ kind: 'client-abort', variant: 'none', status: 0, ms: Date.now() - started })
+        logger?.info?.('dsh-prefill: reasoning-prefix 客户端在上游响应前断开，已中止上游')
+        try { res.destroy() } catch { /* 连接已经没了 */ }
+        return
+      }
+      logger?.warn?.(`dsh-prefill: reasoning-prefix 转发失败: ${String(error?.message ?? error)}`)
+      record({ kind: 'transport-error', error: String(error?.message ?? error) })
+      row.status = 502
       reportOutcome({ ok: false, variant: 'none', status: 0 })
-      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('reasoning-prefix proxy error: ' + String(error?.message ?? error))
+      try {
+        if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('reasoning-prefix proxy error: ' + String(error?.message ?? error))
+        else res.destroy()
+      } catch { /* 连接已经没了 */ }
     } finally {
+      res.off('close', onClientClose)
       // 每请求恰好一行：无论从哪条早退分支离开，都只在这里落一次盘。
       writeRow()
     }
@@ -1682,6 +1758,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         }
         const onError = (error) => {
           if (error?.code === 'EADDRINUSE' && attempts < maxAttempts) {
+            // 这一轮的 once('listening') 没触发过：不摘掉，每次重试就多挂一个（第 11 次起 MaxListeners 告警）。
+            server.off('listening', onListening)
             attempts += 1
             const next = port + attempts
             if (next <= 65535) {
