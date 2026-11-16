@@ -301,20 +301,37 @@ function sanitizePresetKnob(key, value) {
     case 'catalogPosition':
       return value === 'head' || value === 'tail' ? value : undefined
     case 'fallbackOrder':
-      return value === 'system-first' || value === 'user-first' ? value : undefined
+      // '' = 默认回退链：也是要快照 / 恢复的取值（缺键才表示「这份预设没带」）。
+      return value === '' || value === 'system-first' || value === 'user-first' ? value : undefined
     case 'maxEmittedCalls':
       return Number.isInteger(value) && value >= 1 && value <= 32 ? value : undefined
     case 'failureThreshold':
       return Number.isInteger(value) && value >= 1 && value <= 10 ? value : undefined
     case 'catalogInclude':
     case 'catalogExclude':
-      return presetNameList(value)
+      // [] = 不筛清单：同样要快照。
+      return Array.isArray(value) && value.length === 0 ? [] : presetNameList(value)
     case 'sampling':
+      // null / 成员全空 = 不覆盖采样：快照成 null（套用时清掉覆盖）；缺键 / 非法值仍然丢弃。
+      if (value === null) return null
+      if (value === undefined || typeof value !== 'object' || Array.isArray(value)) return undefined
+      if (Object.values(value).every((member) => member === null || member === undefined)) return null
       return samplingOf(value) ?? undefined
     default:
       return undefined
   }
 }
+
+/**
+ * 服务端「另存为前缀预设」一定会带上的旋钮（`reasoningConfigOf()` 对它们总有确定值）。
+ * 一条预设这 10 项齐全 ⇒ 它是全量快照；0.21.6–0.21.11 的全量快照里缺的那几项，保存时就是默认值。
+ */
+const PRESET_ALWAYS_SNAPSHOTTED = [
+  'shim', 'textualize', 'catalogRole', 'catalogMode', 'catalogDetail', 'catalogPosition',
+  'allowPassthrough', 'maxEmittedCalls', 'failureThreshold', 'ignoreFailures',
+]
+/** 取默认值时旧版本存不下来的 4 项：默认值本身。 */
+const presetDefaultKnobs = () => ({ fallbackOrder: '', catalogInclude: [], catalogExclude: [], sampling: null })
 
 /**
  * 从一份配置（已归一化的 `reasoningConfigOf()` 或一条已过白名单的预设）里取出要携带的旋钮。
@@ -335,6 +352,13 @@ export function presetKnobsOf(config) {
  * P2-10：除前缀本身外，还把「实验配置」那一组旋钮一起存 —— 否则换机器 / 换 profile 后
  * 无法还原出产生某批数据的配置。旧预设没有这些键，读进来照旧（套用时什么都不改）。
  */
+/** 预设旋钮；若是全量快照（见 PRESET_ALWAYS_SNAPSHOTTED），缺的默认值旋钮补齐。部分 / 仅前缀的预设原样。 */
+function presetKnobsWithDefaults(entry) {
+  const knobs = presetKnobsOf(entry)
+  if (!PRESET_ALWAYS_SNAPSHOTTED.every((key) => Object.hasOwn(knobs, key))) return knobs
+  return { ...presetDefaultKnobs(), ...knobs }
+}
+
 export function sanitizePrefixPresets(raw) {
   if (!Array.isArray(raw)) return []
   const seen = new Set()
@@ -350,8 +374,8 @@ export function sanitizePrefixPresets(raw) {
       contentPrefix: typeof entry.contentPrefix === 'string' ? entry.contentPrefix.slice(0, 2000) : '',
       // P1：预设也可以带触发标记（套用时一并写入 match；空 = 不改当前触发）。
       ...(typeof entry.match === 'string' && entry.match !== '' ? { match: entry.match.slice(0, 200) } : {}),
-      // P2-10：全量旋钮（有才写）。
-      ...presetKnobsOf(entry),
+      // P2-10：全量旋钮（有才写）。旧版本的全量快照没存默认值旋钮 ⇒ 读盘时补成默认，套用才能还原。
+      ...presetKnobsWithDefaults(entry),
     })
     if (out.length >= 30) break
   }
@@ -2460,7 +2484,11 @@ export function apply(ctx) {
         maxEmittedCalls: current.maxEmittedCalls,
         failureThreshold: current.failureThreshold,
       }
-      patchState({ ui: { reasoningPrefix: next } })
+      // 先摊开盘上原值：上面手写字段表没列的旋钮（ignoreFailures / armId / runId / sampling，以及以后新加的）原样保留。
+      // patchState 只在 ui 层浅合并，直接写 next 会把 reasoningPrefix 整份换掉。
+      const rawPrefix = readState()?.ui?.reasoningPrefix
+      const kept = rawPrefix !== null && typeof rawPrefix === 'object' && !Array.isArray(rawPrefix) ? rawPrefix : {}
+      patchState({ ui: { reasoningPrefix: { ...kept, ...next } } })
       const applied = await applyReasoningState()
       return Response.json({ ...await reasoningStatus(), applied }, noStore)
     }

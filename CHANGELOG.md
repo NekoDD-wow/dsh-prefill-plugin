@@ -3,6 +3,12 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：思考前缀的实验旋钮在两条路径上存不住 / 还原不回**。
+  - 左栏「保存前缀 / 保存并启用」（`POST /reasoning/enable`）用一份手写字段表整份重写 `ui.reasoningPrefix`，表里没有 0.21.4–0.21.5 新加的 `ignoreFailures` / `armId` / `runId` / `sampling`。实验开着时在左栏改前缀保存一次，这四项就被清掉：批量实验跑到阈值又被自动停用、结果行分桶落到空臂、臂间采样参数不一致，全程无提示。现在先摊开盘上原值再覆盖手写字段，以后新增旋钮也不会再漏。
+  - 前缀预设（0.21.6 P2-10「预设携带全量实验旋钮」）保存时，取默认值的 4 项 —— 回退链 `fallbackOrder: ''`、清单包含 / 排除 `[]`、采样 `sampling: null` —— 过不了白名单、不进快照；套用时这 4 项保持后来改过的值，还原不出产生那批数据的配置。面板「含 N 项旋钮」也因此在 10–14 之间随保存时的取值漂移。现在这 4 项的默认值也作为取值存下来（`''` / `[]` / `null`；缺键与非法值仍然丢弃，仅前缀的旧预设套用只换前缀，语义不变）。已有的旧全量快照（10 项常驻旋钮齐全、缺这 4 项）读盘时补成默认值，套用同样能还原。
+  - 测试：新增 `tests/reasoning-knobs-persist.test.mjs`（4 项，真实 `impl.apply()` 路由）、`tests/preset-default-knobs.test.mjs`（4 项）与公共 `tests/impl-mount-harness.mjs`。`tests/preset-knobs.test.mjs` 改了两处断言：`sampling: {}` / `null` 现在快照成 `{ sampling: null }`（原断言「不落键」正是这次的缺陷）；「非法 include」样本由 `[]` 换成 `'read'`（`[]` 现在是合法的「不筛清单」）。
+
 ## 0.21.11 — 2026-11-14
 - **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
 - **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：
