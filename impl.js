@@ -1907,20 +1907,37 @@ export function apply(ctx) {
    * llm-pi-ai 里这个 provider 是不是本插件写的：baseURL 指向本机代理（http://127.0.0.1:<端口>/beta/v1）。
    * 没有这条 ⇒ undefined；有但不是 ⇒ false（用户自己的 provider，比如 deepseek）；读不到配置 ⇒ undefined。
    */
-  const reasoningRouteIsOurs = (settings, providerId) => {
+  /**
+   * llm-pi-ai 里这个 provider 的归属：
+   * · 'ours'    baseURL 指向本机代理（本插件写的路由）
+   * · 'foreign' 用户自己的 provider（同名撞名）
+   * · 'absent'  没有这一条
+   * · 'unknown' settings.describe 抛错 / 形状变化，读不出 providers
+   * remove / upsert 只对确定的 'ours' / 'absent' 动手；'unknown' 时 fail-closed —— 宁可不删/不写，
+   * 也不误删或覆盖用户的 provider（v0.21.14 审查 #87）。
+   */
+  const reasoningRouteOwnership = (settings, providerId) => {
     try {
       const forms = settings.describe() ?? {}
       const list = Array.isArray(forms) ? forms : Object.values(forms)
       const nameOf = (entry) => entry?.ns ?? entry?.id ?? entry?.entryId ?? entry?.key ?? ''
       const entry = list.find((item) => nameOf(item) === 'llm-pi-ai') ?? list.find((item) => String(nameOf(item)).includes('pi-ai'))
-      const providers = entry?.value?.providers ?? entry?.form?.providers ?? entry?.values?.providers ?? entry?.config?.providers
-      if (providers === null || typeof providers !== 'object') return undefined
+      if (entry === undefined) return { state: 'unknown' }
+      const providers = entry.value?.providers ?? entry.form?.providers ?? entry.values?.providers ?? entry.config?.providers
+      if (providers === null || typeof providers !== 'object') return { state: 'unknown' }
       const profile = providers[providerId]
-      if (profile === undefined || profile === null) return undefined
-      return typeof profile.baseURL === 'string' && /^http:\/\/127\.0\.0\.1:\d+\/beta\/v1\/?$/.test(profile.baseURL)
+      if (profile === undefined || profile === null) return { state: 'absent' }
+      const ours = typeof profile.baseURL === 'string' && /^http:\/\/127\.0\.0\.1:\d+\/beta\/v1\/?$/.test(profile.baseURL)
+      return { state: ours ? 'ours' : 'foreign' }
     } catch {
-      return undefined
+      return { state: 'unknown' }
     }
+  }
+  const reasoningRouteIsOurs = (settings, providerId) => {
+    const resolved = reasoningRouteOwnership(settings, providerId)
+    // absent（没有这条）/ unknown（读不到）都算「不知道」；false 只留给确定的 foreign。
+    if (resolved.state === 'unknown' || resolved.state === 'absent') return undefined
+    return resolved.state === 'ours'
   }
   /** 路由名被用户已有的 provider 占用时的提示（面板 / 左栏直接显示）。 */
   const reasoningRouteTakenError = (providerId) => '模型路由名「' + providerId + '」已被一个现有 provider 占用（不是本插件写的），换一个名字'
@@ -1930,8 +1947,11 @@ export function apply(ctx) {
     const settings = settingsOf()
     if (settings === undefined) return { ok: false, error: 'settings 服务不可用' }
     const config = reasoningConfigOf()
+    const owner = reasoningRouteOwnership(settings, config.providerId)
     // 绝不覆盖用户自己的 provider（路由名撞名时）。
-    if (reasoningRouteIsOurs(settings, config.providerId) === false) return { ok: false, conflict: true, error: reasoningRouteTakenError(config.providerId) }
+    if (owner.state === 'foreign') return { ok: false, conflict: true, error: reasoningRouteTakenError(config.providerId) }
+    // 读不到配置 / 形状变化 ⇒ 不知道同名条目是谁的，绝不覆盖（v0.21.14 审查 #87）。
+    if (owner.state === 'unknown') return { ok: false, error: '读不到 llm-pi-ai 设置，无法确认模型路由归属，拒绝覆盖同名 provider' }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const form = reasoningFormOf(settings)
       if (form.key === undefined) return { ok: false, error: '没有找到 llm-pi-ai 设置命名空间', keys: form.keys }
@@ -1950,10 +1970,13 @@ export function apply(ctx) {
     const settings = settingsOf()
     if (settings === undefined) return { ok: false, error: 'settings 服务不可用' }
     const id = typeof providerId === 'string' && providerId !== '' ? providerId : reasoningConfigOf().providerId
-    if (reasoningRouteIsOurs(settings, id) === false) {
+    const owner = reasoningRouteOwnership(settings, id)
+    if (owner.state === 'foreign') {
       if (reasoningRouteWritten === id) reasoningRouteWritten = null
       return { ok: true, skipped: 'not-ours', providerIds: reasoningFormOf(settings).providerIds }
     }
+    // 读不到配置 / 形状变化 ⇒ 不知道这条是不是本插件写的，绝不动手（避免误删用户 provider；v0.21.14 审查 #87）。
+    if (owner.state === 'unknown') return { ok: false, error: '读不到 llm-pi-ai 设置，无法确认模型路由归属，拒绝删除同名 provider' }
     const form = reasoningFormOf(settings)
     if (form.key === undefined) return { ok: false, error: '没有找到 llm-pi-ai 设置命名空间' }
     try {

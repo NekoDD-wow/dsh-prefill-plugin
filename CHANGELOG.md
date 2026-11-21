@@ -5,6 +5,15 @@
 > **项目状态（2026-11-21）**：思考前缀 + 工具代理（`reasoning-prefix.js`）**已冻结** —— 保留为实验性功能（默认关、代码与面板都在，已装用户可继续用），但不再加新功能、不再做兼容性适配；后续版本只维护插件其他部分。
 
 
+## 0.21.15 — 2026-11-22
+- **修复 v0.21.14 审查发现的 4 个问题 + 1 个文档偏差**（公开仓 issue #84–#87、私人仓 #68）。每项都先用函数级探针复现，行为测试均先在 v0.21.14 基线上验证会红。
+  - **闸门换轮重挂（#84）**：重挂后本轮判定仍取重挂前抓到的旧 `frozenLevers` ⇒ 同一轮 root / agent 两个座位判定相反、开 / 关闸各有一个方向晚一轮。改为：重挂这一轮**挂载与判定统一用当前 `state0.levers`**。新增 `tests/gate-remount-consistency.test.mjs`。
+  - **prime 假闩锁（#85）**：挂载失败且一条都没挂上时，把已 `dispose` 的旧闩锁塞回去 ⇒ 看起来有挂载、实际 restrict / 消息过滤全缺席，还会骗过 F23 的空挂载重挂。改为「旧闩锁没被撤掉（unlatch 不可用）才保留；已被撤掉就写空闩锁交给 F23 重挂」。新增 `tests/prime-failure-remount.test.mjs`，`tests/persona-mount.test.mjs` 的静态断言同步。
+  - **严格档放行 Agent Teams（#86）**：0.2.2-rc.3 把 `agent-message` 归核心后团队包不再有 kind 成员，严格档放行该包会变成「段和工具放行、队友消息仍被丢」的半放行。按「放行 = 整包可用」加 **allow-only 的 `restoresKinds`**：放行时恢复核心 `agent-message`，拦截时不连带核心能力。新增 `tests/sandbox-pack-restores.test.mjs`。
+  - **清理与 fail-closed（#87）**：删除 v0.21.14 后不可达的 strict 工具分支；F22 兜底改按 **`name`** 定位（同名段正文不一致就替换，不再追加同名段）；`removeReasoningRoute` / `upsertReasoningRoute` 在 `settings.describe()` 读不出 providers 时 **fail-closed**（不再误删 / 覆盖用户同名 provider）。新增 `tests/override-sections-recovery.test.mjs`，`tests/reasoning-route-safety.test.mjs` 补 fail-closed 用例。
+  - **文档（#68）**：`docs/bug-人格段丢失-补丁与回归.md` 同步最终实现（F20 不做改名重挂、去掉已删除的 `.bak` 引用、F21 / F22 语义更新）。
+- 验证：单测 **920 项 / 919 pass / 1 skip / 0 fail**（新增 10 项；新用例在 v0.21.14 基线上 6 红）。
+
 ## 0.21.14 — 2026-11-21
 - **修复：接管 / 纯净（strict）下工具被「放行清单」顶掉**（PR #67）。`mountLevers` 里放行清单分支先于 strict 分支命中，`restrict({ allow: [] })` 永远轮不到 ⇒ 预设 / 会话 / 沙盒规则带 `tools: ['read']` 时请求头仍带工具（lab 复现 `tools=1`），违反「pure 必须 0 工具」。
   - 修法：`state.levers.blockTools === true` ⇒ `wantedTools = []` 强制清零；放行清单只在 pass / replace 下生效。

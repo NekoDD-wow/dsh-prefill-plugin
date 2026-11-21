@@ -154,6 +154,9 @@ export const BUILTIN_PACKS = Object.freeze([
       { tool: 'team_task_get', exact: true, at: `${TEAM_TOOL}:232` },
       { tool: 'team_task_update', exact: true, at: `${TEAM_TOOL}:248` },
     ],
+    // 0.2.2-rc.3 起 agent-message 归核心、不再挂在团队包上：严格档放行本包时**额外恢复**它
+    // （allow-only —— deny 本包也不反向连带核心能力，见 packRestoresKinds）。
+    restoresKinds: [{ kind: 'agent-message', exact: true }],
   },
 ])
 
@@ -342,4 +345,13 @@ export function packVerdict(state, session, global, target, level) {
 export function packKinds(state, packId) {
   const pack = packCatalog(state).find((entry) => entry.id === packId)
   return (pack?.members ?? []).filter((member) => typeof member.kind === 'string').map((member) => ({ name: member.kind, exact: member.exact === true }))
+}
+
+/**
+ * 放行这个包时**额外恢复**的核心消息来源（rc.3 之后从包里归到核心的 kind）。
+ * 只影响 allow：deny 包不会反向连带这些核心能力（与「拦团队包不连坐核心」的 rc.3 对齐口径一致）。
+ */
+export function packRestoresKinds(state, packId) {
+  const pack = packCatalog(state).find((entry) => entry.id === packId)
+  return (pack?.restoresKinds ?? []).filter((entry) => typeof entry.kind === 'string').map((entry) => ({ name: entry.kind, exact: entry.exact === true }))
 }

@@ -71,7 +71,7 @@
  * @module @local/dsh-prefill/sandbox
  */
 
-import { CORE_KINDS, packKinds, packVerdict, sanitizePackSettings } from './sandbox-packs.js'
+import { CORE_KINDS, packKinds, packRestoresKinds, packVerdict, sanitizePackSettings } from './sandbox-packs.js'
 
 export const LEVELS = ['observe', 'controlled', 'strict']
 export const FAMILIES = ['rewrite', 'allow', 'tools', 'deny']
@@ -590,11 +590,15 @@ export function resolveSandbox(state, sessionId) {
     messageAllow = new NameSet(entries)
   }
 
+  const level = LEVELS.includes(session?.level) ? session.level : LEVELS.includes(global?.level) ? global.level : 'observe'
   // 第 2 步：来源包开关（会话 > 全局）。显式放行的包把它的消息来源加进白名单（严格档放行 Agent Teams ⇒ 队友消息能送达）。
   const packs = { ...sanitizePackSettings(global?.packs), ...sanitizePackSettings(session?.packs) }
   for (const [id, action] of Object.entries(packs)) {
     if (action !== 'allow') continue
-    for (const entry of packKinds(state, id)) {
+    // 包成员 + 包声明「allow 时额外恢复」的核心 kind（rc.3 起 agent-message 这类归了核心、
+    // 不再挂在包上；只 allow 时恢复，deny 包不反向连带 —— 见 packRestoresKinds）。
+    const restores = level === 'strict' ? packRestoresKinds(state, id) : []
+    for (const entry of [...packKinds(state, id), ...restores]) {
       if (messageAllow.has(entry.name)) continue
       messageAllow.addPattern(entry.name, entry.exact)
       allowKinds = [...allowKinds, entry.name]
@@ -620,7 +624,6 @@ export function resolveSandbox(state, sessionId) {
     }
   }
 
-  const level = LEVELS.includes(session?.level) ? session.level : LEVELS.includes(global?.level) ? global.level : 'observe'
   const resolved = { level, rewrite, allowKinds, messageAllow, toolAllow, blocks, families, packs }
   if (isObject(state)) {
     if (perState === undefined) RESOLVED.set(state, (perState = new Map()))

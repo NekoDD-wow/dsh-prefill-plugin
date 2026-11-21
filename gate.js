@@ -906,7 +906,7 @@ export function applyMessageBlocks(api, payload, incoming, decision) {
   return next
 }
 
-export { auditSnapshot }
+export { auditSnapshot, ensureOverrideSections }
 
 /**
  * 挂在**插件根 ctx**（无标签监听器 ⇒ 必然收到每一次 `system-prompt/assemble` 派发），
@@ -939,23 +939,39 @@ function ensureOverrideSections(api, id, assembly) {
   }
   const sections = overrides?.sections
   if (sections === null || typeof sections !== 'object' || Array.isArray(sections)) return assembly
-  const norm = (value) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
-  const have = assembly.sections.map((section) => norm(section?.text))
-  const missing = Object.entries(sections).filter(([, text]) => {
-    const probe = norm(text)
-    return probe !== '' && !have.some((entry) => entry === probe || entry.includes(probe))
-  })
-  if (missing.length === 0) return assembly
-  // 恢复出来的段**沿用原名**：它不是"注册进作用域"（注册那条路已经失败了），而是直接补进
-  // 本次 assembly 的返回数组 ⇒ 不会撞 "already registered"，也不存在要由 unlatch 清掉的注册。
-  // 名字加后缀反而会让下游按名字找段（例如面板按 name 列出可改项）对不上。
-  const added = missing.map(([name, text]) => ({
-    name,
-    order: globalOrderOf(api.rootCtx, 'sections', name) ?? 1000,
-    text: String(text),
-  }))
-  api.note({ override_recovered: missing.map(([name]) => name), id })
-  return { ...assembly, sections: [...assembly.sections, ...added] }
+  const normalize = (value) => String(value ?? '').replace(/\s+/g, ' ').trim()
+  const wanted = Object.entries(sections)
+    .map(([name, text]) => [name, String(text ?? '')])
+    .filter(([, text]) => normalize(text) !== '')
+  if (wanted.length === 0) return assembly
+  // 按 **name** 定位已有段，不按正文前缀：同名段正文在轮内被改掉时要**替换**，
+  // 追加第二份会让提示词里出现两版人格；两条改写前 40 字相同也不算「已在」（v0.21.14 审查 #87）。
+  const indexByName = new Map()
+  for (let index = 0; index < assembly.sections.length; index += 1) {
+    const name = assembly.sections[index]?.name
+    if (typeof name === 'string' && name !== '' && !indexByName.has(name)) indexByName.set(name, index)
+  }
+  const nextSections = assembly.sections.slice()
+  const added = []
+  const replaced = []
+  for (const [name, text] of wanted) {
+    const at = indexByName.get(name)
+    if (at === undefined) {
+      // 恢复出来的段**沿用原名**：它不是"注册进作用域"（注册那条路已经失败了），而是直接补进
+      // 本次 assembly 的返回数组 ⇒ 不会撞 "already registered"，也不存在要由 unlatch 清掉的注册。
+      // 名字加后缀反而会让下游按名字找段（例如面板按 name 列出可改项）对不上。
+      nextSections.push({ name, order: globalOrderOf(api.rootCtx, 'sections', name) ?? 1000, text })
+      added.push(name)
+      continue
+    }
+    const existing = nextSections[at]
+    if (normalize(existing?.text) === normalize(text)) continue
+    nextSections[at] = { ...existing, text }
+    replaced.push(name)
+  }
+  if (added.length === 0 && replaced.length === 0) return assembly
+  api.note({ override_recovered: [...added, ...replaced], id, added, replaced })
+  return { ...assembly, sections: nextSections }
 }
 
 function ensureToolsBlocker(api) {
@@ -1136,10 +1152,9 @@ function mountLevers(agent, state, api, sink) {
     contextsSuppressed = true
   }
   // ── 工具放行：**不改工具说明，只管"能不能用"**（用户要求）──────────────────
-  //   · 接管 / 纯净（blockTools）⇒ **一律一个都不给**，放行清单不恢复工具
-  //   · 配了放行清单（会话级优先于全局）⇒ `restrict({ allow: 清单 })`
-  //   · 没配但 lever 打开 ⇒ `restrict({ allow: [] })`（一个都不给）
-  //   · 都没配 ⇒ 不干预
+  //   · 接管 / 纯净（blockTools）⇒ **一律一个都不给**（wantedTools 强制为 []），放行清单不恢复工具
+  //   · 其余情况配了放行清单（会话级优先于全局）⇒ `restrict({ allow: 清单 })`
+  //   · 没配清单 ⇒ 不干预（blockTools 已在上面统一清零，没有第二条 strict 分支）
   // blockTools 必须优先于清单：pure 预设/角色卡带 tools:['read'] 时，旧顺序会让
   // 清单分支先命中，strict 的 allow:[] 永远轮不到，请求头仍带 read（lab 复现 tools=1）。
   // 清单先与官方 `restrictableNames` 求交集：`restrict()` 遇到未知名字会**抛错**，
@@ -1158,8 +1173,6 @@ function mountLevers(agent, state, api, sink) {
     push(toolService.restrict({ allow }))
     if (dropped.length > 0) api.note({ tools_unknown_ignored: dropped, id: agent?.id })
     if (allow.length === 0) api.note({ tools_policy: 'none', id: agent?.id })
-  } else if (strictTools && typeof toolService?.restrict === 'function') {
-    push(toolService.restrict({ allow: [] }))
   }
 
   // ── Q17：段 / 上下文改写的挂载（同名遮蔽）──────────────────────────────────
@@ -1271,15 +1284,14 @@ export async function prime(api, agent) {
   } catch (thrown) {
     error = String(thrown?.message ?? thrown)
   }
-  if (error !== '' && disposers.length === 0 && previousDisposed) {
-    // 挂载失败且一条都没挂上：**不要**用空挂载覆盖旧闩锁（宁可沿用旧的已挂载集合），
-    // 否则这一轮会静默跑在"无改写"状态。
-    // ⚠️ 只在旧闩锁**已被我撤掉**时才走这里 —— 旧闩锁的 disposers 此刻已经执行过，
-    // 它记的那些注册**已经不在了**，再塞回去只会得到一个「看着有挂载、其实什么都没挂」
-    // 的假闩锁（比空闩锁更坏：step() 的 "空挂载强制重挂" 也会被它骗过去）。
-    // 没撤成（unlatch 不可用）时旧注册其实还在，保留 previous 才是对的；两条分支都用 note 留痕。
+  // 挂载失败且一条都没挂上：
+  // · 旧闩锁**没被撤掉**（unlatch 不可用）⇒ 它记的注册其实还活着，保留 previous 才对；
+  // · 旧闩锁**已被撤掉**（disposers 跑过了）⇒ 绝不能回塞 —— 那会得到一个「看着有挂载、
+  //   其实什么都没挂」的假闩锁，把 step() 的「空挂载强制重挂」(F23) 骗过去，整轮
+  //   restrict / 消息过滤全缺席（v0.21.14 审查 #85）。这种情况照常写空闩锁，交给 F23 重挂。
+  if (error !== '' && disposers.length === 0 && previous !== undefined && !previousDisposed) {
     api.latches.set(agent.id, previous)
-    api.note({ prime: 'kept-previous', id: agent.id, error, stale: true })
+    api.note({ prime: 'kept-previous', id: agent.id, error, stale: false })
     return
   }
   api.latches.set(agent.id, {
@@ -1444,7 +1456,9 @@ export async function step(api, payload, decision) {
     })
   }
   // 本轮所有判定都用冻结值，不再读实时状态。
-  const state = { ...state0, levers: entry?.frozenLevers ?? state0.levers }
+  // ⚠ 重挂这一轮例外：挂载用的是 state0.levers，判定也必须用同一份 —— 否则第一个座位
+  // 「挂新 lever、判旧 lever」，同一轮 root / agent 两个座位判定会相反（v0.21.14 审查 #84）。
+  const state = { ...state0, levers: remounted ? state0.levers : (entry?.frozenLevers ?? state0.levers) }
 
   const droppedKinds = []
   const overrode = []

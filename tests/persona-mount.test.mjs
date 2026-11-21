@@ -35,8 +35,9 @@ test('F21 · prime 幂等：进门先撤同 id 旧闩锁，且在挂载失败时
   // 塞回去只会得到"看着有挂载、其实什么都没挂"的假闩锁。
   assert.match(body, /let previousDisposed = false/, '需要记录"旧闩锁是否真的被撤掉了"')
   assert.match(body, /previousDisposed = true/)
-  assert.match(body, /if \(error !== '' && disposers\.length === 0 && previousDisposed\)/, '回塞旧闩锁的分支必须带 previousDisposed')
-  assert.doesNotMatch(body, /if \(error !== '' && disposers\.length === 0 && previous !== undefined\)/, '旧写法（无条件回塞）已被审查修掉，不许回退')
+  // v0.21.14 审查 #85 后：旧闩锁被撤掉（disposers 跑过）时**不许**回塞，只有没撤成（旧注册还活着）才保留。
+  assert.match(body, /if \(error !== '' && disposers\.length === 0 && previous !== undefined && !previousDisposed\)/, '回塞旧闩锁的分支必须要求「旧闩锁没被撤掉」')
+  assert.doesNotMatch(body, /if \(error !== '' && disposers\.length === 0 && previousDisposed\)/, '旧写法（回塞已撤掉的假闩锁）已被审查修掉，不许回退')
 })
 
 test('F20 · 改写段挂载逐条兜底：一条抛错不许把后面的 lever 带崩', () => {
@@ -62,10 +63,11 @@ test('F22 · 人格段兜底只在有闩锁时触发（没启用 / 用户手动�
   assert.ok(call >= 0, '装配观察者要调用兜底')
   const line = src.slice(src.lastIndexOf('\n', call) + 1, src.indexOf('\n', call))
   assert.match(line, /latch === undefined \? filtered :/, '没闩锁（没启用 / 已停用）⇒ 不兜')
-  // 兜底只补、不改已有段
+  // 兜底按 name 定位：缺的补、同名正文不一致的**替换**（v0.21.14 审查 #87 前是只追加，会出两版人格）
   const fn = src.slice(at('function ensureOverrideSections'), at('function ensureToolsBlocker'))
-  assert.match(fn, /\.\.\.assembly, sections: \[\.\.\.assembly\.sections, \.\.\.added\]/, '只追加，不替换')
-  assert.match(fn, /override_recovered/, '补过要留审计')
+  assert.match(fn, /nextSections\[at\] = \{ \.\.\.existing, text \}/, '同名段正文不一致要替换，不能追加同名段')
+  assert.match(fn, /const indexByName = new Map\(\)/, '要按 name 建索引判断在不在（不按正文前缀）')
+  assert.match(fn, /override_recovered/, '补过 / 替换过要留审计')
 })
 
 test('F23 · 空挂载强制重挂（闩锁在但一条都没挂上时不许直接沿用）', () => {

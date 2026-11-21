@@ -60,3 +60,19 @@ test('状态文件里已经是撞名的路由名（旧版本写进去的）：�
   assert.deepEqual(settings.store.providers.deepseek, USER_DEEPSEEK, '用户的 deepseek provider 被删除')
   assert.equal(settings.store.providers['prefill-x'], undefined, '本插件之前写的 prefill-x 也该清掉')
 })
+
+test('settings.describe 形状变化读不到 providers：启用 / 停用都 fail-closed，不覆盖也不删用户 provider', async () => {
+  const raw = h.readStateFile()
+  h.seed({ ...raw, ui: { ...raw.ui, reasoningPrefix: { ...raw.ui.reasoningPrefix, providerId: 'deepseek', enabled: true } } })
+  const original = settings.describe
+  settings.describe = () => [{ ns: 'llm-pi-ai', value: { revision: 1 } }]
+  try {
+    const enabled = await h.post(ENABLE, { prefix: '想：' })
+    assert.equal(enabled.applied?.ok, false, '读不到 providers 时不许写路由（会覆盖同名用户 provider）')
+    assert.deepEqual(settings.store.providers.deepseek, USER_DEEPSEEK, '用户的 deepseek provider 被覆盖')
+    await h.post(DISABLE, {})
+    assert.deepEqual(settings.store.providers.deepseek, USER_DEEPSEEK, '读不到 providers 时不许删同名 provider')
+  } finally {
+    settings.describe = original
+  }
+})
