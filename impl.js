@@ -2035,6 +2035,8 @@ export function apply(ctx) {
           maxEmittedCalls: current.maxEmittedCalls,
           reasoningPrefix: current.prefix,
           contentPrefix: current.contentPrefix,
+          // 前缀模板变量 {{provider}} 用（代理侧展开）。
+          providerId: current.providerId,
           catalog: toolCatalogOf(),
           logging: current.logging,
           // 日志轮转策略（代理侧 7 个写入点共用；0 = 不轮转）。

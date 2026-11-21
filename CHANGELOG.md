@@ -3,6 +3,15 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：reasoning 代理结果行 / 统计字段与实际发出的请求不一致**。
+  - `catalogRole`：以前 `prepare` 为 system / user 各跑一遍、后一遍覆盖，结果行永远写 `user`。现在按变体链里实际发出的变体写：`system` / `user`，`prefixed` / 透传为 `null`。
+  - `catalogInjected`：shim 关（`prefixed` 变体）时根本不注入清单，结果行和 `stats.lastRequest` 却记 `true`。现在 shim 关时记 `false`（`catalogBytes` 仍是清单长度，未改）。
+  - 前缀模板变量 `{{provider}}` / `{{turn}}` / `{{session}}`：以前代理只传了 `model`，impl 的 getConfig 也没传 `providerId`，发出去的前缀原样带着 `{{…}}`。现在 impl 传 `providerId`，代理用关联通道解析出的 turn / sessionId 展开；关联不上会话时这两个变量原样保留。
+  - 臂桶满 32 个时「丢最旧」：以前按 `Object.keys` 顺序，整数样子的臂名（如 `"7"`）永远排最前，最新的臂反被淘汰。改为单独记建桶顺序，`resetStats` 一并清空。
+  - `parseUsage` 的 Anthropic 口径：`input_tokens` 不含缓存读 / 写，以前 prompt 少算、cacheMiss 被夹成 0。现在总输入 = `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`（`tests/experimental.test.mjs` 里按旧口径写的期望值一并改正）。DeepSeek / OpenAI 口径不变。
+- 新增 `tests/proxy-result-row.test.mjs`（9 项）、`tests/reasoning-prefix-provider-var.test.mjs`（1 项）。
+
 ## 0.21.12 — 2026-11-21
 - **移植公开镜像的 8 个外部 PR（贡献者 @dymk1ex1xz，均对应其 issue）**。公开仓是私人仓的生成镜像，PR 不直接合并；逐条审核（新测试先在基线上验证会红）后移植：
   - **reasoning 代理（#56 / #52）**：shim 按 SSE 规范解析上游帧 —— `data: null` / 非对象帧不再打崩宿主进程；`event:` / `id:` / `retry:` / 注释行与多行 `data:` 正确解析；content-type 大小写不敏感；usage 每请求只记一次；非 SSE 200 先收字节再解码、透传 finish_reason、`{error:…}` 按流错误；原生 `tool_calls` 与 DSML 调用共用 index 空间重新编号。

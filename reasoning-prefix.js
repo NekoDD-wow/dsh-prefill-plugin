@@ -159,7 +159,12 @@ export function parseUsage(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
   const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
   const details = raw.prompt_tokens_details !== null && typeof raw.prompt_tokens_details === 'object' ? raw.prompt_tokens_details : {}
-  const prompt = num(raw.prompt_tokens) ?? num(raw.input_tokens)
+  // Anthropic 的 input_tokens 只是最后一个缓存断点之后的新输入，**不含**缓存读 / 写；
+  // 总输入 = input_tokens + cache_read_input_tokens + cache_creation_input_tokens。
+  const anthropicInput = num(raw.input_tokens)
+  const anthropicPrompt =
+    anthropicInput === undefined ? undefined : anthropicInput + (num(raw.cache_read_input_tokens) ?? 0) + (num(raw.cache_creation_input_tokens) ?? 0)
+  const prompt = num(raw.prompt_tokens) ?? anthropicPrompt
   const completion = num(raw.completion_tokens) ?? num(raw.output_tokens)
   const cacheHit = num(raw.prompt_cache_hit_tokens) ?? num(details.cached_tokens) ?? num(raw.cache_read_input_tokens)
   const explicitMiss = num(raw.prompt_cache_miss_tokens)
@@ -846,6 +851,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
   }
   /** 臂数上限：臂名手抖（或脚本传错）不会撑爆内存，满则丢最旧。 */
   const ARM_LIMIT = 32
+  /** 臂的建桶顺序：Object.keys 会把 "7" 这类整数键排到最前，不能拿来判断「最旧」。 */
+  let armOrder = []
   const emptyArmBucket = () => ({
     requests: 0,
     ok: 0,
@@ -861,9 +868,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
   const bucketArm = (armId, { ok, ms, firstDeltaMs, usage } = {}) => {
     if (typeof armId !== 'string' || armId === '') return
     if (!Object.hasOwn(stats.arms, armId)) {
-      const keys = Object.keys(stats.arms)
-      if (keys.length >= ARM_LIMIT) delete stats.arms[keys[0]]
+      if (armOrder.length >= ARM_LIMIT) delete stats.arms[armOrder.shift()]
       stats.arms[armId] = emptyArmBucket()
+      armOrder.push(armId)
     }
     const bucket = stats.arms[armId]
     bucket.requests += 1
@@ -1118,13 +1125,21 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             reason = null
             if (textualized.changed > 0) logger?.info?.('dsh-prefill: reasoning-prefix 文本化了 ' + textualized.changed + ' 条 tool 消息')
           }
-          // P1：前缀模板变量（{{date}}/{{time}}/{{model}} 等）在发请求前展开。
+          // P1：前缀模板变量（{{date}}/{{time}}/{{model}}/{{provider}}/{{turn}}/{{session}}）在发请求前展开。
+          // turn / session 来自关联通道（上面已解析）；认领不到会话时留 undefined ⇒ 原样保留。
+          const varContext = {
+            model: draft.model,
+            provider: typeof config.providerId === 'string' && config.providerId !== '' ? config.providerId : undefined,
+            turn: row.turn ?? undefined,
+            session: row.sessionId ?? undefined,
+          }
           const interpolatedConfig = {
             ...config,
-            reasoningPrefix: interpolatePrefixVars(config.reasoningPrefix, { model: draft.model }),
-            contentPrefix: interpolatePrefixVars(config.contentPrefix, { model: draft.model }),
+            reasoningPrefix: interpolatePrefixVars(config.reasoningPrefix, varContext),
+            contentPrefix: interpolatePrefixVars(config.contentPrefix, varContext),
           }
           const result = injectReasoningPrefix(draft, interpolatedConfig)
+          const shim = config.shim === true || process.env.DSH_PREFILL_SPIKE_SHIM === '1'
           if (!result.applied) {
             reason = result.reason
             return null
@@ -1143,7 +1158,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             catalogPosition: config.catalogPosition === 'tail' ? 'tail' : 'head',
             // F15-B：短路不再限定 history 模式 —— 历史里有**同一份**清单（逐字相同）就不重复注入。
             // 「用过 history 又切回 each」的会话以前会拿到两份清单（历史那份 + 每轮这份）。
-            catalogInjected: !hasSameToolCatalog(result.body.messages, catalog),
+            // shim 关（prefixed 变体）根本不注入清单 ⇒ false。
+            catalogInjected: shim && !hasSameToolCatalog(result.body.messages, catalog),
             // P0 预览正文片段：清单前几行 + 实际注入的前缀消息（面板展开看）。
             catalogHead: catalog.split('\n').slice(0, 8).join('\n').slice(0, 900),
             prefixMessage: {
@@ -1157,12 +1173,12 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           row.catalogMode = requestShape.catalogMode
           row.catalogPosition = requestShape.catalogPosition
           row.catalogDetail = requestShape.catalogDetail
-          row.catalogRole = catalogRole
+          // catalogRole 不在这里写：prepare 先后为 system / user 各跑一遍，后一遍会覆盖。
+          // 改在变体链里按实际发出的变体写（见下方 attempts 循环）。
           row.prefix = {
             reasoningLen: requestShape.reasoningPrefix.length,
             contentLen: requestShape.contentPrefix.length,
           }
-          const shim = config.shim === true || process.env.DSH_PREFILL_SPIKE_SHIM === '1'
           if (shim) {
             const messages = result.body.messages
             const prefixMessage = messages[messages.length - 1]
@@ -1300,6 +1316,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       let finalVariant = null
       for (const variant of variants) {
         const attemptStarted = Date.now()
+        // 清单角色跟着实际发出的变体走：最后一次尝试（即生效变体，或全失败时最后试的那个）为准；
+        // prefixed / passthrough 没带清单 ⇒ null。
+        row.catalogRole = variant.kind === 'system' || variant.kind === 'user' ? variant.kind : null
         const response = await fetch(target, {
           method: req.method,
           headers,
@@ -1782,6 +1801,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       stats.failed = 0
       stats.variants = {}
       stats.arms = Object.create(null)
+      armOrder = []
       stats.calls = 0
       stats.firstDeltaMs = { sum: 0, count: 0 }
       stats.ms = { sum: 0, count: 0 }

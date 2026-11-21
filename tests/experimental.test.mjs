@@ -183,11 +183,12 @@ test('parseUsage：DeepSeek / OpenAI / Anthropic 三种口径都能读', () => {
     cacheHit: 800,
     cacheMiss: 200,
   })
+  // Anthropic：input_tokens 只是缓存断点之后的新输入，总输入 = input + cache_read + cache_creation。
   assert.deepEqual(parseUsage({ input_tokens: 50, output_tokens: 7, cache_read_input_tokens: 30 }), {
-    prompt: 50,
+    prompt: 80,
     completion: 7,
     cacheHit: 30,
-    cacheMiss: 20,
+    cacheMiss: 50,
   })
   assert.equal(parseUsage(null), null)
   assert.equal(parseUsage('x'), null)
