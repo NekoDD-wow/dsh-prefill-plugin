@@ -1136,15 +1136,19 @@ function mountLevers(agent, state, api, sink) {
     contextsSuppressed = true
   }
   // ── 工具放行：**不改工具说明，只管"能不能用"**（用户要求）──────────────────
+  //   · 接管 / 纯净（blockTools）⇒ **一律一个都不给**，放行清单不恢复工具
   //   · 配了放行清单（会话级优先于全局）⇒ `restrict({ allow: 清单 })`
   //   · 没配但 lever 打开 ⇒ `restrict({ allow: [] })`（一个都不给）
   //   · 都没配 ⇒ 不干预
+  // blockTools 必须优先于清单：pure 预设/角色卡带 tools:['read'] 时，旧顺序会让
+  // 清单分支先命中，strict 的 allow:[] 永远轮不到，请求头仍带 read（lab 复现 tools=1）。
   // 清单先与官方 `restrictableNames` 求交集：`restrict()` 遇到未知名字会**抛错**，
   // 一个过期名字就能把该会话的挂载链搞挂（`dsh-tools:2908`）。
   // 会话级映射统一支持 `'*'` 通配（无头探针用），别只按键精确查——这个坑踩过一次。
   // 会话沙盒第 1 步：旧 sessionTools[会话] ?? sessionTools['*'] 现在是规则表的 tools 族（undefined = 没配，回落全局 state.tools）。
+  const strictTools = state?.levers?.blockTools === true
   const sandboxTools = resolveSandbox(state, agent?.id).toolAllow
-  const wantedTools = sandboxTools !== undefined ? sandboxTools : state?.tools
+  const wantedTools = strictTools ? [] : (sandboxTools !== undefined ? sandboxTools : state?.tools)
   if (Array.isArray(wantedTools) && typeof toolService?.restrict === 'function') {
     const known = new Set(restrictableToolNames(toolService, agent))
     const allow = known.size === 0
@@ -1154,7 +1158,7 @@ function mountLevers(agent, state, api, sink) {
     push(toolService.restrict({ allow }))
     if (dropped.length > 0) api.note({ tools_unknown_ignored: dropped, id: agent?.id })
     if (allow.length === 0) api.note({ tools_policy: 'none', id: agent?.id })
-  } else if (state.levers.blockTools && typeof toolService?.restrict === 'function') {
+  } else if (strictTools && typeof toolService?.restrict === 'function') {
     push(toolService.restrict({ allow: [] }))
   }
 
