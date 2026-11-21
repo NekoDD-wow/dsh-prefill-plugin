@@ -3,6 +3,19 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：卡片关着时芯片上的「预设名 + 已配置 N/8」停在关卡片那一刻**。
+  - 触发：卡片打开过再关上，之后本会话的预设 / 闸门 / 人格段在别处变了（另一窗口、左侧页、写接口）。
+  - 影响：芯片一直显示旧预设名和旧的 N/8，直到再次打开卡片；summary store 里其实已经是新值。0.19 卡片关着也定时拉 `/state`，这是 0.21 收敛轮询后的回退。
+  - 修法：PrefillDock 订阅 summary，摘要里与芯片相关的几格（activePreset / prefill / gate / persona / locked）变化、且卡片关着、且本页打开过卡片时，补拉一次 `/state`。只在变化时拉，不定时；从没打开过卡片不拉。
+- **修复：每轮注入关着时，旧会话的首轮锁定在卡片里认不出来（#19 A 回退）**。
+  - 触发：本版之前开跑、没有 `state.locked` 的旧会话，左栏「每轮注入」关着，DSH 重启后打开卡片。
+  - 影响：卡片显示「首轮未发送」、开场对话区可编辑，改了也不会发出去。原因是 `every-turn-status` 只在每轮注入开着时拉，而它回的 `lock` 是这类会话认首轮锁定的唯一依据。
+  - 修法：每轮注入关着时打开卡片也拉一次（不轮询）；开着时照旧 15s 一次。
+- **修复：换会话不清 `everyTurnStatus`**。同一个卡片实例从 A（已锁定）切到 B，B 会显示 A 的「已锁定」并把开场对话区锁成只读。现在 `sessionId` 变化时先清空。
+- **修复：页面切到后台时卡片的 `/state`（整封，约 1MB）与 `/usage` 轮询不暂停**。summary store 在 `document.hidden` 时已暂停，这两条没有：卡片开着放在后台，30 秒内仍拉 6 次整封 state。现在两处轮询在后台时跳过，回前台下一轮照常。
+- 测试：新增 `tests/dock-chip-refresh.test.mjs`（3 项）、`tests/dock-everyturn-status.test.mjs`（3 项）、`tests/dock-hidden-poll.test.mjs`（2 项），都是整模块渲染，复用 `tests/client-render-harness.mjs`。
+
 ## 0.21.12 — 2026-11-21
 - **移植公开镜像的 8 个外部 PR（贡献者 @dymk1ex1xz，均对应其 issue）**。公开仓是私人仓的生成镜像，PR 不直接合并；逐条审核（新测试先在基线上验证会红）后移植：
   - **reasoning 代理（#56 / #52）**：shim 按 SSE 规范解析上游帧 —— `data: null` / 非对象帧不再打崩宿主进程；`event:` / `id:` / `retry:` / 注释行与多行 `data:` 正确解析；content-type 大小写不敏感；usage 每请求只记一次；非 SSE 200 先收字节再解码、透传 finish_reason、`{error:…}` 按流错误；原生 `tool_calls` 与 DSML 调用共用 index 空间重新编号。
