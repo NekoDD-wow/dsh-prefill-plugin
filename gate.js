@@ -790,8 +790,26 @@ export function neutralizeEntries(api, scope, holder, group, match) {
   }
   const own = typeof layers.peek === 'function' ? layers.peek(scope)?.[group] : undefined
   const register = group === 'sections' ? sp?.section : sp?.context
+  const textOf = (entry) => {
+    try {
+      return String(typeof entry?.text === 'function' ? entry.text() : entry?.text ?? '')
+    } catch {
+      return ''
+    }
+  }
   for (const [name, entry] of merged) {
-    if (done.has(name) || String(name).startsWith('prefill:') || !match(name, entry)) continue
+    if (String(name).startsWith('prefill:') || !match(name, entry)) continue
+    if (done.has(name)) {
+      // `done` 是「这个 latch 处理过」的记忆，不等于「现在还是空的」。
+      // step 的 refreshContext / agent 重建会把注册表恢复成原文；只认 done 会让
+      // 重挂后的下一轮直接跳过 -> runtime-context 又漏（session-d4225a91 turn 3）。
+      const ownEntry = own?.get(name)
+      const stillEmpty = ownEntry === entry
+        ? textOf(entry) === ''
+        : ownEntry !== undefined && ownEntry.required !== true && textOf(ownEntry) === ''
+      if (stillEmpty) continue
+      done.delete(name)
+    }
     try {
       if (own !== undefined && own.get(name) === entry) {
         const original = entry.text
@@ -846,7 +864,7 @@ export function applyAssemblyBlocks(api, id, scope, result, latch) {
     // 只记**真会进模型**的：段被本插件的 complete 段整份顶掉 / 上下文被 suppress 时，装配里列着也不算。
     const seen = {
       sections: latch?.frozenLevers?.blockSections === true ? [] : result?.sections,
-      contexts: latch?.contextsSuppressed === true ? [] : result?.contexts,
+      contexts: latch?.contextsSuppressed === true || latch?.frozenLevers?.blockContexts === true ? [] : result?.contexts,
     }
     const fresh = recordFindings(id, classifyAssembly(seen, knownInjectionNames(api.rootCtx)))
     if (fresh.length > 0) api.note({ audit: 'assembly', id, fresh })
@@ -1021,14 +1039,17 @@ function ensureToolsBlocker(api) {
       // agent-loop 在 step() 里会 refreshContext() 重算快照、绕过 pre-step 直接写进会话 ⇒
       // 只能在注册表层面把它们清掉（见 neutralizeRequiredContexts）。
       let neutralized = []
-      if (latch?.contextsSuppressed === true && context?.scope !== undefined) {
-        neutralized = neutralizeRequiredContexts(api, context.scope, latch)
+      // 重挂 / state-write 之后 contextsSuppressed 可能丢掉（实测 turn 3 的 runtime-context 泄漏）。
+      // frozen.blockContexts 是同一轮冻结的 pure 判据，不依赖挂载期的一次性标志；用它兜底。
+      const scope = context?.scope ?? context?.agent
+      if (latch !== undefined && scope !== undefined && (latch.contextsSuppressed === true || frozen?.blockContexts === true)) {
+        neutralized = neutralizeRequiredContexts(api, scope, latch)
       }
       const unrequired = neutralized.length > 0 || latch?.neutralizedContexts?.size > 0
         ? { ...result, contexts: (result?.contexts ?? []).filter((entry) => !latch.neutralizedContexts.has(entry?.name)) }
         : result
       // 用户点过「阻断」的段 / 上下文（会话级 + 全局记住），顺带审计作用域内注册的贡献者。
-      const filtered = applyAssemblyBlocks(api, id, context?.scope, unrequired, latch)
+      const filtered = applyAssemblyBlocks(api, id, scope, unrequired, latch)
       const hit = frozen?.blockTools === true
       api.note({ blocker: 'system-prompt/assemble', id: typeof id === 'string' ? id : '(none)', frozen: frozen !== undefined, hit, ...(neutralized.length > 0 ? { neutralized } : {}) })
       // 【人格段兜底】(F22)：装配结果里没有我方改写段的正文 ⇒ 段没挂上（撞名 / 挂载中断 /
@@ -1145,10 +1166,18 @@ function mountLevers(agent, state, api, sink) {
   if (
     state.levers.blockContexts &&
     overrideContextNames.length === 0 &&
-    !messageOverrideKinds.includes('runtime-context') &&
-    typeof sp?.suppressRuntimeContext === 'function'
+    !messageOverrideKinds.includes('runtime-context')
   ) {
-    push(sp.suppressRuntimeContext())
+    if (typeof sp?.suppressRuntimeContext === 'function') {
+      try {
+        push(sp.suppressRuntimeContext())
+      } catch (thrown) {
+        // 重挂撞上旧作用域时 suppress 可能抛 already registered；不能让它把整条挂载链带崩。
+        // contextsSuppressed 仍置真：装配观察者会按 frozen.blockContexts 继续清 required 上下文。
+        api.note?.({ context_suppress_failed: String(thrown?.message ?? thrown), id: agent?.id })
+      }
+    }
+    // 即使官方 suppress 不可用/注册失败，pure 也必须在装配层清掉 required 上下文。
     contextsSuppressed = true
   }
   // ── 工具放行：**不改工具说明，只管"能不能用"**（用户要求）──────────────────
@@ -1260,7 +1289,10 @@ export async function prime(api, agent) {
   // 否则首个请求的装配抢在 pre-step 之前 ⇒ 人格段"首轮不生效、第二轮才生效"。
   const hasOverrides = overridesFor(state, agent.id) !== undefined
   const hasInjects = queueOf(state, agent.id).length > 0 || everyTurnFor(state, agent.id) !== undefined
-  if (!state.armed.includes(agent.id) && !state.armed.includes('*') && !hasOverrides && !hasInjects) return
+  // 纯净 / 接管即使没有改写内容，也必须挂上「清段 + 清 required 上下文 + 清工具」的 lever；
+  // 否则 state-write 之后 reprime 会在这里早退，运行时上下文原样漏进下一轮。
+  const blockMode = state.levers.blockTools === true || state.levers.blockContexts === true || state.levers.blockSections === true
+  if (!state.armed.includes(agent.id) && !state.armed.includes('*') && !hasOverrides && !hasInjects && !blockMode) return
   // 【幂等 + 失败不覆盖】(F21)：同一个 id 的 agent 可能被重建（会话继承 / 恢复开局 /
   // 种子结束都会走一遍 agent/created）。以前这里不查旧闩锁、也不撤就重挂 ⇒ 同名段抛
   // "already registered in this scope"；更糟的是**抛完照样写闩锁**，把正在生效的那份
@@ -1459,6 +1491,19 @@ export async function step(api, payload, decision) {
   // ⚠ 重挂这一轮例外：挂载用的是 state0.levers，判定也必须用同一份 —— 否则第一个座位
   // 「挂新 lever、判旧 lever」，同一轮 root / agent 两个座位判定会相反（v0.21.14 审查 #84）。
   const state = { ...state0, levers: remounted ? state0.levers : (entry?.frozenLevers ?? state0.levers) }
+  // pre-step 就清 required 上下文：装配观察者太晚 —— loop 的 runtime-context 快照在
+  // pre-step 之后、系统提示装配之前生成；只在装配里清，快照仍是旧的（session-d4225a91 turn 3）。
+  if (state.levers.blockContexts === true && agent !== undefined) {
+    const currentLatch = latches.get(agent.id)
+    if (currentLatch !== undefined) {
+      try {
+        const fresh = neutralizeRequiredContexts(api, agent, currentLatch)
+        if (fresh.length > 0) api.note({ neutralized_prestep: fresh, id: agent.id })
+      } catch {
+        // 拿不到 scope 时交给装配观察者兜底。
+      }
+    }
+  }
 
   const droppedKinds = []
   const overrode = []

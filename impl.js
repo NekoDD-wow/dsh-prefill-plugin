@@ -2370,12 +2370,14 @@ export function apply(ctx) {
   /** 轮内点击时暂存的重挂请求 —— 等该轮结束再执行（用户定的轮次规则）。 */
   const pendingReprime = new Set()
 
-  /** 立刻对单个 agent 重挂（撤旧 → 按当前状态挂上，latch 标记 pending）。 */
+  /** 立刻对单个 agent 重挂（撤旧交给 prime，避免 prime 早退时留下无闩锁空窗）。 */
   const reprimeOne = async (agent, label) => {
     const gate = await loadGate()
     if (typeof gate?.prime !== 'function') return
     try {
-      unlatch(agent.id)
+      // 不要在这里先 unlatch：prime 自己会在**确认要挂载之后**撤旧。
+      // 先撤再 prime，一旦 prime 因状态视图（例如 everyTurn 关闭后的瞬时视图）早退，
+      // 旧闩锁就没了 —— 下一轮装配拿不到 frozen.blockContexts，runtime-context 直接漏。
       await gate.prime({ readState, note, latches, unlatch, rootCtx: rootCtxRef }, agent)
       note({ reprime: label, id: agent.id })
     } catch (error) {

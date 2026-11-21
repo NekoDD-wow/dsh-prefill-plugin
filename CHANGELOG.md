@@ -5,6 +5,17 @@
 > **项目状态（2026-11-21）**：思考前缀 + 工具代理（`reasoning-prefix.js`）**已冻结** —— 保留为实验性功能（默认关、代码与面板都在，已装用户可继续用），但不再加新功能、不再做兼容性适配；后续版本只维护插件其他部分。
 
 
+## 0.21.16 — 2026-11-22
+- **修复：纯净模式在 state-write / reprime 后漏 required 运行时上下文**（线上 session-d4225a91 turn 3）。现象：`working-directory:current` / `subagent:identity` 以 `user/message kind=runtime-context` 进入请求，模型思维链从角色视角退成「助手分析角色扮演」，正文变空；初始装配有 `neutralized`，`reprime:state-write` 之后没有。触发点是一次 `everyTurn` 开关写入后的重挂，不是 API URL / transport。
+  - **`neutralizeEntries` 不再只信 latch 的 `done`**：`step` 的 `refreshContext` / agent 重建会把注册表恢复成原文；旧实现看到 `done` 有名字就跳过，导致重挂后的下一轮直接漏。现在按「当前正文是否仍为空 / 空遮蔽是否还在」判断，不空就重新清。
+  - **装配观察者按 `frozen.blockContexts` 兜底**：不再只依赖挂载期的一次性 `latch.contextsSuppressed`；`context.scope` 缺失时回退 `context.agent`，`applyAssemblyBlocks` 用同一 scope。
+  - **`suppressRuntimeContext` 注册失败不拖垮挂载**：重挂撞旧作用域时记 `context_suppress_failed`，`contextsSuppressed` 仍置真，required 上下文继续在装配层清。
+  - **`step()` 在 pre-step 先清 required 上下文**：loop 的 runtime-context 快照早于系统提示装配，只在装配里清会晚一轮；pre-step 清完，快照才是空。
+  - **`reprimeOne` 不再先 `unlatch`**：`prime` 自己会在确认挂载后撤旧；先撤后 prime，一旦 prime 因瞬时状态视图早退，旧闩锁就没了，装配拿不到 `frozen.blockContexts`。
+  - **`prime` 对纯 / 接管 blockMode 不再早退**：即使当前没有改写 / 注入，只要 `blockTools` / `blockContexts` / `blockSections` 为真也必须挂上清段、清上下文、清工具的 lever。
+- 测试：新增 `tests/pure-reprime-contexts.test.mjs` 3 项（装配在 `contextsSuppressed=false` 时仍清 required；`reprimeOne` 不先 unlatch；`step` pre-step 清上下文），`tests/pure-required-contexts.test.mjs` 补 stale-done 用例（注册表恢复原文后要重新清）。先在新用例上验证旧实现会红；全量 **924 项 / 923 pass / 1 skip / 0 fail**。
+- 真机：lab `RP·数删长戏版` 三步脚本（发一轮 → `everyTurnOff` → 再发一轮）确认第三步无 `runtime-context`，`neutralized_prestep` 记录两项；模型思考保持角色第一人称。
+
 ## 0.21.15 — 2026-11-22
 - **修复 v0.21.14 审查发现的 4 个问题 + 1 个文档偏差**（公开仓 issue #84–#87、私人仓 #68）。每项都先用函数级探针复现，行为测试均先在 v0.21.14 基线上验证会红。
   - **闸门换轮重挂（#84）**：重挂后本轮判定仍取重挂前抓到的旧 `frozenLevers` ⇒ 同一轮 root / agent 两个座位判定相反、开 / 关闸各有一个方向晚一轮。改为：重挂这一轮**挂载与判定统一用当前 `state0.levers`**。新增 `tests/gate-remount-consistency.test.mjs`。

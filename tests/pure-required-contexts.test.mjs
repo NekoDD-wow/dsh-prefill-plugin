@@ -51,6 +51,18 @@ test('本作用域的 required 上下文：正文临时清空，unlatch 后还�
   assert.equal(identity.text(), 'You are the Team Lead named "lead".')
 })
 
+test('重挂 / refreshContext 把正文恢复后，已处理过的名字要重新清空（stale done 回归）', () => {
+  const { agentLayer, agent, layers } = fakeWorld()
+  const identity = { name: 'team:identity', order: 125, required: true, text: () => 'You are the Team Lead named "lead".' }
+  agentLayer.contexts.set('team:identity', identity)
+  const latch = { disposers: [] }
+  assert.deepEqual(neutralizeRequiredContexts({ rootCtx: undefined }, agent, latch), ['team:identity'])
+  // 模拟 step 的 refreshContext / agent 重建：注册表又有了原文，但 latch 的 done 里还记着名字。
+  identity.text = () => 'You are the Team Lead named "lead".'
+  assert.deepEqual(neutralizeRequiredContexts({ rootCtx: undefined }, agent, latch), ['team:identity'])
+  assert.equal(effective(layers, agent).find((entry) => entry.name === 'team:identity').text, '')
+})
+
 test('核心常驻 required 上下文（0.2.2-rc.3 的 subagent:identity）同样被清掉（纯净模式固有语义，见渠道报告 §7.6）', () => {
   const { agent, layers } = fakeWorld()
   const identity = { name: 'subagent:identity', order: 130, required: true, text: () => 'You are the root agent. Your name is "lead".' }
