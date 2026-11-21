@@ -3,6 +3,14 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：reasoning 代理剩余的几处健壮性问题**（`reasoning-prefix.js`）：
+  - **请求体读到一半客户端断开不落结果行**：以前读请求体失败直接 return（在结果行建立之前），违背「每请求恰好一行」。现在照样落一行：`ok:false`、`status:0`、`verdict:'error'`、`clientAborted:true`、`ms:null`；记 `client-abort` 审计（`stage:'request-body'`）、计入 `stats.failed`，不报 outcome（不进连续失败计数），不打上游。
+  - **监听成功后 server 上没有常驻 `error` 监听器**：运行期 accept 失败（EMFILE 等）会变成未捕获异常、宿主进程退出。`listen()` 成功后挂一个只记日志的常驻监听器（重复 listen 不重复挂）。
+  - **SSE 流里的错误帧被静默吞掉**：上游 200 之后在流中发 `data: {"error":…}`（余额不足 / 限流 / 网关出错）时，shim 只转发认得出的 delta，客户端和结果行都看不到失败，记成 ok（全程只有错误帧时还会落一条 no-delta）。现在与 0.21.12 对非 SSE 200 `{error:…}` 同口径：按流错误记失败（`stream-error` 审计、`stats.failed`、报一次失败 outcome），另外把这一帧原样转给客户端（OpenAI 兼容客户端据此报错），收尾照常补 finish + `[DONE]`。`error: null` 的普通帧不受影响。
+  - **导出函数 `transformShimSse` 遇到 `data: null` 同步抛 TypeError**：跳过非对象帧。该函数目前没有生产调用方，顺手修。
+- 验证：新增 `tests/proxy-stream-robustness.test.mjs` 7 项（6 项在 e62b23f 上失败、修复后通过；另 1 项是 `error: null` 的防误伤用例）。
+
 ## 0.21.12 — 2026-11-21
 - **移植公开镜像的 8 个外部 PR（贡献者 @dymk1ex1xz，均对应其 issue）**。公开仓是私人仓的生成镜像，PR 不直接合并；逐条审核（新测试先在基线上验证会红）后移植：
   - **reasoning 代理（#56 / #52）**：shim 按 SSE 规范解析上游帧 —— `data: null` / 非对象帧不再打崩宿主进程；`event:` / `id:` / `retry:` / 注释行与多行 `data:` 正确解析；content-type 大小写不敏感；usage 每请求只记一次；非 SSE 200 先收字节再解码、透传 finish_reason、`{error:…}` 按流错误；原生 `tool_calls` 与 DSML 调用共用 index 空间重新编号。

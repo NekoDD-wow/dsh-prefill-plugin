@@ -359,6 +359,8 @@ export function transformShimSse(rawSse) {
     if (payload === '[DONE]') continue
     let chunk
     try { chunk = JSON.parse(payload) } catch { continue }
+    // `data: null` / 数字 / 数组不是 chunk 对象：跳过（以前读 null.id 同步抛 TypeError）。
+    if (chunk === null || typeof chunk !== 'object' || Array.isArray(chunk)) continue
     if (typeof chunk.id === 'string') id = chunk.id
     if (typeof chunk.model === 'string') model = chunk.model
     if (typeof chunk.created === 'number') created = chunk.created
@@ -907,15 +909,15 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
   const server = http.createServer(async (req, res) => {
     // 客户端在请求体发完之前断开时 for await(req) 会抛 aborted；漏出去就是 unhandledRejection，
     // Node 默认 --unhandled-rejections=throw ⇒ 宿主进程会被终止。这里就地收口。
-    let incoming
+    // 读失败时不在这里 return：要等结果行建好后落一行再走（「每请求恰好一行」），见下方 bodyReadError。
+    let incoming = null
+    let bodyReadError = null
     try {
       const chunks = []
       for await (const chunk of req) chunks.push(chunk)
       incoming = Buffer.concat(chunks)
     } catch (error) {
-      logger?.warn?.('dsh-prefill: reasoning-prefix 读取请求体失败（客户端可能已断开）: ' + String(error?.message ?? error))
-      try { res.destroy() } catch { /* 连接已经没了 */ }
-      return
+      bodyReadError = error
     }
     const config = getConfig?.() ?? {}
     currentLogging = config.logging !== null && typeof config.logging === 'object' ? config.logging : null
@@ -1015,11 +1017,12 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     let collectedReasoning = '' // 思维链正文（能拿到时才非空）
     let reasoningCollectible = false // 本轮是否具备采集 reasoning 的能力（非 shim 透传路径采不到）
     let rowUsage = null
+    let started = null // 发上游前才赋值；请求体都没读完就断开的请求 ms 记 null
     const writeRow = () => {
       if (wrote) return
       wrote = true
       row.ok = okFlag === true
-      row.ms = Date.now() - started
+      row.ms = started === null ? null : Date.now() - started
       row.usage = usageRowOf(rowUsage)
       row.textHead = snippets ? collectedText.slice(0, 80) : ''
       row.textTail = snippets ? collectedText.slice(-40) : ''
@@ -1063,6 +1066,19 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         // 记账方抛错不影响转发（以前它会冒泡到 transport catch，在响应已发出后再 writeHead 502）
         logger?.warn?.('dsh-prefill: reasoning-prefix onOutcome 回调抛错: ' + String(error?.message ?? error))
       }
+    }
+    if (bodyReadError !== null) {
+      // 请求体没读完客户端就断开了：不打上游，按客户端中止落一行（与其它 client-abort 分支同口径：
+      // 记审计、计入 stats.failed、不报 outcome ⇒ 不进连续失败计数）。以前直接 return，结果行一行都不落。
+      logger?.warn?.('dsh-prefill: reasoning-prefix 读取请求体失败（客户端可能已断开）: ' + String(bodyReadError?.message ?? bodyReadError))
+      row.clientAborted = true
+      row.variant = 'none'
+      reportedVariantName = 'none'
+      record({ kind: 'client-abort', variant: 'none', status: 0, stage: 'request-body', error: String(bodyReadError?.message ?? bodyReadError) })
+      bump({ ok: false, armId })
+      try { res.destroy() } catch { /* 连接已经没了 */ }
+      writeRow()
+      return
     }
     if (isChat && config.enabled !== false) {
       try {
@@ -1253,7 +1269,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       if (IGNORED_REASONS.includes(reason)) return 'ignored'
       return 'passthrough'
     }
-    const started = Date.now()
+    started = Date.now()
     /**
      * 客户端在响应结束前断开（典型：DSH 里点「停止」）⇒ 中止上游。
      *   · 透传路径以前 `reader.pipe(res)` 在目标被销毁后 unpipe、源停在背压上，`end` 永远不来 ⇒
@@ -1479,6 +1495,14 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           // 在 data 监听器里抛 TypeError ⇒ 未捕获异常，宿主进程退出。
           if (chunk === null || typeof chunk !== 'object' || Array.isArray(chunk)) return
           sawFrame = true
+          // 流中的错误帧（`data: {"error":…}`，DeepSeek / OpenRouter / 网关在 200 之后出错时会这么发）：
+          // 以前只转发认得出的 delta ⇒ 错误被静默吞掉，客户端和结果行都记成成功。现在与非 SSE 200 的
+          // `{error:…}` 同口径按流错误记失败，并把这一帧原样转给客户端（OpenAI 兼容客户端据此报错）。
+          if (chunk.error !== undefined && chunk.error !== null) {
+            if (streamError === null) streamError = new Error('SSE error frame: ' + data.slice(0, 200))
+            safeWrite('data: ' + JSON.stringify(chunk) + '\n\n')
+            return
+          }
           if (base === null) base = chunk
           if (chunk.usage !== undefined && chunk.usage !== null) writeUsage(chunk.usage)
           const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined
@@ -1754,6 +1778,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       writeRow()
     }
   })
+  const onRuntimeError = (error) => {
+    logger?.warn?.('dsh-prefill: reasoning-prefix 代理运行期错误: ' + String(error?.code ?? '') + ' ' + String(error?.message ?? error))
+  }
   return {
     server,
     audit: () => [...audit],
@@ -1820,6 +1847,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         }
         const onListening = () => {
           cleanup()
+          // 监听成功后 server 上就没有 error 监听器了：运行期 accept 失败（EMFILE 等）会变成未捕获异常，
+          // 宿主进程退出。挂一个常驻的只记日志（重复 listen 不重复挂）。
+          if (!server.listeners('error').includes(onRuntimeError)) server.on('error', onRuntimeError)
           resolve(server.address().port)
         }
         const tryListen = (candidate) => {
