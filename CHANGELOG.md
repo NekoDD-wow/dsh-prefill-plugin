@@ -3,6 +3,17 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：顶栏徽标在 DSH 重启后把已开跑的会话写成「写入历史」**。
+  - 触发：会话已开跑过（`state.locked[会话]` 已落盘），DSH 重启后还没跑下一轮 —— `turns` / `materialized` 来自 gate 内存快照，重启清零。
+  - 影响：同一时刻输入框芯片按 `state.locked` 显示「已写入」，顶栏徽标却写「写入历史」（未开跑），两处口径不一；0.21.0 修的「17 轮会话误报写入历史」在重启场景下仍会出现。
+  - 修法：`SessionModeBadge` 的「已开跑」判据加上首轮锁定记录：`turns > 0 || materialized > 0 || state.locked[会话] 是对象`，与芯片同口径。
+- **修复：系统提示「替换」模式下顶栏徽标写成「系统提示·追加」**。
+  - 触发：卡片里系统提示选「替换」（`gate[会话] = 'replace'` + 人格段）。
+  - 影响：徽标把替换当成 pass + 人格段，显示「追加」，与卡片里的模式不一致。
+  - 修法：`gate[会话] === 'replace'` 时显示「系统提示·替换」（`systemReplaceMeta`）；追加 / 接管 / 纯净 / 过滤的显示不变。
+- 测试：新增 `tests/header-badge-state.test.mjs`（4 项，整模块渲染，复用 `tests/client-render-harness.mjs`）。
+
 ## 0.21.12 — 2026-11-21
 - **移植公开镜像的 8 个外部 PR（贡献者 @dymk1ex1xz，均对应其 issue）**。公开仓是私人仓的生成镜像，PR 不直接合并；逐条审核（新测试先在基线上验证会红）后移植：
   - **reasoning 代理（#56 / #52）**：shim 按 SSE 规范解析上游帧 —— `data: null` / 非对象帧不再打崩宿主进程；`event:` / `id:` / `retry:` / 注释行与多行 `data:` 正确解析；content-type 大小写不敏感；usage 每请求只记一次；非 SSE 200 先收字节再解码、透传 finish_reason、`{error:…}` 按流错误；原生 `tool_calls` 与 DSML 调用共用 index 空间重新编号。

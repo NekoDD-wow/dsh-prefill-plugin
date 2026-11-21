@@ -16468,7 +16468,9 @@ window.__ModuleLoader__.load({
       const materialized = live?.materialized?.[sessionId] ?? 0
       // 已开跑 = 有轮次，或预填装已写进历史。turns 在旧会话 / 快照缺失时会是 0，
       // 不能据此断言「还没开跑」（缺陷 #3：开跑 17 轮的会话徽标仍写「写入历史」）。
-      const started = turns > 0 || materialized > 0
+      // 首轮锁定记录落盘（state.locked），DSH 重启后 turns / materialized 归零时靠它认已开跑（与芯片同口径）。
+      const lockRec = live?.state?.locked?.[sessionId]
+      const started = turns > 0 || materialized > 0 || (lockRec !== null && typeof lockRec === 'object')
       // 工具数：summary 给的是数字（契约 tools[会话] = 工具个数）；整封 envelope 那边归一时也算成数字。
       const tools = live?.tools?.[sessionId]
       const toolCount = Array.isArray(tools) ? tools.length : Number.isFinite(tools) ? tools : undefined
@@ -16479,7 +16481,9 @@ window.__ModuleLoader__.load({
           ? hasPersona
             ? t('chipTakeover')
             : t('chipPure')
-          : hasPersona
+          : gateMap[sessionId] === 'replace'
+            ? `${t('systemTitle')}·${t('systemReplaceMeta')}`
+            : hasPersona
             ? `${t('systemTitle')}·${t('systemAppendMeta')}`
             : gate === 'filter'
               ? t('stateFilter')
