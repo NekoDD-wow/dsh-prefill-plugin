@@ -238,14 +238,24 @@ export function createShimStreamParser() {
   const paramValues = new Set()
   let buf = ''
   let skipValue = false
+  // 参数回显过滤只在「刚解析完调用、还没出现别的非空正文」这段窗口里做：
+  // 以前对整段流生效，调用过 read(limit=10) 之后正文里单独一行 10 也会被删。
+  let echoWindow = false
   const DSML_NOISE = /<\/?[^<>]*\uFF5C[^<>]*>/g
   const cleanText = (text) => {
     const stripped = text.replace(DSML_NOISE, '')
-    if (paramValues.size === 0) return stripped
-    return stripped
-      .split('\n')
-      .filter((line) => line.trim() === '' || !paramValues.has(line.trim()))
-      .join('\n')
+    if (!echoWindow || paramValues.size === 0) return stripped
+    const kept = []
+    for (const line of stripped.split('\n')) {
+      const trimmed = line.trim()
+      if (echoWindow && trimmed !== '') {
+        if (paramValues.has(trimmed)) continue
+        echoWindow = false
+        paramValues.clear()
+      }
+      kept.push(line)
+    }
+    return kept.join('\n')
   };
   const flushText = (events, text) => {
     const clean = cleanText(text)
@@ -259,10 +269,12 @@ export function createShimStreamParser() {
     const inner = raw.slice(1, -1)
     const canonical = raw.startsWith(TAG_START)
     if (canonical && /(invoke|calls)/.test(inner)) return false
-    const isTag = canonical || inner.includes(BAR) || /(invoke|calls|parameter)/.test(inner)
+    // 短形式只认**标签名恰好是** invoke / calls / parameter（`<parameters>`、`<recalls>` 这类普通 XML 不算）。
+    const isTag = canonical || inner.includes(BAR) || /^\/?(?:invoke|calls|parameter)(?:\s|$)/.test(inner)
     if (!isTag) return false
     buf = buf.slice(raw.length)
-    if (/parameter/.test(inner)) {
+    // 只有参数**起始**标签连值一起丢；闭合标签后面是正文，不能吞。
+    if (/parameter(?:\s|$)/.test(inner) && !inner.startsWith('/')) {
       const nextLt = buf.indexOf('<')
       if (nextLt > 0) buf = buf.slice(nextLt)
       else if (nextLt < 0) {
@@ -281,8 +293,8 @@ export function createShimStreamParser() {
         if (buf === '') break
         const nextLt = buf.indexOf('<')
         if (nextLt < 0) {
+          // 值还没完（跨了三个以上 chunk）：继续丢，直到下一个 '<'。以前这里就复位，第三块起的值会漏成正文。
           buf = ''
-          skipValue = false
           break
         }
         buf = buf.slice(nextLt)
@@ -307,6 +319,9 @@ export function createShimStreamParser() {
         for (const value of Object.values(args)) {
           if (typeof value === 'string' || typeof value === 'number') paramValues.add(String(value))
         }
+        // invokeFull 没锚定：它可能命中 buf 中间的 invoke，前面那段（以 '<' 开头的普通正文）不能丢。
+        if (full.index > 0) flushText(events, buf.slice(0, full.index))
+        echoWindow = true
         const call = { name: full[1], arguments: JSON.stringify(args) }
         calls.push(call)
         events.push({ type: 'calls', calls: [call] })
@@ -326,7 +341,10 @@ export function createShimStreamParser() {
           buf = buf.slice(1)
           continue
         }
-        if (buf.length >= 40) {
+        // 已能认出是 DSML 标记开头（`<｜`、`</｜`）的就多等一会：参数起始标签本身常超过 40 字，
+        // 以前到 40 字就把 '<' 当正文吐出，后面整个标签和参数值都漏给客户端。512 字封顶防止无限缓冲。
+        const dsmlish = buf[1] === BAR || (buf[1] === '/' && buf[2] === BAR)
+        if (buf.length >= (dsmlish ? 512 : 40)) {
           flushText(events, '<')
           buf = buf.slice(1)
           continue
@@ -342,7 +360,10 @@ export function createShimStreamParser() {
   };
   const end = () => {
     const events = []
-    if (buf !== '') flushText(events, buf)
+    // 流在调用 / 标签中途被截断（上游 finish=length）：剩下的是半截 DSML（`<｜…`、`</｜…`），
+    // 不是正文。以前整段当文本吐出，剥掉完整标签后半截标签和参数值留给了客户端。
+    const truncatedDsml = buf.startsWith('<') && (buf[1] === BAR || (buf[1] === '/' && buf[2] === BAR))
+    if (buf !== '' && !truncatedDsml) flushText(events, buf)
     buf = ''
     return events
   };
@@ -1453,7 +1474,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           if (finished) return
           finished = true
           emitEvents(parser.end())
-          writeChunk({}, callCount > 0 ? 'tool_calls' : reason)
+          // 只把 stop 改写成 tool_calls；length / content_filter 等原样透传（截断不能报成正常的调用结束）。
+          writeChunk({}, callCount > 0 && reason === 'stop' ? 'tool_calls' : reason)
         }
         const closeStream = () => {
           if (finished !== true) finish('stop')

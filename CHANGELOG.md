@@ -5,6 +5,15 @@
 > **项目状态（2026-11-21）**：思考前缀 + 工具代理（`reasoning-prefix.js`）**已冻结** —— 保留为实验性功能（默认关、代码与面板都在，已装用户可继续用），但不再加新功能、不再做兼容性适配；后续版本只维护插件其他部分。
 
 
+## 未发布
+- **reasoning 代理 shim：DSML 调用解析与收尾**（`createShimStreamParser` / 流式 `finish()`）
+  - 同一次 push 里先有含 `<` 的正文（如 `a<b`）、后有完整 invoke ⇒ 两者之间的正文被吞（非 SSE 200 路径整段 push，最容易撞上）。现在 invoke 之前的正文全部保留。
+  - 正文里普通 XML 标签名只要**包含** parameter / invoke / calls（`<parameters>`、`<recalls>`）就被当 DSML 吞掉，参数闭合标签还会连带吞掉其后正文。现在短形式只认标签名恰好是这三个，闭合标签不吞值。
+  - 调用过的参数值会把之后整段流里内容相同的正文行删掉（调用 `read(limit=10)` 后正文单独一行 `10` 消失）。现在只过滤紧跟调用、出现别的非空正文之前的回显行。
+  - 模型写出畸形起始标签（`</…DSML… invoke name="bash">`）后，上游逐 token 吐字时超过 40 字的参数起始标签被按 40 字兜底当正文吐出，参数名和值都漏给客户端；孤立参数值跨三个以上 chunk 时第三块起也会漏。现在能认出是 DSML 开头（`<｜` / `</｜`）的标签最多等 512 字，参数值丢到下一个 `<` 为止。
+  - 上游在调用中途截断（max_tokens）时，`end()` 把半截 DSML 当正文吐出（客户端看到 `<｜｜DSML｜｜ parameter name="description" string="` 或半截参数值）。现在以 `<｜` / `</｜` 开头的残留直接丢弃。
+  - **行为变化**：上游 finish=`length`（及 content_filter 等）在已解析出调用时不再改写成 `tool_calls`，原样透传；只有 `stop` 仍改写成 `tool_calls`。已解析出的完整调用照常转发。
+
 ## 0.21.12 — 2026-11-21
 - **移植公开镜像的 8 个外部 PR（贡献者 @dymk1ex1xz，均对应其 issue）**。公开仓是私人仓的生成镜像，PR 不直接合并；逐条审核（新测试先在基线上验证会红）后移植：
   - **reasoning 代理（#56 / #52）**：shim 按 SSE 规范解析上游帧 —— `data: null` / 非对象帧不再打崩宿主进程；`event:` / `id:` / `retry:` / 注释行与多行 `data:` 正确解析；content-type 大小写不敏感；usage 每请求只记一次；非 SSE 200 先收字节再解码、透传 finish_reason、`{error:…}` 按流错误；原生 `tool_calls` 与 DSML 调用共用 index 空间重新编号。
