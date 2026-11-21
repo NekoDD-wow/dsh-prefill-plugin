@@ -3,6 +3,12 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：`POST /reasoning/disable` 响应缺状态、`/reasoning-spike/status` 回 `{}`**。触发：左栏停用思考前缀，或调用旧 spike 别名。影响：`reasoningStatus()` 是 async，这两处漏了 `await` ⇒ disable 只回 `{ applied }`、别名回 `{}`；左栏 `reasoningAct` 直接用响应刷新状态行，停用后 route / proxyRunning 等字段为空，要等下次刷新才回来。修法：两处补 `await`，与 `/reasoning/status`、`/reasoning/enable` 同形。
+- **修复：旧 `state.injects` 迁移把「缺 enabled」写成显式关**。触发：从 0.15.x 升级、有旧会话内注入，且该会话（或通配 `*`）每轮注入格只配了模式、没写 `enabled`。影响：`migrateLegacyInjects` 仍用 `=== true`，迁过来的注入被写成 `enabled:false` 不再注入，之后 heal 也救不回来；通配格缺 `enabled` 时也不被当作基底。修法：两处改为 `!== false`，与 0.21.3 起 gate.everyTurnFor / normalizeState / sanitizeEveryTurn 的「缺省 = 开、显式 false 才关」同口径。
+- **修复：实验功能没开时仍记「前缀轮」**。触发：实验总开关关着（默认用户）时任意会话发话。影响：每轮第一步都往 `<数据目录>/prefix-log.jsonl` 追加一行（`enabled:false`）并累计前缀轮计数；之后打开总开关，实验面板「前缀轮」把这些普通轮也算进去。修法：`recordPrefixTurn` 在实验总开关关且思考前缀未启用时直接返回（不落盘、不计数）；总开关开着时照旧逐轮记录。
+- 测试：新增 `tests/reasoning-status-response.test.mjs`、`tests/everyturn-migrate-enabled.test.mjs`、`tests/prefix-log-off.test.mjs`（共 8 条，5 条在 0.21.12 上红、修复后绿，3 条回归）；`tests/impl-mount-harness.mjs` 增加钩子记录与 `preStep()`。
+
 ## 0.21.12 — 2026-11-21
 - **移植公开镜像的 8 个外部 PR（贡献者 @dymk1ex1xz，均对应其 issue）**。公开仓是私人仓的生成镜像，PR 不直接合并；逐条审核（新测试先在基线上验证会红）后移植：
   - **reasoning 代理（#56 / #52）**：shim 按 SSE 规范解析上游帧 —— `data: null` / 非对象帧不再打崩宿主进程；`event:` / `id:` / `retry:` / 注释行与多行 `data:` 正确解析；content-type 大小写不敏感；usage 每请求只记一次；非 SSE 200 先收字节再解码、透传 finish_reason、`{error:…}` 按流错误；原生 `tool_calls` 与 DSML 调用共用 index 空间重新编号。

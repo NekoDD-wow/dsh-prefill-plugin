@@ -361,14 +361,15 @@ export function migrateLegacyInjects(state, options = {}) {
     if (state.enabled?.[sid]?.items === false) continue
     const text = renderInjectBlock(filled)
     const own = everyTurn[sid] !== null && typeof everyTurn[sid] === 'object' ? everyTurn[sid] : undefined
-    const wildcard = sid !== '*' && own === undefined && everyTurn['*']?.enabled === true ? everyTurn['*'] : undefined
+    const wildcard = sid !== '*' && own === undefined && everyTurn['*']?.enabled !== false ? everyTurn['*'] : undefined
     const baseEntry = own ?? wildcard
     const { bench: baseBench, benchTowers } = benchOf(baseEntry, options)
     const bench = [...baseBench.filter((block) => block?.ref !== LEGACY_BLOCK_REF), legacyBlock(text)]
     const compiled = compileBench(bench)
     const entry = {
       ...(baseEntry ?? {}),
-      enabled: own === undefined ? true : own.enabled === true,
+      // 0.21.3 口径：缺 enabled = 开，显式 false 才关（同 gate.everyTurnFor / normalizeState / sanitizeEveryTurn）。
+      enabled: own === undefined ? true : own.enabled !== false,
       text: compiled.text,
       firstText: compiled.firstText,
       checks: compiled.checks,
