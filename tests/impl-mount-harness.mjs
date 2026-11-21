@@ -72,7 +72,9 @@ export function fakeSettings(initialProviders = {}) {
 
 /**
  * 挂一份 impl。impl.js 是模块单例（一个测试文件只 mount 一次）。
- * @param {{ state?: object, settings?: object, tag?: string }} opts
+ * 可选 `tools`（假 tools 服务，`schemas()` 给工具清单用）；impl 注册的钩子都记下来，
+ * 用 `preStep` / `sessionEvent` 模拟 DSH 调它们。
+ * @param {{ state?: object, settings?: object, tools?: { schemas: () => any[] }, tag?: string }} opts
  */
 export async function mount(opts = {}) {
   const HOME = mkdtempSync(join(tmpdir(), `prefill-${opts.tag ?? 'impl'}-`))
@@ -85,6 +87,7 @@ export async function mount(opts = {}) {
   }
   const impl = await import('../impl.js')
   const routes = new Map()
+  const hooks = new Map()
   const scope = {
     get: (name) => (name === 'connection' ? { fetch: { register: (def) => routes.set(def.path, def) } } : undefined),
     effect: (fn) => {
@@ -103,9 +106,14 @@ export async function mount(opts = {}) {
         // 同上。
       }
     },
-    on: () => () => {},
+    on: (name, fn) => {
+      if (!hooks.has(name)) hooks.set(name, [])
+      hooks.get(name).push(fn)
+      return () => {}
+    },
     get: (name) => {
       if (name === 'settings' && opts.settings !== undefined) return opts.settings
+      if (name === 'tools' && opts.tools !== undefined) return opts.tools
       throw new Error('no service ' + name)
     },
     inject: (deps, cb) => cb(scope),
@@ -134,7 +142,23 @@ export async function mount(opts = {}) {
     const t = new Date(Date.UTC(2032, 0, 1) + ++bump * 1000)
     utimesSync(STATE_FILE, t, t)
   }
-  return { impl, HOME, DATA_DIR, STATE_FILE, routes, post, readStateFile, seed }
+  /**
+   * 模拟一步 `agent/pre-step`：decision.messages 只有本步 claim 的消息（与 dsh-agent-loop 一致，**不含历史**），
+   * 历史由 `events` 经 `agent.session.snapshotEvents()` 给出。返回（被 impl 原地改过的）decision。
+   */
+  const preStep = async (sessionId, turn, step, { events = [], claimed = [] } = {}) => {
+    const decision = { kind: 'enter', messages: [...claimed] }
+    const agent = { id: sessionId, session: { snapshotEvents: () => events } }
+    const hook = hooks.get('agent/pre-step')?.[0]
+    if (hook === undefined) throw new Error('agent/pre-step not registered')
+    await hook({ agent, turn, step, messages: claimed }, async () => decision)
+    return decision
+  }
+  /** 模拟一条 `session/event`（例如 request/header）。 */
+  const sessionEvent = (sessionId, event) => {
+    for (const fn of hooks.get('session/event') ?? []) fn({ id: sessionId }, event)
+  }
+  return { impl, HOME, DATA_DIR, STATE_FILE, routes, hooks, post, readStateFile, seed, preStep, sessionEvent }
 }
 
 /**

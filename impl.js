@@ -242,12 +242,13 @@ export function sanitizeUi(raw) {
  * 只保留**时间序最后一份**工具清单（纯函数，便于单测）。
  *
  * - 为什么是「最后一份」：会话历史是**追加**的，所以时间序最后那份才是**最新**那份（工具集变了要以新的为准）。
- *   能走到去重说明本轮没有新注入（`ensureCatalogInjected` 只在装配里一份都没有时才注入），
- *   所以不存在「本轮 prepend 的新清单在最前」这种情况；按第一份留会留下**最旧**的那份。
- * - 为什么 0/1 份时原样返回：代理没在跑（会话没切到前缀路由）时，清单是模型**唯一**的工具认知来源，
- *   删掉会让模型彻底不知道有哪些工具 —— 所以只在「≥2 份」时才动手。
+ * - 为什么 0/1 份时原样返回：清单可能是模型**唯一**的工具认知来源，删掉会让模型彻底不知道有哪些工具 ——
+ *   所以只在「≥2 份」时才动手（0.21.6 的约束）。
+ * - 用途（审计 impl #7 之后）：pre-step 的 `decision.messages` 不含会话历史，在装配出口去重是看不到旧清单的；
+ *   现在只拿它给面板数「历史 + 本步」里多出来的份数（countCatalogDuplicates）。
+ *   真正从请求里去掉旧清单的是代理侧（reasoning-prefix.js 的 dedupeToolCatalogs，同一条「永不删到不剩」约束）。
  *
- * @param {unknown} messages 装配好的消息表
+ * @param {unknown} messages 消息表（DSH 侧形状，按 source.prefill 识别）
  * @returns {{ messages: Array<unknown>, dropped: number }}
  */
 export function keepLatestToolCatalog(messages) {
@@ -1782,23 +1783,41 @@ export function apply(ctx) {
    * @returns {Promise<boolean>} 这一轮是否新注入了清单
    */
   /**
-   * F15：每会话「最近一次装配丢弃了几份重复清单」（面板提示用；0 = 干净）。
-   * 为什么会有重复：`catalogMode=history` 把清单**永久**写进会话日志，之后切回 `each`
-   * 也不会撤销；工具集变化时 history 模式还会再补一条新的 ⇒ 装配里可能同时出现两份。
+   * F15 / 审计 impl #7：每会话「模型视图里多出来的清单份数」（面板提示用；0 = 干净）。
+   * 为什么会有：`catalogMode=history` 把清单**永久**写进会话日志（日志只能追加），工具集变化时再补一条新的；
+   * 切回 `each` 也不会撤销 ⇒ 历史里可能同时留着几份。
+   * 怎么数：pre-step 的 `decision.messages` 只有本步 claim 的消息、**不含历史**，所以不能在装配出口数，
+   * 要读会话本身（有 surface 时只数模型视图里还在的节点，压缩遮掉的不算）+ 本步新注入的那份。
+   * 真正把旧清单从请求里去掉的是代理（reasoning-prefix.js 的 dedupeToolCatalogs）；
+   * 没走前缀代理的请求里它们仍会一起发出去 —— 这正是面板要提示的。
    */
   const catalogDuplicatesBySession = new Map()
   const CATALOG_DUP_LIMIT = 200
-  /**
-   * 装配出口去重（F15）：把 `decision.messages` 里的重复清单删掉。
-   * 只改本次装配（in-flight），不动已落盘的会话历史 ⇒ 幂等且可逆。
-   * @returns {number} 丢弃的份数
-   */
-  const dropDuplicateCatalogs = (sessionId, decision) => {
-    const result = keepLatestToolCatalog(decision?.messages)
-    if (result.dropped === 0) return 0
-    decision.messages = result.messages
-    note({ seat: 'reasoning-prefix', catalog: 'duplicate-dropped', id: sessionId, dropped: result.dropped })
-    return result.dropped
+  /** 会话模型视图里的清单消息（时间序）。有 surface 用 surface（压缩 / 替换遮掉的不算），否则退回全量事件。 */
+  const historyToolCatalogs = (agent) => {
+    const out = []
+    const session = agent?.session
+    try {
+      const nodes = session?.surface?.nodes
+      if (nodes !== undefined && nodes !== null && typeof session?.eventAt === 'function') {
+        for (const seq of nodes) {
+          const event = session.eventAt(seq)
+          if (event?.type === 'user/message' && event.data?.source?.prefill === 'tool-catalog') out.push(event.data)
+        }
+        return out
+      }
+    } catch {
+      // 落到全量事件。
+    }
+    for (const event of sessionEvents(agent, agent?.id)) {
+      if (event?.type === 'user/message' && event.data?.source?.prefill === 'tool-catalog') out.push(event.data)
+    }
+    return out
+  }
+  /** 本步之后模型视图里会有几份多余的清单（历史 + 本步装配里的）。永远只是计数，不改任何消息。 */
+  const countCatalogDuplicates = (agent, decision) => {
+    const inFlight = Array.isArray(decision?.messages) ? decision.messages.filter((message) => message?.source?.prefill === 'tool-catalog') : []
+    return keepLatestToolCatalog([...historyToolCatalogs(agent), ...inFlight]).dropped
   }
   const ensureCatalogInjected = async (payload, decision) => {
     const config = reasoningConfigOf()
@@ -1806,6 +1825,10 @@ export function apply(ctx) {
     if (Number(payload?.step ?? 1) !== 1) return false
     const agent = payload?.agent
     if (typeof agent?.id !== 'string') return false
+    // 审计 impl #7：已知本会话走的是别的 provider（不是前缀路由）⇒ 不往它的历史里永久写清单 ——
+    // 那些会话有原生 tools，清单只是冗余提示，而且写进去就撤不掉。路由未知（还没发过请求）时照旧注入（保守）。
+    const known = latestRouteBySession.get(agent.id)
+    if (known !== undefined && known.provider !== config.providerId) return false
     const catalog = toolCatalogOf()
     if (catalog === '') return false
     const hash = createHash('sha1').update(catalog).digest('hex').slice(0, 12)
@@ -2249,14 +2272,16 @@ export function apply(ctx) {
       } catch (error) {
         note({ seat: 'reasoning-prefix', catalog: 'inject-failed', error: String(error?.message ?? error) })
       }
-      // F15：装配出口去重（放在注入之后 —— 新注入的是 prepend 的，去重保留第一份就是保留最新那份）。
+      // F15 / 审计 impl #7：数一数模型视图里多出来的清单（只计数；去重在代理侧做，见 countCatalogDuplicates）。
+      // 只在每轮第 1 步数：清单只会在第 1 步写进历史，后续步骤数出来一样。
       try {
         const agentId = typeof payload?.agent?.id === 'string' ? payload.agent.id : ''
-        if (agentId !== '') {
-          const dropped = dropDuplicateCatalogs(agentId, decision)
-          // 每次都覆盖：下一次干净的装配会把计数归 0，面板不会挂着过期的提示。
+        if (agentId !== '' && Number(payload?.step ?? 1) === 1) {
+          const duplicates = countCatalogDuplicates(payload.agent, decision)
+          if (duplicates > 0) note({ seat: 'reasoning-prefix', catalog: 'duplicates-in-history', id: agentId, duplicates })
+          // 每次都覆盖：换成干净的会话 / 被压缩后计数会回到 0，面板不会挂着过期的提示。
           catalogDuplicatesBySession.delete(agentId)
-          catalogDuplicatesBySession.set(agentId, dropped)
+          catalogDuplicatesBySession.set(agentId, duplicates)
           while (catalogDuplicatesBySession.size > CATALOG_DUP_LIMIT) {
             const oldest = catalogDuplicatesBySession.keys().next().value
             if (oldest === undefined) break
@@ -2264,7 +2289,7 @@ export function apply(ctx) {
           }
         }
       } catch (error) {
-        note({ seat: 'reasoning-prefix', catalog: 'dedupe-failed', error: String(error?.message ?? error) })
+        note({ seat: 'reasoning-prefix', catalog: 'count-failed', error: String(error?.message ?? error) })
       }
       return handle(payload, decision, 'root')
     },

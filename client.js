@@ -2986,7 +2986,7 @@ window.__ModuleLoader__.load({
       labClearDone: '已清空本轮填装：下一轮不加前缀',
       labRestoreDone: '已恢复：下一轮照常加前缀',
       // F15-C：清单重复的说明（不是告警）。根因写清：「仅首次进历史」会把清单永久写进会话。
-      labCatalogDuplicates: '本次装配发现 {n} 份重复的工具清单，已只保留最新一份。根因：清单在「仅首次进历史」模式下会永久写进本会话，之后切回「每轮注入」也不会撤销 —— 换一个新会话就干净了。',
+      labCatalogDuplicates: '本会话历史里多出 {n} 份工具清单（旧版本或重复）。根因：清单在「仅首次进历史」模式下会永久写进本会话，工具集变化时会再写一份新的，切回「每轮注入」也不会撤销。走前缀代理的请求每轮只发最新一份；没走前缀代理的请求里它们仍会一起发出 —— 换一个新会话就干净了。',
       labPresetsTitle: '前缀预设（独立预设，之后可并进整体预设）',
       labPresetName: '预设名',
       labPresetNamePh: '例如：中文思维链',
@@ -3463,7 +3463,7 @@ window.__ModuleLoader__.load({
       labClearDone: 'Cleared: next turn adds no prefix',
       labRestoreDone: 'Restored: next turn adds the prefix again',
       // F15-C: duplicate-catalog note (not a warning). Root cause is spelled out: "history only" writes it permanently.
-      labCatalogDuplicates: 'This turn found {n} duplicate tool catalogs and kept only the newest one. Why: in "history only" mode the catalog is written into this session permanently; switching back to "every turn" does not undo it — a fresh session starts clean.',
+      labCatalogDuplicates: 'This session\'s history holds {n} extra tool catalogs (older versions or repeats). Why: in "history only" mode the catalog is written into this session permanently, a new one is written when the tool set changes, and switching back to "every turn" does not undo it. Requests through the prefix proxy send only the newest one; requests that bypass the proxy still carry them all — a fresh session starts clean.',
       labPresetsTitle: 'Prefix presets (standalone; ready to merge into full presets)',
       labPresetName: 'Preset name',
       labPresetNamePh: 'e.g. Chinese reasoning',

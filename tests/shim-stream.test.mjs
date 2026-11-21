@@ -190,7 +190,7 @@ test('F15-B：历史已有同文本清单（each 模式）⇒ 上游只有一份
   assert.equal(readRows(file)[0].catalogInjected, false, '跳过注入要如实反映到结果行')
 })
 
-test('F15-B：历史清单文本不同 ⇒ 仍注入新的（共两份，其中一份是新清单）', async () => {
+test('F15-B：历史清单文本不同 ⇒ 仍注入新的；旧那份从本次请求里去掉（审计 impl #7：只发一份）', async () => {
   const file = join(tempDir(), 'result.jsonl')
   const { response, upstream } = await run({
     config: { shim: true, catalog: CATALOG, catalogMode: 'each', resultFile: file },
@@ -205,10 +205,11 @@ test('F15-B：历史清单文本不同 ⇒ 仍注入新的（共两份，其中�
   })
   assert.equal(response.status, 200)
   const sent = upstream.bodies[0].messages
-  assert.equal(countCatalogs(sent), 2, '工具集变了就必须带上新清单（旧清单里的工具可能已经不存在）')
+  assert.equal(countCatalogs(sent), 1, '工具集变了：只发新清单（旧清单里的工具可能已经不存在）')
   assert.ok(sent.some((message) => message.content === CATALOG), '新清单必须在')
-  assert.ok(sent.some((message) => message.content === OLD_CATALOG), '旧那份留在历史里（不动它）')
+  assert.ok(!sent.some((message) => message.content === OLD_CATALOG), '旧那份只在本次请求里去掉（会话日志不动）')
   assert.equal(readRows(file)[0].catalogInjected, true)
+  assert.equal(readRows(file)[0].catalogDropped, 1)
 })
 
 test('F15-B：DSH 侧形状（source.prefill=tool-catalog + block 数组）同样短路', async () => {

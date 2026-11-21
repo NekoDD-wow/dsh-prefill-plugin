@@ -522,6 +522,78 @@ export function hasSameToolCatalog(messages, catalogText) {
 }
 
 /**
+ * 这条 wire 消息是不是一份工具清单（任何版本）：正文与本轮清单逐字相同，或以清单固定开头起笔
+ * （代理自己的 user 变体会包一层 `<system-reminder>`，也认）。带 source 且明确不是清单 ⇒ 不认（同 hasSameToolCatalog）。
+ */
+function isToolCatalogMessage(message, catalogText) {
+  if (message === null || typeof message !== 'object') return false
+  if (message.role !== 'user' && message.role !== 'system') return false
+  const source = message.source
+  if (source !== null && typeof source === 'object' && source.prefill !== 'tool-catalog') return false
+  const text = messageText(message)
+  if (typeof catalogText === 'string' && catalogText !== '' && text === catalogText) return true
+  const body = text.startsWith('<system-reminder>\n') ? text.slice('<system-reminder>\n'.length) : text
+  return body.startsWith(TOOL_CATALOG_MARK)
+}
+
+/**
+ * 历史清单去重（审计 impl #7）：wire 上只留**一份**清单。
+ *
+ * 为什么放在代理：`catalogMode=history` 的清单是写进会话日志的，DSH 每轮从日志投影进 wire；
+ * 插件的 `agent/pre-step` 只拿到本步 claim 的消息、看不到历史，日志又只能追加 ⇒ 工具集变化后
+ * 旧清单永久留在历史里。只有代理拿得到完整的 `body.messages`，能在发给上游前把过期的那份去掉。
+ *
+ * 留哪一份（**永不删到一份都不剩**，0.21.6 的约束）：
+ * - 有与本轮清单逐字相同的 ⇒ 留最后一份相同的，其余（旧版本、重复）都去掉；
+ * - 没有相同的、且代理本轮会注入新清单（`inject`，即 shim 开着）⇒ 历史里的旧版本全去掉，由新注入的那份顶上；
+ * - 没有相同的、代理也不注入 ⇒ 只留时间序最后一份（它就是模型唯一的工具认知来源）。
+ * 去掉会让两条 assistant 相邻的那份不动（不制造上游可能拒绝的消息序列）。
+ *
+ * @param {unknown} messages wire 上的 messages
+ * @param {string} catalogText 本轮清单原文
+ * @param {{ inject?: boolean }} [options]
+ * @returns {{ messages: Array<unknown>, dropped: number }}
+ */
+export function dedupeToolCatalogs(messages, catalogText, options) {
+  const list = Array.isArray(messages) ? messages : []
+  const indexes = []
+  for (let index = 0; index < list.length; index += 1) {
+    if (isToolCatalogMessage(list[index], catalogText)) indexes.push(index)
+  }
+  if (indexes.length === 0) return { messages: list, dropped: 0 }
+  const same = indexes.filter((index) => typeof catalogText === 'string' && catalogText !== '' && messageText(list[index]) === catalogText)
+  let keep
+  if (same.length > 0) keep = same[same.length - 1]
+  else if (options?.inject === true) keep = -1
+  else keep = indexes[indexes.length - 1]
+  const drop = new Set(indexes.filter((index) => index !== keep))
+  if (drop.size === 0) return { messages: list, dropped: 0 }
+  // 不制造相邻的两条 assistant：被夹在两条 assistant 之间的那份留着。
+  const kept = []
+  let dropped = 0
+  for (let index = 0; index < list.length; index += 1) {
+    if (drop.has(index)) {
+      const prev = kept[kept.length - 1]
+      let next
+      for (let ahead = index + 1; ahead < list.length; ahead += 1) {
+        if (!drop.has(ahead)) {
+          next = list[ahead]
+          break
+        }
+      }
+      if (prev?.role === 'assistant' && next?.role === 'assistant') {
+        kept.push(list[index])
+        continue
+      }
+      dropped += 1
+      continue
+    }
+    kept.push(list[index])
+  }
+  return dropped === 0 ? { messages: list, dropped: 0 } : { messages: kept, dropped }
+}
+
+/**
  * 由工具 registry 的 wire schemas 生成「前缀模式」用的文本清单。
  * @param schemas - [{ name, description, parameters }]（parameters 为 JSON Schema 对象）
  * @param options.detail - 'full' 完整（默认）| 'brief' 精简（描述 60 字 + 仅参数名）| 'names' 仅工具名
@@ -1124,6 +1196,11 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             reason = null
             if (textualized.changed > 0) logger?.info?.('dsh-prefill: reasoning-prefix 文本化了 ' + textualized.changed + ' 条 tool 消息')
           }
+          // 审计 impl #7：wire 上只留一份清单（history 模式在工具集变化后会在历史里留下旧版本）。
+          // 永不删到一份都不剩：见 dedupeToolCatalogs。透传臂用原始字节，不经过这里。
+          const shimOn = config.shim === true || process.env.DSH_PREFILL_SPIKE_SHIM === '1'
+          const deduped = dedupeToolCatalogs(draft.messages, catalog, { inject: shimOn })
+          if (deduped.dropped > 0) draft.messages = deduped.messages
           // P1：前缀模板变量（{{date}}/{{time}}/{{model}} 等）在发请求前展开。
           const interpolatedConfig = {
             ...config,
@@ -1164,6 +1241,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           row.catalogPosition = requestShape.catalogPosition
           row.catalogDetail = requestShape.catalogDetail
           row.catalogRole = catalogRole
+          // 只在真的去掉了旧清单时出现（同 clientAborted：不扩冻结字段集）。
+          if (deduped.dropped > 0) row.catalogDropped = deduped.dropped
+          else delete row.catalogDropped
           row.prefix = {
             reasoningLen: requestShape.reasoningPrefix.length,
             contentLen: requestShape.contentPrefix.length,

@@ -5,6 +5,14 @@
 > **项目状态（2026-11-21）**：思考前缀 + 工具代理（`reasoning-prefix.js`）**已冻结** —— 保留为实验性功能（默认关、代码与面板都在，已装用户可继续用），但不再加新功能、不再做兼容性适配；后续版本只维护插件其他部分。
 
 
+## 未发布
+- **修复：catalogMode=history 的工具清单去重 / 计数是死代码，工具集变化后模型同时看到新旧两份清单（审计 impl #7、#11）**。
+  - 触发：实验开着、清单注入选「仅首次进历史」，会话中途工具集 / 清单详略 / 包含排除变了（清单 hash 变）；或先用「仅首次进历史」再切回「每轮注入」。
+  - 影响：0.21.6 的「装配出口去重」放在 `agent/pre-step`，但 pre-step 的 `decision.messages` 只有本步 claim 的消息、**不含会话历史**（历史由 DSH 从日志投影进 wire）⇒ 它永远只看到 0/1 份、`dropped` 恒为 0。旧清单（还列着已移除的工具）永久留在历史里，每轮和新清单一起发给模型；代理的「同文本短路」看到新清单已在就不再处理；面板 `prefill.catalogDuplicates` 恒为 0（0.21.7 验收的「=0」并不说明干净）。另外 history 模式不看会话路由，已知走普通 provider 的会话也被永久写进一条文本清单。
+  - 修法：① 去重挪到代理（`reasoning-prefix.js` 新增 `dedupeToolCatalogs`）：发上游前 wire 上只留一份 —— 有与本轮逐字相同的就留最后一份相同的；没有且 shim 会注入新清单就去掉历史里的旧版本；shim 不注入时只留时间序最后一份。**永不删到一份都不剩**（0.21.6 的约束保留）；夹在两条 assistant 之间的不删；只改本次请求，会话日志不动；透传臂用原始字节、不经过去重。结果行在真的去掉时多一个 `catalogDropped`（不扩冻结字段集）。② `catalogDuplicates` 改为每轮第 1 步按会话本身计数（有 surface 时只数模型视图里还在的节点）+ 本步新注入的；面板文案同步。③ `ensureCatalogInjected`：已知本会话走的不是前缀路由（`request/header` 记下的 provider ≠ 前缀路由名）就不写清单；路由未知时照旧注入。
+  - 行为变化：`shim-stream.test.mjs`「历史清单文本不同」一条原来断言上游收到两份（新 + 旧），现在只收到新的一份。
+  - 测试：新增 `tests/catalog-history-dedupe.test.mjs`（5）、`tests/proxy-catalog-dedupe.test.mjs`（5），其中 7 条 + 改过的 1 条在 e62b23f 上红、修复后绿；`tests/impl-mount-harness.mjs` 增加 `tools` 服务、钩子记录与 `preStep` / `sessionEvent`（不依赖 mock.module）。
+
 ## 0.21.12 — 2026-11-21
 - **移植公开镜像的 8 个外部 PR（贡献者 @dymk1ex1xz，均对应其 issue）**。公开仓是私人仓的生成镜像，PR 不直接合并；逐条审核（新测试先在基线上验证会红）后移植：
   - **reasoning 代理（#56 / #52）**：shim 按 SSE 规范解析上游帧 —— `data: null` / 非对象帧不再打崩宿主进程；`event:` / `id:` / `retry:` / 注释行与多行 `data:` 正确解析；content-type 大小写不敏感；usage 每请求只记一次；非 SSE 200 先收字节再解码、透传 finish_reason、`{error:…}` 按流错误；原生 `tool_calls` 与 DSML 调用共用 index 空间重新编号。
