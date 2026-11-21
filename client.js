@@ -4747,7 +4747,7 @@ window.__ModuleLoader__.load({
       statusTools: '工具',
       statusToolsHint: '本会话作用域',
       statusModel: '模型',
-      statusModelUnknown: '—（v2 接 summary.model）',
+      statusModelUnknown: '本会话所用模型暂不显示',
       statusOpenInject: '打开拦截设置',
       sbxOffTitle: '本会话的拦截已停用。',
       sbxOffBody: '左栏「会话沙盒」开关关着：这里的档位与规则不生效；要改就先打开那个开关。',
@@ -4770,7 +4770,7 @@ window.__ModuleLoader__.load({
       statusTools: 'Tools',
       statusToolsHint: 'session scope',
       statusModel: 'Model',
-      statusModelUnknown: '— (v2: summary.model)',
+      statusModelUnknown: 'The model used by this session is not shown yet',
       statusOpenInject: 'Open blocking settings',
       sbxOffTitle: 'Blocking is off for this session.',
       sbxOffBody: 'The Sandbox switch in the left column is off, so the level and rules here do not apply; turn it on to edit them.',
@@ -7074,7 +7074,9 @@ window.__ModuleLoader__.load({
      * 目录联动（纯计算，方便单测）：anchors = [{ anchor, top }]（top 相对滚动容器内容区，按 DOM 顺序），
      * 返回「最后一个 top <= scrollTop + lead」的锚点。
      */
-    function tocActiveAt(anchors, scrollTop, lead = 32) {
+    // lead 必须 ≥ 卡片的 scrollMarginTop（44，给吸顶目录让位）：点目录跳转后节顶正好落在可视区顶下 44px，
+    // lead 小于它时随之而来的 scroll 事件会把高亮改回上一节。两处改一处时要一起改（tests/settings-toc-spy.test.mjs 会拦）。
+    function tocActiveAt(anchors, scrollTop, lead = 48) {
       if (!Array.isArray(anchors) || anchors.length === 0) return ''
       let active = anchors[0].anchor
       for (const item of anchors) {
@@ -9256,6 +9258,8 @@ window.__ModuleLoader__.load({
       }, [])
 
       const refreshEnvelope = React.useCallback(() => {
+        // 后台标签页不拉整封 state（与 summary store 的 document.hidden 暂停一致）；回前台下一轮照常拉。
+        if (typeof document !== 'undefined' && document?.hidden === true) return
         // 轮询一律带 15s 上限：挂住的请求不许把下一轮叠上来。
         // 记下发请求时的写代号：1MB 的整封 state 在飞时用户点了芯片，回来的这份不能把写响应冲掉。
         const readGen = summaryStore.writeGen
@@ -9263,6 +9267,20 @@ window.__ModuleLoader__.load({
           .then((data) => setEnvelope(data, readGen))
           .catch(() => {})
       }, [])
+      // 卡片关着时不轮询 /state，但芯片的「预设名 + 已配置 N/8」仍来自这份 envelope（chipSummary）⇒
+      // summary 里与芯片相关的几格（预设 / 预填装 / 闸门 / 人格段 / 首轮锁定）一变，补拉一次整封 state。
+      // 只在变化时拉、不定时；页面加载后从没打开过卡片（envelopeRaw 为 null）不拉 —— 那时芯片本来就不显示预设名。
+      const dockLive = useSummary(sessionId)
+      const dockLiveSig =
+        dockLive === null
+          ? ''
+          : JSON.stringify([dockLive.state?.activePreset ?? null, dockLive.state?.prefill ?? null, dockLive.state?.gate ?? null, dockLive.persona ?? null, dockLive.state?.locked ?? null])
+      React.useEffect(() => {
+        if (cardOpen || dockLiveSig === '' || envelopeRaw === null) return
+        refreshEnvelope()
+        // 只认签名变化：cardOpen / envelopeRaw 变化不该单独触发补拉（开卡片自己会读，补拉回来的 envelope 也不该再触发）。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [dockLiveSig])
 
       // 打开 / 换会话 / 卡片重新打开：读开关 + 草稿 + 系统提示。**卡片关着不读**（关着时界面不渲染，读了白花流量）。
       React.useEffect(() => {
@@ -9531,12 +9549,15 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (!cardOpen || sessionId === '') return undefined
         let alive = true
-        const load = () =>
+        const load = () => {
+          // 后台标签页不拉用量（与 /state、summary 一致）。
+          if (typeof document !== 'undefined' && document?.hidden === true) return
           void postJsonWithTimeout(USAGE_ROUTE, { sessionId })
             .then((data) => {
               if (alive) setUsage(data)
             })
             .catch(() => {})
+        }
         load()
         const timer = setInterval(load, 4000)
         return () => {
@@ -9547,9 +9568,23 @@ window.__ModuleLoader__.load({
 
       // 每轮注入的自动判定（v0.9）：只在「卡片打开 + 本会话开着每轮注入」时每 15 秒刷一次（只读，算一次很便宜）。
       // 关着卡片 / 没开每轮注入 ⇒ 不跑：这数据只给卡片里那节用（规划 §2.2 的收敛项）。
+      // 例外：它回的 lock 是「本版之前开跑、没有 state.locked 的旧会话」认首轮锁定的唯一来源（lockView 第二档），
+      // 所以每轮注入关着时打开卡片也拉一次（不轮询）；换会话先清掉，免得 B 显示 A 的结果。
       const everyTurnOn = everyTurnSwitchOn(state, sessionId)
+      React.useEffect(() => setEveryTurnStatus(null), [sessionId])
       React.useEffect(() => {
-        if (!cardOpen || !enabled || !everyTurnOn || sessionId === '') return undefined
+        if (!cardOpen || !enabled || sessionId === '') return undefined
+        if (!everyTurnOn) {
+          let alive = true
+          void postJsonWithTimeout(PACKS_ROUTE, { sessionId, op: 'every-turn-status' })
+            .then((data) => {
+              if (alive) setEveryTurnStatus(data?.status ?? null)
+            })
+            .catch(() => {})
+          return () => {
+            alive = false
+          }
+        }
         let alive = true
         const load = () =>
           void postJsonWithTimeout(PACKS_ROUTE, { sessionId, op: 'every-turn-status' })
@@ -16468,7 +16503,9 @@ window.__ModuleLoader__.load({
       const materialized = live?.materialized?.[sessionId] ?? 0
       // 已开跑 = 有轮次，或预填装已写进历史。turns 在旧会话 / 快照缺失时会是 0，
       // 不能据此断言「还没开跑」（缺陷 #3：开跑 17 轮的会话徽标仍写「写入历史」）。
-      const started = turns > 0 || materialized > 0
+      // 首轮锁定记录落盘（state.locked），DSH 重启后 turns / materialized 归零时靠它认已开跑（与芯片同口径）。
+      const lockRec = live?.state?.locked?.[sessionId]
+      const started = turns > 0 || materialized > 0 || (lockRec !== null && typeof lockRec === 'object')
       // 工具数：summary 给的是数字（契约 tools[会话] = 工具个数）；整封 envelope 那边归一时也算成数字。
       const tools = live?.tools?.[sessionId]
       const toolCount = Array.isArray(tools) ? tools.length : Number.isFinite(tools) ? tools : undefined
@@ -16479,7 +16516,9 @@ window.__ModuleLoader__.load({
           ? hasPersona
             ? t('chipTakeover')
             : t('chipPure')
-          : hasPersona
+          : gateMap[sessionId] === 'replace'
+            ? `${t('systemTitle')}·${t('systemReplaceMeta')}`
+            : hasPersona
             ? `${t('systemTitle')}·${t('systemAppendMeta')}`
             : gate === 'filter'
               ? t('stateFilter')

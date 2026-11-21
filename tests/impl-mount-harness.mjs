@@ -85,6 +85,8 @@ export async function mount(opts = {}) {
   }
   const impl = await import('../impl.js')
   const routes = new Map()
+  /** impl 用 ctx.on 挂的钩子（agent/pre-step 等）：只记录不调用，需要的用例通过 preStep() 驱动。 */
+  const hooks = new Map()
   const scope = {
     get: (name) => (name === 'connection' ? { fetch: { register: (def) => routes.set(def.path, def) } } : undefined),
     effect: (fn) => {
@@ -103,7 +105,11 @@ export async function mount(opts = {}) {
         // 同上。
       }
     },
-    on: () => () => {},
+    on: (name, fn) => {
+      if (!hooks.has(name)) hooks.set(name, [])
+      hooks.get(name).push(fn)
+      return () => {}
+    },
     get: (name) => {
       if (name === 'settings' && opts.settings !== undefined) return opts.settings
       throw new Error('no service ' + name)
@@ -134,7 +140,14 @@ export async function mount(opts = {}) {
     const t = new Date(Date.UTC(2032, 0, 1) + ++bump * 1000)
     utimesSync(STATE_FILE, t, t)
   }
-  return { impl, HOME, DATA_DIR, STATE_FILE, routes, post, readStateFile, seed }
+  /** 模拟一步 agent/pre-step（真实钩子 + 最简 decision）；返回 decision。 */
+  const preStep = async (sessionId, turn, step) => {
+    const decision = { kind: 'enter', messages: [] }
+    const agent = { id: sessionId, session: { snapshotEvents: () => [] } }
+    for (const fn of hooks.get('agent/pre-step') ?? []) await fn({ agent, turn, step, messages: [] }, async () => decision)
+    return decision
+  }
+  return { impl, HOME, DATA_DIR, STATE_FILE, routes, hooks, post, preStep, readStateFile, seed }
 }
 
 /**

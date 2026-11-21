@@ -2561,7 +2561,7 @@ export function apply(ctx) {
     const reasoningDisable = async () => {
       patchState({ ui: { reasoningPrefix: { ...reasoningConfigOf(), enabled: false } } })
       const applied = await applyReasoningState()
-      return Response.json({ ...reasoningStatus(), applied }, noStore)
+      return Response.json({ ...(await reasoningStatus()), applied }, noStore)
     }
 
     // ── 实验面板（胶囊弹窗里的「实验」页）：总开关 + 累计统计 + 暴露参数 ──
@@ -3088,7 +3088,7 @@ export function apply(ctx) {
     register({ path: '/api/dsh-prefill/reasoning/status', methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(await reasoningStatus(), noStore) }, 'dsh-prefill: reasoning status')
     register({ path: '/api/dsh-prefill/reasoning/enable', methods: ['POST'], requestBody: 'buffered', fetch: reasoningEnable }, 'dsh-prefill: reasoning enable')
     register({ path: '/api/dsh-prefill/reasoning/disable', methods: ['POST'], requestBody: 'buffered', fetch: reasoningDisable }, 'dsh-prefill: reasoning disable')
-    register({ path: '/api/dsh-prefill/reasoning-spike/status', methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(reasoningStatus(), noStore) }, 'dsh-prefill: reasoning status (spike alias)')
+    register({ path: '/api/dsh-prefill/reasoning-spike/status', methods: ['POST'], requestBody: 'buffered', fetch: async () => Response.json(await reasoningStatus(), noStore) }, 'dsh-prefill: reasoning status (spike alias)')
     register({ path: '/api/dsh-prefill/reasoning-spike/upsert', methods: ['POST'], requestBody: 'buffered', fetch: reasoningEnable }, 'dsh-prefill: reasoning enable (spike alias)')
     register({ path: '/api/dsh-prefill/reasoning-spike/remove', methods: ['POST'], requestBody: 'buffered', fetch: reasoningDisable }, 'dsh-prefill: reasoning disable (spike alias)')
     // 实验面板（胶囊弹窗）：状态 / 总开关 / 参数 / 统计清零。
