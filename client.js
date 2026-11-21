@@ -4747,7 +4747,7 @@ window.__ModuleLoader__.load({
       statusTools: '工具',
       statusToolsHint: '本会话作用域',
       statusModel: '模型',
-      statusModelUnknown: '—（v2 接 summary.model）',
+      statusModelUnknown: '本会话所用模型暂不显示',
       statusOpenInject: '打开拦截设置',
       sbxOffTitle: '本会话的拦截已停用。',
       sbxOffBody: '左栏「会话沙盒」开关关着：这里的档位与规则不生效；要改就先打开那个开关。',
@@ -4770,7 +4770,7 @@ window.__ModuleLoader__.load({
       statusTools: 'Tools',
       statusToolsHint: 'session scope',
       statusModel: 'Model',
-      statusModelUnknown: '— (v2: summary.model)',
+      statusModelUnknown: 'The model used by this session is not shown yet',
       statusOpenInject: 'Open blocking settings',
       sbxOffTitle: 'Blocking is off for this session.',
       sbxOffBody: 'The Sandbox switch in the left column is off, so the level and rules here do not apply; turn it on to edit them.',
@@ -7074,7 +7074,9 @@ window.__ModuleLoader__.load({
      * 目录联动（纯计算，方便单测）：anchors = [{ anchor, top }]（top 相对滚动容器内容区，按 DOM 顺序），
      * 返回「最后一个 top <= scrollTop + lead」的锚点。
      */
-    function tocActiveAt(anchors, scrollTop, lead = 32) {
+    // lead 必须 ≥ 卡片的 scrollMarginTop（44，给吸顶目录让位）：点目录跳转后节顶正好落在可视区顶下 44px，
+    // lead 小于它时随之而来的 scroll 事件会把高亮改回上一节。两处改一处时要一起改（tests/settings-toc-spy.test.mjs 会拦）。
+    function tocActiveAt(anchors, scrollTop, lead = 48) {
       if (!Array.isArray(anchors) || anchors.length === 0) return ''
       let active = anchors[0].anchor
       for (const item of anchors) {

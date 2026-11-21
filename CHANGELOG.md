@@ -3,6 +3,12 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 未发布
+- **修复：状态 popover「模型」行的 tooltip 是开发占位**。触发：点开卡片头部状态胶囊，鼠标停在「模型」行。影响：显示实现备注「—（v2 接 summary.model）」/「— (v2: summary.model)」。修法：zh / en 改成「本会话所用模型暂不显示」/「The model used by this session is not shown yet」；`tests/ui-terms.test.mjs` 里钉死旧占位的断言同步改。
+- **文档：README「首轮锁定」仍写旧术语**。原文「头部徽章显示「首轮未发 / 已锁定」」—— 0.21 已改称「首轮未发送」，独立徽章也已并进卡片头部状态胶囊；改为「卡片头部状态胶囊显示「首轮未发送 / 已锁定」」。
+- **修复：设置页点目录后高亮跳回上一节**。触发：左侧栏设置页点目录任一项（如「库」）。影响：卡片 `scrollMarginTop: 44`（给吸顶目录让位）让 `scrollIntoView` 把节顶停在可视区顶下 44px，而 scroll-spy 的 `tocActiveAt` lead 默认 32 ⇒ 随之而来的 scroll 事件把高亮和 `aria-current` 改成上一节。修法：lead 改为 48（≥ scrollMarginTop），并注明两处要一起改。
+- 测试：新增 `tests/ui-copy-placeholders.test.mjs`（2 条）、`tests/settings-toc-spy.test.mjs`（2 条）；其中 3 条在 0.21.12 上红、修复后绿，1 条回归（lead 不能放得过大）。
+
 ## 0.21.12 — 2026-11-21
 - **移植公开镜像的 8 个外部 PR（贡献者 @dymk1ex1xz，均对应其 issue）**。公开仓是私人仓的生成镜像，PR 不直接合并；逐条审核（新测试先在基线上验证会红）后移植：
   - **reasoning 代理（#56 / #52）**：shim 按 SSE 规范解析上游帧 —— `data: null` / 非对象帧不再打崩宿主进程；`event:` / `id:` / `retry:` / 注释行与多行 `data:` 正确解析；content-type 大小写不敏感；usage 每请求只记一次；非 SSE 200 先收字节再解码、透传 finish_reason、`{error:…}` 按流错误；原生 `tool_calls` 与 DSML 调用共用 index 空间重新编号。

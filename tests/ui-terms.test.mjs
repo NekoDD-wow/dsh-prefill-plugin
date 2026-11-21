@@ -140,7 +140,7 @@ test('新增 UI 键 zh / en 成对', () => {
   }
   assert.match(src, /kpiBlocked: '拦截中'/, 'KPI 第 4 格按 Lead 拍板叫「拦截中」')
   assert.match(src, /kpiBlockedTip: '当前累计拦截数（观察档不计，无时间窗）'/)
-  assert.match(src, /statusModelUnknown: '—（v2 接 summary\.model）'/)
+  assert.match(src, /statusModelUnknown: '本会话所用模型暂不显示'/)
 })
 
 test('F14 · verdict 现役七态 + 两个 legacy 值都映射到人话键，且键中英成对', () => {
