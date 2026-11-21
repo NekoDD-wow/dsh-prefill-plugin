@@ -64,7 +64,7 @@ export function lastMessageHash(messages) {
 export function extractResponseText(contentType, text) {
   if (typeof text !== 'string' || text === '') return ''
   try {
-    if (String(contentType).includes('text/event-stream')) {
+    if (String(contentType).toLowerCase().includes('text/event-stream')) {
       let out = ''
       for (const line of text.split('\n')) {
         const trimmed = line.trim()
@@ -583,6 +583,11 @@ export function toolCatalogText() {
 
 /** 结果行里 reasoningHead 的截断长度。 */
 const REASONING_HEAD_CHARS = 200
+/**
+ * 不能原样转给 fetch 的请求头：host / content-length / accept-encoding 由 fetch 自己定，
+ * 其余是 hop-by-hop 头 —— undici 遇到 transfer-encoding / keep-alive / upgrade / expect 等会直接抛（⇒ 502）。
+ */
+const HOP_BY_HOP_REQUEST_HEADERS = ['host', 'content-length', 'accept-encoding', 'connection', 'transfer-encoding', 'keep-alive', 'upgrade', 'expect', 'te', 'trailer', 'proxy-connection']
 
 /**
  * 采样覆盖补丁（P1-5）：只认 temperature / topP / seed 三个合法字段，非法值静默丢弃。
@@ -811,7 +816,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
   const collectUsageFromBody = (contentType, text) => {
     if (typeof text !== 'string' || text === '') return null
     try {
-      if (String(contentType).includes('text/event-stream')) {
+      if (String(contentType).toLowerCase().includes('text/event-stream')) {
         let last = null
         for (const line of text.split('\n')) {
           const trimmed = line.trim()
@@ -995,6 +1000,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       reasoningHead: null,
       routeConfidence: 'none',
       autoDisabled: false,
+      // 客户端（DSH 里点「停止」）在响应结束前断开：上游已中止，这一行记 ok:false、verdict 'error'，
+      // 靠这个字段和真正的失败区分开（它不进「连续失败自动停用」计数）。
+      clientAborted: false,
       verdict: 'error',
     }
     let wrote = false
@@ -1073,6 +1081,12 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           }
         } catch {
           // 关联失败 ⇒ 保持 routeConfidence='none'，sessionId 留 null（安全侧）
+        }
+        // 「清空本轮填装」按会话生效：认领到会话身份且该会话这一轮在跳过 ⇒ 本请求透传（记 skipped）。
+        // 认不出会话（routeConfidence none）的请求不跳过 —— 宁可多加一次前缀，也不把别的会话一起跳过。
+        if (row.sessionId !== null && typeof config.isSkipping === 'function' && config.isSkipping(row.sessionId) === true) {
+          config.skipping = true
+          throw { skip: true }
         }
         const match = typeof config.match === 'string' && config.match !== '' ? config.match : process.env.DSH_PREFILL_SPIKE_MATCH
         if (typeof match === 'string' && match !== '') {
@@ -1184,7 +1198,9 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
     }
     const headers = {}
     for (const [key, value] of Object.entries(req.headers)) {
-      if (['host', 'content-length', 'accept-encoding', 'connection'].includes(key)) continue
+      // hop-by-hop 头不能转给 fetch：客户端带 transfer-encoding: chunked（或 keep-alive / upgrade / expect）时
+      // undici 直接抛 ⇒ 502。请求体已经整段读进来了，按 content-length 重新发即可。
+      if (HOP_BY_HOP_REQUEST_HEADERS.includes(key)) continue
       headers[key] = value
     }
     const upstream = String(config.upstream ?? 'https://api.deepseek.com/beta').replace(/\/+$/, '')
@@ -1238,6 +1254,27 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       return 'passthrough'
     }
     const started = Date.now()
+    /**
+     * 客户端在响应结束前断开（典型：DSH 里点「停止」）⇒ 中止上游。
+     *   · 透传路径以前 `reader.pipe(res)` 在目标被销毁后 unpipe、源停在背压上，`end` 永远不来 ⇒
+     *     处理协程永久挂起，结果行 / stats / 审计都不落，上游 body 一直挂着；
+     *   · shim 路径以前把上游整段读完（继续生成、继续计费），写入全被丢弃，最后还记成 ok:true。
+     * 用户主动停止不是上游的错：记 `client-abort`，**不**调用 reportOutcome（不进连续失败计数）。
+     */
+    const upstreamAbort = new AbortController()
+    let clientClosed = false
+    const onClientClose = () => {
+      if (clientClosed || res.writableFinished === true) return
+      clientClosed = true
+      upstreamAbort.abort()
+    }
+    res.on('close', onClientClose)
+    // 读请求体之后、挂监听之前就断了的连接：close 已经错过，这里补一次。
+    if (res.destroyed === true || req.socket?.destroyed === true) onClientClose()
+    const markClientAbort = () => {
+      row.clientAborted = true
+      okFlag = false
+    }
     try {
       /**
        * F16（P1-7）：shim 分支会**伪造 SSE 帧序列**，非流式客户端拿到的协议是错的
@@ -1267,6 +1304,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           method: req.method,
           headers,
           body: req.method === 'GET' || req.method === 'HEAD' ? undefined : variant.body,
+          signal: upstreamAbort.signal,
         })
         // 结果行逐次记账：一次请求试过谁、各自什么状态、最后谁生效，都在这一行里。
         row.attempts.push({ variant: variant.kind, status: response.status, ok: response.status < 400, ms: Date.now() - attemptStarted })
@@ -1315,7 +1353,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       const transformedVariant = finalVariant === 'system' || finalVariant === 'user'
       // 对外记账用的变体名：透传要区分 skipped / ignored / passthrough（见 outcomeVariant）。
       const reportedVariant = outcomeVariant(finalVariant)
-      const upstreamIsSse = String(final.headers.get('content-type') ?? '').includes('text/event-stream')
+      // 媒体类型不区分大小写（RFC 9110 §8.3.1）：`Text/Event-Stream` 也是 SSE。
+      const upstreamIsSse = String(final.headers.get('content-type') ?? '').toLowerCase().includes('text/event-stream')
       if (shimActive && transformedVariant) {
         // 流式改写：文本增量立即转发，只有出现 DSML 起始标记时才缓冲成 tool_calls。
         res.writeHead(final.status, {
@@ -1362,9 +1401,10 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           }
           safeWrite('data: ' + JSON.stringify(payload) + '\n\n')
         }
+        // 有的上游每帧都带（累计）usage：帧里只转发、记下最后一次，收尾时统一记账一次（以前每帧都 recordUsage ⇒ 翻倍）。
+        let lastRawUsage = null
         const writeUsage = (usage) => {
-          const parsed = recordUsage(usage)
-          if (parsed !== null) requestUsage = parsed
+          if (parseUsage(usage) !== null) lastRawUsage = usage
           const payload = {
             id: typeof base?.id === 'string' ? base.id : 'shim',
             object: 'chat.completion.chunk',
@@ -1401,6 +1441,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
             }
           }
         }
+        // 上游原生 tool_calls 的 index → 本流里的 index（与 DSML 解析出的调用共用 callCount 序列）。
+        const nativeIndex = new Map()
         const finish = (reason) => {
           if (finished) return
           finished = true
@@ -1416,16 +1458,26 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           }
         }
         const handleFrame = (raw) => {
-          const line = raw.trim()
-          if (line === '' || !line.startsWith('data:')) return
-          const data = line.slice(5).trim()
-          if (data === '[DONE]') return
+          // SSE 一帧可以有多行（WHATWG HTML §9.2.6）：`event:` / `id:` / `retry:` 与注释行（以 ':' 开头，
+          // 如 DeepSeek 排队时发的 `: keep-alive`）都跳过，只取 `data:` 字段；多条 data 行按规范用 '\n' 拼接。
+          // 以前要求整帧以 `data:` 开头 ⇒ 带这些行的合法帧整帧被丢，正文静默消失还记成功。
+          const dataLines = []
+          for (const line of raw.split('\n')) {
+            if (!line.startsWith('data:')) continue
+            dataLines.push(line.slice(line.startsWith('data: ') ? 6 : 5))
+          }
+          if (dataLines.length === 0) return
+          const data = dataLines.join('\n').trim()
+          if (data === '' || data === '[DONE]') return
           let chunk
           try {
             chunk = JSON.parse(data)
           } catch {
             return
           }
+          // `data: null` / 数字 / 字符串 / 数组都不是 chunk 对象：跳过。以前接着读 null.usage，
+          // 在 data 监听器里抛 TypeError ⇒ 未捕获异常，宿主进程退出。
+          if (chunk === null || typeof chunk !== 'object' || Array.isArray(chunk)) return
           sawFrame = true
           if (base === null) base = chunk
           if (chunk.usage !== undefined && chunk.usage !== null) writeUsage(chunk.usage)
@@ -1443,7 +1495,18 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
               emitEvents(parser.push(delta.content))
             }
             if (Array.isArray(delta.tool_calls)) {
-              for (const call of delta.tool_calls) writeChunk({ tool_calls: [call] })
+              // 原生调用与 DSML 解析出的调用共用同一个 index 空间：重新编号，否则两个都是 index 0，客户端会拼成一个。
+              for (const call of delta.tool_calls) {
+                if (call === null || typeof call !== 'object') continue
+                const key = Number.isInteger(call.index) ? call.index : 0
+                if (!nativeIndex.has(key)) {
+                  nativeIndex.set(key, callCount)
+                  callCount += 1
+                }
+                sawPayload = true
+                if (firstDeltaMs === null) firstDeltaMs = Date.now() - started
+                writeChunk({ tool_calls: [{ ...call, index: nativeIndex.get(key) }] })
+              }
             }
           }
           if (choice !== null && typeof choice === 'object' && typeof choice.finish_reason === 'string' && choice.finish_reason !== '') {
@@ -1455,18 +1518,27 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           if (upstreamIsSse !== true) {
             // 上游没按 SSE 回（网关 200-JSON / 忽略了 stream:true）：整段读进来按同一口径吐 SSE。
             // 以前会走进帧切分分支，永远匹配不到 '\n\n' ⇒ 正文被静默丢掉（只剩 finish + [DONE]）。
-            let raw = ''
+            // 先收字节、最后一次性解码：按 chunk 各自 toString 会把切在边界上的多字节字符变成 U+FFFD。
+            const rawParts = []
             await new Promise((resolve) => {
               const reader = Readable.fromWeb(final.body)
-              reader.on('data', (chunk) => { raw += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk) })
+              reader.on('data', (chunk) => { rawParts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)) })
               reader.on('end', resolve)
               reader.on('error', (error) => { streamError = error; resolve() })
             })
+            const raw = Buffer.concat(rawParts).toString('utf8')
+            let jsonFinish = 'stop'
             if (streamError === null) {
               try {
                 const parsed = JSON.parse(raw)
+                if (parsed === null || typeof parsed !== 'object' || !Array.isArray(parsed.choices)) {
+                  // 200 + `{error: …}`（网关 / 余额不足等）不是一次成功的回复：按流错误记，不再空回复记 ok。
+                  throw new Error('non-SSE 200 without choices: ' + raw.slice(0, 200))
+                }
                 base = parsed
-                const message = parsed?.choices?.[0]?.message ?? {}
+                const message = parsed.choices[0]?.message ?? {}
+                // 透传上游的 finish_reason（length / content_filter 等），以前一律改写成 stop，截断被藏起来。
+                if (typeof parsed.choices[0]?.finish_reason === 'string' && parsed.choices[0].finish_reason !== '') jsonFinish = parsed.choices[0].finish_reason
                 if (parsed?.usage !== undefined && parsed.usage !== null) writeUsage(parsed.usage)
                 if (typeof message.reasoning_content === 'string' && message.reasoning_content !== '') {
                   sawPayload = true
@@ -1483,6 +1555,7 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
                 streamError = error
               }
             }
+            if (streamError === null) finish(jsonFinish)
             closeStream()
           } else {
             await new Promise((resolve) => {
@@ -1497,7 +1570,12 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
                 while ((splitAt = frameBuffer.indexOf('\n\n')) >= 0) {
                   const raw = frameBuffer.slice(0, splitAt)
                   frameBuffer = frameBuffer.slice(splitAt + 2)
-                  handleFrame(raw)
+                  try {
+                    handleFrame(raw)
+                  } catch (error) {
+                    // data 监听器里抛出去就是未捕获异常（宿主进程退出）：就地收口，按流错误处理。
+                    if (streamError === null) streamError = error
+                  }
                 }
               })
               reader.on('end', () => {
@@ -1525,6 +1603,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           stats.firstDeltaSamples.push(firstDeltaMs)
           if (stats.firstDeltaSamples.length > 100) stats.firstDeltaSamples.shift()
         }
+        // A8：每个请求只记一次 usage（取最后一帧）。
+        if (lastRawUsage !== null) requestUsage = recordUsage(lastRawUsage)
         markRequest(reportedVariant)
         // 结果行口径：无论成功还是流中断，正文 / 思维链 / usage 都已收齐，统一在这里落定。
         finalVariantKind = finalVariant
@@ -1535,6 +1615,14 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         collectedReasoning = collectedReasoningParts.join('')
         row.firstDeltaMs = Number.isFinite(firstDeltaMs) ? firstDeltaMs : null
         rowUsage = requestUsage
+        // 客户端中途断开（上游被 abort 而出错，或上游恰好先吐完、读流正常结束）：都按客户端中止记，不算上游失败。
+        if (clientClosed) {
+          markClientAbort()
+          record({ kind: 'client-abort', variant: reportedVariant, status: final.status, ms: Date.now() - started, firstDeltaMs })
+          bump({ ok: false, armId })
+          logger?.info?.('dsh-prefill: reasoning-prefix 客户端中途断开，已中止上游（shim）')
+          return;
+        }
         if (streamError !== null) {
           // 上游中途断流：尾巴已经尽量补成 finish + [DONE]（不让客户端挂死），但必须记成失败 ——
           // 以前这里 bump ok，面板全绿，用户完全不知道回复被截断了。
@@ -1580,9 +1668,32 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
           })
           reader.pipe(res)
           reader.on('end', resolve)
+          // 客户端断开：pipe 会 unpipe 并让源停在背压上，'end' 永远不来。abort 只在上游还没吐完时
+          // 让源出错，所以这里直接收口，不依赖源的事件。
+          const onGone = () => {
+            if (res.writableFinished === true) return
+            if (forwardError === null) forwardError = new Error('client closed')
+            try { reader.destroy() } catch { /* 已经结束 */ }
+            resolve()
+          }
+          res.once('close', onGone)
+          if (clientClosed) onGone()
           // 以前只 resolve：pipe 在源出错时不会关目标 ⇒ 客户端响应永不结束（挂死），还记成成功。
           reader.on('error', (error) => { forwardError = error; try { res.destroy() } catch { /* 已经断了 */ } resolve() })
         })
+        if (clientClosed) {
+          markRequest(reportedVariant)
+          markClientAbort()
+          finalVariantKind = finalVariant
+          reportedVariantName = reportedVariant
+          row.status = final.status
+          row.variant = reportedVariant
+          collectedText = extractResponseText(contentType, collected)
+          record({ kind: 'client-abort', variant: reportedVariant, status: final.status, ms: Date.now() - started })
+          bump({ ok: false, armId })
+          logger?.info?.('dsh-prefill: reasoning-prefix 客户端中途断开，已中止上游（转发）')
+          return;
+        }
         if (forwardError !== null) {
           markRequest(reportedVariant)
           okFlag = false
@@ -1616,16 +1727,29 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
       reportOutcome({ ok: true, variant: reportedVariant, status: final.status })
       logger?.info?.(`dsh-prefill: reasoning-prefix ${applied ? '已加前缀(' + reportedVariant + ')' : '透传(' + reason + ')'} → ${target} [${final.status}] ${Date.now() - started}ms`)
     } catch (error) {
-      logger?.warn?.(`dsh-prefill: reasoning-prefix 转发失败: ${String(error?.message ?? error)}`)
-      record({ kind: 'transport-error', error: String(error?.message ?? error) })
       okFlag = false
       reportedVariantName = 'none'
-      row.status = 502
       row.variant = 'none'
       bump({ ok: false, armId })
+      if (clientClosed) {
+        // 等上游响应头 / 读错误体时客户端断开：fetch 被 abort 抛出来的，不是传输错误。
+        markClientAbort()
+        row.status = 0
+        record({ kind: 'client-abort', variant: 'none', status: 0, ms: Date.now() - started })
+        logger?.info?.('dsh-prefill: reasoning-prefix 客户端在上游响应前断开，已中止上游')
+        try { res.destroy() } catch { /* 连接已经没了 */ }
+        return
+      }
+      logger?.warn?.(`dsh-prefill: reasoning-prefix 转发失败: ${String(error?.message ?? error)}`)
+      record({ kind: 'transport-error', error: String(error?.message ?? error) })
+      row.status = 502
       reportOutcome({ ok: false, variant: 'none', status: 0 })
-      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('reasoning-prefix proxy error: ' + String(error?.message ?? error))
+      try {
+        if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('reasoning-prefix proxy error: ' + String(error?.message ?? error))
+        else res.destroy()
+      } catch { /* 连接已经没了 */ }
     } finally {
+      res.off('close', onClientClose)
       // 每请求恰好一行：无论从哪条早退分支离开，都只在这里落一次盘。
       writeRow()
     }
@@ -1682,6 +1806,8 @@ export function createReasoningPrefixProxy({ getConfig, logger, onOutcome } = {}
         }
         const onError = (error) => {
           if (error?.code === 'EADDRINUSE' && attempts < maxAttempts) {
+            // 这一轮的 once('listening') 没触发过：不摘掉，每次重试就多挂一个（第 11 次起 MaxListeners 告警）。
+            server.off('listening', onListening)
             attempts += 1
             const next = port + attempts
             if (next <= 65535) {

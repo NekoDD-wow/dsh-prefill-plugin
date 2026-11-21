@@ -63,9 +63,12 @@ test('presetKnobsOf：有才写 —— 缺键就不放进结果（套用旧预�
   assert.deepEqual(presetKnobsOf('nope'), {})
   assert.deepEqual(presetKnobsOf([]), {})
   assert.deepEqual(presetKnobsOf({ shim: false }), { shim: false })
-  // sampling 全空 ⇒ 不落键（不是落一个 {}）。
-  assert.deepEqual(presetKnobsOf({ sampling: {} }), {})
-  assert.deepEqual(presetKnobsOf({ sampling: null }), {})
+  // 缺键 ⇒ 不落键（上面的 {} / { shim:false }）。但 sampling 显式为空（null / 成员全空）表示「不覆盖采样」，
+  // 是保存那一刻的真实取值，要落成 null —— 否则套用时清不掉后来设的采样覆盖（预设还原不出配置）。
+  assert.deepEqual(presetKnobsOf({ sampling: {} }), { sampling: null })
+  assert.deepEqual(presetKnobsOf({ sampling: null }), { sampling: null })
+  // 同理：默认回退链 '' 与不筛清单 [] 也是取值，要落键。
+  assert.deepEqual(presetKnobsOf({ fallbackOrder: '', catalogInclude: [], catalogExclude: [] }), { fallbackOrder: '', catalogInclude: [], catalogExclude: [] })
 })
 
 test('presetKnobsOf：非法值一律丢掉该键，不留坏值', () => {
@@ -78,7 +81,8 @@ test('presetKnobsOf：非法值一律丢掉该键，不留坏值', () => {
     fallbackOrder: 'random',
     maxEmittedCalls: 99,
     failureThreshold: 0,
-    catalogInclude: [],
+    // 非数组才算非法（[] 现在是合法的「不筛清单」）。
+    catalogInclude: 'read',
     catalogExclude: [42],
     sampling: { temperature: 9 },
   })

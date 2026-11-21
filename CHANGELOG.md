@@ -3,6 +3,20 @@
 只记版本级的改动；逐条提交见 `git log`。插件版本以 [`package.json`](package.json) 为准。
 
 
+## 0.21.12 — 2026-11-21
+- **移植公开镜像的 8 个外部 PR（贡献者 @dymk1ex1xz，均对应其 issue）**。公开仓是私人仓的生成镜像，PR 不直接合并；逐条审核（新测试先在基线上验证会红）后移植：
+  - **reasoning 代理（#56 / #52）**：shim 按 SSE 规范解析上游帧 —— `data: null` / 非对象帧不再打崩宿主进程；`event:` / `id:` / `retry:` / 注释行与多行 `data:` 正确解析；content-type 大小写不敏感；usage 每请求只记一次；非 SSE 200 先收字节再解码、透传 finish_reason、`{error:…}` 按流错误；原生 `tool_calls` 与 DSML 调用共用 index 空间重新编号。
+  - **代理生命周期（#59 / #58）**：客户端点停止 ⇒ AbortController 中止上游（透传不再挂死、shim 不再读完计费）；结果行照落一行、新增 `clientAborted` 字段、不报 outcome ⇒ 不计入连续失败；转发过滤 hop-by-hop 请求头（chunked 请求不再 502）；端口回退摘掉旧 listening 监听器；502 前加 headersSent 守卫。
+  - **连续失败计数（#55 / #53）**：ignored / skipped 成败都不碰计数（口径：未命中轮不能证明前缀可用，成功也不清零）；新建代理与「清零统计」时归零。行为变化见下。
+  - **「清空本轮填装」（#57 / #54）**：跳过状态从全局单槽改为按会话 Map，以 `turn/end` 复位（dsh-agent-loop 在 finally 必写）；代理按 `isSkipping(sessionId)` 判，认不出会话的请求不跳过（宁可多加一次前缀）。
+  - **模型路由（#64 / #60）**：只动本插件写的条目（按 baseURL 识别），撞名拒绝覆盖用户 provider；改名先删旧路由；apply 串行化（并发启用不再泄漏代理 / 端口漂移）；providerId 校验。
+  - **前缀参数持久化（#65 / #61）**：左栏保存前缀保留未列旋钮（ignoreFailures / armId / runId / sampling）；预设快照默认值旋钮（fallbackOrder `''` / include `[]` / exclude `[]` / sampling `null`）；0.21.6–0.21.11 旧全量预设读盘补默认，套用能真正还原。
+  - **summary store 竞态（#66 / #62）**：新增写代号 writeGen —— 写入之前发出的轮询回来丢弃并补拉；轮询在飞时收到 STATE_EVENT 不再被吞；卡片 `/state` 的全局摘要去掉后按本会话切；卡片后台读按代号拒收旧读。
+  - **实验页面板（#67 / #63）**：保存 / 套用看 `applied.ok` 并在失败时报原因；未保存草稿按格合并、不再被广播冲掉，新增「未保存 / 放弃修改」；「本轮（即将发出）」读已保存配置。
+- **行为说明**：① ignored / skipped 轮的成功不再清零连续失败计数；② 「清空本轮填装」只对能认领会话的请求生效（关联不上会话时照常加前缀）。
+- 验证：单测 **884 项 / 883 pass / 1 skip / 0 fail**（基线 830 + 新增 54，全部先红后绿）；测试只用本地桩上游，无真实网络调用。
+- 移植适配：`tests/impl-mount-harness.mjs` 的 `freePort` 重写（Windows 上原实现会 connect 假成功、并发测试进程会复用同一临时端口）；#55 的 skipped 用例改走真实关联通道（`llm/stream` 登记指纹）以适配 #57 的按会话语义。
+
 ## 0.21.11 — 2026-11-14
 - **修复：人格段偶发丢失（PR #63）**。四个兜底：① 段挂载逐项 try/catch —— 同名段冲突时只跳过这一条、其余照挂（不再整批失败）；② prime 幂等 —— 重复 prime 先撤旧闩锁，「保留旧闩锁」分支只在确实复用上一轮时才走（修掉假闩锁）；③ `ensureOverrideSections()` 只在有闩锁时补挂，被恢复的段保留原名（修掉改名重挂）；④ 装配结果为空时强制重挂（修掉 `emptyMount` 后一直空着）。壳侧 `/state` 新增 `diagnostics.issues`（只挑异常类：mountError / override_recovered / section_mount_failed / section_missing / remount / prime:kept-previous），排查不用再翻全量日志。新增 `tests/persona-mount.test.mjs` 5 条（先在 HEAD 上红、补丁后绿）。
 - **变更：对齐 DSH 0.2.2-rc.3 的官方注入渠道（PR #64）**。按 `docs/调查报告-官方注入渠道-0.2.2-rc.3.md` 的源码核对结果改名单，不动架构：

@@ -301,20 +301,37 @@ function sanitizePresetKnob(key, value) {
     case 'catalogPosition':
       return value === 'head' || value === 'tail' ? value : undefined
     case 'fallbackOrder':
-      return value === 'system-first' || value === 'user-first' ? value : undefined
+      // '' = 默认回退链：也是要快照 / 恢复的取值（缺键才表示「这份预设没带」）。
+      return value === '' || value === 'system-first' || value === 'user-first' ? value : undefined
     case 'maxEmittedCalls':
       return Number.isInteger(value) && value >= 1 && value <= 32 ? value : undefined
     case 'failureThreshold':
       return Number.isInteger(value) && value >= 1 && value <= 10 ? value : undefined
     case 'catalogInclude':
     case 'catalogExclude':
-      return presetNameList(value)
+      // [] = 不筛清单：同样要快照。
+      return Array.isArray(value) && value.length === 0 ? [] : presetNameList(value)
     case 'sampling':
+      // null / 成员全空 = 不覆盖采样：快照成 null（套用时清掉覆盖）；缺键 / 非法值仍然丢弃。
+      if (value === null) return null
+      if (value === undefined || typeof value !== 'object' || Array.isArray(value)) return undefined
+      if (Object.values(value).every((member) => member === null || member === undefined)) return null
       return samplingOf(value) ?? undefined
     default:
       return undefined
   }
 }
+
+/**
+ * 服务端「另存为前缀预设」一定会带上的旋钮（`reasoningConfigOf()` 对它们总有确定值）。
+ * 一条预设这 10 项齐全 ⇒ 它是全量快照；0.21.6–0.21.11 的全量快照里缺的那几项，保存时就是默认值。
+ */
+const PRESET_ALWAYS_SNAPSHOTTED = [
+  'shim', 'textualize', 'catalogRole', 'catalogMode', 'catalogDetail', 'catalogPosition',
+  'allowPassthrough', 'maxEmittedCalls', 'failureThreshold', 'ignoreFailures',
+]
+/** 取默认值时旧版本存不下来的 4 项：默认值本身。 */
+const presetDefaultKnobs = () => ({ fallbackOrder: '', catalogInclude: [], catalogExclude: [], sampling: null })
 
 /**
  * 从一份配置（已归一化的 `reasoningConfigOf()` 或一条已过白名单的预设）里取出要携带的旋钮。
@@ -335,6 +352,13 @@ export function presetKnobsOf(config) {
  * P2-10：除前缀本身外，还把「实验配置」那一组旋钮一起存 —— 否则换机器 / 换 profile 后
  * 无法还原出产生某批数据的配置。旧预设没有这些键，读进来照旧（套用时什么都不改）。
  */
+/** 预设旋钮；若是全量快照（见 PRESET_ALWAYS_SNAPSHOTTED），缺的默认值旋钮补齐。部分 / 仅前缀的预设原样。 */
+function presetKnobsWithDefaults(entry) {
+  const knobs = presetKnobsOf(entry)
+  if (!PRESET_ALWAYS_SNAPSHOTTED.every((key) => Object.hasOwn(knobs, key))) return knobs
+  return { ...presetDefaultKnobs(), ...knobs }
+}
+
 export function sanitizePrefixPresets(raw) {
   if (!Array.isArray(raw)) return []
   const seen = new Set()
@@ -350,8 +374,8 @@ export function sanitizePrefixPresets(raw) {
       contentPrefix: typeof entry.contentPrefix === 'string' ? entry.contentPrefix.slice(0, 2000) : '',
       // P1：预设也可以带触发标记（套用时一并写入 match；空 = 不改当前触发）。
       ...(typeof entry.match === 'string' && entry.match !== '' ? { match: entry.match.slice(0, 200) } : {}),
-      // P2-10：全量旋钮（有才写）。
-      ...presetKnobsOf(entry),
+      // P2-10：全量旋钮（有才写）。旧版本的全量快照没存默认值旋钮 ⇒ 读盘时补成默认，套用才能还原。
+      ...presetKnobsWithDefaults(entry),
     })
     if (out.length >= 30) break
   }
@@ -1639,9 +1663,13 @@ export function apply(ctx) {
   }
   /** 用户点了「清空本轮填装」的会话：下一轮第一个请求跳过前缀（记进日志，标明 skipped）。 */
   const prefixSkipQueued = new Set()
-  /** 本轮正在跳过前缀的会话 / 轮号：整轮都跳过（多步工具轮也不加），轮结束时清掉。 */
-  let skipTurnSession = ''
-  let skipTurnNumber = 0
+  /**
+   * 本轮正在跳过前缀的会话 → 轮号：整轮都跳过（多步工具轮也不加），轮结束时清掉。
+   * 按会话记（以前是全局单槽：A 跳过时并发会话 B 也被跳过，B 再排队跳过会把 A 的跳过提前结束）。
+   * 复位以 `turn/end` 为准 —— agent-loop 只在正常收尾时发 `agent/turn-stopping`，
+   * 报错 / 被中断 / pre-step reject 都不发，但 finally 里一定会写 `turn/end`。
+   */
+  const skipTurns = new Map()
   /** 最近一次代理启动失败的原因（面板要能看到「为什么模型选择不生效」）。 */
   let reasoningProxyError = null
   /** 最近一次 apply 的结果（enable/disable/repair 路由回给面板）。 */
@@ -1720,8 +1748,7 @@ export function apply(ctx) {
     const skipped = prefixSkipQueued.has(sessionId)
     if (skipped) {
       prefixSkipQueued.delete(sessionId)
-      skipTurnSession = sessionId
-      skipTurnNumber = Number(turn) || 0
+      skipTurns.set(sessionId, Number(turn) || 0)
     }
     const entry = prefixTurnEntry({
       sessionId,
@@ -1876,15 +1903,41 @@ export function apply(ctx) {
       return { error: String(error?.message ?? error) }
     }
   }
+  /**
+   * llm-pi-ai 里这个 provider 是不是本插件写的：baseURL 指向本机代理（http://127.0.0.1:<端口>/beta/v1）。
+   * 没有这条 ⇒ undefined；有但不是 ⇒ false（用户自己的 provider，比如 deepseek）；读不到配置 ⇒ undefined。
+   */
+  const reasoningRouteIsOurs = (settings, providerId) => {
+    try {
+      const forms = settings.describe() ?? {}
+      const list = Array.isArray(forms) ? forms : Object.values(forms)
+      const nameOf = (entry) => entry?.ns ?? entry?.id ?? entry?.entryId ?? entry?.key ?? ''
+      const entry = list.find((item) => nameOf(item) === 'llm-pi-ai') ?? list.find((item) => String(nameOf(item)).includes('pi-ai'))
+      const providers = entry?.value?.providers ?? entry?.form?.providers ?? entry?.values?.providers ?? entry?.config?.providers
+      if (providers === null || typeof providers !== 'object') return undefined
+      const profile = providers[providerId]
+      if (profile === undefined || profile === null) return undefined
+      return typeof profile.baseURL === 'string' && /^http:\/\/127\.0\.0\.1:\d+\/beta\/v1\/?$/.test(profile.baseURL)
+    } catch {
+      return undefined
+    }
+  }
+  /** 路由名被用户已有的 provider 占用时的提示（面板 / 左栏直接显示）。 */
+  const reasoningRouteTakenError = (providerId) => '模型路由名「' + providerId + '」已被一个现有 provider 占用（不是本插件写的），换一个名字'
+  /** 本进程最近一次成功写进 llm-pi-ai 的路由名：改名后据此删旧路由（null = 当前没有本插件写的路由）。 */
+  let reasoningRouteWritten = null
   const upsertReasoningRoute = async () => {
     const settings = settingsOf()
     if (settings === undefined) return { ok: false, error: 'settings 服务不可用' }
     const config = reasoningConfigOf()
+    // 绝不覆盖用户自己的 provider（路由名撞名时）。
+    if (reasoningRouteIsOurs(settings, config.providerId) === false) return { ok: false, conflict: true, error: reasoningRouteTakenError(config.providerId) }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const form = reasoningFormOf(settings)
       if (form.key === undefined) return { ok: false, error: '没有找到 llm-pi-ai 设置命名空间', keys: form.keys }
       try {
         await settings.update(form.key, { providers: { [config.providerId]: reasoningProviderProfile(config) } }, form.revision)
+        reasoningRouteWritten = config.providerId
         return { ok: true, providerId: config.providerId, providerIds: reasoningFormOf(settings).providerIds }
       } catch (error) {
         if (attempt === 1) return { ok: false, error: String(error?.message ?? error) }
@@ -1892,14 +1945,20 @@ export function apply(ctx) {
     }
     return { ok: false, error: '路由写入重试后仍失败' }
   }
-  const removeReasoningRoute = async () => {
+  /** 删本插件写的路由；不传 id 就删当前配置的路由名。用户自己的同名 provider 一律不碰。 */
+  const removeReasoningRoute = async (providerId) => {
     const settings = settingsOf()
     if (settings === undefined) return { ok: false, error: 'settings 服务不可用' }
-    const config = reasoningConfigOf()
+    const id = typeof providerId === 'string' && providerId !== '' ? providerId : reasoningConfigOf().providerId
+    if (reasoningRouteIsOurs(settings, id) === false) {
+      if (reasoningRouteWritten === id) reasoningRouteWritten = null
+      return { ok: true, skipped: 'not-ours', providerIds: reasoningFormOf(settings).providerIds }
+    }
     const form = reasoningFormOf(settings)
     if (form.key === undefined) return { ok: false, error: '没有找到 llm-pi-ai 设置命名空间' }
     try {
-      await settings.mutate(form.key, [{ op: 'unset', path: ['providers', config.providerId] }], form.revision)
+      await settings.mutate(form.key, [{ op: 'unset', path: ['providers', id] }], form.revision)
+      if (reasoningRouteWritten === id) reasoningRouteWritten = null
       return { ok: true, providerIds: reasoningFormOf(settings).providerIds }
     } catch (error) {
       return { ok: false, error: String(error?.message ?? error) }
@@ -1909,6 +1968,9 @@ export function apply(ctx) {
    * 连续失败计数：前缀轮被上游拒绝 / 回退透传达到阈值 ⇒ 自动关实验并记审计。
    * ⚠️ 代理侧现在把透传分成三态（skipped = 用户点了「清空本轮填装」、ignored = 本轮本就不该加前缀、
    * passthrough = 前缀被上游拒绝），只有最后一种该算失败 —— 否则跳过/未命中几次就会把实验自己关掉。
+   * ignored / skipped 这一轮根本没加前缀：它们**成败都不碰计数** —— 失败（429 / 5xx / 断流）不算，
+   * 成功也不清零（否则配了触发标记时，前缀轮失败和未命中轮交替出现就永远凑不满「连续」）。
+   * 计数在新建代理（停用→重新启用 / 换端口）和「清零统计」时归零，不带上一轮实验的旧账。
    *
    * 返回值：`{ autoDisabled: true }` 表示这一次真的把实验关掉了。代理要把它写进结果行
    * （**必须在写行之前**取用，否则那一行会漏掉「我这次是被谁关掉的」）。返回 `undefined` = 没关。
@@ -1916,6 +1978,7 @@ export function apply(ctx) {
    */
   let reasoningFailures = 0
   const onReasoningOutcome = (outcome) => {
+    if (outcome?.variant === 'ignored' || outcome?.variant === 'skipped') return
     const failed = outcome?.ok !== true || outcome.variant === 'passthrough'
     if (!failed) {
       reasoningFailures = 0
@@ -1953,11 +2016,12 @@ export function apply(ctx) {
     const proxy = createReasoningPrefixProxy({
       getConfig: () => {
         const current = reasoningConfigOf()
-        // 「清空本轮填装」：整轮跳过前缀（多步工具轮也不加）；轮结束时由 turn-stopping 复位。
-        const skipping = skipTurnSession !== '' && current.enabled
         return {
-          enabled: skipping ? false : current.enabled,
-          skipping,
+          enabled: current.enabled,
+          // 「清空本轮填装」按会话生效：代理认领到请求所属会话后问这里（认不出会话的请求不跳过）。
+          // 整轮跳过（多步工具轮也不加）；轮结束（turn/end 或 turn-stopping）时复位。
+          skipping: false,
+          isSkipping: (sessionId) => current.enabled && typeof sessionId === 'string' && skipTurns.has(sessionId),
           stripTools: true,
           textualize: current.textualize,
           shim: current.shim,
@@ -1996,6 +2060,8 @@ export function apply(ctx) {
       onOutcome: onReasoningOutcome,
     })
     const active = { proxy, port: config.port }
+    // 新代理 = 新一轮实验：上一轮（停用前）攒下的连续失败不带进来。
+    reasoningFailures = 0
     try {
       // listen 自带端口回退：46321 被别的实例 / 残留进程占住时会顺序向后找空位。
       active.port = await proxy.listen(config.port)
@@ -2030,8 +2096,24 @@ export function apply(ctx) {
   }
   /** 最近一次代理 / 路由写入的结果：面板据此显示「模型路由」状态，别再静默失败。 */
   const reasoningRouteState = { ok: null, error: null, at: null }
-  const applyReasoningState = async () => {
+  /**
+   * applyReasoningState 串行化：启用 / 停用 / 自动停用 / 启动自启任意两次重叠时排队执行。
+   * 不串行的话两次都会看到「还没有代理」，各起一个：后一个被端口占用挤到回退端口并写回状态，
+   * 前一个从 reasoningActive 上被覆盖掉，再也不会被关闭（端口常驻占用）。
+   */
+  let reasoningApplyChain = Promise.resolve()
+  const applyReasoningState = () => {
+    const run = reasoningApplyChain.then(() => applyReasoningStateNow())
+    reasoningApplyChain = run.catch(() => {})
+    return run
+  }
+  const applyReasoningStateNow = async () => {
     const config = reasoningConfigOf()
+    // 路由名改过（面板 / 左栏 / 直接改状态）：先删本插件之前写的旧路由，否则它留在模型选择器里、停用后指向死端口。
+    if (reasoningRouteWritten !== null && reasoningRouteWritten !== config.providerId) {
+      const stale = await removeReasoningRoute(reasoningRouteWritten)
+      if (stale.ok !== true) note({ seat: 'reasoning-prefix', staleRoute: reasoningRouteWritten, error: stale.error })
+    }
     if (!config.enabled) {
       const removed = await removeReasoningRoute()
       await stopReasoningProxy()
@@ -2215,6 +2297,8 @@ export function apply(ctx) {
     // 轮结束：把「最后轮数」+ 当时日志 stat 写进 sidecar（下次写状态不用再解压这份日志）。
     // 这里只尽力而为：日志可能还在追加导致 mtime/size 之后变化，校验失效只会多读一次，不会给错轮数。
     if (event?.type === 'turn/end' && typeof session?.id === 'string') {
+      // 「清空本轮填装」到此为止：turn/end 无论正常结束、报错还是被中断都会写（turn-stopping 只在正常收尾时发）。
+      skipTurns.delete(session.id)
       try {
         const turn = Number(event?.data?.turn)
         const file = sessionLogFile(session.id)
@@ -2250,10 +2334,7 @@ export function apply(ctx) {
     if (typeof id !== 'string') return
     openTurn.delete(id)
     // 轮结束：这一轮若被「清空填装」跳过，到此为止（下一轮恢复正常）。
-    if (skipTurnSession === id) {
-      skipTurnSession = ''
-      skipTurnNumber = 0
-    }
+    skipTurns.delete(id)
     if (pendingReprime.has(id)) await flushPendingReprime()
   })
 
@@ -2438,6 +2519,15 @@ export function apply(ctx) {
         return Response.json({ ok: false, enabled: false, error: '实验性功能未开启：先在左侧页实验区打开总开关。' }, noStore)
       }
       const current = reasoningConfigOf()
+      if (body.providerId !== undefined && body.providerId !== '') {
+        if (typeof body.providerId !== 'string' || !/^[a-z0-9-]+$/.test(body.providerId)) {
+          return Response.json({ ok: false, error: '模型路由名只能是小写字母/数字/短横线' }, noStore)
+        }
+        const settings = settingsOf()
+        if (settings !== undefined && reasoningRouteIsOurs(settings, body.providerId) === false) {
+          return Response.json({ ok: false, error: reasoningRouteTakenError(body.providerId) }, noStore)
+        }
+      }
       const next = {
         enabled: true,
         prefix: typeof body.prefix === 'string' ? body.prefix : current.prefix,
@@ -2460,7 +2550,11 @@ export function apply(ctx) {
         maxEmittedCalls: current.maxEmittedCalls,
         failureThreshold: current.failureThreshold,
       }
-      patchState({ ui: { reasoningPrefix: next } })
+      // 先摊开盘上原值：上面手写字段表没列的旋钮（ignoreFailures / armId / runId / sampling，以及以后新加的）原样保留。
+      // patchState 只在 ui 层浅合并，直接写 next 会把 reasoningPrefix 整份换掉。
+      const rawPrefix = readState()?.ui?.reasoningPrefix
+      const kept = rawPrefix !== null && typeof rawPrefix === 'object' && !Array.isArray(rawPrefix) ? rawPrefix : {}
+      patchState({ ui: { reasoningPrefix: { ...kept, ...next } } })
       const applied = await applyReasoningState()
       return Response.json({ ...await reasoningStatus(), applied }, noStore)
     }
@@ -2647,8 +2741,8 @@ export function apply(ctx) {
           proxyRunning: reasoningActive !== null,
           routeOk: route.ok === true && route.inConfig === true,
           skipQueued: prefixSkipQueued.has(sessionId),
-          skipping: skipTurnSession === sessionId && skipTurnSession !== '',
-          ready: config.enabled && reasoningActive !== null && route.ok === true && route.inConfig === true && !(skipTurnSession === sessionId && skipTurnSession !== ''),
+          skipping: skipTurns.has(sessionId),
+          ready: config.enabled && reasoningActive !== null && route.ok === true && route.inConfig === true && !skipTurns.has(sessionId),
           // P0-1：本会话**实际**用的路由是不是前缀路由。null = 未知（本会话还没发过请求）⇒ 客户端不得据此告警。
           // 刻意不动上面的 ready：ready 是「实验能力就绪」，sessionRoute 是「本会话有没有真的在跑」，
           // 合并会让所有尚未切换模型的会话都显示未就绪，把「没在用」误报成「坏了」。
@@ -2697,6 +2791,8 @@ export function apply(ctx) {
       }
       if (body.providerId !== undefined) {
         if (typeof body.providerId !== 'string' || !/^[a-z0-9-]+$/.test(body.providerId)) return reject('模型路由名只能是小写字母/数字/短横线')
+        const settings = settingsOf()
+        if (settings !== undefined && reasoningRouteIsOurs(settings, body.providerId) === false) return reject(reasoningRouteTakenError(body.providerId))
         patch.providerId = body.providerId
       }
       if (body.modelId !== undefined) {
@@ -2907,6 +3003,7 @@ export function apply(ctx) {
     }
     const experimentalStatsReset = async (request) => {
       reasoningActive?.proxy?.resetStats?.()
+      reasoningFailures = 0
       const body = await readJsonBody(request)
       return Response.json(await experimentalStatus({ sessionId: body.sessionId }), noStore)
     }
