@@ -268,6 +268,8 @@ export function everyTurnFor(state, agentId) {
     since: own ? Number(entry.since) || 0 : 0,
     // 约束承接（constraint-carry.js）：来自会话的预设带过来的标记，只认本会话那格。
     seam: own && entry.seam === true,
+    // 首轮注入保护（上下文压缩后补发首轮段）：缺 = 开；显式 false = 关（系统提示已经够用时可以不补）。
+    compactRefirst: entry.compactRefirst !== false,
     from: own ? 'session' : 'default',
     // 「下一轮发一次」首轮段（issue #19 B，turn-lock.js）：只认本会话那格、盖过章的。
     firstOnce: own && Number.isFinite(Number(entry.firstOnce?.atTurn)) ? { atTurn: Number(entry.firstOnce.atTurn) } : undefined,
@@ -1668,7 +1670,21 @@ export async function step(api, payload, decision) {
     } else {
       known = Math.max(stored, memory ?? 0)
     }
-    if (checkpoints > known) {
+    if (everyTurn.compactRefirst === false) {
+      // 保护关着：新压缩只记账、不补发（基线照样往前推 ⇒ 之后再打开不会为关着时的压缩补发）；已经挂上的补发也撤掉。
+      COMPACT_REFIRST.delete(agent.id)
+      if (checkpoints > known) {
+        COMPACT_SEEN.set(agent.id, checkpoints)
+        try {
+          const current = api.readState?.() ?? {}
+          const seen = current.compactSeen !== null && typeof current.compactSeen === 'object' ? current.compactSeen : {}
+          api.patchState?.({ compactSeen: { ...seen, [agent.id]: checkpoints } })
+        } catch {
+          // 写不进去只靠进程内基线。
+        }
+        note({ compact: 'refirst-off', id: agent.id, checkpoints, sent: known })
+      }
+    } else if (checkpoints > known) {
       if (!COMPACT_REFIRST.has(agent.id)) note({ compact: 'refirst-armed', id: agent.id, checkpoints, sent: known })
       COMPACT_REFIRST.set(agent.id, checkpoints)
       COMPACT_SEEN.set(agent.id, checkpoints)

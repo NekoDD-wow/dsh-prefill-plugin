@@ -270,6 +270,7 @@ export function mergeCarried(carried, base) {
     untilTurn: Math.max(0, Math.floor(Number(settings.untilTurn) || 0)),
     auto: settings.auto ?? {},
     seam: true,
+    ...(settings.compactRefirst === false ? { compactRefirst: false } : {}),
   }
 }
 

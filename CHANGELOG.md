@@ -5,6 +5,12 @@
 > **项目状态（2026-11-21）**：思考前缀 + 工具代理（`reasoning-prefix.js`）**已冻结** —— 保留为实验性功能（默认关、代码与面板都在，已装用户可继续用），但不再加新功能、不再做兼容性适配；后续版本只维护插件其他部分。
 
 
+## 未发布
+- **首轮注入保护加开关**（每轮注入一节，有「只在首轮」段时出现）：勾选框「上下文压缩后补发一次「只在首轮」段」，默认开（和以前一样）。系统提示已经够用、不想压缩后多发一段时可以关。
+  - 存在 `everyTurn[会话].compactRefirst`：缺 = 开，只存 `false`；随预设走（`sanitizeEveryTurn`、存预设、约束承接 `mergeCarried`、复制成新会话默认都带上），通配格 `'*'` 里关也生效。
+  - 关着时 `gate.js` 遇到新压缩检查点只记账：`state.compactSeen` 照样前推（之后再打开不会为关着时的压缩补发），诊断日志记 `{ compact: 'refirst-off' }`；已经挂上还没发出去的补发也撤掉。
+  - 单测：`tests/compaction-refirst.test.mjs` 加 4 项（关着不补 / 再打开只补新压缩、挂上后关掉撤销、缺省与预设字段、面板与文案）。
+
 ## 0.21.16 — 2026-11-22
 - **修复：纯净模式在 state-write / reprime 后漏 required 运行时上下文**（线上 session-d4225a91 turn 3）。现象：`working-directory:current` / `subagent:identity` 以 `user/message kind=runtime-context` 进入请求，模型思维链从角色视角退成「助手分析角色扮演」，正文变空；初始装配有 `neutralized`，`reprime:state-write` 之后没有。触发点是一次 `everyTurn` 开关写入后的重挂，不是 API URL / transport。
   - **`neutralizeEntries` 不再只信 latch 的 `done`**：`step` 的 `refreshContext` / agent 重建会把注册表恢复成原文；旧实现看到 `done` 有名字就跳过，导致重挂后的下一轮直接漏。现在按「当前正文是否仍为空 / 空遮蔽是否还在」判断，不空就重新清。

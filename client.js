@@ -2600,6 +2600,7 @@ window.__ModuleLoader__.load({
         checks: Array.isArray(entry.checks) ? entry.checks : [],
         auto,
         ...(hasBench ? { bench: entry.bench, benchTowers: entry.benchTowers ?? {} } : {}),
+        ...(entry.compactRefirst === false ? { compactRefirst: false } : {}),
       }
     }
     const tint = (color, pct = 12) => `color-mix(in srgb, ${color} ${pct}%, var(--dsw-alias-bg-base))`
@@ -4660,6 +4661,10 @@ window.__ModuleLoader__.load({
       lockFirstOnceSent: '「只在首轮」段已按要求发过一次，之后每轮只发其余部分。',
       lockFirstOnceOn: '下一轮会把「只在首轮」段发一次',
       lockFirstOnceOff: '已取消，「只在首轮」段不发',
+      compactRefirst: '上下文压缩后补发一次「只在首轮」段',
+      compactRefirstTip: '/compact 或自动压缩会把发过「只在首轮」段的那几轮压成摘要。开着：压缩后的下一轮把这段再发一次，并说明历史被压缩过。系统提示已经够用时可以关掉。',
+      compactRefirstOn: '已开：压缩后会补发「只在首轮」段',
+      compactRefirstOff: '已关：压缩后不补发「只在首轮」段',
     })
     Object.assign(en, {
       lockBadge: 'Locked',
@@ -4685,6 +4690,10 @@ window.__ModuleLoader__.load({
       lockFirstOnceSent: 'The "first turn only" parts were sent once as requested; each turn now sends only the rest.',
       lockFirstOnceOn: 'The "first turn only" parts will be sent once next turn',
       lockFirstOnceOff: 'Cancelled — "first turn only" parts will not be sent',
+      compactRefirst: 'Resend "first turn only" parts once after context compaction',
+      compactRefirstTip: '/compact or automatic compaction folds the turns that carried the "first turn only" parts into a summary. On: the next turn after a compaction sends them once more, noting that history was compacted. Turn it off when the system prompt is enough.',
+      compactRefirstOn: 'On — "first turn only" parts are resent after compaction',
+      compactRefirstOff: 'Off — "first turn only" parts are not resent after compaction',
     })
 
     // ── 左侧栏「预填装」页：布局、小节目录与文案（issue #45 PR D）──
@@ -7947,7 +7956,7 @@ window.__ModuleLoader__.load({
       if (entry.enabled === false || (text.trim() === '' && firstText.trim() === '')) return null
       const untilTurn = Math.max(0, Math.floor(Number(entry.untilTurn) || 0))
       const mode = entry.mode === 'auto' || entry.mode === 'until' || entry.mode === 'always' ? entry.mode : untilTurn > 0 ? 'until' : 'always'
-      return { text, firstText, mode, untilTurn, checks: Array.isArray(entry.checks) ? [...entry.checks].sort() : [] }
+      return { text, firstText, mode, untilTurn, checks: Array.isArray(entry.checks) ? [...entry.checks].sort() : [], ...(entry.compactRefirst === false ? { compactRefirst: false } : {}) }
     }
     function itemsShape(items) {
       return (Array.isArray(items) ? items : []).map((item) => (item?.role === 'assistant' ? ['a', String(item.text ?? ''), String(item.reasoning ?? '')] : ['u', String(item?.text ?? '')]))
@@ -10307,7 +10316,7 @@ window.__ModuleLoader__.load({
       const ownEveryTurn = state?.everyTurn?.[sessionId]
       const everyTurnStored =
         (String(ownEveryTurn?.text ?? '').trim() !== '' || String(ownEveryTurn?.firstText ?? '').trim() !== '')
-          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(Array.isArray(ownEveryTurn.bench) && ownEveryTurn.bench.length > 0 ? { bench: ownEveryTurn.bench, benchTowers: ownEveryTurn.benchTowers ?? {} } : {}), ...(ownEveryTurn.seam === true ? { seam: true } : {}) }
+          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(Array.isArray(ownEveryTurn.bench) && ownEveryTurn.bench.length > 0 ? { bench: ownEveryTurn.bench, benchTowers: ownEveryTurn.benchTowers ?? {} } : {}), ...(ownEveryTurn.seam === true ? { seam: true } : {}), ...(ownEveryTurn.compactRefirst === false ? { compactRefirst: false } : {}) }
           : null
       // 约束承接：取过会话 ⇒ 预设标记 fromSession，带上勾选的约束（服务端编成每轮注入，模式沿用 everyTurn）；
       // 没取过但本会话本身就是从这种预设开的 ⇒ 标记照样带上。
@@ -11388,6 +11397,8 @@ window.__ModuleLoader__.load({
         benchTowers: benchMigrated.benchTowers,
         // 约束承接的接缝标记：只认本会话那格，改面板时别丢。
         seam: state?.everyTurn?.[sessionId]?.seam === true,
+        // 首轮注入保护（压缩后补发首轮段）：缺 = 开。
+        compactRefirst: storedEveryTurn?.compactRefirst !== false,
       }
       const writeEveryTurn = async (nextValue, override) => {
         setEveryTurnDraft(nextValue)
@@ -11414,6 +11425,8 @@ window.__ModuleLoader__.load({
           auto,
           ...(hasBench ? { bench: nextValue.bench, benchTowers: nextValue.benchTowers ?? {} } : {}),
           ...(nextValue.seam === true ? { seam: true } : {}),
+          // 首轮注入保护开关：只存关。
+          ...(nextValue.compactRefirst === false ? { compactRefirst: false } : {}),
           // 「下一轮发一次」首轮段（issue #19 B）：只在勾 / 取消时带，服务端盖成 { atTurn }；没带 = 沿用。
           ...(typeof nextValue.firstOnce === 'boolean' ? { firstOnce: nextValue.firstOnce } : {}),
         }
@@ -12389,6 +12402,28 @@ window.__ModuleLoader__.load({
                 }),
                 t('lockFirstOnce'),
               ),
+            )
+          : null,
+        // 首轮注入保护开关：有「只在首轮」段才有意义（压缩后补发的就是它）。
+        everyTurn.firstText.trim() !== ''
+          ? h(
+              'label',
+              { style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }, title: t('compactRefirstTip'), 'data-prefill-compact-refirst-row': '' },
+              h('input', {
+                type: 'checkbox',
+                'data-prefill-compact-refirst': '',
+                checked: everyTurn.compactRefirst !== false,
+                onChange: (event) => {
+                  const on = event.target.checked
+                  void writeEveryTurn({ ...everyTurn, compactRefirst: on })
+                    .then(() => {
+                      setEveryTurnDraft(null)
+                      flash(on ? t('compactRefirstOn') : t('compactRefirstOff'))
+                    })
+                    .catch(failed())
+                },
+              }),
+              t('compactRefirst'),
             )
           : null,
         // v0.15：按钮行（塔在前、积木在后）+ 成本/预览 + 工作台 + 重叠层 + 右键菜单
