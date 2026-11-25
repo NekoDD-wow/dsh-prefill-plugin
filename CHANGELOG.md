@@ -5,6 +5,13 @@
 > **项目状态（2026-11-21）**：思考前缀 + 工具代理（`reasoning-prefix.js`）**已冻结** —— 保留为实验性功能（默认关、代码与面板都在，已装用户可继续用），但不再加新功能、不再做兼容性适配；后续版本只维护插件其他部分。
 
 
+## 0.21.17 — 2026-11-26
+- **新增：首轮注入保护加开关 `everyTurn.compactRefirst`**（移植公开镜像 PR #89 / issue #88，贡献者 @dymk1ex1xz）。每轮注入一节在有「只在首轮」段时显示勾选框「上下文压缩后补发一次「只在首轮」段」，默认开（与原行为一致）；系统提示已够用、不想压缩后再补发一段时可按会话关闭。
+  - **存储与流转**：缺省为开，关闭时仅落盘 `compactRefirst: false`；`everyTurnFor`（本会话与通配格 `'*'`）、`sanitizeEveryTurn`、`mergeCarried`、客户端写每轮注入 / 存预设 / 复制为新会话默认 / 改动指纹均带住该字段。
+  - **闸门行为**：开关关着时遇到新的压缩检查点不补发，照常把 `state.compactSeen` 往前推（之后再打开不会为关着期间的压缩补发），诊断日志记 `{ compact: 'refirst-off' }`；已挂起未发出的补发一并撤掉。
+  - **移植补修（边界）**：撤掉已挂起但尚未发出的补发时，若磁盘 `state.compactSeen` 尚未追平，也一并落盘 `checkpoints` —— 防止「挂起 → 关开关撤掉 → 重启 DSH → 再打开」重发旧压缩。
+- 验证：新增 `tests/compaction-refirst.test.mjs` 4 项（含重启落盘边界断言，在基线与原 PR 代码上均先红后绿）；全量单测 **928 项 / 927 pass / 1 skip / 0 fail**。
+
 ## 0.21.16 — 2026-11-22
 - **修复：纯净模式在 state-write / reprime 后漏 required 运行时上下文**（线上 session-d4225a91 turn 3）。现象：`working-directory:current` / `subagent:identity` 以 `user/message kind=runtime-context` 进入请求，模型思维链从角色视角退成「助手分析角色扮演」，正文变空；初始装配有 `neutralized`，`reprime:state-write` 之后没有。触发点是一次 `everyTurn` 开关写入后的重挂，不是 API URL / transport。
   - **`neutralizeEntries` 不再只信 latch 的 `done`**：`step` 的 `refreshContext` / agent 重建会把注册表恢复成原文；旧实现看到 `done` 有名字就跳过，导致重挂后的下一轮直接漏。现在按「当前正文是否仍为空 / 空遮蔽是否还在」判断，不空就重新清。

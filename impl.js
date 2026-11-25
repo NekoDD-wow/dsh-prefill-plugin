@@ -841,6 +841,8 @@ export function sanitizeEveryTurn(raw) {
     ...(bench.length > 0 ? { bench, benchTowers } : {}),
     // 约束承接：来自会话的预设，新会话第一条真实消息那轮发「首轮段 + 接缝提醒」（constraint-carry.js）。
     ...(raw.seam === true ? { seam: true } : {}),
+    // 首轮注入保护开关：只存关（缺 = 开），随预设走。
+    ...(raw.compactRefirst === false ? { compactRefirst: false } : {}),
   }
 }
 

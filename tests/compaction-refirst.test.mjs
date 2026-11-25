@@ -126,3 +126,69 @@ test("「只注入前 N 轮」已经发完时不硬补：压缩后照旧不再�
   await h.runTurn("第二句")
   assert.equal(injected(h.requests[1].messages).length, 0, "只注入前 1 轮：不该因为压缩又冒出来")
 })
+
+// ── 开关：everyTurn[会话].compactRefirst === false ⇒ 压缩后不补发（系统提示已经够用时） ──
+const offEntry = (sid, extra = {}) => ({ [sid]: { enabled: true, text: "【每轮提醒】", firstText: "【首轮专用段】", mode: "always", compactRefirst: false, ...extra } })
+
+test("开关关：压缩后照发正常段、不补首轮段；基线照样前推（之后再打开不为关着时的压缩补发）；再压缩才补", async () => {
+  const h = harness({ sid: "t1", state: { everyTurn: offEntry("t1") } })
+  await h.runTurn("第一句")
+  assert.match(textOf(injected(h.requests[0].messages)[0]), /首轮专用段/, "关掉的只是压缩后补发，第一轮照常发首轮段")
+  await h.runTurn("第二句")
+  h.log.push(checkpoint())
+  await h.runTurn("第三句")
+  const third = injected(h.requests[2].messages)
+  assert.equal(third.length, 1)
+  assert.match(textOf(third[0]), /每轮提醒/, "开关关着：压缩后发正常段")
+  assert.doesNotMatch(textOf(third[0]), /首轮专用段|历史被压缩成摘要/)
+  assert.deepEqual(h.st.compactSeen, { t1: 1 }, "关着也要把已见到的检查点记下")
+  assert.ok(h.notes.some((e) => e.compact === "refirst-off"), "诊断日志里看得到「压缩了但开关关着」")
+  assert.ok(!h.notes.some((e) => e.compact === "refirst-armed"))
+  // 再打开：关着时那次压缩不补。
+  delete h.st.everyTurn.t1.compactRefirst
+  await h.runTurn("第四句")
+  assert.match(textOf(injected(h.requests[3].messages)[0]), /每轮提醒/, "打开后不为关着时的压缩补发")
+  // 打开后的新压缩照常补。
+  h.log.push(checkpoint())
+  await h.runTurn("第五句")
+  assert.match(textOf(injected(h.requests[4].messages)[0]), /首轮专用段/, "打开后的新压缩要补")
+})
+
+test("开关：已经挂上补发、还没发出去就关掉 ⇒ 撤掉，不发，且 compactSeen 落盘（重启后再开不重补）", async () => {
+  // 第 2 轮恰好「只注入前 1 轮」发完 ⇒ 挂上但不发（磁盘 compactSeen 还是 0）；之后改成一直注入并关掉开关。
+  const h = harness({ sid: "t2", state: { everyTurn: { t2: { enabled: true, text: "【每轮提醒】", firstText: "【首轮专用段】", mode: "until", untilTurn: 1 } } } })
+  await h.runTurn("第一句")
+  h.log.push(checkpoint())
+  await h.runTurn("第二句")
+  assert.ok(h.notes.some((e) => e.compact === "refirst-armed"), "压缩后挂上了补发")
+  assert.deepEqual(h.st.compactSeen, { t2: 0 }, "挂起但未发出前，磁盘 compactSeen 仍为 0")
+  h.st.everyTurn = offEntry("t2")
+  await h.runTurn("第三句")
+  const third = injected(h.requests[2].messages)
+  assert.equal(third.length, 1)
+  assert.match(textOf(third[0]), /每轮提醒/, "关掉之后挂着的补发不再发")
+  assert.deepEqual(h.st.compactSeen, { t2: 1 }, "撤掉挂起时也要把 compactSeen 落盘，防止重启后再打开重发旧压缩")
+  assert.ok(h.notes.some((e) => e.compact === "refirst-off"), "撤掉挂起也要记 refirst-off")
+})
+
+test("开关：everyTurnFor 缺省 = 开，显式 false = 关；预设 / 约束承接 / 通配格都带得住 false", async () => {
+  const { everyTurnFor } = await import("../gate.js")
+  const { sanitizeEveryTurn } = await import("../impl.js")
+  const { mergeCarried } = await import("../constraint-carry.js")
+  assert.equal(everyTurnFor({ everyTurn: { s: { text: "a", firstText: "b" } } }, "s").compactRefirst, true)
+  assert.equal(everyTurnFor({ everyTurn: { s: { text: "a", firstText: "b", compactRefirst: false } } }, "s").compactRefirst, false)
+  assert.equal(everyTurnFor({ everyTurn: { "*": { text: "a", firstText: "b", compactRefirst: false } } }, "s").compactRefirst, false, "新会话默认（'*'）里关掉也生效")
+  assert.equal(sanitizeEveryTurn({ text: "a", firstText: "b", compactRefirst: false }).compactRefirst, false, "存预设要带上关")
+  assert.equal("compactRefirst" in sanitizeEveryTurn({ text: "a", firstText: "b" }), false, "开着（缺省）不写进预设")
+  assert.equal("compactRefirst" in sanitizeEveryTurn({ text: "a", firstText: "b", compactRefirst: true }), false)
+  const carried = mergeCarried([{ id: "x", text: "约束", first: false }], { mode: "always", compactRefirst: false })
+  assert.equal(carried?.compactRefirst, false, "从会话取约束存预设时沿用开关")
+})
+
+test("开关：面板有勾选框，写每轮注入 / 存预设 / 复制成新会话默认时带上关", async () => {
+  const { readFileSync } = await import("node:fs")
+  const client = readFileSync(new URL("../client.js", import.meta.url), "utf8")
+  assert.ok(client.includes("'data-prefill-compact-refirst'"), "每轮注入一节里有开关")
+  assert.equal((client.match(/compactRefirst === false \? \{ compactRefirst: false \} : \{\}/g) ?? []).length >= 4, true, "writeEveryTurn / 存预设 / 新会话默认 / 改动指纹 都要带上关")
+  for (const key of ["compactRefirst:", "compactRefirstTip:", "compactRefirstOn:", "compactRefirstOff:"]) assert.equal(client.split(key).length - 1 >= 2, true, `中英文案都要有 ${key}`)
+})
