@@ -28,25 +28,121 @@ window.__ModuleLoader__.load({
       ReactDOM = null
     }
 
+    // <tokens>
+    /**
+     * Design Tokens 底座（v2 M1）：
+     * - 审美定调：Linear/Stripe 条理骨架 + Gemini 柔和质感（Tonal Surface 柔和色阶底块、舒展圆角 8/10/14/999、润泽状态层）
+     * - 100% 基于宿主 15 个 `--dsw-alias-*` 亮/暗双主题变量，零硬编码色、零色值 transition。
+     */
+    const mix = (token, pct, base = 'transparent') => `color-mix(in srgb, ${token} ${pct}%, ${base})`
+    const T = {
+      font: { xs: 11, sm: 12, md: 13, lg: 14, xl: 16, kpi: 20 },
+      radius: { sm: 8, md: 10, lg: 14, pill: 999 },
+      space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 },
+      surface: {
+        L0: 'var(--dsw-alias-bg-base)',
+        L1: 'var(--dsw-alias-bg-layer-1)',
+        L2: 'var(--dsw-alias-bg-layer-2)',
+        L3: 'var(--dsw-alias-bg-layer-3)',
+        float: {
+          background: 'var(--dsw-alias-bg-base)',
+          border: '1px solid var(--dsw-alias-border-l2)',
+          boxShadow: '0 12px 40px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.06)',
+        },
+        card: {
+          background: 'var(--dsw-alias-bg-layer-1)',
+          border: '1px solid var(--dsw-alias-border-l1)',
+          borderRadius: 10,
+        },
+      },
+      layout: {
+        row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+        col: { display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 },
+        between: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+        trunc: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+        num: { fontVariantNumeric: 'tabular-nums' },
+      },
+    }
+    /**
+     * 组件级作用域 <style>（仅挂载在根容器内部，绝不放进 <button>，严禁全局选择器污染宿主）：
+     * - 柔和状态层 :hover（通过 inset box-shadow 覆盖任意内联底色，且保留已有 boxShadow 如 TOC 底边条）
+     * - 轻压 :active（仅 transform，遵循 motion=off 与 prefers-reduced-motion）
+     * - 2px 柔和 :focus-visible 焦点环 + 6px 细滚动条；零色值 transition（切换亮/暗主题瞬间到位）。
+     */
+    const buildScopedCss = (scope) => {
+      const fieldSel = ':is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]), textarea, select)'
+      const focusBorder = mix('var(--dsw-alias-brand-primary)', 48, 'var(--dsw-alias-border-l2)')
+      const focusRing = `0 0 0 3px ${mix('var(--dsw-alias-brand-primary)', 14)}`
+      return [
+        `${scope} :is(button, [role="tab"]):not(:disabled):not([aria-disabled="true"]):not([role="switch"]):not([data-prefill-save]):hover { box-shadow: inset 0 0 0 999px ${mix('var(--dsw-alias-brand-primary)', 7)}; }`,
+        `${scope} [data-prefill-save]:not(:disabled):not([aria-disabled="true"]):hover { opacity: 0.9; }`,
+        `${scope}:not([data-prefill-motion="off"]) button:not(:disabled):not([aria-disabled="true"]):not([role="switch"]):active { transform: scale(0.98); }`,
+        `${scope} :is(button, a, input[type="checkbox"], input[type="radio"], [role="tab"], [role="switch"], [tabindex]):not([data-prefill-dialog-anchor]):focus-visible { outline: 2px solid ${mix('var(--dsw-alias-brand-primary)', 42)}; outline-offset: 2px; }`,
+        // 表单三态（方案 B · Linear × Gemini 质感）：独立控件 hover/focus、容器 focus-within 与内部防双环
+        `${scope} ${fieldSel}:not(:disabled):not([aria-disabled="true"]):not([data-prefill-editor-input]):hover { border-color: var(--dsw-alias-border-l2) !important; }`,
+        `${scope} ${fieldSel}:not(:disabled):not([aria-disabled="true"]):not([data-prefill-editor-input]):focus { background: var(--dsw-alias-bg-base) !important; border-color: ${focusBorder} !important; box-shadow: ${focusRing} !important; outline: none !important; }`,
+        `${scope} :is(input, textarea)::placeholder { color: var(--dsw-alias-label-tertiary); opacity: 0.85; }`,
+        `${scope} ${fieldSel}:is(:disabled, [aria-disabled="true"]) { opacity: 0.55; cursor: not-allowed; }`,
+        `${scope} [data-prefill-editor-input="1"] { outline: none !important; box-shadow: none !important; border-color: transparent !important; }`,
+        `${scope} [data-prefill-editor-input="1"]:focus { outline: none !important; box-shadow: none !important; border-color: transparent !important; }`,
+        `${scope} [data-prefill-editor-input="1"]:focus-visible { outline: none !important; box-shadow: none !important; border-color: transparent !important; }`,
+        `${scope} [data-prefill-search-box="1"] input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }`,
+        `${scope} :is([data-prefill-editor-shell="1"], [data-prefill-search-box="1"]):not([data-disabled="true"]):not([aria-disabled="true"]):hover { border-color: var(--dsw-alias-border-l2) !important; }`,
+        `${scope} :is([data-prefill-editor-shell="1"], [data-prefill-search-box="1"]):not([data-disabled="true"]):not([aria-disabled="true"]):focus-within { background: var(--dsw-alias-bg-base) !important; border-color: ${focusBorder} !important; box-shadow: ${focusRing} !important; }`,
+        `${scope} :is([data-prefill-editor-shell="1"], [data-prefill-search-box="1"]):is([data-disabled="true"], [aria-disabled="true"]) { opacity: 0.55; cursor: not-allowed; }`,
+        `${scope} select option { background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }`,
+        `${scope}, ${scope} * { scrollbar-width: thin; scrollbar-color: ${mix('var(--dsw-alias-label-tertiary)', 45)} transparent; }`,
+        `${scope}::-webkit-scrollbar, ${scope} *::-webkit-scrollbar { width: 6px; height: 6px; }`,
+        `${scope}::-webkit-scrollbar-track, ${scope} *::-webkit-scrollbar-track { background: transparent; }`,
+        `${scope}::-webkit-scrollbar-thumb, ${scope} *::-webkit-scrollbar-thumb { background: ${mix('var(--dsw-alias-label-tertiary)', 38)}; border-radius: 999px; }`,
+        `${scope}::-webkit-scrollbar-thumb:hover, ${scope} *::-webkit-scrollbar-thumb:hover { background: ${mix('var(--dsw-alias-label-secondary)', 55)}; }`,
+        `@media (prefers-reduced-motion: reduce) { ${scope} button:active { transform: none; } }`,
+      ].join('\n')
+    }
+    const SCOPED_STYLE_CARD = buildScopedCss('[data-prefill-card-panel]')
+    const SCOPED_STYLE_PAGE = [
+      buildScopedCss('[data-prefill-page]'),
+      '[data-prefill-page] [data-prefill-overview-row]:hover { border-color: var(--dsw-alias-border-l2); }',
+      '[data-prefill-page] [data-prefill-kpi]:hover { border-color: var(--dsw-alias-border-l2); }',
+      '[data-prefill-page] [data-prefill-lib-tile]:hover { border-color: var(--dsw-alias-border-l2); }',
+      // 保护冻结 reasoning 分节两处展开 S.input 的 <textarea>：恢复多行高度与上下内边距，避免文字贴边（不改动冻结分节源码）。
+      '[data-prefill-page] textarea:is([data-prefill-reasoning-prefix], [data-prefill-reasoning-content-prefix]) { height: auto !important; padding: 8px 10px !important; line-height: 1.5; }',
+    ].join('\n')
+    // </tokens>
+
     // <motion>
     /**
      * 动效（docs/规划-动效.md）：一处常量 + 档位 + `play()` 包装 + presence（延迟卸载）。
      * 原则：只动 transform / opacity；短（120–260ms，出场快于入场）；不引库（WAAPI）；流式时收敛；可关。
      * 档位 full / lite / off：
      *   full = 全部；
-     *   lite = 只留淡入淡出：spring 换成 ease，去掉 transform（位移 / 缩放 / 旋转），位移类（FLIP）和装饰类不播；
+     *   lite = 只留淡入淡出：spring / springSnappy 换成 ease，去掉 transform（位移 / 缩放 / 旋转），位移类（FLIP）和装饰类不播；
      *   off  = 不调用 animate，状态直接切换。
      * 档位 = 用户手选（state.ui.motion，全局设置，不进预设、不随导出）?? （系统「减少动态效果」? lite : full）；
      * 系统设置变化会被监听（matchMedia change），各组件经 MOTION_EVENT 重渲染。
      * 这一段只依赖 window，单测切出来直接跑（tests/motion.test.mjs）。
      */
+    const HAS_LINEAR_EASING = (() => {
+      try {
+        const css = typeof window !== 'undefined' && window?.CSS ? window.CSS : typeof CSS !== 'undefined' ? CSS : null
+        return typeof css?.supports === 'function' && css.supports('animation-timing-function', 'linear(0, 1)') === true
+      } catch {
+        return false
+      }
+    })()
+    // 临界阻尼微过冲弹簧（ζ=0.826, ω=8.0，峰值 1.010 ≤ 1.2%，纯 WAAPI 零依赖）；老引擎回退 Material 3 Emphasized Decelerate。
+    const SPRING_SNAPPY_LINEAR =
+      'linear(0, 0.0641, 0.2054, 0.3701, 0.528, 0.6641, 0.7731, 0.8557, 0.915, 0.9554, 0.9815, 0.9971, 1.0055, 1.0092, 1.01, 1.0093, 1.0079, 1.0062, 1.0046, 1.0033, 1)'
+    const SPRING_SNAPPY_FALLBACK = 'cubic-bezier(0.2, 0, 0, 1)'
     const MOTION = {
       fast: 120,
       base: 180,
       slow: 260,
       ease: 'cubic-bezier(.2,.7,.2,1)', // 入场 / 位移
       easeOut: 'cubic-bezier(.4,0,1,1)', // 出场
+      easeGem: 'cubic-bezier(0.2, 0, 0, 1)', // Material 3 Emphasized Decelerate
       spring: 'cubic-bezier(.34,1.56,.64,1)', // 落地、小点弹出（带轻微回弹）
+      springSnappy: HAS_LINEAR_EASING ? SPRING_SNAPPY_LINEAR : SPRING_SNAPPY_FALLBACK, // 浮层入场临界阻尼弹簧（过冲 ≤1.2%）
       stagger: 30,
     }
     // 手机 / 窄屏阈值（2026-11：手机适配）。放在 <motion> 段里是因为 cardGeometry 用它，
@@ -56,6 +152,9 @@ window.__ModuleLoader__.load({
     // 手机卡片：官方顶栏 48px（主区 box y=48）+ 8px 呼吸；底部 8px 同样留白。
     const PHONE_CARD_TOP = 56
     const PHONE_CARD_INSET = 8
+    // 桌面 / 窄屏弹出卡片高度：兼顾内容可读与对话区留白，大屏按上限封顶避免撑满纵深。
+    const CARD_HEIGHT_RATIO = 0.56
+    const CARD_HEIGHT_MAX = 540
     const MOTION_LEVELS = ['full', 'lite', 'off']
     const MOTION_EVENT = 'dsh-prefill:motion'
     const REDUCE_QUERY = '(prefers-reduced-motion: reduce)'
@@ -112,7 +211,11 @@ window.__ModuleLoader__.load({
       emitMotion()
     }
     const MOVE_PROPS = ['transform', 'translate', 'scale', 'rotate']
-    /** lite：每帧去掉位移 / 缩放 / 旋转、spring 换 ease；去完一帧都没剩下可动的属性 ⇒ null（不播）。 */
+    /** 识别全部弹簧曲线（含旧 spring、新 springSnappy 及其 linear() 预采样曲线），供 lite 档统一降级为 ease。 */
+    function isSpringEasing(easing) {
+      return easing === MOTION.spring || easing === MOTION.springSnappy || (typeof easing === 'string' && easing.startsWith('linear('))
+    }
+    /** lite：每帧去掉位移 / 缩放 / 旋转、弹簧换 ease；去完一帧都没剩下可动的属性 ⇒ null（不播）。 */
     function liteFrames(keyframes) {
       if (!Array.isArray(keyframes)) return null
       let live = false
@@ -120,7 +223,7 @@ window.__ModuleLoader__.load({
         const next = {}
         for (const [key, value] of Object.entries(frame ?? {})) {
           if (MOVE_PROPS.includes(key)) continue
-          if (key === 'easing' && value === MOTION.spring) next.easing = MOTION.ease
+          if (key === 'easing' && isSpringEasing(value)) next.easing = MOTION.ease
           else next[key] = value
           if (!['offset', 'easing', 'composite', 'transformOrigin'].includes(key)) live = true
         }
@@ -205,7 +308,7 @@ window.__ModuleLoader__.load({
         if (kind === 'move' || kind === 'decor') return null
         frames = liteFrames(keyframes)
         if (frames === null) return null
-        if (timing.easing === MOTION.spring) timing.easing = MOTION.ease
+        if (isSpringEasing(timing.easing)) timing.easing = MOTION.ease
       }
       if (defer === true || (deferrable(kind, cue) && streamRoot(el) !== null)) {
         enqueueCue(el, keyframes, { ...opts, defer: undefined }, defer === true ? null : streamRoot(el))
@@ -276,7 +379,7 @@ window.__ModuleLoader__.load({
     }
     /**
      * 卡片几何（纯函数）：宽 clamp(560px, 62vw, 920px) 但不超过视口；以输入框为中线、贴在输入框上方 10px；
-     * 高度 = min(70vh, 输入框上方剩余空间 − 20px)，至少 200。**高度固定**（P1-2）：不随小节内容变，
+     * 高度 = min(56vh, 540px, 输入框上方剩余空间 − 20px)，至少 200。**高度固定**（P1-2）：不随小节内容变，
      * 内容区自己滚动 ⇒ 底部锚定时切小节 / 套预设 / 撤销条出现，顶边都不动。窄屏（<820）同一套。
      * box = 输入框外框 { top, left, width } 或 null；inputTop = 找不到外框时的输入框顶。
      * touchScreen（第 5 参，默认 false）= 当前是手机 / 触屏设备：只有**触屏**的矮视口才切「顶栏之下的浮层（模态）」；
@@ -306,13 +409,14 @@ window.__ModuleLoader__.load({
         return { width, left, bottom: PHONE_CARD_INSET, maxHeight: height, height, narrow: true, phone: false, short: true, vw, vh }
       }
       const bottom = Math.round(vh - top + 10)
-      // 窄屏（481–819）与矮视口：保证 cardTop ≥ 56（剩余空间不够就矮一点）；桌面宽窗口（≥820 且高度够）保持原公式。
+      // 窄屏（481–819）与矮视口：保证 cardTop ≥ 56（剩余空间不够就矮一点）；桌面宽窗口（≥820 且高度够）按 56vh 与 540px 上限收口。
       const narrow = vw < NARROW_MAX
       const clampTop = narrow || short
       const room = Math.max(120, Math.round(top - 10 - PHONE_CARD_TOP))
+      const preferredHeight = Math.min(vh * CARD_HEIGHT_RATIO, CARD_HEIGHT_MAX)
       const maxHeight = clampTop
-        ? Math.max(Math.min(200, room), Math.round(Math.min(vh * 0.7, room)))
-        : Math.round(Math.max(200, Math.min(vh * 0.7, top - 20)))
+        ? Math.max(Math.min(200, room), Math.round(Math.min(preferredHeight, room)))
+        : Math.round(Math.max(200, Math.min(preferredHeight, top - 20)))
       return { width, left, bottom, maxHeight, height: maxHeight, narrow, phone: false, short: false, vw, vh }
     }
     function sameGeometry(a, b) {
@@ -1081,6 +1185,7 @@ window.__ModuleLoader__.load({
      * 减少动效：只淡入；关：直接出现。用户点出来的直接反馈，流式中照常。
      */
     const MENU_GROW = [{ opacity: 0, transform: 'scale(.92)' }, { opacity: 1, transform: 'none' }]
+    const MENU_EXIT = [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }]
     function menuOrigin(box, pointer) {
       if (!box || !Number.isFinite(box.left) || !Number.isFinite(box.top) || !pointer || !Number.isFinite(pointer.x) || !Number.isFinite(pointer.y)) return '0px 0px'
       const x = Math.round(Math.min(Math.max(pointer.x - box.left, 0), Math.max(0, box.width || 0)))
@@ -1092,6 +1197,11 @@ window.__ModuleLoader__.load({
         const box = typeof el?.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null
         const origin = menuOrigin(box, pointer)
         return play(el, MENU_GROW.map((frame) => ({ ...frame, transformOrigin: origin })), { duration: MOTION.fast, easing: MOTION.ease, cue: 'press' })
+      },
+      exit(el, pointer, unmount) {
+        const box = typeof el?.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null
+        const origin = menuOrigin(box, pointer)
+        return presenceExit(play(el, MENU_EXIT.map((frame) => ({ ...frame, transformOrigin: origin })), { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards', cue: 'press' }), unmount, MOTION.fast + 240)
       },
     }
     /**
@@ -1259,40 +1369,80 @@ window.__ModuleLoader__.load({
     }
     /**
      * presence 的组件版：value 有值 ⇒ 显示（第一次出现播 enter）；变空 ⇒ 播 exit，结束后才卸载（presenceExit）；
-     * 退场中又有值 ⇒ abort 退场接着显示。返回 [正在显示的值, ref]。
+     * 退场中又有值 ⇒ abort 退场接着显示。返回 [正在显示的值, ref, closing]。
      */
-    function usePresence(value, enter, exit) {
-      const present = value !== null && value !== undefined && value !== ''
+    function usePresence(value, enter, exit, opts = {}) {
+      const present = value !== null && value !== undefined && value !== '' && value !== false
       const [shown, setShown] = React.useState(present ? value : null)
+      const active = present ? value : shown
       const ref = React.useRef(null)
       const exitCtl = React.useRef(null)
-      const wasShown = React.useRef(false)
+      const enterAnim = React.useRef(null)
+      const prevActive = React.useRef(null)
+      const enterDuration = opts?.enterDuration ?? MOTION.base
+      const enterEasing = opts?.enterEasing ?? MOTION.ease
+      const exitDuration = opts?.exitDuration ?? MOTION.fast
+      const exitEasing = opts?.exitEasing ?? MOTION.easeOut
+      const hasEnter = Array.isArray(enter) && enter.length > 0
       React.useLayoutEffect(() => {
         if (present) {
+          const wasExiting = exitCtl.current !== null
           exitCtl.current?.abort()
           exitCtl.current = null
           setShown(value)
+          if (wasExiting && hasEnter) {
+            enterAnim.current?.cancel?.()
+            enterAnim.current = play(ref.current, enter, { duration: enterDuration, easing: enterEasing })
+          }
           return
         }
         if (shown === null || exitCtl.current !== null) return
-        const animation = play(ref.current, exit, { duration: MOTION.fast, easing: MOTION.easeOut, fill: 'forwards' })
-        exitCtl.current = presenceExit(animation, () => {
-          exitCtl.current = null
-          setShown(null)
-        }, MOTION.fast + 240)
+        enterAnim.current?.cancel?.()
+        enterAnim.current = null
+        const animation = play(ref.current, exit, { duration: exitDuration, easing: exitEasing, fill: 'forwards' })
+        exitCtl.current = presenceExit(
+          animation,
+          () => {
+            exitCtl.current = null
+            setShown(null)
+          },
+          exitDuration + 240,
+        )
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [value])
       React.useLayoutEffect(() => {
-        const has = shown !== null
-        if (has && !wasShown.current) play(ref.current, enter, { duration: MOTION.base, easing: MOTION.ease })
-        wasShown.current = has
+        const has = active !== null
+        const switched = has && opts?.replayOnChange === true && prevActive.current !== null && prevActive.current !== active
+        if (has && hasEnter && (prevActive.current === null || switched)) {
+          enterAnim.current?.cancel?.()
+          enterAnim.current = play(ref.current, enter, { duration: enterDuration, easing: enterEasing })
+        }
+        prevActive.current = has ? active : null
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [shown])
-      React.useEffect(() => () => exitCtl.current?.abort(), [])
-      return [shown, ref]
+      }, [active])
+      React.useEffect(
+        () => () => {
+          enterAnim.current?.cancel?.()
+          exitCtl.current?.abort()
+        },
+        [],
+      )
+      return [active, ref, !present && shown !== null]
     }
+    /** M2 公共微动效帧：浮层原点微缩放（绝不用 scale(0)）、胶囊按压微反馈、切节右栏轻淡入、流式语义点低频轻呼吸。 */
+    const POPOVER_ENTER = (origin = 'top left') => [
+      { opacity: 0, transform: 'translateY(-4px) scale(.96)', transformOrigin: origin },
+      { opacity: 1, transform: 'none', transformOrigin: origin },
+    ]
+    const POPOVER_EXIT = (origin = 'top left') => [
+      { opacity: 1, transform: 'none', transformOrigin: origin },
+      { opacity: 0, transform: 'translateY(-4px) scale(.96)', transformOrigin: origin },
+    ]
+    const PRESS_FX = [{ transform: 'scale(0.97)' }, { transform: 'none' }]
+    const PANE_ENTER = [{ opacity: 0.4 }, { opacity: 1 }]
+    const STREAM_BREATHE = [{ opacity: 1 }, { opacity: 0.42 }, { opacity: 1 }]
     const SR_ONLY = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 }
-    const ERROR_TONE = 'var(--dsw-alias-state-error-primary, #e5484d)'
+    const ERROR_TONE = 'var(--dsw-alias-state-error-primary)'
     /**
      * 头部错误 pill（P0-1）：「⚠ 哪个操作失败 ×N」，点开看详情、✕ 关掉；在头部，所以所有节都看得见。
      * 外层 span 常驻、aria-live="assertive"（先挂好 live region，内容出现时读屏才会念）。
@@ -1399,7 +1549,7 @@ window.__ModuleLoader__.load({
      * 进入 / 复原时文字淡入一下，到时复原不再是静默一跳。复原计时仍由调用方管（setTimeout CONFIRM_MS）。
      */
     function ConfirmButton(props) {
-      const { armed, style, children, ...rest } = props
+      const { armed, danger, style, children, ...rest } = props
       const ref = React.useRef(null)
       const labelRef = React.useRef(null)
       const lineRef = React.useRef(null)
@@ -1421,22 +1571,34 @@ window.__ModuleLoader__.load({
         }
       }, [armed])
       const on = armed === true
+      const isDanger = danger === true
       const look = on
-        ? {
-            color: CONFIRM_TONE,
-            background: tint(CONFIRM_TONE, 10),
-            ...(style?.border !== undefined && style.border !== 'none' ? { borderColor: CONFIRM_TONE } : {}),
-            minWidth: confirmMinWidth(restWidth.current),
-            position: 'relative',
-            overflow: 'hidden',
-          }
+        ? isDanger
+          ? {
+              color: 'var(--dsw-alias-bg-base)',
+              background: ERROR_TONE,
+              border: `1px solid ${ERROR_TONE}`,
+              borderColor: ERROR_TONE,
+              fontWeight: 600,
+              minWidth: confirmMinWidth(restWidth.current),
+              position: 'relative',
+              overflow: 'hidden',
+            }
+          : {
+              color: CONFIRM_TONE,
+              background: tint(CONFIRM_TONE, 10),
+              ...(style?.border !== undefined && style.border !== 'none' ? { borderColor: CONFIRM_TONE } : {}),
+              minWidth: confirmMinWidth(restWidth.current),
+              position: 'relative',
+              overflow: 'hidden',
+            }
         : null
       return h(
         'button',
         { type: 'button', ...rest, ref, 'data-prefill-armed': on ? 'true' : undefined, style: { ...style, ...look } },
         h('span', { ref: labelRef, 'data-prefill-confirm-label': '', style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, width: '100%' } }, children),
         on
-          ? h('span', { ref: lineRef, 'aria-hidden': 'true', 'data-prefill-confirm-countdown': '', style: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: CONFIRM_TONE, opacity: 0.7, transformOrigin: 'left center', pointerEvents: 'none' } })
+          ? h('span', { ref: lineRef, 'aria-hidden': 'true', 'data-prefill-confirm-countdown': '', style: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: isDanger ? 'var(--dsw-alias-bg-base)' : CONFIRM_TONE, opacity: 0.7, transformOrigin: 'left center', pointerEvents: 'none' } })
           : null,
       )
     }
@@ -1596,7 +1758,7 @@ window.__ModuleLoader__.load({
      * 旁边写剩余秒数（各档都有，简洁 / off 靠它）。
      */
     function UndoBar(props) {
-      const { token, text, button, secondsLabel } = props
+      const { token, text, button, secondsLabel, barAttr = '', bottomOffset = 0 } = props
       const [shown, ref] = usePresence(token, UNDO_ENTER, UNDO_EXIT)
       const lineRef = React.useRef(null)
       const startedAt = React.useRef(0)
@@ -1625,7 +1787,7 @@ window.__ModuleLoader__.load({
       const left = undoLeft(startedAt.current, Date.now())
       return h(
         'div',
-        { ref, 'data-prefill-preset-undo-bar': '', role: 'status', style: { position: 'absolute', zIndex: 5, left: 12, right: 12, bottom: 12, overflow: 'hidden', ...V.row, ...V.callout('brand'), maxWidth: 'none', flexWrap: 'wrap', paddingBottom: 9, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 6px 20px rgba(0,0,0,.14), 0 1px 4px rgba(0,0,0,.06)' } },
+        { ref, ...(barAttr === '' ? { 'data-prefill-preset-undo-bar': '' } : { [barAttr]: '' }), role: 'status', style: { position: 'absolute', zIndex: 5, left: 12, right: 12, bottom: 12, ...(bottomOffset > 0 ? { bottom: 12 + bottomOffset } : {}), overflow: 'hidden', ...V.row, ...V.callout('brand'), maxWidth: 'none', flexWrap: 'wrap', paddingBottom: 9, backgroundColor: 'var(--dsw-alias-bg-base)', boxShadow: '0 6px 20px rgba(0,0,0,.14), 0 1px 4px rgba(0,0,0,.06)' } },
         h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, text),
         h('span', { 'data-prefill-undo-seconds': String(left), style: { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' } }, String(secondsLabel ?? '{n}s').replace('{n}', String(left))),
         button,
@@ -1799,15 +1961,20 @@ window.__ModuleLoader__.load({
      * 右键菜单（P2-7）：at 变了（每次打开是一份新的菜单状态）⇒ 从 pointer 处长出来（MENU_FX.grow）；同一份菜单重渲染不重播。
      */
     function GrowMenu(props) {
-      const { at, pointer, children, ...rest } = props
+      const { at, pointer, innerRef, children, ...rest } = props
       const ref = React.useRef(null)
+      const bindRef = (node) => {
+        ref.current = node
+        if (typeof innerRef === 'function') innerRef(node)
+        else if (innerRef && typeof innerRef === 'object') innerRef.current = node
+      }
       React.useLayoutEffect(() => {
         if (at === null || at === undefined) return undefined
         const animation = MENU_FX.grow(ref.current, pointer)
         return () => animation?.cancel?.()
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [at])
-      return h('div', { ...rest, ref }, children)
+      return h('div', { ...rest, ref: innerRef ? bindRef : ref }, children)
     }
     /**
      * 保存对勾（P2-6）：tick 变了（相对挂上时）⇒ 显示一个 ✓ 角标并 pop，SAVED_MS 后淡出卸载；显示中又保存 ⇒ 打断淡出、重新 pop。
@@ -1839,7 +2006,7 @@ window.__ModuleLoader__.load({
       if (shown === 0) return null
       return h(
         'span',
-        { ref, 'aria-hidden': 'true', 'data-prefill-saved-check': String(shown), style: { position: 'absolute', top: -6, right: -6, width: 15, height: 15, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, lineHeight: 1, color: '#fff', background: 'var(--dsw-alias-state-success-primary, #30a46c)', boxShadow: '0 1px 3px rgba(0,0,0,.2)', pointerEvents: 'none' } },
+        { ref, 'aria-hidden': 'true', 'data-prefill-saved-check': String(shown), style: { position: 'absolute', top: -6, right: -6, width: 15, height: 15, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, lineHeight: 1, color: 'var(--dsw-alias-bg-base)', background: 'var(--dsw-alias-state-success-primary)', boxShadow: '0 1px 3px rgba(0,0,0,.2)', pointerEvents: 'none' } },
         '✓',
       )
     }
@@ -1879,7 +2046,7 @@ window.__ModuleLoader__.load({
           ? null
           : h(
               'span',
-              { ref, 'data-prefill-section-saved': String(shown), style: { display: 'inline-flex', alignItems: 'center', gap: 4, height: 22, padding: '0 8px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', color: 'var(--dsw-alias-state-success-primary, #30a46c)', background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary, #30a46c) 12%, transparent)' } },
+              { ref, 'data-prefill-section-saved': String(shown), style: { display: 'inline-flex', alignItems: 'center', gap: 4, height: 22, padding: '0 8px', borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', color: 'var(--dsw-alias-state-success-primary)', background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent)' } },
               '✓ ' + text,
             ),
       )
@@ -1890,7 +2057,7 @@ window.__ModuleLoader__.load({
      * 只内联用到的几个，按名字取；没有对应图标时回落到 emoji 文本（兼容旧的文件预设）。
      * pin / chevron-down 取自 lucide-static 1.61.0（ISC），其余 1.59.0。
      */
-    const ICONS = {"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"castle":[["path",{"d":"M10 5V3"}],["path",{"d":"M14 5V3"}],["path",{"d":"M15 21v-3a3 3 0 0 0-6 0v3"}],["path",{"d":"M18 3v8"}],["path",{"d":"M18 5H6"}],["path",{"d":"M22 11H2"}],["path",{"d":"M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9"}],["path",{"d":"M6 3v8"}]],"chevron-down":[["path",{"d":"m6 9 6 6 6-6"}]],"cat":[["path",{"d":"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"}],["path",{"d":"M8 14v.5"}],["path",{"d":"M16 14v.5"}],["path",{"d":"M11.25 16.25h1.5L12 17l-.75-.75Z"}]],"contact":[["path",{"d":"M16 2v2"}],["path",{"d":"M7 21v-2a2 2 0 012-2h6a2 2 0 012 2v2"}],["path",{"d":"M8 2v2"}],["circle",{"cx":"12","cy":"10","r":"3"}],["rect",{"x":"3","y":"3","width":"18","height":"18","rx":"2"}]],"download":[["path",{"d":"M12 15V3"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}],["path",{"d":"m7 10 5 5 5-5"}]],"drama":[["path",{"d":"M10 11h.01"}],["path",{"d":"M14 6h.01"}],["path",{"d":"M18 6h.01"}],["path",{"d":"M6.5 13.1h.01"}],["path",{"d":"M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3"}],["path",{"d":"M17.4 9.9c-.8.8-2 .8-2.8 0"}],["path",{"d":"M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7"}],["path",{"d":"M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"flame":[["path",{"d":"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"}]],"flower-2":[["path",{"d":"M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"}],["circle",{"cx":"12","cy":"8","r":"2"}],["path",{"d":"M12 10v12"}],["path",{"d":"M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"}],["path",{"d":"M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"image":[["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2","ry":"2"}],["circle",{"cx":"9","cy":"9","r":"2"}],["path",{"d":"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"}]],"languages":[["path",{"d":"m5 8 6 6"}],["path",{"d":"m4 14 6-6 2-3"}],["path",{"d":"M2 5h12"}],["path",{"d":"M7 2h1"}],["path",{"d":"m22 22-5-10-5 10"}],["path",{"d":"M14 18h6"}]],"layout-list":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}],["path",{"d":"M14 4h7"}],["path",{"d":"M14 9h7"}],["path",{"d":"M14 15h7"}],["path",{"d":"M14 20h7"}]],"message-circle-question":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"message-circle":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}]],"paw-print":[["circle",{"cx":"11","cy":"4","r":"2"}],["circle",{"cx":"18","cy":"8","r":"2"}],["circle",{"cx":"20","cy":"16","r":"2"}],["path",{"d":"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"}]],"pen-line":[["path",{"d":"M13 21h8"}],["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}]],"pin":[["path",{"d":"M12 17v5"}],["path",{"d":"M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"}]],"play":[["path",{"d":"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"scan-search":[["path",{"d":"M3 7V5a2 2 0 0 1 2-2h2"}],["path",{"d":"M17 3h2a2 2 0 0 1 2 2v2"}],["path",{"d":"M21 17v2a2 2 0 0 1-2 2h-2"}],["path",{"d":"M7 21H5a2 2 0 0 1-2-2v-2"}],["circle",{"cx":"12","cy":"12","r":"3"}],["path",{"d":"m16 16-1.9-1.9"}]],"scroll-text":[["path",{"d":"M15 12h-5"}],["path",{"d":"M15 8h-5"}],["path",{"d":"M19 17V5a2 2 0 0 0-2-2H4"}],["path",{"d":"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"}]],"scissors":[["circle",{"cx":"6","cy":"6","r":"3"}],["path",{"d":"M8.12 8.12 12 12"}],["path",{"d":"M20 4 8.12 15.88"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M14.8 14.8 20 20"}]],"sword":[["path",{"d":"m11 19-6-6"}],["path",{"d":"m5 21-2-2"}],["path",{"d":"m8 16-4 4"}],["path",{"d":"M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5"}]],"trash-2":[["path",{"d":"M10 11v6"}],["path",{"d":"M14 11v6"}],["path",{"d":"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}],["path",{"d":"M3 6h18"}],["path",{"d":"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],"upload":[["path",{"d":"M12 3v12"}],["path",{"d":"m17 8-5-5-5 5"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"wrench":[["path",{"d":"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]]}
+    const ICONS = {"bot":[["path",{"d":"M12 8V4H8"}],["rect",{"width":"16","height":"12","x":"4","y":"8","rx":"2"}],["path",{"d":"M2 14h2"}],["path",{"d":"M20 14h2"}],["path",{"d":"M15 13v2"}],["path",{"d":"M9 13v2"}]],"castle":[["path",{"d":"M10 5V3"}],["path",{"d":"M14 5V3"}],["path",{"d":"M15 21v-3a3 3 0 0 0-6 0v3"}],["path",{"d":"M18 3v8"}],["path",{"d":"M18 5H6"}],["path",{"d":"M22 11H2"}],["path",{"d":"M22 9v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9"}],["path",{"d":"M6 3v8"}]],"chevron-down":[["path",{"d":"m6 9 6 6 6-6"}]],"chevron-up":[["path",{"d":"m18 15-6-6-6 6"}]],"cat":[["path",{"d":"M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"}],["path",{"d":"M8 14v.5"}],["path",{"d":"M16 14v.5"}],["path",{"d":"M11.25 16.25h1.5L12 17l-.75-.75Z"}]],"contact":[["path",{"d":"M16 2v2"}],["path",{"d":"M7 21v-2a2 2 0 012-2h6a2 2 0 012 2v2"}],["path",{"d":"M8 2v2"}],["circle",{"cx":"12","cy":"10","r":"3"}],["rect",{"x":"3","y":"3","width":"18","height":"18","rx":"2"}]],"download":[["path",{"d":"M12 15V3"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}],["path",{"d":"m7 10 5 5 5-5"}]],"drama":[["path",{"d":"M10 11h.01"}],["path",{"d":"M14 6h.01"}],["path",{"d":"M18 6h.01"}],["path",{"d":"M6.5 13.1h.01"}],["path",{"d":"M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3"}],["path",{"d":"M17.4 9.9c-.8.8-2 .8-2.8 0"}],["path",{"d":"M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7"}],["path",{"d":"M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"}]],"eraser":[["path",{"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"}],["path",{"d":"m5.082 11.09 8.828 8.828"}]],"flame":[["path",{"d":"M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"}]],"flower-2":[["path",{"d":"M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"}],["circle",{"cx":"12","cy":"8","r":"2"}],["path",{"d":"M12 10v12"}],["path",{"d":"M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"}],["path",{"d":"M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"}]],"folder":[["path",{"d":"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],"image":[["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2","ry":"2"}],["circle",{"cx":"9","cy":"9","r":"2"}],["path",{"d":"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"}]],"languages":[["path",{"d":"m5 8 6 6"}],["path",{"d":"m4 14 6-6 2-3"}],["path",{"d":"M2 5h12"}],["path",{"d":"M7 2h1"}],["path",{"d":"m22 22-5-10-5 10"}],["path",{"d":"M14 18h6"}]],"layout-list":[["rect",{"width":"7","height":"7","x":"3","y":"3","rx":"1"}],["rect",{"width":"7","height":"7","x":"3","y":"14","rx":"1"}],["path",{"d":"M14 4h7"}],["path",{"d":"M14 9h7"}],["path",{"d":"M14 15h7"}],["path",{"d":"M14 20h7"}]],"lock":[["rect",{"width":"18","height":"11","x":"3","y":"11","rx":"2","ry":"2"}],["path",{"d":"M7 11V7a5 5 0 0 1 10 0v4"}]],"message-circle-question":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}],["path",{"d":"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"}],["path",{"d":"M12 17h.01"}]],"message-circle":[["path",{"d":"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"}]],"paw-print":[["circle",{"cx":"11","cy":"4","r":"2"}],["circle",{"cx":"18","cy":"8","r":"2"}],["circle",{"cx":"20","cy":"16","r":"2"}],["path",{"d":"M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"}]],"pen-line":[["path",{"d":"M13 21h8"}],["path",{"d":"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}]],"pin":[["path",{"d":"M12 17v5"}],["path",{"d":"M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"}]],"play":[["path",{"d":"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"}]],"puzzle":[["path",{"d":"M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"}]],"scan-search":[["path",{"d":"M3 7V5a2 2 0 0 1 2-2h2"}],["path",{"d":"M17 3h2a2 2 0 0 1 2 2v2"}],["path",{"d":"M21 17v2a2 2 0 0 1-2 2h-2"}],["path",{"d":"M7 21H5a2 2 0 0 1-2-2v-2"}],["circle",{"cx":"12","cy":"12","r":"3"}],["path",{"d":"m16 16-1.9-1.9"}]],"scroll-text":[["path",{"d":"M15 12h-5"}],["path",{"d":"M15 8h-5"}],["path",{"d":"M19 17V5a2 2 0 0 0-2-2H4"}],["path",{"d":"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"}]],"search":[["circle",{"cx":"11","cy":"11","r":"8"}],["path",{"d":"m21 21-4.3-4.3"}]],"scissors":[["circle",{"cx":"6","cy":"6","r":"3"}],["path",{"d":"M8.12 8.12 12 12"}],["path",{"d":"M20 4 8.12 15.88"}],["circle",{"cx":"6","cy":"18","r":"3"}],["path",{"d":"M14.8 14.8 20 20"}]],"sword":[["path",{"d":"m11 19-6-6"}],["path",{"d":"m5 21-2-2"}],["path",{"d":"m8 16-4 4"}],["path",{"d":"M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5"}]],"trash-2":[["path",{"d":"M10 11v6"}],["path",{"d":"M14 11v6"}],["path",{"d":"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}],["path",{"d":"M3 6h18"}],["path",{"d":"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],"upload":[["path",{"d":"M12 3v12"}],["path",{"d":"m17 8-5-5-5 5"}],["path",{"d":"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}]],"user":[["path",{"d":"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{"cx":"12","cy":"7","r":"4"}]],"wrench":[["path",{"d":"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"}]],"x":[["path",{"d":"M18 6 6 18"}],["path",{"d":"m6 6 12 12"}]]}
     /** 有正文的条目数：空行（点了加行没填）发送时会被跳过，不算进「N 条」（issue #1）。 */
     function countFilled(items) {
       return Array.isArray(items) ? items.filter((item) => typeof item?.text === 'string' && item.text.trim() !== '').length : 0
@@ -2084,13 +2251,14 @@ window.__ModuleLoader__.load({
      * 卡片打开时的 /state 与所有写接口都会经过 applyEnvelope ⇒ 顺手记下来，summary 轮询到了再合进去，
      * 免得它们被一冲就没（服务端补了这些字段时以响应为准）。
      */
-    const summaryExtras = { locked: undefined, noticeSeen: undefined, snapshots: undefined, persona: undefined, sessionRoute: undefined }
+    const summaryExtras = { locked: undefined, noticeSeen: undefined, snapshots: undefined, persona: undefined, sessionRoute: undefined, model: undefined }
     /** 换会话：按会话过滤的那几项立刻作废（noticeSeen 是全局的，留着）。 */
     function summaryExtrasReset() {
       summaryExtras.locked = undefined
       summaryExtras.snapshots = undefined
       summaryExtras.persona = undefined
       summaryExtras.sessionRoute = undefined
+      summaryExtras.model = undefined
     }
     /** 有订阅者、有会话才轮询（卡片没开 / 会话界面没挂 ⇒ 一个请求都不发）。 */
     function summaryWanted() {
@@ -2176,6 +2344,13 @@ window.__ModuleLoader__.load({
               at: Number(routeRaw.at) || 0,
             }
           : null
+      const modelRaw = pick(raw.model, summaryExtras.model)
+      const model =
+        typeof modelRaw === 'string' && modelRaw.trim() !== ''
+          ? modelRaw.trim()
+          : sessionRoute !== null && typeof sessionRoute.model === 'string' && sessionRoute.model.trim() !== ''
+            ? sessionRoute.model.trim()
+            : null
       // 人格段：服务端给的是 { 会话: true } 的扁平表，整封 envelope 那边算出来的是布尔 —— 两种都归一成布尔，
       // 消费方只认 `persona === true`（值缺失 = 不知道，别当成 false）。
       const personaRaw = pick(raw.persona, summaryExtras.persona)
@@ -2202,6 +2377,7 @@ window.__ModuleLoader__.load({
         rev: typeof raw.rev === 'string' || typeof raw.rev === 'number' ? String(raw.rev) : '',
         sessionId: sid,
         sessionRoute,
+        model,
         state,
         turns: raw.turns ?? {},
         materialized: raw.materialized ?? {},
@@ -2258,6 +2434,7 @@ window.__ModuleLoader__.load({
       summaryExtras.noticeSeen = typeof state.noticeSeen === 'boolean' ? state.noticeSeen : summaryExtras.noticeSeen
       // F2：整封 envelope（/state 写响应）也可能带顶层 sessionRoute；没有就保留上一次的（别把它冲成 null）。
       if (envelope.sessionRoute !== undefined) summaryExtras.sessionRoute = envelope.sessionRoute
+      if (envelope.model !== undefined) summaryExtras.model = envelope.model
       return normalizeSummary({
         ok: envelope.ok !== false,
         rev: '',
@@ -2296,6 +2473,7 @@ window.__ModuleLoader__.load({
       summaryStore.data = next
       summaryStore.sig = sig
       if (next.rev !== '') summaryStore.rev = next.rev
+      if (next.sessionId === summaryStore.sessionId && typeof next.model === 'string' && next.model !== '') summaryExtras.model = next.model
       summaryEmit()
       return true
     }
@@ -2538,17 +2716,115 @@ window.__ModuleLoader__.load({
       setCardOpen(sessionId, true)
     }
 
-    /** 左栏各项的颜色（CSS 变量；深浅色主题里 warn / success / tertiary 跟随 DSH）。 */
+    /** 左栏各项的颜色（100% 基于宿主 --dsw-alias-* + color-mix 柔和阶梯，深浅色自动平衡，消除暗色发黑）。 */
     const COLOR_VARS = {
-      '--pf-card': '#e0457b',
-      '--pf-system': '#7c5cff',
-      '--pf-turn': 'var(--dsw-alias-state-warn-primary, #f59e0b)',
-      '--pf-lore': '#0fa3a3',
-      '--pf-user': '#3b82f6',
-      '--pf-ai': 'var(--dsw-alias-state-success-primary, #22a06b)',
-      '--pf-ws': '#8b5e34',
-      '--pf-adv': 'var(--dsw-alias-label-secondary, #6b6b6b)',
-      '--pf-off': 'var(--dsw-alias-border-l2, #cfcfcf)',
+      '--pf-card': 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 72%, var(--dsw-alias-brand-primary))',
+      '--pf-system': 'var(--dsw-alias-brand-primary)',
+      '--pf-turn': 'var(--dsw-alias-state-warn-primary)',
+      '--pf-lore': 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 76%, var(--dsw-alias-brand-primary))',
+      '--pf-user': 'color-mix(in srgb, var(--dsw-alias-brand-primary) 68%, var(--dsw-alias-state-success-primary))',
+      '--pf-ai': 'var(--dsw-alias-state-success-primary)',
+      '--pf-ws': 'color-mix(in srgb, var(--dsw-alias-state-warn-primary) 68%, var(--dsw-alias-label-secondary))',
+      '--pf-adv': 'var(--dsw-alias-label-secondary)',
+      '--pf-off': 'var(--dsw-alias-border-l2)',
+    }
+    // <draft-bus>
+    /**
+     * 统一防抖落盘总线（v2 M1 P0-②）：集中登记 5 路草稿（system / everyTurn / ws / items / lore）的待落盘任务，
+     * 在保存预设、导出、关闭卡片、切换会话前按原 sessionId 原子冲刷，根治丢稿与跨会话污染。
+     */
+    function createDraftBus() {
+      const pending = new Map()
+      return {
+        schedule(key, entry) {
+          const prev = pending.get(key)
+          if (prev !== undefined) prev.cancel?.()
+          pending.set(key, entry)
+        },
+        clear(key, entry) {
+          const prev = pending.get(key)
+          if (prev === undefined) return
+          if (entry !== undefined && prev !== entry) return
+          prev.cancel?.()
+          pending.delete(key)
+        },
+        discard(keys) {
+          const list = Array.isArray(keys) ? keys : [...pending.keys()]
+          for (const key of list) {
+            const entry = pending.get(key)
+            if (entry === undefined) continue
+            entry.cancel?.()
+            pending.delete(key)
+          }
+        },
+        async flushAll(targetSessionId) {
+          const tasks = []
+          for (const [key, entry] of [...pending.entries()]) {
+            if (targetSessionId !== undefined && entry.sessionId !== targetSessionId) continue
+            pending.delete(key)
+            entry.cancel?.()
+            if (typeof entry.commit === 'function') tasks.push(Promise.resolve().then(() => entry.commit()))
+          }
+          if (tasks.length === 0) return []
+          return await Promise.allSettled(tasks)
+        },
+        hasPending(key) {
+          return key === undefined ? pending.size > 0 : pending.has(key)
+        },
+        size() {
+          return pending.size
+        },
+      }
+    }
+    // </draft-bus>
+    /**
+     * PrefillDock 共享的 envelope 缓存与订阅表（v2 M1 P0-③）：
+     * 让 SandboxSection / InjectionSection 优先复用卡片的 /state 投影，停掉各自独立的 2500ms 重复轮询；
+     * 独立挂载（如单测 harness）时自动兜底自拉。
+     */
+    const dockEnvelopeCache = new Map()
+    const dockEnvelopeListeners = new Map()
+    const dockEnvelopeActive = new Map()
+    function publishDockEnvelope(sessionId, data) {
+      if (typeof sessionId !== 'string' || sessionId === '' || data === null || typeof data !== 'object') return
+      dockEnvelopeCache.set(sessionId, data)
+      const subs = dockEnvelopeListeners.get(sessionId)
+      if (subs === undefined) return
+      for (const fn of [...subs]) {
+        try {
+          fn(data)
+        } catch {
+          // 单个订阅者异常不影响其他视图。
+        }
+      }
+    }
+    function getDockEnvelope(sessionId) {
+      return typeof sessionId === 'string' && sessionId !== '' ? (dockEnvelopeCache.get(sessionId) ?? null) : null
+    }
+    function subscribeDockEnvelope(sessionId, fn) {
+      if (typeof sessionId !== 'string' || sessionId === '' || typeof fn !== 'function') return () => {}
+      let subs = dockEnvelopeListeners.get(sessionId)
+      if (subs === undefined) {
+        subs = new Set()
+        dockEnvelopeListeners.set(sessionId, subs)
+      }
+      subs.add(fn)
+      return () => {
+        subs.delete(fn)
+        if (subs.size === 0) dockEnvelopeListeners.delete(sessionId)
+      }
+    }
+    function markDockEnvelopeActive(sessionId) {
+      if (typeof sessionId !== 'string' || sessionId === '') return () => {}
+      dockEnvelopeActive.set(sessionId, (dockEnvelopeActive.get(sessionId) ?? 0) + 1)
+      return () => {
+        const next = (dockEnvelopeActive.get(sessionId) ?? 1) - 1
+        if (next <= 0) dockEnvelopeActive.delete(sessionId)
+        else dockEnvelopeActive.set(sessionId, next)
+      }
+    }
+    function isDockEnvelopeActive(sessionId) {
+      return (dockEnvelopeActive.get(sessionId) ?? 0) > 0
     }
     /** 左栏顺序（用量与缓存单列在分隔线下面，没有开关）。 */
     const FEATURE_NAV = [
@@ -4448,6 +4724,9 @@ window.__ModuleLoader__.load({
       usageShort: '用量',
       kindMine: '我的预设',
       saveShort: '保存',
+      clearPresetHeader: '清空预设',
+      clearPresetHeaderTip: '清空当前预设与本会话配置，恢复默认（几秒内可撤销）',
+      clearPresetHeaderEmptyTip: '当前未套用预设，也无待清空配置',
       saveAs: '另存为…',
       saveAsTip: '还没有在用的「我的预设」：起个名字存一份',
       saveOverTip: '覆盖保存到当前预设',
@@ -4551,6 +4830,9 @@ window.__ModuleLoader__.load({
       usageShort: 'Usage',
       kindMine: 'My preset',
       saveShort: 'Save',
+      clearPresetHeader: 'Clear preset',
+      clearPresetHeaderTip: 'Clear active preset and session config back to defaults (undoable)',
+      clearPresetHeaderEmptyTip: 'No active preset or session config to clear',
       saveAs: 'Save as…',
       saveAsTip: 'No preset of yours in use yet: name it and save',
       saveOverTip: 'Overwrite the current preset',
@@ -4793,6 +5075,201 @@ window.__ModuleLoader__.load({
       kpiBlockedTip: 'Current blocked items (observe level excluded; no time window)',
       tocDefaultSandbox: 'New-session default · Sandbox',
     })
+    // ── v2 M2 文案：纯净报错、顶栏徽标下轮生效与 Popover 快跳 ──
+    Object.assign(zh, {
+      errOpGate: '切换纯净模式',
+      headerNextTurn: '下轮生效',
+      headerOpenCard: '打开预填装卡片',
+      headerOpenSettings: '设置 ↗',
+      headerPopoverTitle: '会话预填装状态',
+      headerNextTurnHint: '本轮已锁定，刚刚的切换将从下一轮生效。',
+      // ── M3 弹出卡片 8 节完善 ──
+      presetSearchPlaceholder: '搜索预设或角色卡…',
+      presetSearchEmpty: '没有匹配的预设',
+      presetDirtyTip: '相对已套用预设存在改动，可点「保存」更新',
+      presetDirtyBadge: '已改',
+      saveAsOverwriteWarn: '已存在同名预设「{name}」，再次点击将覆盖它',
+      saveAsOverwriteConfirm: '覆盖已有预设',
+      exportDone: '已导出预设文件「{name}.prefill.json」',
+      errOpExport: '导出预设',
+      statusOpenUsageTip: '点击查看「用量与缓存」',
+      cardApplyNow: '套用此角色卡',
+      cardCompiling: '编译中…',
+      errOpCardUser: '更新我的名字',
+      loreSearchPlaceholder: '搜索标题或关键词…',
+      loreSearchEmpty: '没有匹配的世界书条目',
+      loreDeleteConfirm: '确认删除？',
+      loreRevertConfirm: '确认还原？',
+      memoryClearConfirm: '确认清空？',
+      memoryUnsavedWarn: '有未保存的修改，确定收起并丢弃？',
+      memoryDiscardConfirm: '丢弃并收起',
+      errOpSeed: '读取故事记忆摘要',
+      errOpMemory: '更新故事记忆',
+      systemOffMeta: '未填写',
+      systemSaving: '保存中…',
+      systemSaved: '已保存',
+      systemCharsTok: '{chars} 字 · ≈{tok} tok',
+      systemTakeoverWarn: '「接管整个系统提示」会清空当前会话工具并屏蔽默认系统提示与运行时上下文，等效于纯净模式。',
+      errOpSystemMode: '切换系统提示模式',
+      wsFillOriginal: '填入原文作为起点',
+      wsOriginalShow: '展开原文（{lines} 行）',
+      wsOriginalHide: '收起原文',
+      everyTurnEmptyMeta: '空（未放积木）',
+      benchPromptPlaceholder: '输入名称',
+      benchPromptConfirm: '确定',
+      benchCostUnit: '第 1 轮 {firstChars} 字（≈{firstTok} tok）· 之后 {restChars} 字（≈{restTok} tok）/轮',
+      benchPreviewUnit: '{chars} 字 · ≈{tok} tok',
+      benchDeleteBlockConfirm: '再次点击确认删除此积木',
+      benchDeleteTowerConfirm: '再次点击确认删除此积木塔',
+      errOpOverride: '切换自动注入状态',
+      fetchDeletedItem: '已删除 1 条开场对话',
+      fetchRangeError: '起始轮不能大于结束轮',
+      errOpManual: '手动注入',
+      manualEditKeyHint: 'Ctrl/Cmd+Enter 保存 · Esc 取消',
+      usageOrderAsc: '正序',
+      usageOrderDesc: '倒序（最新在前）',
+      usageCacheBarLabel: '缓存命中率',
+      // ── M4 设置页信息架构重构 ──
+      overviewGroupAll: '全部',
+      overviewGroupLive: '运行中',
+      overviewGroupCustom: '已自定义',
+      overviewGroupDefault: '跟随默认',
+      overviewFilterClear: '清除搜索',
+      overviewKpiActive: '按「{label}」筛选',
+      overviewKpiClear: '取消筛选',
+      overviewPageInfo: '共 {total} 条 · 第 {page}/{pages} 页',
+      overviewPrev: '上一页',
+      overviewNext: '下一页',
+      overviewTimeJustNow: '刚刚',
+      overviewTimeMin: '{n} 分钟前',
+      overviewTimeHour: '{n} 小时前',
+      overviewTimeDay: '{n} 天前',
+      defaultTurnPolicyTitle: '启用与策略',
+      defaultTurnContentTitle: '注入内容',
+      defaultTurnTextLabel: '每轮提醒正文',
+      defaultTurnFirstLabel: '首轮补充（可选）',
+      defaultTurnDirtyHint: '有尚未保存的默认设置更改',
+      defaultSbxNoneSub: '不指定，沿用内置默认',
+      defaultSbxObserveSub: '仅记录来源，不做拦截',
+      defaultSbxControlledSub: '按来源包规则选择性拦截',
+      defaultPackRuleCol: '来源包',
+      defaultPackActionCol: '默认策略',
+      libTabAll: '全部',
+      libTabPacks: '预设',
+      libTabCards: '角色卡',
+      libTabBench: '积木与塔',
+      libTabHidden: '已隐藏',
+      libPackItemsCount: '{n} 项',
+      libCardAvatarBadge: '含头像',
+      dangerZoneTitle: '危险区 · 重置开发者开关',
+      // ── 方案 B：编辑器容器与搜索框文案 ──
+      editorExpand: '展开',
+      editorCollapse: '收起',
+      editorExpandTip: '展开编辑高度',
+      editorCollapseTip: '恢复默认高度',
+      editorClear: '清空',
+      editorClearTip: '清空当前内容',
+      editorFirstTag: '首轮补充',
+      editorTurnTag: '每轮提醒',
+      editorReadOnly: '来自积木工作台（只读）',
+    })
+    Object.assign(en, {
+      errOpGate: 'Toggle pure mode',
+      headerNextTurn: 'Next turn',
+      headerOpenCard: 'Open prefill card',
+      headerOpenSettings: 'Settings ↗',
+      headerPopoverTitle: 'Session prefill status',
+      headerNextTurnHint: 'Current turn is locked; recent changes take effect next turn.',
+      // ── M3 dock sections ──
+      presetSearchPlaceholder: 'Search presets or cards…',
+      presetSearchEmpty: 'No matching presets',
+      presetDirtyTip: 'Modified since applying preset — click Save to update',
+      presetDirtyBadge: 'edited',
+      saveAsOverwriteWarn: 'Preset “{name}” already exists — click again to overwrite',
+      saveAsOverwriteConfirm: 'Overwrite existing',
+      exportDone: 'Exported “{name}.prefill.json”',
+      errOpExport: 'Export preset',
+      statusOpenUsageTip: 'Click to open Usage & cache',
+      cardApplyNow: 'Apply this card',
+      cardCompiling: 'Compiling…',
+      errOpCardUser: 'Update my name',
+      loreSearchPlaceholder: 'Search title or keywords…',
+      loreSearchEmpty: 'No matching lore entries',
+      loreDeleteConfirm: 'Delete?',
+      loreRevertConfirm: 'Revert?',
+      memoryClearConfirm: 'Clear?',
+      memoryUnsavedWarn: 'Unsaved edits — collapse and discard?',
+      memoryDiscardConfirm: 'Discard & hide',
+      errOpSeed: 'Fetch story memory summary',
+      errOpMemory: 'Update story memory',
+      systemOffMeta: 'empty',
+      systemSaving: 'Saving…',
+      systemSaved: 'Saved',
+      systemCharsTok: '{chars} chars · ≈{tok} tok',
+      systemTakeoverWarn: '“Take over” clears this session’s tools and withholds the default system prompt and runtime contexts (equivalent to Pure mode).',
+      errOpSystemMode: 'Switch system prompt mode',
+      wsFillOriginal: 'Fill original as starting point',
+      wsOriginalShow: 'Show original ({lines} lines)',
+      wsOriginalHide: 'Hide original',
+      everyTurnEmptyMeta: 'empty (no blocks)',
+      benchPromptPlaceholder: 'Enter a name',
+      benchPromptConfirm: 'OK',
+      benchCostUnit: 'Turn 1 {firstChars} chars (≈{firstTok} tok) · after {restChars} chars (≈{restTok} tok)/turn',
+      benchPreviewUnit: '{chars} chars · ≈{tok} tok',
+      benchDeleteBlockConfirm: 'Click again to delete this block',
+      benchDeleteTowerConfirm: 'Click again to delete this tower',
+      errOpOverride: 'Toggle auto injection',
+      fetchDeletedItem: 'Removed 1 opening row',
+      fetchRangeError: 'Start turn cannot be greater than end turn',
+      errOpManual: 'Manual inject',
+      manualEditKeyHint: 'Ctrl/Cmd+Enter save · Esc cancel',
+      usageOrderAsc: 'Oldest first',
+      usageOrderDesc: 'Newest first',
+      usageCacheBarLabel: 'Cache hit rate',
+      // ── M4 settings information architecture ──
+      overviewGroupAll: 'All',
+      overviewGroupLive: 'Running',
+      overviewGroupCustom: 'Custom',
+      overviewGroupDefault: 'Default',
+      overviewFilterClear: 'Clear search',
+      overviewKpiActive: 'Filtered by {label}',
+      overviewKpiClear: 'Clear',
+      overviewPageInfo: '{total} total · Page {page}/{pages}',
+      overviewPrev: 'Prev',
+      overviewNext: 'Next',
+      overviewTimeJustNow: 'just now',
+      overviewTimeMin: '{n}m ago',
+      overviewTimeHour: '{n}h ago',
+      overviewTimeDay: '{n}d ago',
+      defaultTurnPolicyTitle: 'Enable & policy',
+      defaultTurnContentTitle: 'Injection content',
+      defaultTurnTextLabel: 'Every-turn reminder',
+      defaultTurnFirstLabel: 'First-turn supplement (optional)',
+      defaultTurnDirtyHint: 'Unsaved changes to default settings',
+      defaultSbxNoneSub: 'Unset, follow built-in default',
+      defaultSbxObserveSub: 'Log sources only, no blocking',
+      defaultSbxControlledSub: 'Block per source-pack rules',
+      defaultPackRuleCol: 'Source pack',
+      defaultPackActionCol: 'Default policy',
+      libTabAll: 'All',
+      libTabPacks: 'Presets',
+      libTabCards: 'Cards',
+      libTabBench: 'Blocks & towers',
+      libTabHidden: 'Hidden',
+      libPackItemsCount: '{n} items',
+      libCardAvatarBadge: 'Avatar',
+      dangerZoneTitle: 'Danger zone · Reset developer switches',
+      // ── Plan B: editor shell & search input copy ──
+      editorExpand: 'Expand',
+      editorCollapse: 'Collapse',
+      editorExpandTip: 'Expand editor height',
+      editorCollapseTip: 'Restore default height',
+      editorClear: 'Clear',
+      editorClearTip: 'Clear text',
+      editorFirstTag: 'First turn',
+      editorTurnTag: 'Every turn',
+      editorReadOnly: 'From bench (read-only)',
+    })
 
     // <viewport>
     /**
@@ -4892,21 +5369,21 @@ window.__ModuleLoader__.load({
         overscrollBehavior: 'contain',
         scrollbarGutter: 'stable',
       },
-      title: { fontSize: 15, fontWeight: 600 },
-      intro: { color: 'var(--dsw-alias-label-secondary)' },
+      title: { fontSize: T.font.kpi, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.25 },
+      intro: { color: 'var(--dsw-alias-label-secondary)', fontSize: T.font.md, lineHeight: 1.55, maxWidth: '68ch' },
       card: {
         display: 'flex',
         flexDirection: 'column',
-        gap: 10,
-        padding: '12px 14px',
+        gap: 12,
+        padding: '14px 16px',
         border: '1px solid var(--dsw-alias-border-l1)',
-        borderRadius: 10,
+        borderRadius: T.radius.lg,
         background: 'var(--dsw-alias-bg-layer-1)',
         // v1：TOC sticky 之后，scrollIntoView 的目标要闪开吸顶目录，否则节标题被盖住。
         scrollMarginTop: 44,
       },
-      cardTitle: { fontWeight: 600 },
-      group: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 },
+      cardTitle: { fontSize: T.font.lg, fontWeight: 600, letterSpacing: '-0.01em' },
+      group: { color: 'var(--dsw-alias-label-secondary)', fontSize: T.font.sm, fontWeight: 600 },
       switchRow: {
         display: 'flex',
         alignItems: 'center',
@@ -4920,21 +5397,19 @@ window.__ModuleLoader__.load({
         padding: '8px 0',
         borderTop: '1px solid var(--dsw-alias-border-l1)',
       },
-      sessionLabel: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 },
-      sessionTitle: { fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      sessionLabel: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 },
+      sessionTitle: { fontSize: T.font.md, fontWeight: 600, ...T.layout.trunc },
       sessionId: {
-        fontSize: 11,
+        fontSize: T.font.xs,
         lineHeight: 1.3,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         color: 'var(--dsw-alias-label-secondary)',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
+        ...T.layout.trunc,
       },
-      sessionMeta: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 },
+      sessionMeta: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 2 },
       // 内容列：最宽 960px（宿主「插件」页的版心），窄屏时撑满。
       pageColumn: { display: 'flex', flexDirection: 'column', gap: 14, width: '100%', maxWidth: 960, paddingTop: 24, boxSizing: 'border-box' },
-      // 页顶小节目录：一排轻量链接，点了滚到对应小节；v1 起吸顶 + 滚动联动（scroll-spy）。
+      // 页顶小节目录：一排轻量链接，点了滚到对应小节；v1 起吸顶 + 滚动联动（scroll-spy），无 backdrop-filter。
       toc: {
         position: 'sticky',
         top: 0,
@@ -4947,51 +5422,399 @@ window.__ModuleLoader__.load({
         marginTop: -6,
         background: 'var(--dsw-alias-bg-base)',
         borderBottom: '1px solid var(--dsw-alias-border-l1)',
+        boxShadow: '0 1px 0 var(--dsw-alias-border-l1)',
       },
       tocLink: {
-        padding: '3px 10px',
+        padding: '4px 10px',
         border: 'none',
-        borderRadius: 6,
+        borderRadius: T.radius.sm,
         background: 'transparent',
         color: 'var(--dsw-alias-label-secondary)',
-        fontSize: 12,
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
         cursor: 'pointer',
       },
       tocLinkActive: {
         color: 'var(--dsw-alias-label-primary)',
-        background: 'var(--dsw-alias-bg-layer-2)',
+        background: mix('var(--dsw-alias-brand-primary)', 7),
         fontWeight: 700,
-        // v1.1：aria-current 之外再加可见高亮（左边条），色弱 / 屏幕放大时也看得出当前节。
-        boxShadow: 'inset 2px 0 0 var(--dsw-alias-brand-primary)',
+        borderRadius: '8px 8px 0 0',
+        // v2 M1：平直底边指示条 + 柔底，消除圆角左侧弯折伪影。
+        boxShadow: 'inset 0 -2px 0 var(--dsw-alias-brand-primary)',
       },
-      // v1：总览顶部的 4 个 KPI（只读；会话行不动，卡片化留 v2）。
-      kpiBar: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))', gap: 8 },
-      kpi: { display: 'flex', flexDirection: 'column', gap: 2, padding: '10px 12px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 10, background: 'var(--dsw-alias-bg-layer-1)', minWidth: 0 },
-      kpiValue: { fontSize: 20, fontWeight: 600, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' },
-      kpiLabel: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)' },
+      // v1：总览顶部的 4 个 KPI（v2 M4：顶行小标签+语义点、底行 22px 粗等宽数字、0 值降权、点击快筛联动）。
+      kpiBar: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 },
+      kpi: { display: 'flex', flexDirection: 'column', gap: 6, padding: '11px 13px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: T.radius.md, background: 'var(--dsw-alias-bg-layer-1)', minWidth: 0, textAlign: 'left', fontFamily: 'inherit', cursor: 'pointer', boxSizing: 'border-box' },
+      kpiTile: (active, warn) => ({
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        padding: '11px 13px',
+        borderRadius: T.radius.md,
+        border: `1px solid ${
+          active
+            ? warn
+              ? 'var(--dsw-alias-state-warn-primary)'
+              : mix('var(--dsw-alias-brand-primary)', 38, 'var(--dsw-alias-border-l2)')
+            : warn
+              ? mix('var(--dsw-alias-state-warn-primary)', 35, 'var(--dsw-alias-border-l1)')
+              : 'var(--dsw-alias-border-l1)'
+        }`,
+        background: active
+          ? warn
+            ? mix('var(--dsw-alias-state-warn-primary)', 11, 'var(--dsw-alias-bg-base)')
+            : mix('var(--dsw-alias-brand-primary)', 10, 'var(--dsw-alias-bg-base)')
+          : warn
+            ? mix('var(--dsw-alias-state-warn-primary)', 6, 'var(--dsw-alias-bg-layer-1)')
+            : 'var(--dsw-alias-bg-layer-1)',
+        minWidth: 0,
+        textAlign: 'left',
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        boxSizing: 'border-box',
+      }),
+      kpiTop: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
+      kpiDot: (tone) => ({ width: 6, height: 6, borderRadius: '50%', flex: '0 0 auto', background: tone }),
+      kpiValue: { fontSize: 22, fontWeight: 700, lineHeight: 1.15, ...T.layout.num, color: 'var(--dsw-alias-label-primary)' },
+      kpiLabel: { fontSize: T.font.xs, fontWeight: 500, color: 'var(--dsw-alias-label-tertiary)', ...T.layout.trunc },
+      // M4 总览工具条 / 双行微卡 / 静音次文字 / 分页条
+      overviewToolbar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
+      overviewList: { display: 'flex', flexDirection: 'column', gap: 8 },
+      overviewCard: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+        padding: '10px 12px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-base)',
+        minWidth: 0,
+        boxSizing: 'border-box',
+      },
+      overviewTail: { fontSize: T.font.xs, color: 'var(--dsw-alias-label-tertiary)', marginLeft: 'auto', flex: '0 1 auto', ...T.layout.trunc, ...T.layout.num },
+      mutedMeta: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '1px 0',
+        borderRadius: 0,
+        border: 'none',
+        background: 'transparent',
+        fontSize: T.font.xs,
+        lineHeight: '18px',
+        color: 'var(--dsw-alias-label-tertiary)',
+      },
+      searchWrap: { position: 'relative', display: 'inline-flex', alignItems: 'center', flex: '1 1 200px', maxWidth: 'min(280px, 100%)', minWidth: 0, boxSizing: 'border-box' },
+      searchClear: {
+        position: 'absolute',
+        right: 6,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 20,
+        height: 20,
+        padding: 0,
+        border: 'none',
+        borderRadius: T.radius.pill,
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-tertiary)',
+        fontSize: T.font.sm,
+        cursor: 'pointer',
+      },
+      paginationBar: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 8,
+        flexWrap: 'wrap',
+        paddingTop: 4,
+        fontSize: T.font.sm,
+        color: 'var(--dsw-alias-label-secondary)',
+        ...T.layout.num,
+      },
+      // M4 按钮分级 + 中性分段器 + 表单子区 + 脏状态底栏 + 资源库网格 + 开发者与危险区
+      btnPrimary: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        padding: '5px 12px',
+        borderRadius: T.radius.sm,
+        border: '1px solid var(--dsw-alias-brand-primary)',
+        background: 'var(--dsw-alias-brand-primary)',
+        color: 'var(--dsw-alias-bg-base)',
+        fontSize: T.font.sm,
+        fontWeight: 600,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      btnOutline: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
+        padding: '4px 10px',
+        borderRadius: T.radius.sm,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-base)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: T.font.sm,
+        fontWeight: 500,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      btnGhost: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
+        padding: '4px 8px',
+        borderRadius: T.radius.sm,
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      seg: {
+        display: 'inline-flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 2,
+        padding: 2,
+        borderRadius: T.radius.md,
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        maxWidth: '100%',
+        boxSizing: 'border-box',
+      },
+      segBtn: (active, tone) => ({
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+        padding: '4px 10px',
+        borderRadius: T.radius.sm,
+        border: active
+          ? `1px solid ${tone ? mix(tone, 36, 'var(--dsw-alias-border-l1)') : mix('var(--dsw-alias-brand-primary)', 28, 'var(--dsw-alias-border-l1)')}`
+          : '1px solid transparent',
+        background: active ? (tone ? mix(tone, 11, 'var(--dsw-alias-bg-base)') : 'var(--dsw-alias-bg-base)') : 'transparent',
+        color: active ? (tone || 'var(--dsw-alias-label-primary)') : 'var(--dsw-alias-label-secondary)',
+        fontWeight: active ? 600 : 400,
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        lineHeight: 1.3,
+      }),
+      segCards: (phone) => ({
+        display: 'grid',
+        gridTemplateColumns: phone ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+        gap: 4,
+        padding: 3,
+        borderRadius: T.radius.md,
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-l1)',
+      }),
+      segCardBtn: (active) => ({
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 2,
+        padding: '8px 10px',
+        borderRadius: T.radius.sm,
+        border: active ? `1px solid ${mix('var(--dsw-alias-brand-primary)', 34, 'var(--dsw-alias-border-l2)')}` : '1px solid transparent',
+        background: active ? 'var(--dsw-alias-bg-base)' : 'transparent',
+        color: 'var(--dsw-alias-label-primary)',
+        textAlign: 'left',
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        minWidth: 0,
+      }),
+      segCardTitle: (active) => ({ fontWeight: active ? 600 : 500, fontSize: T.font.md }),
+      segCardSub: { fontSize: T.font.xs, color: 'var(--dsw-alias-label-tertiary)', lineHeight: 1.4 },
+      subSection: { display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 },
+      subSectionDivider: { display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 12, borderTop: '1px solid var(--dsw-alias-border-l1)', minWidth: 0 },
+      subTitle: { fontSize: T.font.sm, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' },
+      fieldHeader: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
+      fieldMetrics: { fontSize: T.font.xs, color: 'var(--dsw-alias-label-tertiary)', ...T.layout.num },
+      dirtyBar: (dirty) =>
+        dirty
+          ? {
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+              flexWrap: 'wrap',
+              padding: '8px 12px',
+              borderRadius: T.radius.md,
+              border: `1px solid ${mix('var(--dsw-alias-state-warn-primary)', 34, 'var(--dsw-alias-border-l1)')}`,
+              background: mix('var(--dsw-alias-state-warn-primary)', 9, 'var(--dsw-alias-bg-base)'),
+            }
+          : { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap', paddingTop: 2 },
+      packTable: {
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-base)',
+        overflow: 'hidden',
+      },
+      packRow: (first, phone) => ({
+        display: 'grid',
+        gridTemplateColumns: phone ? '1fr' : 'minmax(0, 1fr) auto',
+        alignItems: 'center',
+        gap: 8,
+        padding: '8px 12px',
+        ...(first ? {} : { borderTop: '1px solid var(--dsw-alias-border-l1)' }),
+      }),
+      libGrid: (phone) => ({
+        display: 'grid',
+        gridTemplateColumns: phone ? '1fr' : 'repeat(auto-fill, minmax(260px, 1fr))',
+        gap: 8,
+      }),
+      libCard: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 8,
+        padding: '9px 11px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-base)',
+        minWidth: 0,
+        boxSizing: 'border-box',
+      },
+      settingRow: (first, phone) => ({
+        display: 'flex',
+        alignItems: phone ? 'flex-start' : 'center',
+        justifyContent: 'space-between',
+        flexDirection: phone ? 'column' : 'row',
+        gap: 10,
+        paddingTop: first ? 2 : 12,
+        ...(first ? {} : { borderTop: '1px solid var(--dsw-alias-border-l1)' }),
+      }),
+      devBar: {
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        padding: '10px 14px',
+        borderRadius: T.radius.lg,
+        border: '1px dashed var(--dsw-alias-border-l2)',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: T.font.md,
+        fontWeight: 500,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        boxSizing: 'border-box',
+      },
+      devCard: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        padding: '12px 14px',
+        borderRadius: T.radius.lg,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'transparent',
+      },
+      armedScroll: { maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', paddingRight: 2 },
+      dangerCard: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        padding: '14px 16px',
+        borderRadius: T.radius.lg,
+        border: `1px dashed ${mix('var(--dsw-alias-state-error-primary)', 35, 'var(--dsw-alias-border-l2)')}`,
+        background: mix('var(--dsw-alias-state-error-primary)', 4, 'var(--dsw-alias-bg-layer-1)'),
+      },
+      sectionHead: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 },
+      errTitle: { fontWeight: 700, fontSize: T.font.md, color: 'var(--dsw-alias-state-error-primary)' },
+      dangerTitle: { fontSize: T.font.lg, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--dsw-alias-state-error-primary)' },
+      monoSm: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: T.font.sm },
+      sessionRowClickable: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--dsw-alias-border-l1)', cursor: 'pointer' },
+      noteRight: { color: 'var(--dsw-alias-label-secondary)', fontSize: T.font.sm, marginLeft: 'auto' },
+      labelNowrap: { color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap', flex: '0 0 auto' },
+      textareaMd: {
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
+        padding: '10px 12px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: T.font.sm,
+        lineHeight: 1.6,
+        minHeight: 68,
+        fontFamily: 'inherit',
+        resize: 'vertical',
+      },
+      textareaSm: {
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
+        padding: '10px 12px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: T.font.sm,
+        lineHeight: 1.6,
+        minHeight: 52,
+        fontFamily: 'inherit',
+        resize: 'vertical',
+      },
+      hidden: { display: 'none' },
+      devSection: { display: 'flex', flexDirection: 'column', gap: 'inherit' },
+      devChevron: (open, off) => ({
+        display: 'inline-flex',
+        alignItems: 'center',
+        transform: open ? 'rotate(180deg)' : 'none',
+        transition: off ? 'none' : 'transform 160ms ease',
+      }),
       // 勾选框 / 短输入框和它的文字贴在一起（不再 space-between 拉到两端）。
       checkRow: { display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-start', flexWrap: 'wrap' },
       numberInput: {
         width: 88,
+        height: 30,
         boxSizing: 'border-box',
-        padding: '4px 8px',
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-bg-base)',
+        padding: '0 10px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
         color: 'var(--dsw-alias-label-primary)',
-        fontSize: 12,
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
+        ...T.layout.num,
       },
       selectInput: {
         flex: '1 1 240px',
         minWidth: 0,
         maxWidth: 480,
+        height: 30,
         boxSizing: 'border-box',
-        padding: '6px 9px',
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-bg-base)',
+        padding: '0 10px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
         color: 'var(--dsw-alias-label-primary)',
-        fontSize: 12,
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
       },
       overviewHead: { display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 },
       shortId: {
@@ -5034,6 +5857,7 @@ window.__ModuleLoader__.load({
         gap: 4,
         padding: '1px 7px',
         borderRadius: 10,
+        border: '1px solid transparent',
         fontSize: 11,
         lineHeight: '18px',
         background: 'var(--dsw-alias-bg-layer-2)',
@@ -5065,13 +5889,18 @@ window.__ModuleLoader__.load({
       label: { color: 'var(--dsw-alias-label-secondary)' },
       input: {
         width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        height: 30,
         boxSizing: 'border-box',
-        padding: '6px 9px',
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-bg-base)',
+        padding: '0 10px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
         color: 'var(--dsw-alias-label-primary)',
-        fontSize: 12,
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
       },
       button: {
         alignSelf: 'flex-start',
@@ -5096,26 +5925,29 @@ window.__ModuleLoader__.load({
         overflow: 'auto',
       },
       note: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 },
-      // ── M2：输入框内开关（尺寸要收紧到 composer 工具行的量级）──
+      // ── M2：输入框内开关（桌面 28px 对齐宿主工具行，Tonal Surface 柔和三态去双层黑框）──
       gatePill: (on) => ({
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 5,
-        height: 24,
-        padding: '0 9px',
-        borderRadius: 12,
-        border: `1px solid ${on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'}`,
-        background: on ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent)' : 'transparent',
-        color: on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-secondary)',
-        fontSize: 12,
+        gap: 6,
+        height: 28,
+        padding: '0 10px',
+        borderRadius: T.radius.pill,
+        border: `1px solid ${on ? mix('var(--dsw-alias-brand-primary)', 24, 'var(--dsw-alias-border-l1)') : 'var(--dsw-alias-border-l1)'}`,
+        background: on ? mix('var(--dsw-alias-brand-primary)', 7, 'var(--dsw-alias-bg-layer-1)') : 'transparent',
+        color: on ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
         lineHeight: 1,
         cursor: 'pointer',
         flex: '0 0 auto',
+        boxSizing: 'border-box',
       }),
       gateDot: (on) => ({
         width: 6,
         height: 6,
-        borderRadius: 3,
+        borderRadius: '50%',
+        flex: '0 0 auto',
         background: on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-state-idle-primary)',
       }),
       gateNotice: {
@@ -5260,7 +6092,7 @@ window.__ModuleLoader__.load({
       injectRows: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 },
       injectRow: {
         display: 'grid',
-        gridTemplateColumns: 'minmax(150px, 30%) 1fr',
+        gridTemplateColumns: 'minmax(150px, 30%) minmax(0, 1fr)',
         gap: 8,
         alignItems: 'start',
       },
@@ -5288,15 +6120,19 @@ window.__ModuleLoader__.load({
       },
       injectBox: {
         width: '100%',
-        minHeight: 34,
+        maxWidth: '100%',
+        minWidth: 0,
+        minHeight: 40,
         maxHeight: '14vh',
         boxSizing: 'border-box',
-        padding: '6px 9px',
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-bg-base)',
+        padding: '10px 12px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
         color: 'var(--dsw-alias-label-primary)',
-        fontSize: 12,
+        fontSize: T.font.sm,
+        lineHeight: 1.6,
         fontFamily: 'inherit',
         resize: 'vertical',
       },
@@ -5326,14 +6162,15 @@ window.__ModuleLoader__.load({
       // ── 标签（放行来源 / 白名单）：来源 id 能直接扫出来，所以点选比手打逗号靠谱 ──
       chipRow: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
       chip: (active) => ({
-        padding: '2px 9px',
-        borderRadius: 999,
-        fontSize: 11,
+        padding: '3px 10px',
+        borderRadius: T.radius.pill,
+        fontSize: T.font.xs,
+        fontWeight: active ? 600 : 400,
         cursor: 'pointer',
         whiteSpace: 'nowrap',
-        border: `1px solid ${active ? 'var(--dsw-alias-state-success-primary, var(--dsw-alias-border-l1))' : 'var(--dsw-alias-border-l2)'}`,
+        border: `1px solid ${active ? mix('var(--dsw-alias-brand-primary)', 38, 'var(--dsw-alias-border-l2)') : 'var(--dsw-alias-border-l2)'}`,
         color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
-        background: active ? 'var(--dsw-alias-bg-layer-3, var(--dsw-alias-bg-layer-2))' : 'transparent',
+        background: active ? mix('var(--dsw-alias-brand-primary)', 10, 'var(--dsw-alias-bg-base)') : 'transparent',
       }),
       chipStatic: {
         padding: '2px 9px',
@@ -5369,7 +6206,7 @@ window.__ModuleLoader__.load({
         gap: 3,
         padding: '7px 10px',
         borderRadius: 8,
-        border: '1px solid var(--dsw-alias-state-error-primary, #d94a4a)',
+        border: '1px solid var(--dsw-alias-state-error-primary)',
         background: 'var(--dsw-alias-bg-layer-2)',
         fontSize: 11.5,
       },
@@ -5385,25 +6222,32 @@ window.__ModuleLoader__.load({
         background: 'transparent',
       }),
       dockSelect: {
-        height: 24,
-        padding: '0 6px',
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-bg-base)',
+        height: 30,
+        boxSizing: 'border-box',
+        padding: '0 10px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
         color: 'var(--dsw-alias-label-primary)',
-        fontSize: 12,
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
         maxWidth: 200,
       },
       dockName: {
-        height: 24,
+        height: 30,
         boxSizing: 'border-box',
         width: 120,
-        padding: '0 8px',
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-bg-base)',
+        maxWidth: '100%',
+        minWidth: 0,
+        padding: '0 10px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
         color: 'var(--dsw-alias-label-primary)',
-        fontSize: 12,
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
       },
       dockStatus: (kind) => ({
         fontSize: 11,
@@ -5486,12 +6330,19 @@ window.__ModuleLoader__.load({
       const pageTouch = phone || pageView.coarse === true
       const pageTocLinkStyle = pageTouch ? { ...S.tocLink, flex: '0 0 auto', minHeight: 36, padding: '8px 10px', fontSize: 13, whiteSpace: 'nowrap' } : S.tocLink
       const pageKpiBarStyle = phone ? { ...S.kpiBar, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' } : S.kpiBar
+      const pageCardStyle = phone ? { ...S.card, padding: '12px 12px' } : S.card
       const pageBtn = pageTouch ? { ...S.button, minHeight: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } : S.button
-      const pageInput = pageTouch ? { ...S.input, minHeight: 36, fontSize: 16 } : S.input
-      const pageSelectInput = pageTouch ? { ...S.selectInput, minHeight: 36, fontSize: 16 } : S.selectInput
-      const pageNumberInput = pageTouch ? { ...S.numberInput, minHeight: 34, fontSize: 16 } : S.numberInput
+      const pageBtnPrimary = pageTouch ? { ...S.btnPrimary, minHeight: 34 } : S.btnPrimary
+      const pageBtnOutline = pageTouch ? { ...S.btnOutline, minHeight: 34 } : S.btnOutline
+      const pageBtnGhost = pageTouch ? { ...S.btnGhost, minHeight: 34 } : S.btnGhost
+      const pageSegBtn = (active, tone) => (pageTouch ? { ...S.segBtn(active, tone), minHeight: 32 } : S.segBtn(active, tone))
+      const pageInput = pageTouch ? { ...S.input, height: 34, minHeight: 34, fontSize: 16 } : S.input
+      const pageSelectInput = pageTouch ? { ...S.selectInput, height: 34, minHeight: 34, fontSize: 16 } : S.selectInput
+      const pageNumberInput = pageTouch ? { ...S.numberInput, height: 34, minHeight: 34, fontSize: 16 } : S.numberInput
       const pageSessionRow = phone ? { ...S.sessionRow, flexWrap: 'wrap', alignItems: 'flex-start' } : S.sessionRow
+      const pageOverviewCard = phone ? { ...S.overviewCard, flexDirection: 'column', alignItems: 'stretch' } : S.overviewCard
       const pageChipRow = phone ? { ...S.chipRow, flexWrap: 'wrap' } : S.chipRow
+      const pageLibSelect = phone ? { ...pageSelectInput, width: '100%', maxWidth: '100%' } : { ...pageSelectInput, flex: '0 1 280px', maxWidth: 320 }
       // PR D（#45 第 25 条）：冒号跟着语言走（中文全角 / 英文半角）。t 缺 key 时回退全角。
       const colonText = t('labelColon')
       const colon = typeof colonText === 'string' && colonText !== '' && colonText !== 'labelColon' ? colonText : '：'
@@ -5508,6 +6359,8 @@ window.__ModuleLoader__.load({
       }
       /** 总览会话多于这个数才给过滤框（issue #45 第 16 条）。 */
       const OVERVIEW_FILTER_MIN = 8
+      /** 总览每页默认条数（v2 M4）。 */
+      const OVERVIEW_PAGE_SIZE = 10
       /** 「未保存」标记的颜色（与待确认同一档提醒色）。 */
       const UNSAVED_TONE = 'var(--dsw-alias-state-warn-primary)'
       const [state, setState] = React.useState(null)
@@ -5619,8 +6472,12 @@ window.__ModuleLoader__.load({
       //   sectionFb = { [节]: { tick, text } }；sectionErrors = { [节]: errorsReduce 的状态 }。
       const [sectionFb, setSectionFb] = React.useState({})
       const [sectionErrors, setSectionErrors] = React.useState({})
-      // issue #45 第 16 条：总览过滤（会话多于 OVERVIEW_FILTER_MIN 个时才出现）。
+      // issue #45 第 16 条：总览过滤（会话多于 OVERVIEW_FILTER_MIN 个时才出现）；v2 M4 增加分组 / KPI 联动 / 分页与资源库筛选。
       const [overviewFilter, setOverviewFilter] = React.useState('')
+      const [overviewGroup, setOverviewGroup] = React.useState('all')
+      const [kpiFilter, setKpiFilter] = React.useState('')
+      const [overviewPage, setOverviewPage] = React.useState(1)
+      const [libTab, setLibTab] = React.useState('all')
       const packImportRef = React.useRef(null)
       const cardImportRef = React.useRef(null)
       // PR2：新会话默认（每轮注入）的草稿；null = 跟随服务端，编辑后才有值。
@@ -5675,10 +6532,12 @@ window.__ModuleLoader__.load({
       }, [refresh])
 
       // PR3：卡片点「改默认 ↗」时把左侧页滚到对应小节（没有 URL 路由 / 面板事件，用一条窗口事件带锚点）。
-      const scrollToAnchor = (anchor) => {
+      const scrollToAnchor = (anchor, smooth = false) => {
         if (typeof anchor !== 'string' || anchor === '') return
         const node = typeof document !== 'undefined' ? document.querySelector('[data-prefill-anchor="' + anchor + '"]') : null
-        if (node !== null && node !== undefined && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'start' })
+        if (node !== null && node !== undefined && typeof node.scrollIntoView === 'function') {
+          node.scrollIntoView(smooth === true ? { block: 'start', behavior: 'smooth' } : { block: 'start' })
+        }
       }
       // v1：TOC 吸顶 + scroll-spy（点目录 / 滚动都让 aria-current 跟上）。
       const pageRef = React.useRef(null)
@@ -5822,18 +6681,29 @@ window.__ModuleLoader__.load({
             : typeof ownLevel === 'string' ? 'session' : typeof globalLevelOf === 'string' ? 'global' : 'default'
         const meta = sessionMetaOf(id)
         const title = sessionTitleOf(id)
+        const preset = state?.activePreset?.[id] ?? ''
+        const level = typeof view?.level === 'string' ? view.level : typeof ownLevel === 'string' ? ownLevel : typeof globalLevelOf === 'string' ? globalLevelOf : ''
+        const blocked = Number(view?.blocked) || 0
+        const everyTurnOn = turnEntry !== undefined && turnEntry.enabled !== false && turnText !== '' && everyTurnSwitchOn(state, id)
+        const everyTurnFrom = isEntryObject(own) ? 'session' : isEntryObject(fallback) ? 'default' : ''
+        const manual = Number(envelope?.manualQueued?.[id]) || 0
+        const activeBlocked = level === 'observe' || level === '' ? 0 : blocked
+        const custom = preset !== '' || levelFrom === 'session' || everyTurnFrom === 'session' || manual > 0 || activeBlocked > 0
         return {
           id,
           title,
           cwd: meta.cwd,
           updatedAt: meta.updatedAt,
-          preset: state?.activePreset?.[id] ?? '',
-          level: typeof view?.level === 'string' ? view.level : typeof ownLevel === 'string' ? ownLevel : typeof globalLevelOf === 'string' ? globalLevelOf : '',
+          preset,
+          presetName: preset === '' ? '' : presetLabel(preset),
+          level,
           levelFrom,
-          blocked: Number(view?.blocked) || 0,
-          everyTurn: turnEntry !== undefined && turnEntry.enabled !== false && turnText !== '' && everyTurnSwitchOn(state, id),
-          everyTurnFrom: isEntryObject(own) ? 'session' : isEntryObject(fallback) ? 'default' : '',
-          manual: Number(envelope?.manualQueued?.[id]) || 0,
+          blocked,
+          activeBlocked,
+          everyTurn: everyTurnOn,
+          everyTurnFrom,
+          manual,
+          custom,
           live: Object.prototype.hasOwnProperty.call(envelope?.tools?.sessions ?? {}, id),
         }
       }).sort(
@@ -5843,10 +6713,59 @@ window.__ModuleLoader__.load({
           (a.title || a.id).localeCompare(b.title || b.id) ||
           (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
       )
-      const overviewFiltering = overviewRows.length > OVERVIEW_FILTER_MIN
+      const overviewCounts = {
+        all: overviewRows.length,
+        live: overviewRows.filter((row) => row.live).length,
+        custom: overviewRows.filter((row) => row.custom).length,
+        default: overviewRows.filter((row) => !row.custom).length,
+      }
+      const overviewFiltering = overviewRows.length > OVERVIEW_FILTER_MIN || overviewFilter !== ''
       const overviewNeedle = overviewFiltering ? overviewFilter.trim().toLowerCase() : ''
+      const overviewAfterGroup =
+        kpiFilter === 'live'
+          ? overviewRows.filter((row) => row.live)
+          : kpiFilter === 'preset'
+            ? overviewRows.filter((row) => row.preset !== '')
+            : kpiFilter === 'everyTurn'
+              ? overviewRows.filter((row) => row.everyTurn)
+              : kpiFilter === 'blocked'
+                ? overviewRows.filter((row) => row.activeBlocked > 0)
+                : overviewGroup === 'live'
+                  ? overviewRows.filter((row) => row.live)
+                  : overviewGroup === 'custom'
+                    ? overviewRows.filter((row) => row.custom)
+                    : overviewGroup === 'default'
+                      ? overviewRows.filter((row) => !row.custom)
+                      : overviewRows
       const overviewShown =
-        overviewNeedle === '' ? overviewRows : overviewRows.filter((row) => row.id.toLowerCase().includes(overviewNeedle) || row.title.toLowerCase().includes(overviewNeedle))
+        overviewNeedle === ''
+          ? overviewAfterGroup
+          : overviewAfterGroup.filter(
+              (row) =>
+                row.id.toLowerCase().includes(overviewNeedle) ||
+                row.title.toLowerCase().includes(overviewNeedle) ||
+                row.preset.toLowerCase().includes(overviewNeedle) ||
+                row.presetName.toLowerCase().includes(overviewNeedle),
+            )
+      const overviewTotalPages = Math.max(1, Math.ceil(overviewShown.length / OVERVIEW_PAGE_SIZE))
+      const overviewSafePage = Math.min(Math.max(1, overviewPage), overviewTotalPages)
+      const overviewPaged = overviewShown.slice((overviewSafePage - 1) * OVERVIEW_PAGE_SIZE, overviewSafePage * OVERVIEW_PAGE_SIZE)
+      const selectOverviewGroup = (group) => {
+        setOverviewGroup(group)
+        setKpiFilter(group === 'live' ? 'live' : '')
+        setOverviewPage(1)
+      }
+      const toggleKpiFilter = (key) => {
+        if (kpiFilter === key) {
+          setKpiFilter('')
+          setOverviewGroup('all')
+        } else {
+          setKpiFilter(key)
+          setOverviewGroup(key === 'live' ? 'live' : 'all')
+        }
+        setOverviewPage(1)
+        scrollToAnchor('overview', motionNow !== 'off')
+      }
       // 等剪贴板的结果再提示（PR A #45 第 8 条）：成功才冒「已复制」；失败（没权限 / 没有 clipboard API）
       // 走这一节的错误 pill，绝不显示「已复制」。
       const copySessionId = (id) => {
@@ -6107,7 +7026,7 @@ window.__ModuleLoader__.load({
       const sectionHead = (section, title, extra = []) =>
         h(
           'div',
-          { 'data-prefill-section-head': section, style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 } },
+          { 'data-prefill-section-head': section, style: S.sectionHead },
           title === null ? null : h('div', { style: S.cardTitle }, title),
           ...extra,
           h(ErrorPill, {
@@ -6125,7 +7044,7 @@ window.__ModuleLoader__.load({
         return h(
           'div',
           { 'data-prefill-error-detail': error.key, role: 'dialog', 'aria-label': t('errPill').replace('{op}', error.op), style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderRadius: 8, border: '1px solid ' + tint(ERROR_TONE, 45) } },
-          h('div', { style: { fontWeight: 700, fontSize: 13, color: ERROR_TONE } }, '⚠ ' + t('errPill').replace('{op}', error.op) + (error.count > 1 ? ' ×' + error.count : '')),
+          h('div', { style: S.errTitle }, '⚠ ' + t('errPill').replace('{op}', error.op) + (error.count > 1 ? ' ×' + error.count : '')),
           h('div', { style: S.note }, t('errDetailWhat')),
           h('div', { style: S.note }, t('errDetailReason') + '：', h('code', null, error.detail || t('errDetailUnknown'))),
           h('div', { style: S.note }, t('errDetailAt') + '：' + (error.at ? new Date(error.at).toLocaleTimeString() : '—')),
@@ -6221,11 +7140,11 @@ window.__ModuleLoader__.load({
         )
       }
 
-      // ── 开发者区（M1 探针，默认折叠）────────────────────────────────────────
+      // ── 开发者区（M1 探针，默认折叠；v2 M4：子卡视觉降权、生效会话限高 240px 可滚、危险区独立红虚线隔离）──
       const devCards = [
         h(
           'div',
-          { key: 'levers', style: S.card },
+          { key: 'levers', style: S.devCard },
           h('div', { style: S.cardTitle }, t('cardTitle')),
           h('div', { style: S.group }, t('writeGroup')),
           ...LEVERS.filter((lever) => lever.tone === 'write').map((lever) =>
@@ -6256,7 +7175,7 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { key: 'allow-tools', style: S.card },
+          { key: 'allow-tools', style: S.devCard },
           h('div', { style: S.note }, t('allowLabel')),
           h(
             'div',
@@ -6322,66 +7241,71 @@ window.__ModuleLoader__.load({
         ),
         h(
           'div',
-          { key: 'runtime', style: S.card },
+          { key: 'runtime', style: S.devCard },
           h('div', { style: S.cardTitle }, t('stateTitle')),
           h('div', { style: S.switchRow }, h('span', { style: S.label }, t('hostLabel')), h('span', null, hostTone === 'ok' ? t('reachable') : hostTone === 'fail' ? t('unreachable') : t('busy'))),
-          h('div', { style: S.switchRow }, h('span', { style: S.label }, t('routeLabel')), h('span', { style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 } }, STATE_ROUTE)),
+          h('div', { style: S.switchRow }, h('span', { style: S.label }, t('routeLabel')), h('span', { style: S.monoSm }, STATE_ROUTE)),
           ping.data?.stateFile === undefined ? null : h('div', { style: S.label }, t('stateFileLabel') + ': ' + ping.data.stateFile),
           h(
             'div',
             { style: pageChipRow },
             h(
               'button',
-              { type: 'button', style: pageBtn, 'data-prefill-state-json-toggle': jsonOpen ? 'open' : 'closed', 'aria-expanded': jsonOpen ? 'true' : 'false', onClick: () => setJsonOpen((value) => !value) },
+              { type: 'button', style: pageBtnOutline, 'data-prefill-state-json-toggle': jsonOpen ? 'open' : 'closed', 'aria-expanded': jsonOpen ? 'true' : 'false', onClick: () => setJsonOpen((value) => !value) },
               jsonOpen ? t('stateJsonHide') : t('stateJsonShow'),
             ),
-            h('button', { type: 'button', style: pageBtn, 'data-prefill-state-json-copy': '', onClick: copyStateJson }, t('stateJsonCopy')),
+            h('button', { type: 'button', style: pageBtnGhost, 'data-prefill-state-json-copy': '', onClick: copyStateJson }, t('stateJsonCopy')),
           ),
           jsonOpen ? h('pre', { style: S.pre, 'data-prefill-state-json': '' }, stateJson) : null,
           (state?.armed?.length ?? 0) === 0 ? h('div', { style: S.warn }, t('armedNoneNote')) : null,
-        ),        // ── 生效会话（PR1）：勾选在册会话；收进开发者折叠 ─────────────────────
+        ),        // ── 生效会话（PR1）：勾选在册会话；收进开发者折叠，列表限高 240px 可滚 ─────────
         h(
           'div',
-          { key: 'armed', style: S.card, 'data-prefill-armed-card': '' },
+          { key: 'armed', style: S.devCard, 'data-prefill-armed-card': '' },
           h('div', { style: S.cardTitle }, t('armedTitle')),
           h('div', { style: S.note }, t('armedHint')),
           sessionIds.length === 0 ? h('div', { style: S.note }, t('armedEmpty')) : null,
-          ...sessionIds.map((id) => {
-            const title = sessionTitleOf(id)
-            const label = title !== '' ? title : id
-            return h(
-              'label',
-              { key: id, style: { ...S.sessionRow, cursor: 'pointer' }, 'data-prefill-armed-row': id, title: label + ' · ' + id },
-              h('input', {
-                type: 'checkbox',
-                checked: armed.includes(id),
-                'data-prefill-armed-session': id,
-                onChange: (event) => setArmed(id, event.target.checked),
-              }),
-              h(
-                'div',
-                { style: S.sessionLabel },
-                h('span', { style: S.sessionTitle }, label),
-                title === '' ? null : h('span', { style: S.sessionId }, id),
-              ),
-              liveSet.has(id) ? null : h('span', { style: S.warn }, t('armedNotLive')),
-              state?.activePreset?.[id] === undefined
-                ? null
-                : h('span', { style: S.pill }, state.activePreset[id]),
-            )
-          }),
           h(
-            'label',
-            { style: { ...S.sessionRow, cursor: 'pointer' }, 'data-prefill-armed-row': '*', title: t('armedAllTip') },
-            h('input', { type: 'checkbox', checked: armed.includes('*'), 'data-prefill-armed-session': '*', onChange: (event) => setArmed('*', event.target.checked) }),
-            h('span', null, t('armedAll')),
-            h('span', { style: { ...S.note, marginLeft: 'auto' } }, t('armedAllTip')),
+            'div',
+            { style: S.armedScroll, 'data-prefill-armed-list': '' },
+            ...sessionIds.map((id) => {
+              const title = sessionTitleOf(id)
+              const label = title !== '' ? title : id
+              return h(
+                'label',
+                { key: id, style: S.sessionRowClickable, 'data-prefill-armed-row': id, title: label + ' · ' + id },
+                h('input', {
+                  type: 'checkbox',
+                  checked: armed.includes(id),
+                  'data-prefill-armed-session': id,
+                  onChange: (event) => setArmed(id, event.target.checked),
+                }),
+                h(
+                  'div',
+                  { style: S.sessionLabel },
+                  h('span', { style: S.sessionTitle }, label),
+                  title === '' ? null : h('span', { style: S.sessionId }, id),
+                ),
+                liveSet.has(id) ? null : h('span', { style: S.warn }, t('armedNotLive')),
+                state?.activePreset?.[id] === undefined
+                  ? null
+                  : h('span', { style: S.pill }, state.activePreset[id]),
+              )
+            }),
+            h(
+              'label',
+              { style: S.sessionRowClickable, 'data-prefill-armed-row': '*', title: t('armedAllTip') },
+              h('input', { type: 'checkbox', checked: armed.includes('*'), 'data-prefill-armed-session': '*', onChange: (event) => setArmed('*', event.target.checked) }),
+              h('span', null, t('armedAll')),
+              h('span', { style: S.noteRight }, t('armedAllTip')),
+            ),
           ),
         ),
-        // ── 恢复默认（issue #45 第 14 条：它只重置本区的探针 / 生效会话 / 放行来源 / 工具，所以收进开发者区）──
+        // ── 危险区 · 恢复默认（issue #45 第 14 条 + v2 M4 独立红虚线框隔离 + armed 红底反色）──
         h(
           'div',
-          { key: 'reset', style: S.card, 'data-prefill-reset-card': '' },
+          { key: 'reset', style: S.dangerCard, 'data-prefill-reset-card': '' },
+          h('div', { style: S.dangerTitle }, t('dangerZoneTitle')),
           h('div', { style: S.note }, t('resetTip')),
           h(
             'div',
@@ -6390,7 +7314,8 @@ window.__ModuleLoader__.load({
               ConfirmButton,
               {
                 armed: resetArmed,
-                style: pageBtn,
+                danger: true,
+                style: { ...pageBtnOutline, borderColor: tint(ERROR_TONE, 45), color: ERROR_TONE },
                 title: t('resetTip'),
                 'data-prefill-reset': '',
                 ...busyAttrs(busy, 'reset'),
@@ -6427,16 +7352,39 @@ window.__ModuleLoader__.load({
         ),
       ]
 
-      // v1：总览顶部 4 个 KPI（只读；无时间窗 ⇒ 第 4 格叫「拦截中」= 当前 blocked 合计、观察档不计）。
+      // v1：总览顶部 4 个 KPI（v2 M4：顶行小标签+语义点、底行 22px 粗等宽数字、0 值降权、blocked 暖微框、点击快筛联动）。
       const kpi = {
         live: overviewRows.filter((row) => row.live).length,
         preset: overviewRows.filter((row) => row.preset !== '').length,
         everyTurn: overviewRows.filter((row) => row.everyTurn).length,
         blocked: overviewRows.reduce((sum, row) => sum + (row.level === 'observe' || row.level === '' ? 0 : row.blocked), 0),
       }
+      const kpiMeta = [
+        ['live', t('kpiLive'), kpi.live, t('kpiLiveTip'), kpi.live > 0 ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-idle-primary)'],
+        ['preset', t('kpiPreset'), kpi.preset, t('kpiPresetTip'), kpi.preset > 0 ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-state-idle-primary)'],
+        ['everyTurn', t('kpiEveryTurn'), kpi.everyTurn, t('kpiEveryTurnTip'), kpi.everyTurn > 0 ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-state-idle-primary)'],
+        ['blocked', t('kpiBlocked'), kpi.blocked, t('kpiBlockedTip'), kpi.blocked > 0 ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-state-idle-primary)'],
+      ]
+      const kpiActiveEntry = kpiFilter !== '' && kpiFilter !== 'live' ? kpiMeta.find(([k]) => k === kpiFilter) : null
+      const formatDefaultMetrics = (text) => {
+        const chars = String(text ?? '').length
+        const tok = estimateSettingTokens(text)
+        const tmpl = t('systemCharsTok')
+        return tmpl === 'systemCharsTok' ? `${chars} 字 · ≈${tok} tok` : tmpl.replace('{chars}', String(chars)).replace('{tok}', String(tok))
+      }
+      const libCounts = {
+        packs: lib.packs.length,
+        cards: lib.cards.length,
+        bench: lib.blocks.length + lib.towers.length,
+        hidden: lib.hidden.length,
+      }
+      const libShow = (tab) => libTab === 'all' || libTab === tab
+      const sbxPacksEditable = (globalView?.packs ?? []).filter((pack) => pack.locked !== true)
+
       return h(
         'div',
-        { ref: pageRef, onScroll: onPageScroll, style: pageStyle, 'data-prefill-page': 'prefill' },
+        { ref: pageRef, onScroll: onPageScroll, style: pageStyle, 'data-prefill-page': 'prefill', 'data-prefill-motion': motionNow ?? (typeof motionLevel === 'function' ? motionLevel() : undefined) },
+        typeof SCOPED_STYLE_PAGE === 'string' ? h('style', { key: 'prefill-page-scope', 'data-prefill-scoped-style': 'page' }, SCOPED_STYLE_PAGE) : null,
         // PR D（#45 第 21 条）：和宿主「插件」页一样 —— 左右留白、内容列限宽居中。
         h(
           'div',
@@ -6462,425 +7410,754 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
-          // v1：总览顶部 4 个 KPI（在册 → 运行中 / 已套预设 / 每轮注入开 / 拦截中）。
+          // v2 M4：4 格 KPI 权重分级 + 0 值降权 + blocked 暖微框 + 点击快筛联动。
           h(
             'div',
             { style: pageKpiBarStyle, 'data-prefill-kpi-bar': '' },
-            ...[
-              ['live', t('kpiLive'), kpi.live, t('kpiLiveTip')],
-              ['preset', t('kpiPreset'), kpi.preset, t('kpiPresetTip')],
-              ['everyTurn', t('kpiEveryTurn'), kpi.everyTurn, t('kpiEveryTurnTip')],
-              ['blocked', t('kpiBlocked'), kpi.blocked, t('kpiBlockedTip')],
-            ].map(([key, label, value, tip]) =>
-              h(
-                'div',
-                { key, style: S.kpi, 'data-prefill-kpi': key, 'data-prefill-kpi-value': String(value), title: tip },
-                h('b', { style: key === 'blocked' && value > 0 ? { ...S.kpiValue, color: 'var(--dsw-alias-state-warn-primary, #f59e0b)' } : S.kpiValue }, String(value)),
-                h('span', { style: S.kpiLabel }, label),
-              ),
-            ),
+            ...kpiMeta.map(([key, label, value, tip, dotTone]) => {
+              const isActive = kpiFilter === key
+              const isWarn = key === 'blocked' && value > 0
+              const valueColor = value === 0 ? 'var(--dsw-alias-label-tertiary)' : isWarn ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-label-primary)'
+              return h(
+                'button',
+                {
+                  key,
+                  type: 'button',
+                  style: S.kpiTile(isActive, isWarn),
+                  'data-prefill-kpi': key,
+                  'data-prefill-kpi-value': String(value),
+                  'data-prefill-kpi-zero': value === 0 ? 'true' : 'false',
+                  'data-prefill-kpi-active': isActive ? 'true' : 'false',
+                  'aria-pressed': isActive ? 'true' : 'false',
+                  title: tip,
+                  onClick: () => toggleKpiFilter(key),
+                },
+                h(
+                  'span',
+                  { style: S.kpiTop },
+                  h('i', { 'aria-hidden': 'true', 'data-prefill-kpi-dot': key, style: S.kpiDot(dotTone) }),
+                  h('span', { style: S.kpiLabel }, label),
+                ),
+                h('b', { 'data-prefill-kpi-num': key, style: { ...S.kpiValue, color: valueColor } }, String(value)),
+              )
+            }),
           ),
 
-        // ── 总览（PR3）：在册会话 + 当前配置；每行「打开」= 切会话 + 弹卡片 ──────
+        // ── 总览（PR3 + v2 M4：分组 + 搜索 + 紧凑双行微卡 + 10 条稳态分页）──────
         h(
           'div',
-          { style: S.card, 'data-prefill-anchor': 'overview' },
+          { style: pageCardStyle, 'data-prefill-anchor': 'overview' },
           sectionHead('overview', t('overviewTitle')),
           sectionErrorDetail('overview'),
           h('div', { style: S.note }, t('overviewHint')),
-          overviewRows.length === 0 ? h('div', { style: S.note }, t('overviewEmpty')) : null,
-          overviewFiltering
-            ? h('input', {
-                type: 'search',
-                style: pageInput,
-                value: overviewFilter,
-                placeholder: t('overviewFilter'),
-                'aria-label': t('overviewFilter'),
-                'data-prefill-overview-filter': '',
-                onChange: (event) => setOverviewFilter(event.target.value),
-              })
+          overviewRows.length === 0
+            ? h('div', { style: S.note }, t('overviewEmpty'))
+            : h(
+                'div',
+                { style: S.overviewToolbar, 'data-prefill-overview-toolbar': '' },
+                h(
+                  'div',
+                  { role: 'tablist', style: S.seg, 'data-prefill-overview-groups': '' },
+                  ...[
+                    ['all', t('overviewGroupAll'), overviewCounts.all],
+                    ['live', t('overviewGroupLive'), overviewCounts.live],
+                    ['custom', t('overviewGroupCustom'), overviewCounts.custom],
+                    ['default', t('overviewGroupDefault'), overviewCounts.default],
+                  ].map(([groupKey, groupLabel, count]) => {
+                    const active = kpiActiveEntry === null && overviewGroup === groupKey
+                    return h(
+                      'button',
+                      {
+                        key: groupKey,
+                        type: 'button',
+                        role: 'tab',
+                        'aria-selected': active ? 'true' : 'false',
+                        'data-prefill-overview-group': groupKey,
+                        style: pageSegBtn(active),
+                        onClick: () => selectOverviewGroup(groupKey),
+                      },
+                      `${groupLabel} (${count})`,
+                    )
+                  }),
+                ),
+                kpiActiveEntry !== null
+                  ? h(
+                      'span',
+                      { style: { ...S.pill, borderColor: 'var(--dsw-alias-border-l2)' }, 'data-prefill-overview-kpi-pill': kpiFilter },
+                      t('overviewKpiActive').replace('{label}', kpiActiveEntry[1]),
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          style: { ...S.btnGhost, padding: '0 4px', fontSize: 11 },
+                          'data-prefill-overview-kpi-clear': '',
+                          onClick: () => {
+                            setKpiFilter('')
+                            setOverviewPage(1)
+                          },
+                        },
+                        '×',
+                      ),
+                    )
+                  : null,
+                overviewFiltering
+                  ? h(SearchInput, {
+                      value: overviewFilter,
+                      onChange: (next) => {
+                        setOverviewFilter(next)
+                        setOverviewPage(1)
+                      },
+                      onClear: () => {
+                        setOverviewFilter('')
+                        setOverviewPage(1)
+                      },
+                      placeholder: t('overviewFilter'),
+                      ariaLabel: t('overviewFilter'),
+                      clearLabel: t('overviewFilterClear'),
+                      inputAttrs: { 'data-prefill-overview-filter': '' },
+                      clearAttrs: { 'data-prefill-overview-filter-clear': '' },
+                      touch: pageTouch,
+                      style: S.searchWrap,
+                    })
+                  : null,
+              ),
+          overviewRows.length > 0 && overviewShown.length === 0 ? h('div', { style: S.note }, t('overviewFilterEmpty')) : null,
+          overviewPaged.length > 0
+            ? h(
+                'div',
+                { style: S.overviewList, 'data-prefill-overview-list': '' },
+                ...overviewPaged.map((row) => {
+                  const title = row.title
+                  const label = title !== '' ? title : t('overviewUntitled')
+                  const sandboxText =
+                    (row.level === '' ? t('overviewNone') : t(row.level === 'controlled' ? 'sbxLevelControlled' : row.level === 'strict' ? 'sbxLevelStrict' : 'sbxLevelObserve')) +
+                    // v1：观察档不报「拦 N」（与 sandboxSummary 同一口径）。
+                    (row.blocked > 0 && row.level !== 'observe' && row.level !== '' ? ' · ' + t('sbxBlockedN').replace('{n}', String(row.blocked)) : '')
+                  const sandboxFrom = row.levelFrom === 'global' ? ' · ' + t('overviewFromDefault') : row.levelFrom === 'session' ? ' · ' + t('overviewFromSession') : ''
+                  const everyTurnFrom = row.everyTurnFrom === 'default' ? ' · ' + t('overviewFromDefault') : row.everyTurnFrom === 'session' ? ' · ' + t('overviewFromSession') : ''
+                  const sbxPillTone = S.statusPill(row.blocked > 0 && row.level !== 'observe' && row.level !== '' ? 'warn' : row.level === '' ? 'off' : 'on')
+                  const sbxMuted = row.level === '' || (row.level === 'observe' && row.levelFrom !== 'session')
+                  const relTime = formatRelativeUpdated(row.updatedAt, t)
+                  const cwdTail = shortCwdTail(row.cwd)
+                  const tailText = [relTime, cwdTail].filter((part) => part !== '').join(' · ')
+                  return h(
+                    'div',
+                    { key: row.id, style: pageOverviewCard, 'data-prefill-overview-row': row.id },
+                    h(
+                      'div',
+                      { style: S.sessionLabel },
+                      // 首行：标题 + 灰色短 id + 相对时间 / cwd 尾段
+                      h(
+                        'div',
+                        { style: S.overviewHead },
+                        h('span', { style: S.sessionTitle, title: label }, label),
+                        h('span', { style: S.shortId, title: row.id, 'data-prefill-overview-id': row.id }, shortSessionId(row.id)),
+                        tailText !== '' ? h('span', { style: S.overviewTail, title: row.cwd || undefined, 'data-prefill-overview-tail': row.id }, tailText) : null,
+                      ),
+                      // 次行：精简胶囊（默认继承降为极淡无底次文字，仅运行中/已套预设/自定义拦截/每轮开给高亮胶囊）
+                      h(
+                        'div',
+                        { style: S.sessionMeta },
+                        h(
+                          'span',
+                          { style: row.preset === '' ? S.mutedMeta : S.statusPill('on'), 'data-prefill-overview-preset': row.preset, title: row.preset === '' ? undefined : row.preset },
+                          t('overviewPreset') + colon + (row.preset === '' ? t('overviewNone') : presetLabel(row.preset)),
+                        ),
+                        h(
+                          'span',
+                          { style: sbxMuted ? S.mutedMeta : sbxPillTone, 'data-prefill-overview-sandbox': row.id, 'data-from': row.levelFrom },
+                          t('overviewSandbox') + colon + sandboxText + sandboxFrom,
+                        ),
+                        h(
+                          'span',
+                          { style: row.everyTurn ? S.statusPill('on') : S.mutedMeta, 'data-prefill-overview-everyturn': row.id, 'data-from': row.everyTurnFrom },
+                          t('overviewEveryTurn') + colon + stateText(row.everyTurn) + everyTurnFrom,
+                        ),
+                        row.manual > 0 ? h('span', { style: S.statusPill('warn') }, t('overviewManual') + ' ' + row.manual) : null,
+                        h('span', { style: row.live ? S.statusPill('live') : S.mutedMeta, 'data-prefill-overview-live': row.live ? 'live' : 'not-live' }, row.live ? t('overviewLive') : t('overviewNotLive')),
+                      ),
+                    ),
+                    h(
+                      'div',
+                      { style: pageChipRow },
+                      h('button', { type: 'button', style: pageBtnOutline, 'data-prefill-overview-open': row.id, onClick: () => openSessionAndCard(row.id) }, t('overviewOpen')),
+                      h('button', { type: 'button', style: pageBtnGhost, 'data-prefill-overview-copy': row.id, onClick: () => copySessionId(row.id) }, t('overviewCopy')),
+                    ),
+                  )
+                }),
+              )
             : null,
-          overviewFiltering && overviewShown.length === 0 ? h('div', { style: S.note }, t('overviewFilterEmpty')) : null,
-          ...overviewShown.map((row) => {
-            const title = row.title
-            const label = title !== '' ? title : t('overviewUntitled')
-            const sandboxText =
-              (row.level === '' ? t('overviewNone') : t(row.level === 'controlled' ? 'sbxLevelControlled' : row.level === 'strict' ? 'sbxLevelStrict' : 'sbxLevelObserve')) +
-              // v1：观察档不报「拦 N」（与 sandboxSummary 同一口径）。
-              (row.blocked > 0 && row.level !== 'observe' && row.level !== '' ? ' · ' + t('sbxBlockedN').replace('{n}', String(row.blocked)) : '')
-            const sandboxFrom = row.levelFrom === 'global' ? ' · ' + t('overviewFromDefault') : row.levelFrom === 'session' ? ' · ' + t('overviewFromSession') : ''
-            const everyTurnFrom = row.everyTurnFrom === 'default' ? ' · ' + t('overviewFromDefault') : row.everyTurnFrom === 'session' ? ' · ' + t('overviewFromSession') : ''
-            return h(
-              'div',
-              { key: row.id, style: pageSessionRow, 'data-prefill-overview-row': row.id },
-              h(
+          overviewTotalPages > 1
+            ? h(
                 'div',
-                { style: S.sessionLabel },
-                // PR D（#45 第 22 条）：标题一行；id 缩成灰色短 id，悬停看全文。
+                { style: S.paginationBar, 'data-prefill-overview-pagination': '' },
                 h(
-                  'div',
-                  { style: S.overviewHead },
-                  h('span', { style: S.sessionTitle, title: label }, label),
-                  h('span', { style: S.shortId, title: row.id, 'data-prefill-overview-id': row.id }, shortSessionId(row.id)),
+                  'span',
+                  null,
+                  (() => {
+                    const tmpl = t('overviewPageInfo')
+                    return tmpl === 'overviewPageInfo'
+                      ? `共 ${overviewShown.length} 条 · 第 ${overviewSafePage}/${overviewTotalPages} 页`
+                      : tmpl
+                          .replace('{total}', String(overviewShown.length))
+                          .replace('{page}', String(overviewSafePage))
+                          .replace('{pages}', String(overviewTotalPages))
+                  })(),
                 ),
                 h(
-                  'div',
-                  { style: S.sessionMeta },
-                  h(
-                    'span',
-                    { style: S.statusPill(row.preset === '' ? 'off' : 'on'), 'data-prefill-overview-preset': row.preset, title: row.preset === '' ? undefined : row.preset },
-                    t('overviewPreset') + colon + (row.preset === '' ? t('overviewNone') : presetLabel(row.preset)),
-                  ),
-                  h(
-                    'span',
-                    { style: S.statusPill(row.blocked > 0 ? 'warn' : row.level === '' ? 'off' : 'on'), 'data-prefill-overview-sandbox': row.id, 'data-from': row.levelFrom },
-                    t('overviewSandbox') + colon + sandboxText + sandboxFrom,
-                  ),
-                  h(
-                    'span',
-                    { style: S.statusPill(row.everyTurn ? 'on' : 'off'), 'data-prefill-overview-everyturn': row.id, 'data-from': row.everyTurnFrom },
-                    t('overviewEveryTurn') + colon + stateText(row.everyTurn) + everyTurnFrom,
-                  ),
-                  row.manual > 0 ? h('span', { style: S.statusPill('warn') }, t('overviewManual') + ' ' + row.manual) : null,
-                  h('span', { style: S.statusPill(row.live ? 'live' : 'off'), 'data-prefill-overview-live': row.live ? 'live' : 'not-live' }, row.live ? t('overviewLive') : t('overviewNotLive')),
+                  'button',
+                  {
+                    type: 'button',
+                    style: { ...pageBtnOutline, opacity: overviewSafePage <= 1 ? 0.45 : 1, cursor: overviewSafePage <= 1 ? 'default' : 'pointer' },
+                    disabled: overviewSafePage <= 1,
+                    'data-prefill-overview-prev': '',
+                    onClick: () => setOverviewPage((p) => Math.max(1, p - 1)),
+                  },
+                  t('overviewPrev'),
                 ),
-              ),
-              h(
-                'div',
-                { style: pageChipRow },
-                h('button', { type: 'button', style: pageBtn, 'data-prefill-overview-open': row.id, onClick: () => openSessionAndCard(row.id) }, t('overviewOpen')),
-                h('button', { type: 'button', style: pageBtn, 'data-prefill-overview-copy': row.id, onClick: () => copySessionId(row.id) }, t('overviewCopy')),
-              ),
-            )
-          }),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: { ...pageBtnOutline, opacity: overviewSafePage >= overviewTotalPages ? 0.45 : 1, cursor: overviewSafePage >= overviewTotalPages ? 'default' : 'pointer' },
+                    disabled: overviewSafePage >= overviewTotalPages,
+                    'data-prefill-overview-next': '',
+                    onClick: () => setOverviewPage((p) => Math.min(overviewTotalPages, p + 1)),
+                  },
+                  t('overviewNext'),
+                ),
+              )
+            : null,
         ),
-        // ── 新会话默认 · 每轮注入（PR2：从卡片搬来，唯一编辑处）────────────────
+        // ── 新会话默认 · 每轮注入（PR2 + v2 M4：双子区分组 + 字数/tok 估算 + 脏状态暖色保存底栏）──
         h(
           'div',
-          { style: S.card, 'data-prefill-default-everyturn': '', 'data-prefill-anchor': 'default-everyturn' },
+          { style: pageCardStyle, 'data-prefill-default-everyturn': '', 'data-prefill-anchor': 'default-everyturn' },
           sectionHead('default-everyturn', t('defaultTurnTitle'), [
             defTurnDirty ? h('span', { key: 'unsaved', style: { ...S.pill, color: UNSAVED_TONE, borderColor: UNSAVED_TONE }, 'data-prefill-default-turn-unsaved': '' }, t('unsaved')) : null,
           ]),
           sectionErrorDetail('default-everyturn'),
           h('div', { style: S.note }, t('defaultTurnHint')),
-          h(
-            'label',
-            { style: { ...S.checkRow, cursor: 'pointer' } },
-            h('input', {
-              type: 'checkbox',
-              checked: defTurn.enabled,
-              'data-prefill-default-turn-enabled': '',
-              onChange: (event) => setDefTurn({ enabled: event.target.checked }),
-            }),
-            h('span', null, t('defaultTurnEnable')),
-          ),
-          defBenchLocked
-            ? h(
-                'div',
-                { style: S.warn, 'data-prefill-default-turn-bench': 'locked' },
-                t('defaultTurnBenchLocked'),
-                ' ',
-                h('button', { type: 'button', style: pageBtn, 'data-prefill-default-turn-plain': '', onClick: () => setDefTurn({ plain: true }) }, t('defaultTurnToPlain')),
-              )
-            : defHasBench
-              ? h('div', { style: S.warn, 'data-prefill-default-turn-bench': 'plain' }, t('defaultTurnBenchWarn'))
-              : null,
+          // 子区 1：启用与策略
           h(
             'div',
-            { style: pageChipRow },
-            ...['always', 'until', ...(everyTurnDefault?.mode === 'auto' ? ['auto'] : [])].map((mode) =>
+            { style: S.subSection, 'data-prefill-default-turn-section': 'policy' },
+            h('div', { style: S.subTitle }, t('defaultTurnPolicyTitle')),
+            h(
+              'label',
+              { style: { ...S.checkRow, cursor: 'pointer' } },
+              h('input', {
+                type: 'checkbox',
+                checked: defTurn.enabled,
+                'data-prefill-default-turn-enabled': '',
+                onChange: (event) => setDefTurn({ enabled: event.target.checked }),
+              }),
+              h('span', null, t('defaultTurnEnable')),
+            ),
+            defBenchLocked
+              ? h(
+                  'div',
+                  { style: S.warn, 'data-prefill-default-turn-bench': 'locked' },
+                  t('defaultTurnBenchLocked'),
+                  ' ',
+                  h('button', { type: 'button', style: pageBtnOutline, 'data-prefill-default-turn-plain': '', onClick: () => setDefTurn({ plain: true }) }, t('defaultTurnToPlain')),
+                )
+              : defHasBench
+                ? h('div', { style: S.warn, 'data-prefill-default-turn-bench': 'plain' }, t('defaultTurnBenchWarn'))
+                : null,
+            h(
+              'div',
+              { role: 'radiogroup', style: S.seg },
+              ...['always', 'until', ...(everyTurnDefault?.mode === 'auto' ? ['auto'] : [])].map((mode) =>
+                h(
+                  'button',
+                  {
+                    key: mode,
+                    type: 'button',
+                    role: 'radio',
+                    'aria-checked': defTurn.mode === mode ? 'true' : 'false',
+                    style: pageSegBtn(defTurn.mode === mode),
+                    'data-prefill-default-turn-mode': mode,
+                    onClick: () => setDefTurn({ mode }),
+                  },
+                  t(mode === 'always' ? 'everyTurnModeAlways' : mode === 'auto' ? 'everyTurnModeAuto' : 'everyTurnModeUntil'),
+                ),
+              ),
+            ),
+            defTurn.mode === 'until'
+              ? h(
+                  'label',
+                  { style: S.checkRow },
+                  h('span', { style: S.label }, t('defaultTurnUntilLabel')),
+                  h('input', {
+                    type: 'number',
+                    min: 1,
+                    value: String(defTurn.untilTurn || ''),
+                    style: pageNumberInput,
+                    placeholder: 'N',
+                    'aria-invalid': defTurnUntilInvalid ? 'true' : undefined,
+                    'data-prefill-default-turn-until': '',
+                    onChange: (event) => setDefTurn({ untilTurn: Number(event.target.value) || 0 }),
+                  }),
+                  h('span', { style: S.label }, t('defaultTurnUntilUnit')),
+                )
+              : null,
+            defTurnUntilInvalid ? h('div', { style: S.warn, 'data-prefill-default-turn-until-warn': '' }, t('defaultTurnUntilNeed')) : null,
+          ),
+          // 子区 2：注入内容（1px 顶分隔线 + 现代编辑器容器 EditorShell：底栏统计、状态与一键展开）
+          h(
+            'div',
+            { style: S.subSectionDivider, 'data-prefill-default-turn-section': 'content' },
+            h('div', { style: S.subTitle }, t('defaultTurnContentTitle')),
+            h(
+              'div',
+              { style: S.subSection },
+              h('label', { style: S.label }, t('defaultTurnTextLabel')),
+              h(EditorShell, {
+                value: defTurn.text,
+                placeholder: t('everyTurnPlaceholder'),
+                readOnly: defBenchLocked,
+                minHeight: 84,
+                expandedHeight: 240,
+                textareaAttrs: { 'data-prefill-default-turn-text': '' },
+                metricsText: formatDefaultMetrics(defTurn.text),
+                metricsAttr: 'data-prefill-default-turn-text-metrics',
+                statusNode: defBenchLocked
+                  ? h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('editorReadOnly'))
+                  : defTurnDirty
+                    ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: UNSAVED_TONE } }, h('i', { 'aria-hidden': 'true', style: { width: 6, height: 6, borderRadius: '50%', background: UNSAVED_TONE, display: 'inline-block' } }), t('unsaved'))
+                    : null,
+                onClear: () => setDefTurn({ text: '' }),
+                clearLabel: t('editorClear'),
+                clearTip: t('editorClearTip'),
+                clearAttr: 'default-turn-text',
+                expandLabel: t('editorExpand'),
+                collapseLabel: t('editorCollapse'),
+                expandTip: t('editorExpandTip'),
+                collapseTip: t('editorCollapseTip'),
+                touch: pageTouch,
+                onChange: (event) => setDefTurn({ text: event.target.value }),
+              }),
+            ),
+            h(
+              'div',
+              { style: S.subSection },
+              h('label', { style: S.label }, t('defaultTurnFirstLabel')),
+              h(EditorShell, {
+                value: defTurn.firstText,
+                placeholder: t('everyTurnFirstPlaceholder'),
+                readOnly: defBenchLocked,
+                minHeight: 64,
+                expandedHeight: 200,
+                textareaAttrs: { 'data-prefill-default-turn-first': '' },
+                metricsText: formatDefaultMetrics(defTurn.firstText),
+                metricsAttr: 'data-prefill-default-turn-first-metrics',
+                statusNode: defBenchLocked ? h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('editorReadOnly')) : null,
+                onClear: () => setDefTurn({ firstText: '' }),
+                clearLabel: t('editorClear'),
+                clearTip: t('editorClearTip'),
+                clearAttr: 'default-turn-first',
+                expandLabel: t('editorExpand'),
+                collapseLabel: t('editorCollapse'),
+                expandTip: t('editorExpandTip'),
+                collapseTip: t('editorCollapseTip'),
+                touch: pageTouch,
+                onChange: (event) => setDefTurn({ firstText: event.target.value }),
+              }),
+            ),
+          ),
+          // 脏状态高亮暖色保存底栏
+          h(
+            'div',
+            { style: S.dirtyBar(defTurnDirty), 'data-prefill-default-turn-bar': defTurnDirty ? 'dirty' : 'clean' },
+            defTurnDirty ? h('span', { style: { ...S.note, color: UNSAVED_TONE, fontWeight: 500 } }, t('defaultTurnDirtyHint')) : null,
+            h(
+              'div',
+              { style: pageChipRow },
+              defTurnDirty
+                ? h('button', { type: 'button', style: pageBtnGhost, 'data-prefill-default-turn-discard': '', onClick: () => setDefTurnDraft(null) }, t('discardChanges'))
+                : null,
               h(
                 'button',
                 {
-                  key: mode,
                   type: 'button',
-                  style: S.chip(defTurn.mode === mode),
-                  'data-prefill-default-turn-mode': mode,
-                  onClick: () => setDefTurn({ mode }),
+                  style: defTurnDirty ? pageBtnPrimary : pageBtnOutline,
+                  'data-prefill-default-turn-save': '',
+                  ...busyAttrs(busy, 'default-turn'),
+                  ...(defTurnUntilInvalid ? { disabled: true, title: t('defaultTurnUntilNeed') } : {}),
+                  onClick: saveDefaultTurn,
                 },
-                t(mode === 'always' ? 'everyTurnModeAlways' : mode === 'auto' ? 'everyTurnModeAuto' : 'everyTurnModeUntil'),
+                t('saveDefault'),
               ),
             ),
           ),
-          defTurn.mode === 'until'
-            ? h(
-                'label',
-                { style: S.checkRow },
-                h('span', { style: S.label }, t('defaultTurnUntilLabel')),
-                h('input', {
-                  type: 'number',
-                  min: 1,
-                  value: String(defTurn.untilTurn || ''),
-                  style: pageNumberInput,
-                  placeholder: 'N',
-                  'aria-invalid': defTurnUntilInvalid ? 'true' : undefined,
-                  'data-prefill-default-turn-until': '',
-                  onChange: (event) => setDefTurn({ untilTurn: Number(event.target.value) || 0 }),
-                }),
-                h('span', { style: S.label }, t('defaultTurnUntilUnit')),
-              )
-            : null,
-          defTurnUntilInvalid ? h('div', { style: S.warn, 'data-prefill-default-turn-until-warn': '' }, t('defaultTurnUntilNeed')) : null,
-          h('textarea', {
-            style: { ...S.input, minHeight: 56, fontFamily: 'inherit' },
-            value: defTurn.text,
-            placeholder: t('everyTurnPlaceholder'),
-            readOnly: defBenchLocked,
-            'data-prefill-default-turn-text': '',
-            onChange: (event) => setDefTurn({ text: event.target.value }),
-          }),
-          h('textarea', {
-            style: { ...S.input, minHeight: 44, fontFamily: 'inherit' },
-            value: defTurn.firstText,
-            placeholder: t('everyTurnFirstPlaceholder'),
-            readOnly: defBenchLocked,
-            'data-prefill-default-turn-first': '',
-            onChange: (event) => setDefTurn({ firstText: event.target.value }),
-          }),
-          h(
-            'div',
-            { style: pageChipRow },
-            h(
-              'button',
-              {
-                type: 'button',
-                style: pageBtn,
-                'data-prefill-default-turn-save': '',
-                ...busyAttrs(busy, 'default-turn'),
-                ...(defTurnUntilInvalid ? { disabled: true, title: t('defaultTurnUntilNeed') } : {}),
-                onClick: saveDefaultTurn,
-              },
-              t('saveDefault'),
-            ),
-            defTurnDirty
-              ? h('button', { type: 'button', style: pageBtn, 'data-prefill-default-turn-discard': '', onClick: () => setDefTurnDraft(null) }, t('discardChanges'))
-              : null,
-          ),
         ),
 
-        // ── 新会话默认 · 会话沙盒（PR2）────────────────────────────────────────
+        // ── 新会话默认 · 会话沙盒（PR2 + v2 M4：带副说明三态分段 + 两列紧凑来源包规则表）──
         h(
           'div',
-          { style: S.card, 'data-prefill-default-sandbox': '', 'data-prefill-anchor': 'default-sandbox' },
+          { style: pageCardStyle, 'data-prefill-default-sandbox': '', 'data-prefill-anchor': 'default-sandbox' },
           sectionHead('default-sandbox', t('defaultSbxTitle')),
           sectionErrorDetail('default-sandbox'),
           h('div', { style: S.note }, t('defaultSbxHint')),
           h(
             'div',
-            { style: pageChipRow },
+            { role: 'radiogroup', 'aria-label': t('defaultSbxTitle'), style: S.segCards(phone), 'data-prefill-default-sbx-seg': '1' },
             h(
               'button',
-              { type: 'button', style: S.chip(globalLevel === ''), 'data-prefill-default-sbx-level': 'none', onClick: () => writeGlobalLevel('') },
-              t('defaultNone'),
+              { type: 'button', role: 'radio', 'aria-checked': globalLevel === '' ? 'true' : 'false', style: S.segCardBtn(globalLevel === ''), 'data-prefill-default-sbx-level': 'none', onClick: () => writeGlobalLevel('') },
+              h('span', { style: S.segCardTitle(globalLevel === '') }, t('defaultNone')),
+              h('span', { style: S.segCardSub, 'data-prefill-default-sbx-sub': 'none' }, t('defaultSbxNoneSub')),
             ),
             h(
               'button',
-              { type: 'button', style: S.chip(globalLevel === 'observe'), 'data-prefill-default-sbx-level': 'observe', onClick: () => writeGlobalLevel('observe') },
-              t('sbxLevelObserve'),
+              { type: 'button', role: 'radio', 'aria-checked': globalLevel === 'observe' ? 'true' : 'false', style: S.segCardBtn(globalLevel === 'observe'), 'data-prefill-default-sbx-level': 'observe', onClick: () => writeGlobalLevel('observe') },
+              h('span', { style: S.segCardTitle(globalLevel === 'observe') }, t('sbxLevelObserve')),
+              h('span', { style: S.segCardSub, 'data-prefill-default-sbx-sub': 'observe' }, t('defaultSbxObserveSub')),
             ),
             h(
               'button',
-              { type: 'button', style: S.chip(globalLevel === 'controlled'), 'data-prefill-default-sbx-level': 'controlled', onClick: () => writeGlobalLevel('controlled') },
-              t('sbxLevelControlled'),
+              { type: 'button', role: 'radio', 'aria-checked': globalLevel === 'controlled' ? 'true' : 'false', style: S.segCardBtn(globalLevel === 'controlled'), 'data-prefill-default-sbx-level': 'controlled', onClick: () => writeGlobalLevel('controlled') },
+              h('span', { style: S.segCardTitle(globalLevel === 'controlled') }, t('sbxLevelControlled')),
+              h('span', { style: S.segCardSub, 'data-prefill-default-sbx-sub': 'controlled' }, t('defaultSbxControlledSub')),
             ),
           ),
           // PR B（#45 第 11 条）：'*' 不提供严格档（会接管所有会话，见 PR 说明）；状态文件里手写了也照实说出来，别显示成「不设」。
           globalLevel === 'strict' ? h('div', { style: S.warn, 'data-prefill-default-sbx-strict': '' }, t('defaultSbxStrictNote')) : null,
-          ...(globalView?.packs ?? []).filter((pack) => pack.locked !== true).map((pack) =>
-            h(
-              'div',
-              { key: pack.id, style: S.switchRow, 'data-prefill-default-pack': pack.id },
-              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, localText('sbxPack_' + pack.id, pack.label)),
-              h(
+          sbxPacksEditable.length > 0
+            ? h(
                 'div',
-                { style: pageChipRow },
-                h('button', { type: 'button', style: S.chip(pack.setting?.global === 'allow'), 'data-prefill-default-pack-allow': pack.id, onClick: () => writeGlobalPack(pack.id, 'allow') }, t('sbxAllow')),
-                h('button', { type: 'button', style: S.chip(pack.setting?.global === 'deny'), 'data-prefill-default-pack-deny': pack.id, onClick: () => writeGlobalPack(pack.id, 'deny') }, t('sbxDeny')),
-                h('button', { type: 'button', style: S.chip(pack.setting?.global === undefined), 'data-prefill-default-pack-clear': pack.id, onClick: () => writeGlobalPack(pack.id, undefined) }, t('defaultNone')),
-              ),
-            ),
-          ),
+                { style: S.packTable, 'data-prefill-default-pack-table': '' },
+                ...sbxPacksEditable.map((pack, index) =>
+                  h(
+                    'div',
+                    { key: pack.id, style: S.packRow(index === 0, phone), 'data-prefill-default-pack': pack.id },
+                    h('span', { style: S.sessionTitle, title: localText('sbxPack_' + pack.id, pack.label) }, localText('sbxPack_' + pack.id, pack.label)),
+                    h(
+                      'div',
+                      { role: 'radiogroup', style: S.seg },
+                      h('button', { type: 'button', role: 'radio', 'aria-checked': pack.setting?.global === 'allow' ? 'true' : 'false', style: pageSegBtn(pack.setting?.global === 'allow', 'var(--dsw-alias-brand-primary)'), 'data-prefill-default-pack-allow': pack.id, onClick: () => writeGlobalPack(pack.id, 'allow') }, t('sbxAllow')),
+                      h('button', { type: 'button', role: 'radio', 'aria-checked': pack.setting?.global === 'deny' ? 'true' : 'false', style: pageSegBtn(pack.setting?.global === 'deny', 'var(--dsw-alias-state-warn-primary)'), 'data-prefill-default-pack-deny': pack.id, onClick: () => writeGlobalPack(pack.id, 'deny') }, t('sbxDeny')),
+                      h('button', { type: 'button', role: 'radio', 'aria-checked': pack.setting?.global === undefined ? 'true' : 'false', style: pageSegBtn(pack.setting?.global === undefined), 'data-prefill-default-pack-clear': pack.id, onClick: () => writeGlobalPack(pack.id, undefined) }, t('defaultNone')),
+                    ),
+                  ),
+                ),
+              )
+            : null,
         ),
 
-        // ── 库（PR4）：预设 / 角色卡 / 自定义积木·塔 的管理；卡片只留「套用」「存为」 ──
+        // ── 库（PR4 + v2 M4：工作区嵌卡头 + 顶部分类筛选默认全部 + 2 列紧凑微卡网格）──
         h(
           'div',
-          { style: S.card, 'data-prefill-anchor': 'library' },
-          sectionHead('library', t('libraryTitle')),
+          { style: pageCardStyle, 'data-prefill-anchor': 'library' },
+          h(
+            'div',
+            { style: S.overviewToolbar, 'data-prefill-lib-header': '' },
+            sectionHead('library', t('libraryTitle')),
+            libSession === ''
+              ? null
+              : h(
+                  'label',
+                  { style: S.checkRow },
+                  h('span', { style: S.labelNowrap }, t('librarySession')),
+                  h(
+                    SelectBox,
+                    { style: pageLibSelect, touch: pageTouch, value: libSession, 'data-prefill-lib-session': '', onChange: (event) => setLibSid(event.target.value) },
+                    ...libOptions.map((row) => h('option', { key: row.id, value: row.id }, (row.title !== '' ? row.title : row.id) + (row.cwd !== '' ? ' · ' + row.cwd : ''))),
+                  ),
+                ),
+          ),
           sectionErrorDetail('library'),
           h('div', { style: S.note }, t('libraryHint')),
-          libSession === ''
-            ? h('div', { style: S.note }, t('libraryNoSession'))
-            : h(
-                'label',
-                { style: S.checkRow },
-                h('span', { style: { ...S.label, whiteSpace: 'nowrap', flex: '0 0 auto' } }, t('librarySession')),
-                h(
-                  'select',
-                  { style: pageSelectInput, value: libSession, 'data-prefill-lib-session': '', onChange: (event) => setLibSid(event.target.value) },
-                  ...libOptions.map((row) => h('option', { key: row.id, value: row.id }, (row.title !== '' ? row.title : row.id) + (row.cwd !== '' ? ' · ' + row.cwd : ''))),
-                ),
-              ),
-          h('div', { style: S.group }, t('libraryPacks')),
-          lib.packs.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
-          ...lib.packs.map((pack) =>
-            h(
-              'div',
-              { key: 'pack:' + pack.name, style: S.switchRow, 'data-prefill-lib-pack': pack.name },
-              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, pack.name + ' · ' + String(pack.count ?? 0)),
-              h(
-                'div',
-                { style: pageChipRow },
-                h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-pack-export': pack.name, onClick: () => void exportLibPack(pack.name) }, t('libraryExport')),
-                h(
-                  ConfirmButton,
-                  { armed: libArmed === 'pack:' + pack.name, style: pageBtn, 'data-prefill-lib-pack-delete': pack.name, onClick: () => deleteLibPack(pack.name) },
-                  libArmed === 'pack:' + pack.name ? t('confirmYes') : t('libraryDelete'),
-                ),
-              ),
-            ),
-          ),
-          // 导入：真按钮（Tab 得到、Enter / 空格可按）点隐藏的 file input（issue #45 第 16 条）。
+          libSession === '' ? h('div', { style: S.note }, t('libraryNoSession')) : null,
           h(
             'div',
-            { style: pageChipRow },
-            h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-pack-import-open': '', ...busyAttrs(busy, 'lib:pack-import'), onClick: () => packImportRef.current?.click?.() }, t('libraryImport')),
-            h('input', { ref: packImportRef, type: 'file', accept: '.json', tabIndex: -1, 'aria-hidden': 'true', style: { display: 'none' }, 'data-prefill-lib-pack-import': '', onChange: importLibPack }),
-          ),
-          h('div', { style: S.group }, t('libraryCards')),
-          lib.cards.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
-          ...lib.cards.map((card) =>
-            h(
-              'div',
-              { key: 'card:' + card.id, style: S.switchRow, 'data-prefill-lib-card': card.id },
-              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, card.name ?? card.id),
-              h(
-                'div',
-                { style: pageChipRow },
-                card.hasAvatar === true
-                  ? h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-card-export': card.id, onClick: () => void exportLibCardPng(card.id) }, t('libraryExportPng'))
-                  : null,
-                h(
-                  ConfirmButton,
-                  { armed: libArmed === 'card:' + card.id, style: pageBtn, 'data-prefill-lib-card-delete': card.id, onClick: () => deleteLibCard(card.id) },
-                  libArmed === 'card:' + card.id ? t('confirmYes') : t('libraryDelete'),
-                ),
-              ),
-            ),
-          ),
-          h(
-            'div',
-            { style: pageChipRow },
-            h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-card-import-open': '', ...busyAttrs(busy, 'lib:card-import'), onClick: () => cardImportRef.current?.click?.() }, t('libraryImport')),
-            h('input', { ref: cardImportRef, type: 'file', accept: '.json,.png,application/json,image/png', tabIndex: -1, 'aria-hidden': 'true', style: { display: 'none' }, 'data-prefill-lib-card-import': '', onChange: importLibCard }),
-          ),
-          h('div', { style: S.group }, t('libraryBlocks')),
-          lib.blocks.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
-          ...lib.blocks.map((block) =>
-            h(
-              'div',
-              { key: 'block:' + block.id, style: S.switchRow, 'data-prefill-lib-block': block.id },
-              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, block.name ?? block.id),
-              h(
-                ConfirmButton,
-                { armed: libArmed === 'block:' + block.id, style: pageBtn, 'data-prefill-lib-block-delete': block.id, onClick: () => deleteLibBlock(block.id) },
-                libArmed === 'block:' + block.id ? t('confirmYes') : t('libraryDelete'),
-              ),
-            ),
-          ),
-          h('div', { style: S.group }, t('libraryTowers')),
-          lib.towers.length === 0 ? h('div', { style: S.note }, t('libraryEmpty')) : null,
-          ...lib.towers.map((tower) =>
-            h(
-              'div',
-              { key: 'tower:' + tower.id, style: S.switchRow, 'data-prefill-lib-tower': tower.id },
-              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, tower.name ?? tower.id),
-              h(
-                ConfirmButton,
-                { armed: libArmed === 'tower:' + tower.id, style: pageBtn, 'data-prefill-lib-tower-delete': tower.id, onClick: () => deleteLibTower(tower.id) },
-                libArmed === 'tower:' + tower.id ? t('confirmYes') : t('libraryDelete'),
-              ),
-            ),
-          ),
-          lib.hidden.length === 0 ? null : h('div', { style: S.group }, t('libraryHidden')),
-          ...lib.hidden.map((id) =>
-            h(
-              'div',
-              { key: 'hidden:' + id, style: S.switchRow, 'data-prefill-lib-hidden': id },
-              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: id }, lib.names?.[id] ?? id),
-              h('button', { type: 'button', style: pageBtn, 'data-prefill-lib-unhide': id, onClick: () => unhideLib(id) }, t('libraryUnhide')),
-            ),
-          ),
-        ),
-
-        // ── 偏好（PR2：动效 + 重置「不再提示」）──────────────────────────────
-        h(
-          'div',
-          { style: S.card, 'data-prefill-prefs': '', 'data-prefill-anchor': 'prefs' },
-          sectionHead('prefs', t('prefsTitle')),
-          sectionErrorDetail('prefs'),
-          h('div', { style: S.note }, t('motionTitle')),
-          h(
-            'div',
-            { style: pageChipRow },
-            ...MOTION_LEVELS.map((level) =>
+            { role: 'tablist', style: S.seg, 'data-prefill-lib-filter-bar': '' },
+            ...[
+              ['all', t('libTabAll')],
+              ['packs', `${t('libTabPacks')} ${libCounts.packs}`],
+              ['cards', `${t('libTabCards')} ${libCounts.cards}`],
+              ['bench', `${t('libTabBench')} ${libCounts.bench}`],
+              ['hidden', `${t('libTabHidden')} ${libCounts.hidden}`],
+            ].map(([tabKey, tabLabel]) =>
               h(
                 'button',
-                { key: level, type: 'button', style: S.chip(motionNow === level), 'aria-pressed': motionNow === level ? 'true' : 'false', 'data-prefill-pref-motion': level, onClick: () => writeMotion(level) },
-                t(level === 'full' ? 'motionFull' : level === 'lite' ? 'motionLite' : 'motionOff'),
+                {
+                  key: tabKey,
+                  type: 'button',
+                  role: 'tab',
+                  'aria-selected': libTab === tabKey ? 'true' : 'false',
+                  'data-prefill-lib-filter': tabKey,
+                  style: pageSegBtn(libTab === tabKey),
+                  onClick: () => setLibTab(tabKey),
+                },
+                tabLabel,
               ),
             ),
-            // PR D（#45 第 23 条）：「改回跟随系统」是动作不是选项 —— 画成普通按钮，跟随中就灰掉。
-            h(
-              'button',
-              {
-                type: 'button',
-                style: { ...pageBtn, alignSelf: 'center', marginLeft: 6, opacity: motionNow === null ? 0.5 : 1, cursor: motionNow === null ? 'default' : 'pointer' },
-                disabled: motionNow === null,
-                'data-prefill-pref-motion': 'auto',
-                onClick: () => writeMotion(null),
-              },
-              t('motionAuto'),
-            ),
           ),
-          h('div', { style: S.note }, motionNow === null ? t('motionAutoNow') : t('motionManualNow')),
-          h(
-            'button',
-            {
-              type: 'button',
-              style: pageBtn,
-              'data-prefill-pref-reset-noask': '',
-              ...busyAttrs(busy, 'noask'),
-              onClick: () => void act('prefs', 'noask', opOf('prefsTitle', 'resetNoAsk'), { ui: { ...(envelope?.state?.ui ?? {}), loreConstWarn: false } }),
-            },
-            t('resetNoAsk'),
-          ),
-          h('div', { style: S.note }, t('resetNoAskHint')),
+          // 预设组
+          libShow('packs')
+            ? h(
+                'div',
+                { style: S.subSection },
+                h(
+                  'div',
+                  { style: S.overviewToolbar },
+                  h('div', { style: S.group }, t('libraryPacks')),
+                  // 导入：真按钮（Tab 得到、Enter / 空格可按）点隐藏的 file input（issue #45 第 16 条）。
+                  h(
+                    'div',
+                    { style: pageChipRow },
+                    h('button', { type: 'button', style: pageBtnOutline, 'data-prefill-lib-pack-import-open': '', ...busyAttrs(busy, 'lib:pack-import'), onClick: () => packImportRef.current?.click?.() }, t('libraryImport')),
+                    h('input', { ref: packImportRef, type: 'file', accept: '.json', tabIndex: -1, 'aria-hidden': 'true', style: S.hidden, 'data-prefill-lib-pack-import': '', onChange: importLibPack }),
+                  ),
+                ),
+                lib.packs.length === 0
+                  ? h('div', { style: S.note }, t('libraryEmpty'))
+                  : h(
+                      'div',
+                      { style: S.libGrid(phone), 'data-prefill-lib-grid': 'packs' },
+                      ...lib.packs.map((pack) =>
+                        h(
+                          'div',
+                          { key: 'pack:' + pack.name, style: S.libCard, 'data-prefill-lib-tile': 'pack', 'data-prefill-lib-pack': pack.name },
+                          h(
+                            'div',
+                            { style: S.sessionLabel },
+                            h('span', { style: S.sessionTitle, title: pack.name }, pack.name),
+                            h('span', { style: S.fieldMetrics }, t('libPackItemsCount').replace('{n}', String(pack.count ?? 0))),
+                          ),
+                          h(
+                            'div',
+                            { style: pageChipRow },
+                            h('button', { type: 'button', style: pageBtnGhost, 'data-prefill-lib-pack-export': pack.name, onClick: () => void exportLibPack(pack.name) }, t('libraryExport')),
+                            h(
+                              ConfirmButton,
+                              { armed: libArmed === 'pack:' + pack.name, danger: true, style: pageBtnGhost, 'data-prefill-lib-pack-delete': pack.name, onClick: () => deleteLibPack(pack.name) },
+                              libArmed === 'pack:' + pack.name ? t('confirmYes') : t('libraryDelete'),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+              )
+            : null,
+          // 角色卡组
+          libShow('cards')
+            ? h(
+                'div',
+                { style: S.subSectionDivider },
+                h(
+                  'div',
+                  { style: S.overviewToolbar },
+                  h('div', { style: S.group }, t('libraryCards')),
+                  h(
+                    'div',
+                    { style: pageChipRow },
+                    h('button', { type: 'button', style: pageBtnOutline, 'data-prefill-lib-card-import-open': '', ...busyAttrs(busy, 'lib:card-import'), onClick: () => cardImportRef.current?.click?.() }, t('libraryImport')),
+                    h('input', { ref: cardImportRef, type: 'file', accept: '.json,.png,application/json,image/png', tabIndex: -1, 'aria-hidden': 'true', style: S.hidden, 'data-prefill-lib-card-import': '', onChange: importLibCard }),
+                  ),
+                ),
+                lib.cards.length === 0
+                  ? h('div', { style: S.note }, t('libraryEmpty'))
+                  : h(
+                      'div',
+                      { style: S.libGrid(phone), 'data-prefill-lib-grid': 'cards' },
+                      ...lib.cards.map((card) =>
+                        h(
+                          'div',
+                          { key: 'card:' + card.id, style: S.libCard, 'data-prefill-lib-tile': 'card', 'data-prefill-lib-card': card.id },
+                          h(
+                            'div',
+                            { style: S.sessionLabel },
+                            h('span', { style: S.sessionTitle, title: card.name ?? card.id }, card.name ?? card.id),
+                            card.hasAvatar === true ? h('span', { style: S.fieldMetrics }, t('libCardAvatarBadge')) : null,
+                          ),
+                          h(
+                            'div',
+                            { style: pageChipRow },
+                            card.hasAvatar === true
+                              ? h('button', { type: 'button', style: pageBtnGhost, 'data-prefill-lib-card-export': card.id, onClick: () => void exportLibCardPng(card.id) }, t('libraryExportPng'))
+                              : null,
+                            h(
+                              ConfirmButton,
+                              { armed: libArmed === 'card:' + card.id, danger: true, style: pageBtnGhost, 'data-prefill-lib-card-delete': card.id, onClick: () => deleteLibCard(card.id) },
+                              libArmed === 'card:' + card.id ? t('confirmYes') : t('libraryDelete'),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+              )
+            : null,
+          // 积木与塔组
+          libShow('bench')
+            ? h(
+                'div',
+                { style: S.subSectionDivider },
+                h('div', { style: S.group }, t('libraryBlocks')),
+                lib.blocks.length === 0
+                  ? h('div', { style: S.note }, t('libraryEmpty'))
+                  : h(
+                      'div',
+                      { style: S.libGrid(phone), 'data-prefill-lib-grid': 'blocks' },
+                      ...lib.blocks.map((block) =>
+                        h(
+                          'div',
+                          { key: 'block:' + block.id, style: S.libCard, 'data-prefill-lib-tile': 'block', 'data-prefill-lib-block': block.id },
+                          h('span', { style: S.sessionTitle, title: block.name ?? block.id }, block.name ?? block.id),
+                          h(
+                            ConfirmButton,
+                            { armed: libArmed === 'block:' + block.id, danger: true, style: pageBtnGhost, 'data-prefill-lib-block-delete': block.id, onClick: () => deleteLibBlock(block.id) },
+                            libArmed === 'block:' + block.id ? t('confirmYes') : t('libraryDelete'),
+                          ),
+                        ),
+                      ),
+                    ),
+                h('div', { style: S.group }, t('libraryTowers')),
+                lib.towers.length === 0
+                  ? h('div', { style: S.note }, t('libraryEmpty'))
+                  : h(
+                      'div',
+                      { style: S.libGrid(phone), 'data-prefill-lib-grid': 'towers' },
+                      ...lib.towers.map((tower) =>
+                        h(
+                          'div',
+                          { key: 'tower:' + tower.id, style: S.libCard, 'data-prefill-lib-tile': 'tower', 'data-prefill-lib-tower': tower.id },
+                          h('span', { style: S.sessionTitle, title: tower.name ?? tower.id }, tower.name ?? tower.id),
+                          h(
+                            ConfirmButton,
+                            { armed: libArmed === 'tower:' + tower.id, danger: true, style: pageBtnGhost, 'data-prefill-lib-tower-delete': tower.id, onClick: () => deleteLibTower(tower.id) },
+                            libArmed === 'tower:' + tower.id ? t('confirmYes') : t('libraryDelete'),
+                          ),
+                        ),
+                      ),
+                    ),
+              )
+            : null,
+          // 已隐藏内置组
+          libShow('hidden') && (lib.hidden.length > 0 || libTab === 'hidden')
+            ? h(
+                'div',
+                { style: S.subSectionDivider },
+                h('div', { style: S.group }, t('libraryHidden')),
+                lib.hidden.length === 0
+                  ? h('div', { style: S.note }, t('libraryEmpty'))
+                  : h(
+                      'div',
+                      { style: S.libGrid(phone), 'data-prefill-lib-grid': 'hidden' },
+                      ...lib.hidden.map((id) =>
+                        h(
+                          'div',
+                          { key: 'hidden:' + id, style: S.libCard, 'data-prefill-lib-tile': 'hidden', 'data-prefill-lib-hidden': id },
+                          h('span', { style: S.sessionTitle, title: id }, lib.names?.[id] ?? id),
+                          h('button', { type: 'button', style: pageBtnOutline, 'data-prefill-lib-unhide': id, onClick: () => unhideLib(id) }, t('libraryUnhide')),
+                        ),
+                      ),
+                    ),
+              )
+            : null,
         ),
 
-        // ── 实验性功能总开关（v0.20.2）：关着时实验区不可用、胶囊弹窗不显示实验面板 ──
+        // ── 偏好（PR2 + v2 M4：标准 1px 分隔 Setting Row + 中性分段器）──────────────
         h(
           'div',
-          { style: S.card, 'data-prefill-experimental': '', 'data-prefill-anchor': 'experimental' },
-          sectionHead('experimental', t('expTitle')),
-          sectionErrorDetail('experimental'),
-          h('div', { style: S.note }, t('expHint')),
+          { style: pageCardStyle, 'data-prefill-prefs': '', 'data-prefill-anchor': 'prefs' },
+          sectionHead('prefs', t('prefsTitle')),
+          sectionErrorDetail('prefs'),
           h(
             'div',
-            { style: S.switchRow },
-            h('span', { style: S.label }, t('expTitle')),
+            { style: S.settingRow(true, phone) },
+            h(
+              'div',
+              { style: S.sessionLabel },
+              h('div', { style: S.sessionTitle }, t('motionTitle')),
+              h('div', { style: S.note }, motionNow === null ? t('motionAutoNow') : t('motionManualNow')),
+            ),
+            h(
+              'div',
+              { style: pageChipRow },
+              h(
+                'div',
+                { style: S.seg },
+                ...MOTION_LEVELS.map((level) =>
+                  h(
+                    'button',
+                    { key: level, type: 'button', style: pageSegBtn(motionNow === level), 'aria-pressed': motionNow === level ? 'true' : 'false', 'data-prefill-pref-motion': level, onClick: () => writeMotion(level) },
+                    t(level === 'full' ? 'motionFull' : level === 'lite' ? 'motionLite' : 'motionOff'),
+                  ),
+                ),
+              ),
+              // PR D（#45 第 23 条）：「改回跟随系统」是动作不是选项 —— 画成普通按钮，跟随中就灰掉。
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: { ...pageBtnGhost, opacity: motionNow === null ? 0.45 : 1, cursor: motionNow === null ? 'default' : 'pointer' },
+                  disabled: motionNow === null,
+                  'data-prefill-pref-motion': 'auto',
+                  onClick: () => writeMotion(null),
+                },
+                t('motionAuto'),
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { style: S.settingRow(false, phone) },
+            h(
+              'div',
+              { style: S.sessionLabel },
+              h('div', { style: S.sessionTitle }, t('resetNoAsk')),
+              h('div', { style: S.note }, t('resetNoAskHint')),
+            ),
             h(
               'button',
               {
                 type: 'button',
-                role: 'switch',
-                'aria-checked': experimentalOn ? 'true' : 'false',
-                'data-prefill-experimental-toggle': experimentalOn ? 'on' : 'off',
-                ...busyAttrs(busy, 'experimental'),
-                onClick: () => void toggleExperimental(!experimentalOn),
-                style: { ...pageBtn, ...(experimentalOn ? { borderColor: 'var(--dsw-alias-brand-primary)', color: 'var(--dsw-alias-brand-primary)' } : {}) },
+                style: pageBtnOutline,
+                'data-prefill-pref-reset-noask': '',
+                ...busyAttrs(busy, 'noask'),
+                onClick: () => void act('prefs', 'noask', opOf('prefsTitle', 'resetNoAsk'), { ui: { ...(envelope?.state?.ui ?? {}), loreConstWarn: false } }),
               },
-              experimentalOn ? t('expOnLabel') : t('expOffLabel'),
+              t('resetNoAsk'),
+            ),
+          ),
+        ),
+
+        // ── 实验性功能总开关（v0.20.2 + v2 M4：保留 role="switch"，视觉改统一药丸 Toggle）──
+        h(
+          'div',
+          { style: pageCardStyle, 'data-prefill-experimental': '', 'data-prefill-anchor': 'experimental' },
+          sectionHead('experimental', t('expTitle')),
+          sectionErrorDetail('experimental'),
+          h(
+            'div',
+            { style: S.settingRow(true, phone) },
+            h(
+              'div',
+              { style: S.sessionLabel },
+              h('div', { style: S.sessionTitle }, t('expTitle')),
+              h('div', { style: S.note }, t('expHint')),
+            ),
+            h(
+              'div',
+              { style: pageChipRow },
+              h('span', { style: S.note }, experimentalOn ? t('expOnLabel') : t('expOffLabel')),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  role: 'switch',
+                  'aria-checked': experimentalOn ? 'true' : 'false',
+                  'aria-label': t('expTitle'),
+                  'data-prefill-experimental-toggle': experimentalOn ? 'on' : 'off',
+                  ...busyAttrs(busy, 'experimental'),
+                  onClick: () => void toggleExperimental(!experimentalOn),
+                  style: S.track(experimentalOn),
+                },
+                h('span', { style: S.knob(experimentalOn) }),
+              ),
             ),
           ),
           experimentalOn ? null : h('div', { style: S.note }, t('expOffNote')),
@@ -7038,22 +8315,31 @@ window.__ModuleLoader__.load({
               : [h('div', { style: S.note, 'data-prefill-reasoning-gated': '' }, t('expOffNote'))]),
         ),
 
-        // ── 开发者区（默认折叠）：展开按钮那一行兼作这一区的标题行（错误 pill / 已保存）────────
+        // ── 开发者区（默认折叠）：低饱和整宽虚线栏 + 旋转 chevron，兼作这一区的标题行（错误 pill / 已保存）──
         h(
           'div',
-          { 'data-prefill-dev': devOpen ? 'open' : 'closed', 'data-prefill-anchor': 'dev', style: { display: 'flex', flexDirection: 'column', gap: 'inherit' } },
+          { 'data-prefill-dev': devOpen ? 'open' : 'closed', 'data-prefill-anchor': 'dev', style: S.devSection },
           sectionHead('dev', null, [
             h(
               'button',
               {
                 key: 'toggle',
                 type: 'button',
-                style: pageBtn,
+                style: pageTouch ? { ...S.devBar, minHeight: 40 } : S.devBar,
                 'data-prefill-dev-toggle': devOpen ? 'open' : 'closed',
                 'aria-expanded': devOpen ? 'true' : 'false',
                 onClick: () => setDevOpen((value) => !value),
               },
-              devOpen ? t('devHide') : t('devShow'),
+              h('span', null, devOpen ? t('devHide') : t('devShow')),
+              h(
+                'span',
+                {
+                  'aria-hidden': 'true',
+                  'data-prefill-dev-chevron': devOpen ? 'open' : 'closed',
+                  style: S.devChevron(devOpen, motionNow === 'off'),
+                },
+                '▾',
+              ),
             ),
           ]),
           sectionErrorDetail('dev'),
@@ -7138,6 +8424,445 @@ window.__ModuleLoader__.load({
     function shortSessionId(id) {
       const bare = String(id ?? '').replace(/^session-/, '')
       return bare.length > 8 ? bare.slice(0, 8) + '…' : bare
+    }
+    /** 设置页局部 token 粗估（同 estimateTokens 口径；放切片内供 settings-harness 独立执行）。 */
+    function estimateSettingTokens(text) {
+      if (typeof text !== 'string' || text === '') return 0
+      let cjk = 0
+      for (const ch of text) if (/[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch)) cjk += 1
+      return Math.round(cjk * 0.7 + (text.length - cjk) / 3.5)
+    }
+    /** 取 cwd 尾段（最后 1 级目录名，过长截断；全文放 title）。 */
+    function shortCwdTail(cwd) {
+      if (typeof cwd !== 'string') return ''
+      const clean = cwd.trim().replace(/[\\/]+$/, '')
+      if (clean === '') return ''
+      const parts = clean.split(/[\\/]/).filter(Boolean)
+      const tail = parts.at(-1) ?? clean
+      return tail.length > 24 ? '…' + tail.slice(-22) : tail
+    }
+    /** 相对时间格式化（用于总览微卡首行尾段）。 */
+    function formatRelativeUpdated(updatedAt, t) {
+      const ts = Number(updatedAt)
+      if (!Number.isFinite(ts) || ts <= 0) return ''
+      const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000))
+      if (diffSec < 60) return t('overviewTimeJustNow')
+      const mins = Math.floor(diffSec / 60)
+      if (mins < 60) return t('overviewTimeMin').replace('{n}', String(mins))
+      const hours = Math.floor(mins / 60)
+      if (hours < 24) return t('overviewTimeHour').replace('{n}', String(hours))
+      const days = Math.floor(hours / 24)
+      return t('overviewTimeDay').replace('{n}', String(days))
+    }
+    /**
+     * 方案 B · 统一现代编辑器容器（Linear × Gemini 质感）：
+     * - 外框柔和凹槽（data-prefill-editor-shell="1"，:focus-within 整体泛起 3px 柔品牌光环），100% 严丝合缝贴合父容器；
+     * - 内部无缝 <textarea data-prefill-editor-input="1"> 透明无框无双环；
+     * - 底部一体式脚栏（data-prefill-editor-footer="1"）收纳字数/tok 统计、保存态与专属动作（清空/填入原文/展开高度）。
+     * 放在 PrefillSection 切片内，使设置页与 settings-harness 也能复用同一套实现。
+     */
+    function EditorShell(props) {
+      const {
+        value = '',
+        onChange,
+        onBlur,
+        onFocus,
+        onInput,
+        onKeyDown,
+        placeholder,
+        readOnly = false,
+        disabled = false,
+        spellCheck = false,
+        minHeight = 96,
+        expandedHeight = 280,
+        maxHeight = '28vh',
+        maxWidth,
+        expandable = true,
+        expanded: controlledExpanded,
+        onToggleExpand,
+        textareaRef,
+        textareaAttrs,
+        textareaStyle,
+        shellAttrs,
+        shellStyle,
+        footerLeft,
+        footerRight,
+        metricsText,
+        metricsAttr,
+        statusNode,
+        onClear,
+        clearLabel,
+        clearTip,
+        clearAttr,
+        expandLabel,
+        collapseLabel,
+        expandTip,
+        collapseTip,
+        touch,
+      } = props
+      const [innerExpanded, setInnerExpanded] = React.useState(false)
+      const isExpanded = typeof controlledExpanded === 'boolean' ? controlledExpanded : innerExpanded
+      const toggleExpand = () => {
+        if (typeof onToggleExpand === 'function') onToggleExpand(!isExpanded)
+        else setInnerExpanded((cur) => !cur)
+      }
+      const isTouch = typeof touch === 'boolean' ? touch : typeof V_TOUCH === 'boolean' ? V_TOUCH : false
+      const mixFn = typeof mix === 'function' ? mix : (token, pct, base = 'transparent') => `color-mix(in srgb, ${token} ${pct}%, ${base})`
+      const str = String(value ?? '')
+      const computedMinH = isExpanded ? Math.max(Number(minHeight) || 96, Number(expandedHeight) || 280) : minHeight
+      const computedMaxH = isExpanded ? 'none' : maxHeight
+      const hasFooterLeft = footerLeft !== undefined && footerLeft !== null
+      const computedMetrics =
+        metricsText !== undefined
+          ? metricsText
+          : !hasFooterLeft
+            ? `${str.length} 字 · ≈${typeof estimateTokens === 'function' ? estimateTokens(str) : estimateSettingTokens(str)} tok`
+            : null
+      const footBtnStyle = {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 3,
+        height: isTouch ? 28 : 22,
+        padding: '0 6px',
+        border: 'none',
+        borderRadius: 6,
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 11,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      }
+      const chevIcon = (up) =>
+        typeof Icon === 'function'
+          ? h(Icon, { name: up ? 'chevron-up' : 'chevron-down', size: 11 })
+          : h(
+              'svg',
+              { width: 11, height: 11, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+              h('path', { d: up ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6' }),
+            )
+      const shellMaxW =
+        maxWidth === undefined || maxWidth === '100%'
+          ? '100%'
+          : typeof maxWidth === 'number'
+            ? `min(${maxWidth}px, 100%)`
+            : `min(${maxWidth}, 100%)`
+      return h(
+        'div',
+        {
+          'data-prefill-editor-shell': '1',
+          'data-expanded': isExpanded ? 'true' : 'false',
+          'data-disabled': disabled ? 'true' : undefined,
+          ...(shellAttrs ?? {}),
+          style: {
+            display: 'flex',
+            flexDirection: 'column',
+            width: '100%',
+            maxWidth: shellMaxW,
+            minWidth: 0,
+            boxSizing: 'border-box',
+            borderRadius: 12,
+            border: '1px solid var(--dsw-alias-border-l1)',
+            background: mixFn('var(--dsw-alias-bg-layer-2)', 42, 'var(--dsw-alias-bg-base)'),
+            boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
+            overflow: 'hidden',
+            ...(shellStyle ?? {}),
+          },
+        },
+        h('textarea', {
+          ref: textareaRef,
+          value: str,
+          placeholder,
+          readOnly,
+          disabled,
+          spellCheck,
+          'data-prefill-editor-input': '1',
+          ...(textareaAttrs ?? {}),
+          style: {
+            display: 'block',
+            width: '100%',
+            maxWidth: '100%',
+            minWidth: 0,
+            boxSizing: 'border-box',
+            minHeight: computedMinH,
+            maxHeight: computedMaxH,
+            padding: '10px 12px',
+            margin: 0,
+            border: 'none',
+            outline: 'none',
+            boxShadow: 'none',
+            background: 'transparent',
+            color: 'var(--dsw-alias-label-primary)',
+            fontSize: isTouch ? 16 : 12.5,
+            lineHeight: 1.6,
+            fontFamily: 'inherit',
+            resize: 'vertical',
+            ...(textareaStyle ?? {}),
+          },
+          onChange,
+          onBlur,
+          onFocus,
+          onInput,
+          onKeyDown,
+        }),
+        h(
+          'div',
+          {
+            'data-prefill-editor-footer': '1',
+            style: {
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+              flexWrap: 'wrap',
+              padding: '6px 10px',
+              borderTop: '1px solid var(--dsw-alias-border-l1)',
+              background: mixFn('var(--dsw-alias-bg-layer-1)', 65, 'var(--dsw-alias-bg-base)'),
+              fontSize: 11,
+              color: 'var(--dsw-alias-label-tertiary)',
+              fontVariantNumeric: 'tabular-nums',
+              minWidth: 0,
+              boxSizing: 'border-box',
+            },
+          },
+          h(
+            'div',
+            { style: { display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 } },
+            hasFooterLeft ? footerLeft : h('span', metricsAttr ? { [metricsAttr]: '' } : null, computedMetrics),
+            statusNode ?? null,
+          ),
+          h(
+            'div',
+            { style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginLeft: 'auto' } },
+            footerRight ?? null,
+            onClear && !readOnly && !disabled && str !== ''
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: footBtnStyle,
+                    title: clearTip ?? clearLabel,
+                    'data-prefill-editor-clear': clearAttr ?? '1',
+                    onClick: onClear,
+                  },
+                  clearLabel ?? '清空',
+                )
+              : null,
+            expandable
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: footBtnStyle,
+                    title: isExpanded ? (collapseTip ?? collapseLabel) : (expandTip ?? expandLabel),
+                    'data-prefill-editor-expand': isExpanded ? 'expanded' : 'collapsed',
+                    'aria-expanded': isExpanded ? 'true' : 'false',
+                    onClick: toggleExpand,
+                  },
+                  chevIcon(isExpanded),
+                  isExpanded ? (collapseLabel ?? '收起') : (expandLabel ?? '展开'),
+                )
+              : null,
+          ),
+        ),
+      )
+    }
+    /**
+     * 方案 B · 统一现代搜索框：外框 data-prefill-search-box="1"（10px 圆角，桌面 30px / 触屏 34px），
+     * 左侧 13px 搜索图标 + 中间透明无边框 input（data-prefill-editor-input="1"）+ 有值时右侧淡圆清空 ×。
+     */
+    function SearchInput(props) {
+      const {
+        value = '',
+        onChange,
+        onClear,
+        placeholder,
+        ariaLabel,
+        clearLabel,
+        inputAttrs,
+        clearAttrs,
+        disabled = false,
+        touch,
+        style,
+        inputRef,
+      } = props
+      const isTouch = typeof touch === 'boolean' ? touch : typeof V_TOUCH === 'boolean' ? V_TOUCH : false
+      const mixFn = typeof mix === 'function' ? mix : (token, pct, base = 'transparent') => `color-mix(in srgb, ${token} ${pct}%, ${base})`
+      const hasValue = String(value ?? '') !== ''
+      const searchIcon =
+        typeof Icon === 'function'
+          ? h(Icon, { name: 'search', size: 13 })
+          : h(
+              'svg',
+              { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+              h('circle', { cx: '11', cy: '11', r: '8' }),
+              h('path', { d: 'm21 21-4.3-4.3' }),
+            )
+      const closeIcon =
+        typeof Icon === 'function'
+          ? h(Icon, { name: 'x', size: 11 })
+          : h(
+              'svg',
+              { width: 11, height: 11, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+              h('path', { d: 'M18 6 6 18' }),
+              h('path', { d: 'm6 6 12 12' }),
+            )
+      const boxStyle = {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        height: isTouch ? 34 : 30,
+        padding: '0 8px 0 10px',
+        borderRadius: 10,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mixFn('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
+        boxSizing: 'border-box',
+        minWidth: 0,
+        maxWidth: '100%',
+        ...(style && typeof style === 'object' ? style : null),
+      }
+      return h(
+        'div',
+        {
+          'data-prefill-search-box': '1',
+          'data-disabled': disabled ? 'true' : undefined,
+          style: boxStyle,
+        },
+        h(
+          'span',
+          { 'aria-hidden': 'true', style: { display: 'inline-flex', alignItems: 'center', color: 'var(--dsw-alias-label-tertiary)', flex: '0 0 auto' } },
+          searchIcon,
+        ),
+        h('input', {
+          ref: inputRef,
+          type: 'search',
+          value: String(value ?? ''),
+          placeholder,
+          'aria-label': ariaLabel ?? placeholder,
+          spellCheck: false,
+          disabled,
+          'data-prefill-editor-input': '1',
+          ...(inputAttrs ?? {}),
+          style: {
+            flex: '1 1 auto',
+            width: '100%',
+            minWidth: 0,
+            height: '100%',
+            border: 'none',
+            outline: 'none',
+            boxShadow: 'none',
+            background: 'transparent',
+            padding: 0,
+            margin: 0,
+            color: 'var(--dsw-alias-label-primary)',
+            fontSize: isTouch ? 16 : 12.5,
+            fontFamily: 'inherit',
+            boxSizing: 'border-box',
+          },
+          onChange: (event) => onChange?.(event.target.value, event),
+        }),
+        hasValue && !disabled
+          ? h(
+              'button',
+              {
+                type: 'button',
+                'aria-label': clearLabel ?? 'clear',
+                title: clearLabel,
+                'data-prefill-search-clear': '1',
+                ...(clearAttrs ?? {}),
+                style: {
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flex: '0 0 auto',
+                  width: isTouch ? 24 : 18,
+                  height: isTouch ? 24 : 18,
+                  padding: 0,
+                  border: 'none',
+                  borderRadius: 999,
+                  background: mixFn('var(--dsw-alias-label-tertiary)', 14),
+                  color: 'var(--dsw-alias-label-secondary)',
+                  cursor: 'pointer',
+                },
+                onClick: () => (onClear ? onClear() : onChange?.('')),
+              },
+              closeIcon,
+            )
+          : null,
+      )
+    }
+    /**
+     * 方案 B · 统一下拉框包装器：隐藏原生系统箭头，叠加 Lucide chevron-down，
+     * 零硬编码色，保留原生 <select> 受控行为、键盘操作与全部 data-prefill-* 钩子。
+     */
+    function SelectBox(props) {
+      const { style, wrapStyle, touch, children, ...selectProps } = props
+      const isTouch = typeof touch === 'boolean' ? touch : typeof V_TOUCH === 'boolean' ? V_TOUCH : false
+      const mixFn = typeof mix === 'function' ? mix : (token, pct, base = 'transparent') => `color-mix(in srgb, ${token} ${pct}%, ${base})`
+      const sObj = style && typeof style === 'object' ? style : {}
+      const { flex, width, maxWidth, minWidth, ...innerRest } = sObj
+      const outerStyle = {
+        position: 'relative',
+        display: 'inline-flex',
+        alignItems: 'center',
+        minWidth: minWidth ?? 0,
+        maxWidth: maxWidth ?? '100%',
+        boxSizing: 'border-box',
+        ...(flex !== undefined ? { flex } : {}),
+        ...(width !== undefined ? { width } : {}),
+        ...(wrapStyle ?? {}),
+      }
+      const baseStyle = {
+        height: isTouch ? 34 : 30,
+        boxSizing: 'border-box',
+        padding: '0 28px 0 10px',
+        borderRadius: 10,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mixFn('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: isTouch ? 16 : 12,
+        fontFamily: 'inherit',
+        ...innerRest,
+        width: width === 'auto' ? 'auto' : '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        paddingRight: 28,
+        appearance: 'none',
+        WebkitAppearance: 'none',
+        cursor: selectProps.disabled ? 'not-allowed' : 'pointer',
+      }
+      const arrow =
+        typeof Icon === 'function'
+          ? h(Icon, { name: 'chevron-down', size: 13 })
+          : h(
+              'svg',
+              { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+              h('path', { d: 'm6 9 6 6 6-6' }),
+            )
+      return h(
+        'span',
+        { 'data-prefill-select-box': '1', style: outerStyle },
+        h('select', { ...selectProps, style: baseStyle }, children),
+        h(
+          'span',
+          {
+            'aria-hidden': 'true',
+            style: {
+              position: 'absolute',
+              right: 9,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              pointerEvents: 'none',
+              color: 'var(--dsw-alias-label-tertiary)',
+            },
+          },
+          arrow,
+        ),
+      )
     }
 
     /** DSH 左侧栏那一行 + 主区设置页共用的 panel id（官方通道 sidebar.panellist / main）。 */
@@ -7276,6 +9001,24 @@ window.__ModuleLoader__.load({
         play(chipRef.current, CHIP_SWAP, { duration: MOTION.fast, easing: MOTION.ease, cue: 'press' })
       }, [compact])
 
+      // ── 改造面 1：输入槽胶囊 PrefillToggle（28px/30px 三态柔色去双黑框、三档响应式、按压微反馈、流式轻呼吸）──
+      const midNarrow = !phone && view.vw > PHONE_MAX && view.vw < 960
+      const prefillMapNow = live?.state?.prefill
+      const prefillOnNow =
+        sessionId !== '' &&
+        prefillMapNow !== null &&
+        typeof prefillMapNow === 'object' &&
+        typeof prefillMapNow[sessionId] === 'string' &&
+        prefillMapNow[sessionId] !== ''
+      const chipHasSummary = prefillOnNow && chipSummary.get(sessionId) !== undefined
+      React.useLayoutEffect(() => {
+        if (!chipStreaming || motion !== 'full' || !chipHasSummary || compact) return undefined
+        const dot = chipRef.current?.querySelector('[data-prefill-chip-dot]') ?? null
+        if (dot === null) return undefined
+        const anim = play(dot, STREAM_BREATHE, { duration: 2200, iterations: Infinity, easing: 'ease-in-out', kind: 'decor', cue: 'press' })
+        return () => anim?.cancel?.()
+      }, [chipStreaming, motion, chipHasSummary, compact])
+
       if (sessionId === '') return null
       const state = live?.state ?? null
       const map = state?.prefill !== null && typeof state?.prefill === 'object' ? state.prefill : {}
@@ -7321,6 +9064,9 @@ window.__ModuleLoader__.load({
       const openingShown = chipBusy.shown('open')
       // v1：芯片只有 1 个状态点 +「已配置 N/8」；老摘要（没 status）时按空态兜底。
       const chipStatus = summary?.status ?? { tone: 'empty', configured: 0, total: FEATURE_NAV.length }
+      // 三档响应式：手机（≤480）精简不画预设名与 N/8；窄屏（481–959）未套预设省略「· 未套用预设」、有预设名限宽 88px；宽屏（≥960）限宽 120px。
+      const hasPresetName = typeof summary?.name === 'string' && summary.name !== ''
+      const showPresetPart = !phone && (!midNarrow || hasPresetName)
 
       // 常驻提示：本会话被勾进「生效会话」且至少一个开发者开关为 true（待生效时交给 Q9 角标）。
       const sessionArmed =
@@ -7357,14 +9103,23 @@ window.__ModuleLoader__.load({
           'data-prefill-chip-error': chipError !== '' ? 'true' : undefined,
           title: chipError !== '' ? `${t('errPill').replace('{op}', t('errOpChip'))}：${chipError}` : chipTitle,
           'data-open': cardOpen ? 'true' : 'false',
+          onPointerDown: () => {
+            play(chipRef.current, PRESS_FX, { duration: 110, easing: MOTION.ease, cue: 'press' })
+          },
           style: {
             ...S.gatePill(on),
             ...COLOR_VARS,
             gap: 6,
-            // 手机：短标签（≤200px）+ 30px 高（原来的 24px 在触屏上偏小，且长文案会挤爆工具行）。
-            maxWidth: touch ? 200 : 320,
-            ...(touch ? { height: 30, padding: '0 10px' } : {}),
-            ...(cardOpen ? { boxShadow: '0 0 0 2px color-mix(in srgb, var(--dsw-alias-label-primary) 22%, transparent)', background: 'color-mix(in srgb, var(--dsw-alias-label-primary) 8%, var(--dsw-alias-bg-base))' } : {}),
+            // 桌面 28px / 触屏与手机 30px；手机（≤480）收紧横向内边距与间距，确保 320px 输入行与官方按钮零重叠。
+            maxWidth: phone ? 200 : midNarrow ? 260 : 320,
+            ...(phone ? { height: 30, padding: '0 8px', gap: 4 } : touch ? { height: 30, padding: '0 10px' } : {}),
+            ...(cardOpen
+              ? {
+                  border: `1px solid ${mix('var(--dsw-alias-brand-primary)', 34, 'var(--dsw-alias-border-l2)')}`,
+                  background: mix('var(--dsw-alias-brand-primary)', 10, 'var(--dsw-alias-bg-layer-1)'),
+                  boxShadow: `0 0 0 2px ${mix('var(--dsw-alias-brand-primary)', 12)}`,
+                }
+              : {}),
             ...(openingShown ? BUSY_LOOK : {}),
             ...(chipError !== '' ? { color: ERROR_TONE, boxShadow: `0 0 0 1px ${tint(ERROR_TONE, 50)}` } : {}),
           },
@@ -7398,23 +9153,30 @@ window.__ModuleLoader__.load({
         },
         summary !== undefined && compact && !phone
           ? [
-              h('b', { key: 'name', style: { fontWeight: 700 } }, t('nav')),
-              h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
-              h('span', { key: 'pinned', 'data-prefill-chip-pinned': '', style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, h('span', { style: { display: 'inline-flex', color: 'var(--pf-system)' } }, h(Icon, { name: 'pin', size: 11, fill: 'currentColor' })), t('chipPinned')),
-              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
+              h('b', { key: 'name', style: { fontWeight: 600 } }, t('nav')),
+              h('span', { key: 'sep', style: { opacity: 0.45 } }, '·'),
+              h('span', { key: 'pinned', 'data-prefill-chip-pinned': '', style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, h('span', { style: { display: 'inline-flex', color: 'var(--dsw-alias-label-secondary)' } }, h(Icon, { name: 'pin', size: 11, fill: 'currentColor' })), t('chipPinned')),
+              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.55, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
             ]
           : summary === undefined
           ? [
               openingShown ? h(Spinner, { key: 'dot', size: 9 }) : h('span', { key: 'dot', style: S.gateDot(on) }),
               // 失败说明放在常驻的 live 区域里（读屏会念），6 秒后回到原文案。
               h('span', { key: 'label', role: 'status', 'aria-live': 'polite', 'data-prefill-chip-label': '' }, chipError !== '' ? t('chipOpenFailed') : fallback),
+              // 手机（≤480）首屏未开卡态省略右侧箭头，避免 320px 输入行「预填装·开」超宽与官方按钮重叠。
+              phone ? null : h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: on ? 0.55 : 0.42 }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
             ]
           : [
-              h('b', { key: 'name', style: { fontWeight: 700 } }, t('nav')),
-              // 手机：只留「预填装 + 状态点 + 箭头」。预设名 / 已配置 N/8 收进卡片与 title（触屏点开卡片就能看到），
-              // 否则 320px 下「纯净」会被挤出输入区（实测只剩一条边）。
-              phone ? null : h('span', { key: 'sep', style: { opacity: 0.5 } }, '·'),
-              phone ? null : h('span', { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, summary.name || fallbackName(t, injectMode, written)),
+              h('b', { key: 'name', style: { fontWeight: 600 } }, t('nav')),
+              // 手机（≤480）：只留「预填装 + 状态点 + 箭头」；窄屏（481–959）未套预设省略「· 未套用预设」，有预设名限宽 88px。
+              showPresetPart ? h('span', { key: 'sep', style: { opacity: 0.45 } }, '·') : null,
+              showPresetPart
+                ? h(
+                    'span',
+                    { key: 'preset', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, maxWidth: midNarrow ? 88 : 120 } },
+                    summary.name || fallbackName(t, injectMode, written),
+                  )
+                : null,
               h(
                 'span',
                 {
@@ -7436,18 +9198,24 @@ window.__ModuleLoader__.load({
                     flex: '0 0 auto',
                     background:
                       chipStatus.tone === 'full'
-                        ? 'var(--dsw-alias-state-success-primary, #22a06b)'
+                        ? 'var(--dsw-alias-state-success-primary)'
                         : chipStatus.tone === 'partial'
                           ? 'var(--dsw-alias-brand-primary)'
                           : chipStatus.tone === 'warn'
-                            ? 'var(--dsw-alias-state-warn-primary, #f59e0b)'
+                            ? 'var(--dsw-alias-state-warn-primary)'
                             : 'var(--pf-off)',
                   },
                 }),
-                phone ? null : h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, t('chipConfigured').replace('{n}', String(chipStatus.configured)).replace('{total}', String(chipStatus.total))),
+                phone
+                  ? null
+                  : h(
+                      'span',
+                      { style: { fontSize: T.font.xs, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap', flex: '0 0 auto', fontVariantNumeric: 'tabular-nums' } },
+                      t('chipConfigured').replace('{n}', String(chipStatus.configured)).replace('{total}', String(chipStatus.total)),
+                    ),
               ),
-              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.6, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
-              // F2：本会话没走前缀路由时的 7px 告警标记。**新属性名**（`data-prefill-chip-dot` 在芯片里只能有 1 个）；
+              h('span', { key: 'chev', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.55, transition: motion === 'full' ? `transform ${MOTION.fast}ms ${MOTION.ease}` : 'none', transform: cardOpen ? 'none' : 'rotate(180deg)' }, 'aria-hidden': 'true' }, h(Icon, { name: 'chevron-down', size: 12 })),
+              // F2：本会话没走前缀路由时的 12px 告警圆点。**新属性名**（`data-prefill-chip-dot` 在芯片里只能有 1 个）；
               // 只有 routeOff 才渲染，unknown / true 一律是 null（不加属性、不染红）。
               routeOff
                 ? h(
@@ -7456,7 +9224,22 @@ window.__ModuleLoader__.load({
                       key: 'route-off',
                       'data-prefill-chip-route': 'off',
                       title: `${t('reasoningRouteOff')}\n${t('reasoningRouteOffHint')}`,
-                      style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 7, height: 7, flex: '0 0 auto', color: 'var(--dsw-alias-state-warn-primary, #f59e0b)', fontSize: 7.5, fontWeight: 800, lineHeight: 1 },
+                      style: {
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 12,
+                        height: 12,
+                        borderRadius: '50%',
+                        flex: '0 0 auto',
+                        background: mix('var(--dsw-alias-state-warn-primary)', 18),
+                        border: `1px solid ${mix('var(--dsw-alias-state-warn-primary)', 42)}`,
+                        color: 'var(--dsw-alias-state-warn-primary)',
+                        fontSize: 9,
+                        fontWeight: 800,
+                        lineHeight: 1,
+                        boxSizing: 'border-box',
+                      },
                     },
                     '!',
                   )
@@ -7491,7 +9274,61 @@ window.__ModuleLoader__.load({
       const gateView = useViewport()
       const gatePhone = gateView.phone || gateView.coarse === true
       const [confirming, setConfirming] = React.useState(false)
+      const [optimisticGate, setOptimisticGate] = React.useState(null)
+      const [noticePos, setNoticePos] = React.useState(null)
+      const gateBusy = useBusy()
+      const gateBtnRef = React.useRef(null)
+      const [noticeShown, noticeRef, noticeClosing] = usePresence(
+        confirming ? 'open' : '',
+        POPOVER_ENTER('bottom left'),
+        POPOVER_EXIT('bottom left'),
+        { enterDuration: 150, enterEasing: MOTION.springSnappy, exitDuration: 110, exitEasing: MOTION.easeOut },
+      )
       const state = live?.state ?? null
+
+      React.useEffect(() => {
+        setConfirming(false)
+        setOptimisticGate(null)
+      }, [sessionId])
+
+      // 首次确认气泡锚定在按钮上方 8px，视口边界内安全夹取；Esc / 外点可关。
+      React.useLayoutEffect(() => {
+        if (!confirming) return undefined
+        const update = () => {
+          const rect = gateBtnRef.current?.getBoundingClientRect?.()
+          const vw = typeof window !== 'undefined' ? Number(window.innerWidth) || 1440 : 1440
+          const vh = typeof window !== 'undefined' ? Number(window.innerHeight) || 900 : 900
+          const width = Math.min(320, Math.max(240, vw - 24))
+          if (!rect || !Number.isFinite(rect.top)) {
+            setNoticePos({ left: 12, bottom: 72, width })
+            return
+          }
+          const left = Math.round(Math.min(Math.max(12, rect.left), Math.max(12, vw - width - 12)))
+          const bottom = Math.round(Math.max(8, vh - rect.top + 8))
+          setNoticePos({ left, bottom, width })
+        }
+        update()
+        window.addEventListener('resize', update)
+        return () => window.removeEventListener('resize', update)
+      }, [confirming])
+
+      React.useEffect(() => {
+        if (!confirming) return undefined
+        const popLayer = dialogLayers.push(() => setConfirming(false))
+        const onDown = (event) => {
+          if (pathHas(event, 'data-prefill-gate-notice') || pathHas(event, 'data-prefill-gate')) return
+          const target = event.target
+          if (target instanceof Node && (noticeRef.current?.contains?.(target) || gateBtnRef.current?.contains?.(target))) return
+          setConfirming(false)
+        }
+        document.addEventListener('pointerdown', onDown, true)
+        document.addEventListener('mousedown', onDown, true)
+        return () => {
+          popLayer()
+          document.removeEventListener('pointerdown', onDown, true)
+          document.removeEventListener('mousedown', onDown, true)
+        }
+      }, [confirming, noticeRef])
 
       const call = React.useCallback(async (body) => {
         const response = await fetch(STATE_ROUTE, {
@@ -7505,20 +9342,17 @@ window.__ModuleLoader__.load({
 
       if (sessionId === '') return null
       const gate = state?.gate !== null && typeof state?.gate === 'object' ? state.gate : {}
-      const on = gate[sessionId] === 'pure'
+      const serverOn = gate[sessionId] === 'pure'
+      const on = optimisticGate !== null ? optimisticGate : serverOn
+      const gateShown = gateBusy.shown('toggle')
 
       const write = async (mode, markSeen) => {
         // 先取最新 state 当底稿再组 patch：/state 的 patch 是**整表替换**（impl.js patchState =
         // { ...current, ...patch }），而 summary 只带本会话那几格 —— 拿它整表回写会把别的会话的
         // gate / 工具清单 / armed 抹掉（#26 的同一类坑，实测踩过会话工具白名单被旧快照覆盖）。
-        let base = null
-        try {
-          base = (await call(undefined))?.state ?? null
-        } catch {
-          base = null
-        }
+        const base = (await call(undefined))?.state ?? null
         // 拿不到整封 state 就不写：宁可这次点击不生效，也别拿本会话的切片去覆盖整张表。
-        if (base === null || typeof base !== 'object') return
+        if (base === null || typeof base !== 'object') throw new Error('state unavailable')
         const gateMap = base?.gate !== null && typeof base?.gate === 'object' ? base.gate : {}
         // sessionId 只当路由提示（服务端拿它算写响应里的 `summary`，不进 state）：写完 applyEnvelope 直接采纳。
         const patch = { gate: { ...gateMap, [sessionId]: mode }, sessionId }
@@ -7535,37 +9369,87 @@ window.__ModuleLoader__.load({
             patch.activePreset = active
           }
         }
-        try {
-          const data = await call(patch)
-          applyEnvelope(data)
-          notifyStateChanged()
-        } catch {
-          // 写失败保持原样，下个轮询会刷新。
-        }
+        const data = await call(patch)
+        applyEnvelope(data)
+        notifyStateChanged()
+        return data
       }
 
-      // Q9：只在**首次**开启时弹一次说明，之后直接生效（不做每次提交前确认）。
-      if (confirming) {
-        return h(
-          'div',
-          { style: S.gateNotice },
-          h('span', { style: S.gateNoticeTitle }, t('gateNoticeTitle')),
-          h('span', { style: S.gateNoticeBody }, t('gateNoticeBody')),
-          h(
-            'button',
-            {
-              type: 'button',
-              style: S.gateBtn,
-              onClick: () => {
-                setConfirming(false)
-                write('pure', true)
-              },
-            },
-            t('gateConfirm'),
-          ),
-          h('button', { type: 'button', style: S.gateBtn, onClick: () => setConfirming(false) }, t('gateCancel')),
-        )
+      // Q9：只在**首次**开启时弹一次说明，之后直接生效（不做每次提交前确认）；
+      // v2 M2：首次确认条迁出输入行，改为 Portal 锚定按钮上方 8px 轻气泡（无 react-dom 回退原位）。
+      const commitGate = (mode, markSeen) => {
+        if (gateBusy.pending('toggle')) return
+        const nextOn = mode === 'pure'
+        void optimistic({
+          apply: () => setOptimisticGate(nextOn),
+          commit: () => gateBusy.run('toggle', () => write(mode, markSeen)),
+          settle: () => setOptimisticGate(null),
+          onOk: () => reportOk(sessionId, 'gate'),
+          onError: (err) => {
+            reportError(sessionId, 'gate', t('errOpGate'), err)
+            play(gateBtnRef.current, SHAKE, { duration: MOTION.base, easing: MOTION.ease, kind: 'move' })
+          },
+        })
       }
+
+      const usePortal = ReactDOM !== null && typeof ReactDOM.createPortal === 'function' && typeof document !== 'undefined'
+      const noticeNode =
+        noticeShown === null
+          ? null
+          : h(
+              'div',
+              {
+                ref: noticeRef,
+                role: 'dialog',
+                'aria-label': t('gateNoticeTitle'),
+                'data-prefill-gate-notice': '1',
+                'data-closing': noticeClosing ? 'true' : undefined,
+                'aria-hidden': noticeClosing ? 'true' : undefined,
+                style: {
+                  ...T.surface.float,
+                  borderRadius: T.radius.lg,
+                  border: `1px solid ${mix('var(--dsw-alias-state-warn-primary)', 38, 'var(--dsw-alias-border-l2)')}`,
+                  padding: '10px 12px',
+                  boxSizing: 'border-box',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  fontSize: T.font.sm,
+                  lineHeight: 1.5,
+                  color: 'var(--dsw-alias-label-primary)',
+                  pointerEvents: noticeClosing ? 'none' : 'auto',
+                  ...(usePortal
+                    ? { position: 'fixed', zIndex: 62, left: noticePos?.left ?? 12, bottom: noticePos?.bottom ?? 72, width: noticePos?.width ?? 320 }
+                    : { ...S.gateNotice, maxWidth: 340 }),
+                },
+              },
+              h('div', { style: { fontWeight: 600, fontSize: T.font.md, color: 'var(--dsw-alias-state-warn-primary)' } }, t('gateNoticeTitle')),
+              h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: T.font.sm, lineHeight: 1.5 } }, t('gateNoticeBody')),
+              h(
+                'div',
+                { style: { display: 'flex', justifyContent: 'flex-end', gap: 6 } },
+                h('button', { type: 'button', style: V.btnGhost, onClick: () => setConfirming(false) }, t('gateCancel')),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: {
+                      ...V.btn,
+                      borderColor: mix('var(--dsw-alias-state-warn-primary)', 42, 'var(--dsw-alias-border-l2)'),
+                      background: mix('var(--dsw-alias-state-warn-primary)', 14, 'var(--dsw-alias-bg-layer-1)'),
+                      color: 'var(--dsw-alias-state-warn-primary)',
+                      fontWeight: 600,
+                    },
+                    onClick: () => {
+                      setConfirming(false)
+                      commitGate('pure', true)
+                    },
+                  },
+                  t('gateConfirm'),
+                ),
+              ),
+            )
+      const noticePortal = noticeNode === null ? null : usePortal ? ReactDOM.createPortal(noticeNode, document.body) : noticeNode
 
       // Q9 角标：本轮生效的三态 + 被丢弃的 kind 计数（数据来自宿主 `snapshots`）。
       // ⚠️ 轮内翻开关**不会**影响正在跑的这一轮（Q18：本轮 levers 已冻结，重挂延后到
@@ -7608,6 +9492,14 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const gateAmberStyle = on
+        ? {
+            background: mix('var(--dsw-alias-state-warn-primary)', 12),
+            border: `1px solid ${mix('var(--dsw-alias-state-warn-primary)', 38, 'var(--dsw-alias-border-l1)')}`,
+            color: 'var(--dsw-alias-state-warn-primary)',
+          }
+        : {}
+
       return h(
         'div',
         { style: S.gateWrap },
@@ -7615,24 +9507,40 @@ window.__ModuleLoader__.load({
           'button',
           {
             type: 'button',
+            ref: gateBtnRef,
+            'data-prefill-gate': '1',
             'aria-pressed': on ? 'true' : 'false',
+            ...busyAttrs(gateBusy, 'toggle'),
             title: on ? t('gateTitleOn') : t('gateTitleOff'),
-            style: gatePhone ? { ...S.gatePill(on), height: 30, padding: '0 11px' } : S.gatePill(on),
+            onPointerDown: () => {
+              play(gateBtnRef.current, PRESS_FX, { duration: 110, easing: MOTION.ease, cue: 'press' })
+            },
+            style: {
+              ...S.gatePill(on),
+              ...gateAmberStyle,
+              ...(gateView.phone ? { height: 30, padding: '0 8px', gap: 5 } : gatePhone ? { height: 30, padding: '0 10px' } : {}),
+              ...(gateShown ? BUSY_LOOK : {}),
+            },
             onClick: () => {
+              if (gateBusy.pending('toggle')) return
+              if (confirming) {
+                setConfirming(false)
+                return
+              }
               if (on) {
-                void write('pass')
+                commitGate('pass')
                 return
               }
               void readNoticeSeen().then((seen) => {
                 if (seen === true) {
-                  void write('pure', true)
+                  commitGate('pure', true)
                   return
                 }
                 setConfirming(true)
               })
             },
           },
-          h('span', { style: S.gateDot(on) }),
+          gateShown ? h(Spinner, { size: 9 }) : h('span', { style: { ...S.gateDot(on), ...(on ? { background: 'var(--dsw-alias-state-warn-primary)' } : {}) } }),
           on
             ? live?.persona === true
               ? t('gateOnTakeover')
@@ -7640,6 +9548,7 @@ window.__ModuleLoader__.load({
             : t('gateOff'),
         ),
         badge,
+        noticePortal,
       )
     }
 
@@ -7825,6 +9734,18 @@ window.__ModuleLoader__.load({
       return patch
     }
     // </preset-undo>
+
+    /** 按会话原子补丁版 presetRestorePatch：用于撤销「取消预设」。 */
+    function presetRestoreSessionPatch(sessionId, snap) {
+      const set = {}
+      const unset = []
+      for (const key of PRESET_KEYS) {
+        const value = snap?.maps?.[key]
+        if (value === undefined) unset.push(key)
+        else set[key] = value
+      }
+      return { target: sessionId, set, unset, armed: snap?.armed === true }
+    }
 
     // <turn-lock> 首轮锁定（issue #19 A / B）。tests/turn-lock.test.mjs 从源码切出来跑。
     /**
@@ -8016,6 +9937,30 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** 按会话原子补丁版 presetPatch：只传本会话槽位，由服务端在最新 state 上原子合并，免写前读与整表上传。 */
+    function presetSessionPatch(sessionId, resolved, from, activeKey) {
+      const set = {}
+      const unset = []
+      const assign = (key, value) => {
+        if (value === null || value === undefined) unset.push(key)
+        else set[key] = value
+      }
+      const enabled = resolved.enabled && typeof resolved.enabled === 'object' && Object.keys(resolved.enabled).length > 0 ? resolved.enabled : null
+      const overrides = resolved.overrides && typeof resolved.overrides === 'object' ? resolved.overrides : null
+      assign('activePreset', activeKey || null)
+      assign('cardRef', resolved.card ? { ...resolved.card, ...(resolved.applied ? { applied: resolved.applied } : {}) } : null)
+      assign('lore', resolved.lore)
+      assign('memory', resolved.memory)
+      assign('overrides', overrides)
+      set.gate = resolved.gate === 'pure' || resolved.gate === 'replace' ? resolved.gate : 'pass'
+      assign('sessionTools', Array.isArray(resolved.tools) ? resolved.tools : null)
+      assign('everyTurn', resolved.everyTurn)
+      assign('enabled', enabled)
+      assign('workspaceInstructions', presetWorkspace(resolved.workspaceInstructions))
+      assign('slotSource', activeKey ? slotSourceOf(resolved, from) : null)
+      return { target: sessionId, set, unset, armed: false }
+    }
+
     /**
      * 「基于角色卡」的预设只存和卡不一样的格。`session` = 本会话当前值（预设形状），`card` = cardLayer。
      * 和卡一样的格不存（套用时从卡现编译）；卡有、本会话清空了的格存 null（明确用默认）。
@@ -8108,10 +10053,10 @@ window.__ModuleLoader__.load({
         boxSizing: 'border-box',
         maxHeight: 'calc(100% - 60px)',
         overflowY: 'auto',
-        borderRadius: 12,
-        border: '1px solid var(--dsw-alias-border-l1)',
+        borderRadius: T.radius.lg,
+        border: '1px solid var(--dsw-alias-border-l2)',
         background: 'var(--dsw-alias-bg-base)',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.16)',
+        boxShadow: T.surface.float.boxShadow,
       },
       grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 8 },
       pills: { display: 'flex', flexWrap: 'wrap', gap: 6 },
@@ -8248,48 +10193,60 @@ window.__ModuleLoader__.load({
       }),
       textarea: {
         width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
         boxSizing: 'border-box',
         minHeight: 64,
         maxHeight: '28vh',
-        padding: '8px 10px',
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-bg-layer-1)',
+        padding: '10px 12px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
         color: 'var(--dsw-alias-label-primary)',
         fontSize: 12.5,
-        lineHeight: 1.55,
+        lineHeight: 1.6,
         fontFamily: 'inherit',
         resize: 'vertical',
       },
       input: {
-        height: 26,
+        height: 30,
         boxSizing: 'border-box',
-        padding: '0 8px',
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-bg-layer-1)',
+        padding: '0 10px',
+        borderRadius: T.radius.md,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: mix('var(--dsw-alias-bg-layer-2)', 48, 'var(--dsw-alias-bg-base)'),
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,.035)',
         color: 'var(--dsw-alias-label-primary)',
-        fontSize: 12,
+        fontSize: 12.5,
         fontFamily: 'inherit',
         minWidth: 0,
+        maxWidth: '100%',
       },
       row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-      callout: (tone) => ({
-        maxWidth: '68ch',
-        padding: '7px 10px',
-        borderRadius: 8,
-        fontSize: 11.5,
-        lineHeight: 1.6,
-        color: 'var(--dsw-alias-label-secondary)',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        borderLeft: `3px solid ${
+      callout: (tone) => {
+        const accent =
           tone === 'warn'
             ? 'var(--dsw-alias-state-warn-primary)'
             : tone === 'brand'
               ? 'var(--dsw-alias-brand-primary)'
               : 'var(--dsw-alias-border-l2)'
-        }`,
-      }),
+        return {
+          maxWidth: '68ch',
+          padding: '8px 12px 8px 16px',
+          borderRadius: T.radius.md,
+          fontSize: T.font.sm,
+          lineHeight: 1.6,
+          color: 'var(--dsw-alias-label-secondary)',
+          border: `1px solid ${mix(accent, tone === 'warn' ? 28 : tone === 'brand' ? 22 : 85, 'var(--dsw-alias-border-l1)')}`,
+          backgroundColor: tone === 'warn' || tone === 'brand' ? mix(accent, 7, 'var(--dsw-alias-bg-layer-1)') : 'var(--dsw-alias-bg-layer-2)',
+          // 内部内缩平直竖条：用背景条替代左侧硬描边，绝不与圆角叠加弯折成括号伪影。
+          backgroundImage: `linear-gradient(${accent}, ${accent})`,
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: '6px 7px',
+          backgroundSize: '3px calc(100% - 14px)',
+        }
+      },
       table: { width: '100%', borderCollapse: 'collapse', fontSize: 11.5, fontVariantNumeric: 'tabular-nums' },
       th: {
         textAlign: 'right',
@@ -8310,10 +10267,56 @@ window.__ModuleLoader__.load({
         gap: 8,
         alignItems: 'flex-start',
         padding: '8px 8px 8px 10px',
-        borderRadius: 10,
+        borderRadius: T.radius.md,
         border: '1px solid var(--dsw-alias-border-l1)',
         background: assistant ? 'var(--dsw-alias-bg-layer-1)' : 'var(--dsw-alias-bg-base)',
       }),
+      // M4 样式收口：高频布局 / 文本 / 按钮复用基元（严禁影响冻结节与单测字面断言）
+      colSm: { display: 'flex', flexDirection: 'column', gap: 6 },
+      colXs: { display: 'flex', flexDirection: 'column', gap: 4 },
+      rowSm: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+      rowSmText: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: T.font.sm },
+      rowEnd: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' },
+      flex1: { flex: '1 1 auto' },
+      flexBody: { flex: '1 1 260px', minWidth: 0 },
+      muted: { color: 'var(--dsw-alias-label-tertiary)' },
+      secondarySm: { fontSize: T.font.sm, color: 'var(--dsw-alias-label-secondary)' },
+      subXs: { fontSize: T.font.xs, color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 },
+      semi: { fontWeight: 600 },
+      bold: { fontWeight: 700 },
+      inlineSm: { display: 'inline-flex', alignItems: 'center', gap: 4 },
+      inlineSmText: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: T.font.sm },
+      hintSm: { color: 'var(--dsw-alias-label-secondary)', fontSize: T.font.sm, lineHeight: 1.6, maxWidth: '68ch' },
+      metaSm: { fontSize: T.font.sm, color: 'var(--dsw-alias-label-tertiary)' },
+      avatarSm: { width: 16, height: 16, borderRadius: '50%', objectFit: 'cover', flex: '0 0 auto' },
+      calloutRow: (tone) => ({ ...V.callout(tone), display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }),
+      calloutCol: (tone) => ({ ...V.callout(tone), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' }),
+      btnGhostSm: {
+        height: 24,
+        padding: '0 8px',
+        borderRadius: 6,
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: T.font.xs,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      btnMenu: {
+        height: 24,
+        padding: '0 8px',
+        borderRadius: 6,
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: T.font.sm,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        width: '100%',
+        textAlign: 'left',
+      },
     }
 
     // <touch>
@@ -8329,6 +10332,8 @@ window.__ModuleLoader__.load({
       btn: V.btn,
       btnPrimary: V.btnPrimary,
       btnGhost: V.btnGhost,
+      btnGhostSm: V.btnGhostSm,
+      btnMenu: V.btnMenu,
       input: V.input,
       textarea: V.textarea,
       pill: V.pill,
@@ -8344,6 +10349,8 @@ window.__ModuleLoader__.load({
       dockName: S.dockName,
       gateBtn: S.gateBtn,
       input: S.input,
+      textareaMd: S.textareaMd,
+      textareaSm: S.textareaSm,
       numberInput: S.numberInput,
       selectInput: S.selectInput,
       injectBox: S.injectBox,
@@ -8357,6 +10364,8 @@ window.__ModuleLoader__.load({
       V.btn = want ? { ...V_BASE.btn, height: 34 } : V_BASE.btn
       V.btnPrimary = want ? { ...V_BASE.btnPrimary, height: 34 } : V_BASE.btnPrimary
       V.btnGhost = want ? { ...V_BASE.btnGhost, height: 34, minWidth: 34 } : V_BASE.btnGhost
+      V.btnGhostSm = want ? { ...V_BASE.btnGhostSm, height: 34, minWidth: 34 } : V_BASE.btnGhostSm
+      V.btnMenu = want ? { ...V_BASE.btnMenu, height: 34 } : V_BASE.btnMenu
       V.input = want ? { ...V_BASE.input, height: 34, fontSize: 16 } : V_BASE.input
       V.textarea = want ? { ...V_BASE.textarea, fontSize: 16 } : V_BASE.textarea
       V.pill = want ? (active) => ({ ...V_BASE.pill(active), height: 34, padding: '0 12px 0 10px' }) : V_BASE.pill
@@ -8366,18 +10375,105 @@ window.__ModuleLoader__.load({
       S.chip = want ? (active) => ({ ...S_BASE.chip(active), padding: '6px 12px', minHeight: 30, display: 'inline-flex', alignItems: 'center' }) : S_BASE.chip
       S.chipStatic = want ? { ...S_BASE.chipStatic, padding: '6px 12px', minHeight: 30, display: 'inline-flex', alignItems: 'center' } : S_BASE.chipStatic
       S.dockMini = want ? { ...S_BASE.dockMini, width: 30, height: 30 } : S_BASE.dockMini
-      S.dockSelect = want ? { ...S_BASE.dockSelect, height: 32, fontSize: 16 } : S_BASE.dockSelect
-      S.dockName = want ? { ...S_BASE.dockName, height: 32, fontSize: 16 } : S_BASE.dockName
+      S.dockSelect = want ? { ...S_BASE.dockSelect, height: 34, fontSize: 16 } : S_BASE.dockSelect
+      S.dockName = want ? { ...S_BASE.dockName, height: 34, fontSize: 16 } : S_BASE.dockName
       S.gateBtn = want ? { ...S_BASE.gateBtn, minHeight: 30, padding: '4px 10px' } : S_BASE.gateBtn
-      S.input = want ? { ...S_BASE.input, minHeight: 34, fontSize: 16 } : S_BASE.input
+      S.input = want ? { ...S_BASE.input, height: 34, minHeight: 34, fontSize: 16 } : S_BASE.input
+      S.textareaMd = want ? { ...S_BASE.textareaMd, fontSize: 16 } : S_BASE.textareaMd
+      S.textareaSm = want ? { ...S_BASE.textareaSm, fontSize: 16 } : S_BASE.textareaSm
       S.numberInput = want ? { ...S_BASE.numberInput, height: 34, fontSize: 16 } : S_BASE.numberInput
-      S.selectInput = want ? { ...S_BASE.selectInput, minHeight: 34, fontSize: 16 } : S_BASE.selectInput
+      S.selectInput = want ? { ...S_BASE.selectInput, height: 34, minHeight: 34, fontSize: 16 } : S_BASE.selectInput
       S.injectBox = want ? { ...S_BASE.injectBox, fontSize: 16 } : S_BASE.injectBox
       S.button = want ? { ...S_BASE.button, minHeight: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } : S_BASE.button
     }
     // </touch>
 
     /** 角色卡面板选项的默认值（预设里的角色卡引用按它补全）。 */
+
+    /**
+     * 统一分段控件（v2 M2）：收口系统提示 / 工作区说明 / 手动注入角色 / 会话沙盒等单选分段，
+     * 共享 Tonal Surface 柔和轨道、清晰高亮滑块、语义色阶（沙盒档位/允许/禁止）与键盘方向键切换。
+     */
+    function SegmentedControl(props) {
+      const { options = [], value, onPick, optionAttr = '', size = 'normal', busyValue = null, busyShown = false, ariaLabel, style } = props
+      const groupRef = React.useRef(null)
+      const onKeyDown = (index) => (event) => {
+        if (options.length < 2) return
+        let nextIdx = -1
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIdx = (index + 1) % options.length
+        else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') nextIdx = (index - 1 + options.length) % options.length
+        else if (event.key === 'Home') nextIdx = 0
+        else if (event.key === 'End') nextIdx = options.length - 1
+        if (nextIdx < 0) return
+        event.preventDefault()
+        const target = options[nextIdx]
+        if (target !== undefined) onPick?.(target.value)
+        const radios = groupRef.current?.querySelectorAll?.('[role="radio"]')
+        radios?.[nextIdx]?.focus?.({ preventScroll: true })
+      }
+      return h(
+        'span',
+        {
+          ref: groupRef,
+          role: 'radiogroup',
+          'aria-label': ariaLabel,
+          'data-prefill-segmented': '1',
+          'aria-busy': busyShown ? 'true' : undefined,
+          'aria-disabled': busyValue !== null ? 'true' : undefined,
+          style: {
+            ...V.seg,
+            borderRadius: T.radius.md,
+            alignItems: 'center',
+            flex: '0 0 auto',
+            ...(busyShown ? BUSY_LOOK : {}),
+            ...(style ?? {}),
+          },
+        },
+        ...options.map((option, index) => {
+          const active = option.value === value
+          const tone = option.tone ?? ''
+          const baseBtn = V.segBtn(active)
+          const hasTone = active && tone !== ''
+          const attrProps = optionAttr !== '' ? { [optionAttr]: option.value } : {}
+          return h(
+            'button',
+            {
+              key: option.value,
+              type: 'button',
+              role: 'radio',
+              tabIndex: active || (index === 0 && !options.some((o) => o.value === value)) ? 0 : -1,
+              'aria-checked': active ? 'true' : 'false',
+              title: option.title ?? undefined,
+              'data-prefill-busy': busyShown && busyValue === option.value ? 'true' : undefined,
+              ...attrProps,
+              onClick: () => onPick?.(option.value),
+              onKeyDown: onKeyDown(index),
+              style: {
+                ...baseBtn,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                borderRadius: T.radius.sm,
+                ...(size === 'small' ? { padding: '0 9px', fontSize: T.font.sm } : { height: Math.max(baseBtn.height ?? 26, 26), padding: '0 11px', fontSize: T.font.sm }),
+                border: active
+                  ? `1px solid ${hasTone ? (option.soft ? 'var(--dsw-alias-border-l1)' : mix(tone, 34, 'var(--dsw-alias-border-l1)')) : 'var(--dsw-alias-border-l1)'}`
+                  : '1px solid transparent',
+                ...(hasTone
+                  ? {
+                      background: mix(tone, option.soft ? 8 : 13, 'var(--dsw-alias-bg-base)'),
+                      color: tone,
+                      opacity: option.soft ? 0.85 : 1,
+                    }
+                  : {}),
+              },
+            },
+            busyShown && busyValue === option.value ? h(Spinner, { key: 'spin', size: 10 }) : null,
+            option.label,
+            option.sub ? h('small', { style: { marginLeft: 3, fontWeight: 400, fontSize: T.font.xs, color: 'var(--dsw-alias-label-tertiary)' } }, option.sub) : null,
+          )
+        }),
+      )
+    }
 
     /**
      * 悬浮卡片右栏的一节（v0.10）：标题 + 右侧控件 + 内容，不再折叠——左栏选哪项就只渲染哪一节。
@@ -8391,9 +10487,9 @@ window.__ModuleLoader__.load({
           'div',
           { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
           h('h3', { style: { margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } }, props.title),
-          props.meta ? h('span', { style: { ...V.sectionMeta, fontSize: 12 } }, props.meta) : null,
+          props.meta ? h('span', { style: V.metaSm }, props.meta) : null,
           props.tags ?? null,
-          h('span', { style: { flex: '1 1 auto' } }),
+          h('span', { style: V.flex1 }),
           props.right ?? null,
         ),
         h(OffNote, { id: props.id, off: props.off === true, title: props.offTitle, body: props.offBody }),
@@ -8437,6 +10533,7 @@ window.__ModuleLoader__.load({
       const [text, setText] = React.useState('')
       const [role, setRole] = React.useState('user')
       const [busy, setBusy] = React.useState(false)
+      const busyCtl = useBusy()
       const [notice, setNotice] = React.useState(null)
       const [editing, setEditing] = React.useState(null)
       const seenPending = React.useRef(new Set())
@@ -8461,6 +10558,12 @@ window.__ModuleLoader__.load({
         [t],
       )
       const call = React.useCallback((payload) => postJson(INJECT_ROUTE, { sessionId, ...payload }).then(absorb), [sessionId, absorb])
+
+      // M3：行内编辑态按 Esc 只退出编辑，先于卡片关闭监听拦截，绝不关卡片。
+      React.useEffect(() => {
+        if (editing === null || typeof dialogLayers === 'undefined') return undefined
+        return dialogLayers.push(() => setEditing(null))
+      }, [editing !== null])
 
       // P1-9：「已写入会话」里新出现的一行（刚发出去）底色闪一下；第一次拿到列表时只记下，不闪。
       const recentSeen = React.useRef(null)
@@ -8534,65 +10637,98 @@ window.__ModuleLoader__.load({
       // 轮询走带 15s 上限的 postJson（挂住的请求不许把下一轮叠上来）；卡片关着时本组件已卸载，不跑。
       React.useEffect(() => {
         if (sessionId === '' || pending.length === 0) return undefined
-        const timer = setInterval(() => void postJsonWithTimeout(INJECT_ROUTE, { sessionId, op: 'list' }).then(absorb).catch(() => {}), 2500)
+        const timer = setInterval(() => {
+          if (typeof document !== 'undefined' && document?.hidden === true) return
+          void postJsonWithTimeout(INJECT_ROUTE, { sessionId, op: 'list' }).then(absorb).catch(() => {})
+        }, 2500)
         return () => clearInterval(timer)
       }, [sessionId, pending.length, absorb])
 
       if (sessionId === '') return null
       const failText = (result) =>
         result?.reason === 'sent' ? t('manualAlreadySent') : result?.reason === 'queue-full' ? t('manualQueueFull') : t('manualFailed')
+      const reportFailure = (msg, err) => {
+        setNotice({ kind: 'error', text: msg })
+        if (typeof reportError === 'function') reportError(sessionId, 'manual', t('errOpManual'), err ?? new Error(msg))
+      }
       const send = () => {
-        if (text.trim() === '' || busy) return
+        if (text.trim() === '' || busy || busyCtl.pending('send')) return
         setBusy(true)
         setNotice(null)
-        call({ op: 'add', role, text })
-          .then((result) => {
-            if (result?.ok === true) setText('')
-            else setNotice({ kind: 'error', text: failText(result) })
-          })
-          .catch(() => setNotice({ kind: 'error', text: t('manualFailed') }))
-          .finally(() => setBusy(false))
+        const runningOp = busyCtl.run('send', () =>
+          call({ op: 'add', role, text })
+            .then((result) => {
+              if (result?.ok === true) {
+                setText('')
+                if (typeof reportOk === 'function') reportOk(sessionId, 'manual')
+              } else {
+                reportFailure(failText(result))
+              }
+            })
+            .catch((err) => reportFailure(t('manualFailed'), err))
+            .finally(() => setBusy(false)),
+        )
+        if (runningOp === null) setBusy(false)
       }
       const withdraw = (id) => {
-        call({ op: 'remove', id })
-          .then((result) => {
-            if (result?.ok !== true) setNotice({ kind: 'error', text: failText(result) })
-          })
-          .catch(() => setNotice({ kind: 'error', text: t('manualFailed') }))
+        const opKey = `withdraw:${id}`
+        if (busyCtl.pending(opKey)) return
+        setNotice(null)
+        void busyCtl
+          .run(opKey, () =>
+            call({ op: 'remove', id })
+              .then((result) => {
+                if (result?.ok === true) {
+                  if (typeof reportOk === 'function') reportOk(sessionId, 'manual')
+                } else {
+                  reportFailure(failText(result))
+                }
+              })
+              .catch((err) => reportFailure(t('manualFailed'), err)),
+          )
+          ?.catch(() => {})
       }
       const saveEdit = () => {
-        if (editing === null) return
+        if (editing === null || editing.text.trim() === '' || busyCtl.pending('edit')) return
         const draft = editing
-        call({ op: 'edit', id: draft.id, role: draft.role, text: draft.text })
-          .then((result) => {
-            if (result?.ok === true) setEditing(null)
-            else {
-              setEditing(null)
-              setNotice({ kind: 'error', text: failText(result) })
-            }
-          })
-          .catch(() => setNotice({ kind: 'error', text: t('manualFailed') }))
+        setNotice(null)
+        void busyCtl
+          .run('edit', () =>
+            call({ op: 'edit', id: draft.id, role: draft.role, text: draft.text })
+              .then((result) => {
+                if (result?.ok === true) {
+                  setEditing(null)
+                  if (typeof reportOk === 'function') reportOk(sessionId, 'manual')
+                } else {
+                  setEditing(null)
+                  reportFailure(failText(result))
+                }
+              })
+              .catch((err) => reportFailure(t('manualFailed'), err)),
+          )
+          ?.catch(() => {})
       }
       const roleSeg = (value, onPick) =>
-        h(
-          'span',
-          { style: V.seg, role: 'radiogroup' },
-          ['user', 'assistant'].map((key) =>
-            h(
-              'button',
-              { key, type: 'button', role: 'radio', 'aria-checked': value === key ? 'true' : 'false', style: V.segBtn(value === key), 'data-prefill-manual-role': key, onClick: () => onPick(key) },
-              key === 'user' ? t('manualRoleUser') : t('manualRoleAssistant'),
-            ),
-          ),
-        )
-      const status = data === null ? '' : data.live !== true ? t('manualOffline') : data.running === true ? t('manualRunning') : t('manualIdle')
+        h(SegmentedControl, {
+          size: 'small',
+          value,
+          onPick,
+          optionAttr: 'data-prefill-manual-role',
+          options: [
+            { value: 'user', label: t('manualRoleUser') },
+            { value: 'assistant', label: t('manualRoleAssistant') },
+          ],
+        })
+      // M3：运行态直接复用 PrefillDock 的 streaming（独立挂载时优雅回落 data?.running）。
+      const running = typeof props.streaming === 'boolean' ? props.streaming : data?.running === true
+      const status = running ? t('manualRunning') : data === null ? '' : data.live !== true ? t('manualOffline') : t('manualIdle')
 
       return h(
         'div',
         {
           style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6, paddingTop: 10, borderTop: '1px dashed var(--dsw-alias-border-l2)' },
           'data-prefill-manual': '',
-          'data-running': data?.running === true ? '1' : '0',
+          'data-running': running ? '1' : '0',
         },
         h(
           'div',
@@ -8621,7 +10757,15 @@ window.__ModuleLoader__.load({
           }),
           h(
             'button',
-            { type: 'button', style: V.btnPrimary, disabled: busy || text.trim() === '', 'data-prefill-manual-inject': '1', onClick: send },
+            {
+              type: 'button',
+              style: { ...V.btnPrimary, display: 'inline-flex', alignItems: 'center', gap: 5, ...(busyCtl.shown('send') ? BUSY_LOOK : {}) },
+              disabled: busy || busyCtl.pending('send') || text.trim() === '',
+              ...busyAttrs(busyCtl, 'send'),
+              'data-prefill-manual-inject': '1',
+              onClick: send,
+            },
+            busyCtl.shown('send') ? h(Spinner, { key: 'spin', size: 11 }) : null,
             t('manualSend'),
           ),
         ),
@@ -8643,24 +10787,67 @@ window.__ModuleLoader__.load({
                   : editing !== null && editing.id === entry.id
                   ? h(
                       'div',
-                      { key: entry.id, style: { ...V.row, alignItems: 'flex-start' }, 'data-prefill-manual-row': entry.id },
-                      roleSeg(editing.role, (next) => setEditing({ ...editing, role: next })),
-                      h('textarea', {
-                        value: editing.text,
-                        rows: 2,
-                        style: { ...V.textarea, flex: '1 1 240px', minHeight: 44, maxWidth: '72ch' },
-                        onChange: (event) => setEditing({ ...editing, text: event.target.value }),
-                      }),
-                      h('button', { type: 'button', style: V.btnPrimary, disabled: editing.text.trim() === '', onClick: saveEdit }, t('manualSave')),
-                      h('button', { type: 'button', style: V.btn, onClick: () => setEditing(null) }, t('manualCancel')),
+                      { key: entry.id, style: { display: 'flex', flexDirection: 'column', gap: 4, maxWidth: '80ch' }, 'data-prefill-manual-row': entry.id },
+                      h(
+                        'div',
+                        { style: { ...V.row, alignItems: 'flex-start' } },
+                        roleSeg(editing.role, (next) => setEditing({ ...editing, role: next })),
+                        h('textarea', {
+                          value: editing.text,
+                          rows: 2,
+                          autoFocus: true,
+                          style: { ...V.textarea, flex: '1 1 240px', minHeight: 44, maxWidth: '72ch' },
+                          'data-prefill-manual-edit-text': '',
+                          onChange: (event) => setEditing({ ...editing, text: event.target.value }),
+                          onKeyDown: (event) => {
+                            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                              event.preventDefault()
+                              saveEdit()
+                              return
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              event.nativeEvent?.stopImmediatePropagation?.()
+                              setEditing(null)
+                            }
+                          },
+                        }),
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            style: { ...V.btnPrimary, display: 'inline-flex', alignItems: 'center', gap: 5, ...(busyCtl.shown('edit') ? BUSY_LOOK : {}) },
+                            disabled: editing.text.trim() === '' || busyCtl.pending('edit'),
+                            ...busyAttrs(busyCtl, 'edit'),
+                            'data-prefill-manual-save-edit': '',
+                            onClick: saveEdit,
+                          },
+                          busyCtl.shown('edit') ? h(Spinner, { key: 'spin', size: 11 }) : null,
+                          t('manualSave'),
+                        ),
+                        h('button', { type: 'button', style: V.btn, 'data-prefill-manual-cancel-edit': '', onClick: () => setEditing(null) }, t('manualCancel')),
+                      ),
+                      h('span', { style: V.sectionMeta, 'data-prefill-manual-edit-hint': '' }, t('manualEditKeyHint')),
                     )
                   : h(
                       'div',
                       { key: entry.id, style: { ...V.row, ...V.callout('brand'), maxWidth: '80ch' }, 'data-prefill-manual-row': entry.id },
                       h('b', { style: { fontSize: 12, whiteSpace: 'nowrap' } }, entry.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
                       h('span', { style: { flex: '1 1 auto', minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, entry.text),
-                      h('button', { type: 'button', style: V.btnGhost, onClick: () => setEditing({ id: entry.id, role: entry.role, text: entry.text }) }, t('manualEdit')),
-                      h('button', { type: 'button', style: V.btnGhost, 'data-prefill-manual-withdraw': entry.id, onClick: () => withdraw(entry.id) }, t('manualWithdraw')),
+                      h('button', { type: 'button', style: V.btnGhost, 'data-prefill-manual-edit': entry.id, onClick: () => setEditing({ id: entry.id, role: entry.role, text: entry.text }) }, t('manualEdit')),
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          style: { ...V.btnGhost, display: 'inline-flex', alignItems: 'center', gap: 4, ...(busyCtl.shown(`withdraw:${entry.id}`) ? BUSY_LOOK : {}) },
+                          ...busyAttrs(busyCtl, `withdraw:${entry.id}`),
+                          'data-prefill-manual-withdraw': entry.id,
+                          onClick: () => withdraw(entry.id),
+                        },
+                        busyCtl.shown(`withdraw:${entry.id}`) ? h(Spinner, { key: 'spin', size: 10 }) : null,
+                        t('manualWithdraw'),
+                      ),
                     ),
               ),
             ),
@@ -8713,11 +10900,13 @@ window.__ModuleLoader__.load({
       const [everyTurnBlockList, setEveryTurnBlockList] = React.useState([])
       const [everyTurnTowerList, setEveryTurnTowerList] = React.useState([])
       const [everyTurnDraft, setEveryTurnDraft] = React.useState(null)
-      // 世界书本会话修改（草稿先显示、去抖后写 state.lore[会话]）；展开 / 编辑中的条目、显示条数只在面板本地。
+      // 世界书本会话修改（草稿先显示、去抖后写 state.lore[会话]）；展开 / 编辑中的条目、显示条数、搜索与关键词受控草稿只在面板本地。
       const [loreDraft, setLoreDraft] = React.useState(null)
       const [loreOpen, setLoreOpen] = React.useState(() => new Set())
       const [loreEditing, setLoreEditing] = React.useState('')
       const [loreShown, setLoreShown] = React.useState(40)
+      const [loreQuery, setLoreQuery] = React.useState('')
+      const [loreKeyDrafts, setLoreKeyDrafts] = React.useState({})
       const loreTimer = React.useRef(null)
       // 常驻条目（内容在系统提示里）改动前的确认：pending = 待确认的那次改动；noAsk = 「不再提示」勾选。
       const [loreConstPending, setLoreConstPending] = React.useState(null)
@@ -8728,6 +10917,11 @@ window.__ModuleLoader__.load({
       // v0.15 工作台：这些 hook 必须放在组件早退之前，否则 hook 数量会变（React #310）。
       const [benchPreview, setBenchPreview] = React.useState(false)
       const [benchMenu, setBenchMenu] = React.useState(null)
+      const [benchMenuConfirm, setBenchMenuConfirm] = React.useState('')
+      const [shownBenchMenu, benchMenuExitRef, benchMenuClosing] = usePresence(benchMenu, null, MENU_EXIT, { exitDuration: MOTION.fast, exitEasing: MOTION.easeOut })
+      const [benchDialog, setBenchDialog] = React.useState(null)
+      const benchDialogInputRef = React.useRef(null)
+      const [benchHoverOverlap, setBenchHoverOverlap] = React.useState('')
       const [benchFocus, setBenchFocus] = React.useState('')
       const [dragKey, setDragKey] = React.useState('')
       const [, setDropIndexState] = React.useState(-1)
@@ -8788,24 +10982,53 @@ window.__ModuleLoader__.load({
       })
 
       const everyTurnTimer = React.useRef(0)
-      React.useEffect(() => setEveryTurnDraft(null), [sessionId])
+      const activeSessionRef = React.useRef(sessionId)
+      activeSessionRef.current = sessionId
+      const draftBusRef = React.useRef(null)
+      if (draftBusRef.current === null) draftBusRef.current = createDraftBus()
+      const draftBus = draftBusRef.current
+      const flushAllDrafts = React.useCallback((targetSid) => draftBus.flushAll(targetSid), [draftBus])
+      React.useEffect(() => {
+        setEveryTurnDraft(null)
+      }, [sessionId])
       React.useEffect(() => {
         clearTimeout(loreTimer.current)
         setLoreDraft(null)
         setLoreEditing('')
         setLoreOpen(new Set())
         setLoreShown(40)
+        setLoreQuery('')
+        setLoreKeyDrafts({})
       }, [sessionId])
       // 工作区说明（AGENTS.md / CLAUDE.md）：改写正文的草稿（700ms 落盘）。
       const [wsDraft, setWsDraft] = React.useState(null)
+      const [wsOriginalOpen, setWsOriginalOpen] = React.useState(false)
       const wsTimer = React.useRef(0)
       // 这个会话里，说明已经发出之后用户又改过设置 ⇒ 显示「中途切换」提示。
       const [wsMidChanged, setWsMidChanged] = React.useState(false)
       React.useEffect(() => {
         setWsDraft(null)
         setWsMidChanged(false)
+        setWsOriginalOpen(false)
       }, [sessionId])
+      // M1 P0-②：切换 sessionId 或卸载前，先冲刷旧 sessionId 的所有未落盘防抖草稿，并清理旧定时器与脏标记，
+      // 既不丢旧会话草稿，也绝不让 700ms 旧定时器回调写进新会话状态。
+      React.useEffect(() => {
+        const sid = sessionId
+        return () => {
+          if (sid === '') return
+          dirty.current = false
+          systemDirty.current = false
+          clearTimeout(everyTurnTimer.current)
+          clearTimeout(wsTimer.current)
+          clearTimeout(loreTimer.current)
+          void draftBus.flushAll(sid)
+        }
+      }, [sessionId, draftBus])
       const [packName, setPackName] = React.useState('')
+      const [presetQuery, setPresetQuery] = React.useState('')
+      const [saveAsOverwrite, setSaveAsOverwrite] = React.useState('')
+      const saveAsInputRef = React.useRef(null)
       // 另存为：套着角色卡时「基于角色卡」（只存改过的格）默认勾上。
       const [saveOnCard, setSaveOnCard] = React.useState(true)
       // 「从当前会话取」（v0.10.1 起在开场对话里）：取第 N–M 轮的原话和回答，直接放进开场对话列表。
@@ -8815,6 +11038,9 @@ window.__ModuleLoader__.load({
       const [fetchPending, setFetchPending] = React.useState(null)
       const [placeAt, setPlaceAt] = React.useState(0)
       const [undoSnap, setUndoSnap] = React.useState(null)
+      const [lockDetailsOpen, setLockDetailsOpen] = React.useState(false)
+      // AI 切回用户时暂存已写 reasoning（按行下标），切回 AI 时可复原。
+      const reasoningStashRef = React.useRef({})
       // 「取消预设」后的撤销快照（presetSnapshot），8 秒后失效。
       const [presetUndo, setPresetUndo] = React.useState(null)
       // 最近一次放进列表的范围（故事记忆摘要不能晚于它的末轮）。
@@ -8830,6 +11056,8 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         setFetchPending(null)
         setUndoSnap(null)
+        setLockDetailsOpen(false)
+        reasoningStashRef.current = {}
         setFetchCut(null)
         setSeedDraft(null)
         setSeedNote('')
@@ -8844,7 +11072,7 @@ window.__ModuleLoader__.load({
       }, [shownRows, itemCount])
       React.useEffect(() => {
         if (undoSnap === null) return undefined
-        const timer = setTimeout(() => setUndoSnap((current) => (current === undoSnap ? null : current)), 8000)
+        const timer = setTimeout(() => setUndoSnap((current) => (current === undoSnap ? null : current)), UNDO_MS)
         return () => clearTimeout(timer)
       }, [undoSnap])
       React.useEffect(() => {
@@ -8861,6 +11089,8 @@ window.__ModuleLoader__.load({
       const [cardPick, setCardPick] = React.useState('')
       // 「我的名字」：卡片自己的设置（{{user}} 展开成什么），存在角色卡引用里。
       const [cardUser, setCardUser] = React.useState('')
+      const [cardUserBusy, setCardUserBusy] = React.useState(false)
+      React.useEffect(() => setCardUserBusy(false), [sessionId])
       const [avatars, setAvatars] = React.useState({})
       const [cardPreview, setCardPreview] = React.useState(null)
       const [envelopeRaw, setEnvelopeRaw] = React.useState(null)
@@ -8872,6 +11102,7 @@ window.__ModuleLoader__.load({
       /** readGen：后台轮询发请求时记下的 summaryStore.writeGen（见 applyEnvelope）；写响应不传。 */
       const setEnvelope = (data, readGen) => {
         setEnvelopeRaw(data)
+        if (data !== null && typeof data === 'object' && sessionId !== '') publishDockEnvelope(sessionId, data)
         // 卡片的 /state 读写不带 sessionId ⇒ 服务端附的是全局摘要（summary.sessionId === ''），applyEnvelope 会整份拒收。
         // 卡片手里是整封 envelope（所有会话的 state），按本会话切一刀同样准确 ⇒ 去掉全局摘要、走 extractSummary。
         const globalSummary = data !== null && typeof data === 'object' && data.summary !== null && typeof data.summary === 'object' && data.summary.sessionId === ''
@@ -8882,6 +11113,8 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = React.useState({ guide: false })
       const [hovered, setHovered] = React.useState('')
       const [systemDraft, setSystemDraft] = React.useState(null)
+      const [systemSaveState, setSystemSaveState] = React.useState('idle')
+      React.useEffect(() => setSystemSaveState('idle'), [sessionId])
       // 系统提示模式的乐观值：点了先切换高亮，写状态（服务端要重挂 + 预热，往返相对慢）回来后再交给真实状态。
       const [systemModeWant, setSystemModeWant] = React.useState(null)
       // 模式写请求串起来跑：连点时按顺序落盘，避免两个 patch 各读各的 fresh 状态互相盖。
@@ -8914,10 +11147,11 @@ window.__ModuleLoader__.load({
         window.addEventListener(ERROR_EVENT, onError)
         return () => window.removeEventListener(ERROR_EVENT, onError)
       }, [sessionId])
-      /** 失败：开场对话 meta 里的旧状态字照旧写，另外报给头部 pill（哪个操作 + 原因）。 */
+      /** 失败：开场对话 meta 里的旧状态字照旧写，另外报给头部 pill（哪个操作 + 原因）；切会话后旧回调静默跳过。 */
       const failed = React.useCallback(
         (key = 'sync', op = undefined) =>
           (err) => {
+            if (activeSessionRef.current !== sessionId) return
             setStatusRaw('error')
             reportError(sessionId, key, op ?? t('errOpSync'), err)
           },
@@ -9021,6 +11255,24 @@ window.__ModuleLoader__.load({
       const [pinned, setPinned] = React.useState(false)
       const [pane, setPane] = React.useState('items')
       const [menu, setMenu] = React.useState('')
+      const menuOriginRef = React.useRef('top left')
+      if (menu !== '') menuOriginRef.current = menu === 'more' ? 'top right' : menu === 'status' ? 'top center' : 'top left'
+      const [shownMenu, menuRef, menuClosing] = usePresence(
+        menu,
+        POPOVER_ENTER(menuOriginRef.current),
+        POPOVER_EXIT(menuOriginRef.current),
+        { enterDuration: 160, enterEasing: MOTION.springSnappy, exitDuration: 110, exitEasing: MOTION.easeOut, replayOnChange: true },
+      )
+      const [shownErrorPanel, errorPanelRef, errorPanelClosing] = usePresence(
+        error?.open ? error : null,
+        POPOVER_ENTER('top left'),
+        POPOVER_EXIT('top left'),
+        { enterDuration: 160, enterEasing: MOTION.springSnappy, exitDuration: 110, exitEasing: MOTION.easeOut },
+      )
+      const mainRef = React.useRef(null)
+      const paneAnimRef = React.useRef(null)
+      const prevPaneRef = React.useRef('')
+      const markerHoverTimer = React.useRef(0)
       // P2-6：保存 / 另存为成功一次 +1（「保存」按钮角上的 ✓ 看它）。
       const [savedTick, setSavedTick] = React.useState(0)
       // P2-11：刚导入的角色卡（{ id, fresh }）：列表里那张入场 + 描边高亮，BLOCK_GLOW_MS 后清掉。
@@ -9035,7 +11287,10 @@ window.__ModuleLoader__.load({
         window.addEventListener(CARD_EVENT, onCard)
         return () => window.removeEventListener(CARD_EVENT, onCard)
       }, [sessionId])
-      const closeCard = React.useCallback(() => setCardOpen(sessionId, false), [sessionId])
+      const closeCard = React.useCallback(() => {
+        void flushAllDrafts(sessionId)
+        setCardOpen(sessionId, false)
+      }, [sessionId, flushAllDrafts])
       // a11y（v1.1）：卡片关闭后焦点还给输入框里的芯片，键盘 / 读屏用户不迷路（芯片不在就什么也不做）。
       const focusChipBack = React.useCallback(() => {
         try {
@@ -9051,9 +11306,36 @@ window.__ModuleLoader__.load({
       }, [cardOpen])
       React.useEffect(() => () => setSummaryCardOpen(false), [])
       // P1-8：打开下拉菜单 / 弹层时，之前那条 toast 已经和眼前无关，先收掉（否则它叠在菜单上面挡住选项）。
+      // M3：presets 关掉清搜索；saveas 打开自动聚焦输入框，关闭清覆盖确认态。
       React.useEffect(() => {
         if (menu !== '') setToast('')
+        if (menu !== 'presets') setPresetQuery('')
+        if (menu !== 'saveas') setSaveAsOverwrite('')
+        if (menu === 'saveas') {
+          const id = setTimeout(() => {
+            saveAsInputRef.current?.focus?.()
+            saveAsInputRef.current?.select?.()
+          }, 0)
+          return () => clearTimeout(id)
+        }
+        return undefined
       }, [menu])
+      React.useEffect(() => {
+        if (saveAsOverwrite === '') return undefined
+        const id = setTimeout(() => setSaveAsOverwrite(''), CONFIRM_MS)
+        return () => clearTimeout(id)
+      }, [saveAsOverwrite])
+      React.useEffect(() => {
+        setBenchMenuConfirm('')
+      }, [benchMenu])
+      React.useEffect(() => {
+        if (benchDialog === null) return undefined
+        const id = setTimeout(() => {
+          benchDialogInputRef.current?.focus?.()
+          benchDialogInputRef.current?.select?.()
+        }, 0)
+        return () => clearTimeout(id)
+      }, [benchDialog !== null])
       // 动效（P1-10）：档位订阅；state.ui.motion 交给模块级档位。
       const motion = useMotionLevel()
       React.useEffect(() => {
@@ -9136,6 +11418,12 @@ window.__ModuleLoader__.load({
         }
         const onKey = (event) => {
           if (event.key !== 'Escape') return
+          // 手动注入行内编辑或弹窗输入中按 Esc：交给目标控件自己取消编辑，绝不关卡片。
+          if (event.target instanceof Element && event.target.closest('[data-prefill-manual-edit-text],[data-prefill-dialog-panel]') !== null) return
+          if (benchDialog !== null) {
+            setBenchDialog(null)
+            return
+          }
           if (menu !== '') {
             setMenu('')
             return
@@ -9161,14 +11449,14 @@ window.__ModuleLoader__.load({
           document.removeEventListener('mousedown', onDown, true)
           document.removeEventListener('keydown', onKey, true)
         }
-      }, [cardOpen, pinned, menu, closeCard, fetchPending, sessionId])
+      }, [cardOpen, pinned, menu, benchDialog, closeCard, fetchPending, sessionId])
 
       // 钉住后鼠标离开卡片 ~500ms：缩成一个小标记（预设名 + 彩点），淡出的卡片不挡点击；悬停 / 点标记恢复。
       // 焦点在卡片里（正在打字）、下拉菜单 / 放置确认 / 二次确认开着时不缩。
       const [shrunk, setShrunk] = React.useState(false)
       const hoverRef = React.useRef(false)
       const shrinkTimer = React.useRef(0)
-      const holdOpen = menu !== '' || fetchPending !== null || confirming !== '' || presetUndo !== null || error?.open === true
+      const holdOpen = menu !== '' || fetchPending !== null || confirming !== '' || presetUndo !== null || undoSnap !== null || benchDialog !== null || error?.open === true
       const holdRef = React.useRef(holdOpen)
       holdRef.current = holdOpen
       const scheduleShrink = React.useCallback(() => {
@@ -9184,18 +11472,26 @@ window.__ModuleLoader__.load({
       }, [])
       const restoreCard = React.useCallback(() => {
         clearTimeout(shrinkTimer.current)
+        clearTimeout(markerHoverTimer.current)
+        markerHoverTimer.current = 0
         setShrunk(false)
       }, [])
       React.useEffect(() => {
         if (!pinned || !cardOpen) {
           clearTimeout(shrinkTimer.current)
+          clearTimeout(markerHoverTimer.current)
+          markerHoverTimer.current = 0
           setShrunk(false)
         }
       }, [pinned, cardOpen])
       React.useEffect(() => {
         if (holdOpen) restoreCard()
       }, [holdOpen, restoreCard])
-      React.useEffect(() => () => clearTimeout(shrinkTimer.current), [])
+      React.useEffect(() => () => {
+        clearTimeout(shrinkTimer.current)
+        clearTimeout(markerHoverTimer.current)
+        paneAnimRef.current?.cancel?.()
+      }, [])
 
       // v1：收起 = 缩成右下角标记（钉住 + 卡片不渲染）；关闭 = 真的关。两个按钮不再共用一个 onClick。
       const collapseCard = React.useCallback(() => {
@@ -9244,7 +11540,10 @@ window.__ModuleLoader__.load({
         const chip = document.querySelector('[data-prefill-chip]')
         originRef.current = cardOrigin(chip instanceof Element ? chip.getBoundingClientRect() : null, first, window.innerHeight)
         window.addEventListener('resize', measure)
-        const timer = setInterval(measure, 500)
+        const timer = setInterval(() => {
+          if (typeof document !== 'undefined' && document?.hidden === true) return
+          measure()
+        }, 500)
         return () => {
           window.removeEventListener('resize', measure)
           clearInterval(timer)
@@ -9257,7 +11556,7 @@ window.__ModuleLoader__.load({
         const el = cardRef.current
         if (el === null) return
         enterPending.current = false
-        play(el, CARD_ENTER(originRef.current), { duration: MOTION.base, easing: MOTION.ease })
+        play(el, CARD_ENTER(originRef.current), { duration: MOTION.base, easing: MOTION.springSnappy })
       })
 
       React.useEffect(() => {
@@ -9267,15 +11566,15 @@ window.__ModuleLoader__.load({
       }, [])
 
       const refreshEnvelope = React.useCallback(() => {
-        // 后台标签页不拉整封 state（与 summary store 的 document.hidden 暂停一致）；回前台下一轮照常拉。
+        // 后台标签页不拉状态（与 summary store 的 document.hidden 暂停一致）；回前台下一轮照常拉。
         if (typeof document !== 'undefined' && document?.hidden === true) return
         // 轮询一律带 15s 上限：挂住的请求不许把下一轮叠上来。
-        // 记下发请求时的写代号：1MB 的整封 state 在飞时用户点了芯片，回来的这份不能把写响应冲掉。
+        // 记下发请求时的写代号：slim state 在飞时用户点了芯片，回来的这份不能把写响应冲掉。
         const readGen = summaryStore.writeGen
-        void postJsonWithTimeout(STATE_ROUTE, undefined)
+        void postJsonWithTimeout(STATE_ROUTE, sessionId !== '' ? { slim: true, sessionId } : undefined)
           .then((data) => setEnvelope(data, readGen))
           .catch(() => {})
-      }, [])
+      }, [sessionId])
       // 卡片关着时不轮询 /state，但芯片的「预设名 + 已配置 N/8」仍来自这份 envelope（chipSummary）⇒
       // summary 里与芯片相关的几格（预设 / 预填装 / 闸门 / 人格段 / 首轮锁定）一变，补拉一次整封 state。
       // 只在变化时拉、不定时；页面加载后从没打开过卡片（envelopeRaw 为 null）不拉 —— 那时芯片本来就不显示预设名。
@@ -9299,7 +11598,7 @@ window.__ModuleLoader__.load({
         void (async () => {
           try {
             const readGen = summaryStore.writeGen
-            const snapshot = await postJsonWithTimeout(STATE_ROUTE, undefined)
+            const snapshot = await postJsonWithTimeout(STATE_ROUTE, { slim: true, sessionId })
             if (!alive) return
             setEnvelope(snapshot, readGen)
             const map = snapshot?.state?.prefill
@@ -9334,11 +11633,15 @@ window.__ModuleLoader__.load({
       const turnEnded = streamingRef.current && !streaming
 
       // 状态轮询：轮次数 / 闸门 / 注入数会在别处变（跑完一轮、点了芯片）。**只在卡片打开时跑**，周期 5s
-      // （规划 §2.2 验收：30s 内 /state ≤ 6 次；关卡片一个请求都不发）。
+      // （规划 §2.2 验收：30s 内 /state ≤ 6 次；关卡片一个请求都不发）。同时标记本会话有活跃 dock 供沙盒/改写复用。
       React.useEffect(() => {
         if (!cardOpen || !enabled || sessionId === '') return undefined
+        const unmark = markDockEnvelopeActive(sessionId)
         const timer = setInterval(refreshEnvelope, 5000)
-        return () => clearInterval(timer)
+        return () => {
+          unmark()
+          clearInterval(timer)
+        }
       }, [cardOpen, enabled, refreshEnvelope, sessionId])
       // 「刷」（第 4 步）：渲染时算好左栏状态签名和变化（cueInfoRef），提交后在这里按「谁引起的」分别提示。
       //   user（P0-4）：变了的项扫光（简洁档闪底色），toast 列出连带改动（当前节和刚点的开关自己不算「连带」）。
@@ -9429,6 +11732,12 @@ window.__ModuleLoader__.load({
       const [memoryView, setMemoryView] = React.useState(null)
       const [memoryOpen, setMemoryOpen] = React.useState(false)
       const [memoryDraft, setMemoryDraft] = React.useState(null)
+      const [memoryCollapseWarn, setMemoryCollapseWarn] = React.useState(false)
+      React.useEffect(() => {
+        setMemoryOpen(false)
+        setMemoryDraft(null)
+        setMemoryCollapseWarn(false)
+      }, [sessionId])
       const memoryCall = React.useCallback((payload) => postJson(MEMORY_ROUTE, { sessionId, ...payload }), [sessionId])
       React.useEffect(() => {
         // 卡片关着看不到记忆摘要 ⇒ 不轮询（十五秒一次也是流量）。
@@ -9437,12 +11746,14 @@ window.__ModuleLoader__.load({
           return undefined
         }
         let alive = true
-        const pull = () =>
+        const pull = () => {
+          if (typeof document !== 'undefined' && document?.hidden === true) return
           void postJsonWithTimeout(MEMORY_ROUTE, { sessionId, op: 'get' })
             .then((data) => {
               if (alive) setMemoryView(data ?? null)
             })
             .catch(() => {})
+        }
         pull()
         const timer = setInterval(pull, 15000)
         return () => {
@@ -9491,16 +11802,28 @@ window.__ModuleLoader__.load({
         }
       }, [cards, cardsCall])
 
-      // 开场对话：编辑后 700ms 落盘。
+      // 开场对话：编辑后 700ms 落盘（纳入统一防抖落盘总线，保存/导出/关卡片/切会话前自动冲刷）。
       React.useEffect(() => {
-        if (!enabled || items === null || !dirty.current) return undefined
-        const timer = setTimeout(() => {
-          dirty.current = false
-          setStatus('saving')
-          void postJson(DRAFT_ROUTE, { sessionId, items })
-            .then(() => setStatus('saved'))
+        if (!enabled || items === null || !dirty.current || sessionId === '') return undefined
+        const sid = sessionId
+        const snapshot = items
+        const commit = () => {
+          if (activeSessionRef.current === sid) {
+            dirty.current = false
+            setStatus('saving')
+          }
+          return postJson(DRAFT_ROUTE, { sessionId: sid, items: snapshot })
+            .then(() => {
+              if (activeSessionRef.current === sid) setStatus('saved')
+            })
             .catch(failed())
+        }
+        const entry = { sessionId: sid, commit, cancel: () => clearTimeout(timer) }
+        const timer = setTimeout(() => {
+          draftBus.clear('items', entry)
+          void commit()
         }, 700)
+        draftBus.schedule('items', entry)
         return () => clearTimeout(timer)
       }, [items, enabled, sessionId])
 
@@ -9515,8 +11838,8 @@ window.__ModuleLoader__.load({
       const isOnStored = (key) => (key === 'everyTurn' ? everyTurnSwitchOn(state, sessionId) : ownEnabled[key] !== false)
       // 开关乐观更新（P0-2）：点了先按新值显示，写入结束后撤掉乐观值回到服务端状态（失败 ⇒ 回弹到原状态）。
       const isOn = (key) => (Object.hasOwn(optimisticOn, key) ? optimisticOn[key] === true : isOnStored(key))
-      // 工作区说明进预设的那一份（只有模式 + 改写正文；原样 = 不存）。
-      const wsPreset = presetWorkspace(state?.workspaceInstructions?.[sessionId])
+      // 工作区说明进预设的那一份（只有模式 + 改写正文；原样 = 不存；优先读当前未落盘草稿 wsDraft）。
+      const wsPreset = presetWorkspace(wsDraft ?? state?.workspaceInstructions?.[sessionId])
       // 角色卡（已套用的那张）与它留下的指纹。
       const appliedRef = state?.cardRef?.[sessionId] ?? null
       const appliedCardName = appliedRef ? (cards.find((card) => card.id === appliedRef.id)?.name ?? appliedRef.id) : ''
@@ -9544,17 +11867,38 @@ window.__ModuleLoader__.load({
       // 点了还没落盘完：先按点的显示（乐观），写成功后交回真实状态。
       const systemMode = systemModeWant ?? systemModeStored
 
-      // 系统提示：编辑后 800ms 落盘（写 overrides[session].sections['prefill:persona']）。
+      // 系统提示：编辑后 800ms 落盘（写 overrides[session].sections['prefill:persona']，纳入统一防抖落盘总线）。
       React.useEffect(() => {
         if (systemDraft === null || !systemDirty.current || sessionId === '') return undefined
+        const sid = sessionId
+        const text = systemDraft
+        const commit = () => {
+          if (activeSessionRef.current === sid) {
+            systemDirty.current = false
+            setSystemSaveState('saving')
+          }
+          return writeSystem(text, undefined, undefined, sid)
+            .then((data) => {
+              if (activeSessionRef.current === sid) setSystemSaveState('saved')
+              return data
+            })
+            .catch((err) => {
+              if (activeSessionRef.current === sid) setSystemSaveState('idle')
+              throw err
+            })
+            .catch(failed())
+        }
+        const entry = { sessionId: sid, commit, cancel: () => clearTimeout(timer) }
         const timer = setTimeout(() => {
-          systemDirty.current = false
-          void writeSystem(systemDraft, undefined).catch(failed())
+          draftBus.clear('system', entry)
+          void commit()
         }, 800)
+        draftBus.schedule('system', entry)
         return () => clearTimeout(timer)
       }, [systemDraft, sessionId])
 
-      // 用量：卡片打开时每 4 秒刷新一次（关着看不到用量，不跑）。
+      // 用量：仅在「当前在用量页 || 流式输出中」时每 4 秒轮询；非用量页空闲降频（开卡拉一次供状态胶囊，不持续轮询）。
+      const usagePollActive = pane === 'usage' || streaming
       React.useEffect(() => {
         if (!cardOpen || sessionId === '') return undefined
         let alive = true
@@ -9568,12 +11912,17 @@ window.__ModuleLoader__.load({
             .catch(() => {})
         }
         load()
+        if (!usagePollActive) {
+          return () => {
+            alive = false
+          }
+        }
         const timer = setInterval(load, 4000)
         return () => {
           alive = false
           clearInterval(timer)
         }
-      }, [cardOpen, sessionId])
+      }, [cardOpen, sessionId, usagePollActive])
 
       // 每轮注入的自动判定（v0.9）：只在「卡片打开 + 本会话开着每轮注入」时每 15 秒刷一次（只读，算一次很便宜）。
       // 关着卡片 / 没开每轮注入 ⇒ 不跑：这数据只给卡片里那节用（规划 §2.2 的收敛项）。
@@ -9595,12 +11944,14 @@ window.__ModuleLoader__.load({
           }
         }
         let alive = true
-        const load = () =>
+        const load = () => {
+          if (typeof document !== 'undefined' && document?.hidden === true) return
           void postJsonWithTimeout(PACKS_ROUTE, { sessionId, op: 'every-turn-status' })
             .then((data) => {
               if (alive) setEveryTurnStatus(data?.status ?? null)
             })
             .catch(() => {})
+        }
         load()
         const timer = setInterval(load, 15000)
         return () => {
@@ -9622,6 +11973,16 @@ window.__ModuleLoader__.load({
         const host = navRef.current
         const was = navWas.current
         navWas.current = now
+        // M2：切节时右栏复位至顶部并播放 120ms 轻淡入（连切立即 cancel 上一段，不堆叠）。
+        if (cardOpen && now !== null && prevPaneRef.current !== '' && prevPaneRef.current !== now.pane) {
+          const mainEl = mainRef.current
+          if (mainEl !== null) {
+            mainEl.scrollTop = 0
+            paneAnimRef.current?.cancel?.()
+            paneAnimRef.current = play(mainEl, PANE_ENTER, { duration: MOTION.fast, easing: MOTION.ease })
+          }
+        }
+        prevPaneRef.current = cardOpen && now !== null ? now.pane : ''
         if (now === null || host === null || was === null || was.pane === now.pane || was.narrow !== now.narrow) return
         const from = host.querySelector(`[data-prefill-nav-box="${was.pane}"]`)
         const layer = host.querySelector('[data-prefill-nav-hl]')
@@ -9690,11 +12051,49 @@ window.__ModuleLoader__.load({
       const move = (index, delta) => {
         const target = index + delta
         if (target < 0 || target >= items.length) return
-        setExpandedRows(new Set())
+        // M3：移动行只交换对应 key，不清整套 expandedRows 与 reasoning 暂存。
+        setExpandedRows((current) => {
+          const next = new Set(current)
+          const hasA = current.has(index)
+          const hasB = current.has(target)
+          if (hasA) next.add(target)
+          else next.delete(target)
+          if (hasB) next.add(index)
+          else next.delete(index)
+          return next
+        })
+        const stash = reasoningStashRef.current
+        const a = stash[index]
+        const b = stash[target]
+        if (b !== undefined) stash[index] = b
+        else delete stash[index]
+        if (a !== undefined) stash[target] = a
+        else delete stash[target]
         const next = [...items]
         const [moved] = next.splice(index, 1)
         next.splice(target, 0, moved)
         edit(next)
+      }
+      const removeItemAt = (index) => {
+        const before = items
+        // M3：删单条只更新对应下标映射并送入 UndoBar，不清其余行的展开态。
+        setExpandedRows((current) => {
+          const next = new Set()
+          for (const key of current) {
+            if (key < index) next.add(key)
+            else if (key > index) next.add(key - 1)
+          }
+          return next
+        })
+        const nextStash = {}
+        for (const [k, v] of Object.entries(reasoningStashRef.current)) {
+          const n = Number(k)
+          if (n < index) nextStash[n] = v
+          else if (n > index) nextStash[n - 1] = v
+        }
+        reasoningStashRef.current = nextStash
+        edit(items.filter((_unused, at) => at !== index))
+        setUndoSnap({ items: before, mode: 'delete' })
       }
       const armConfirm = (key) => {
         if (confirming === key) return true
@@ -9707,31 +12106,32 @@ window.__ModuleLoader__.load({
        * 写系统提示：`text` = 人格段正文（空 = 不改）；`mode` = 'off' | 'append' | 'takeover' | undefined（不动模式）。
        * 接管 = `gate[sid]='pure'`（闸门逐名清空 harness 的段、拦掉注入与工具），人格段作为唯一一段留下。
        */
-      const writeSystem = async (text, mode, extra) => {
-        const fresh = await postJson(STATE_ROUTE, undefined)
-        const current = fresh?.state?.overrides?.[sessionId] ?? {}
+      const writeSystem = async (text, mode, extra, targetSid = sessionId) => {
+        const fresh = await postJson(STATE_ROUTE, { slim: true, sessionId: targetSid })
+        const current = fresh?.state?.overrides?.[targetSid] ?? {}
         const sections = { ...(current.sections ?? {}) }
         if (typeof text === 'string' && text.trim() !== '') sections[PERSONA_SECTION] = text
         else delete sections[PERSONA_SECTION]
         const entry = { messages: { ...(current.messages ?? {}) }, sections, contexts: { ...(current.contexts ?? {}) } }
         const empty = Object.keys(entry.messages).length + Object.keys(entry.sections).length + Object.keys(entry.contexts).length === 0
-        const patch = {
-          overrides: empty ? without(fresh?.state?.overrides, sessionId) : { ...(fresh?.state?.overrides ?? {}), [sessionId]: entry },
-          ...(extra ?? {}),
-        }
+        const set = {}
+        const unset = []
+        if (empty) unset.push('overrides')
+        else set.overrides = entry
+        const sessionPatch = { target: targetSid, set, unset }
         if (mode !== undefined) {
-          patch.gate = { ...(fresh?.state?.gate ?? {}), [sessionId]: mode === 'takeover' ? 'pure' : mode === 'replace' ? 'replace' : 'pass' }
+          set.gate = mode === 'takeover' ? 'pure' : mode === 'replace' ? 'replace' : 'pass'
           // 旧版「纯净模式」写的是全局开关 + armed；这里顺手把本会话从 armed 里摘掉，免得关不掉。
           if (mode !== 'takeover') {
-            patch.armed = (fresh?.state?.armed ?? []).filter((id) => id !== sessionId)
-            patch.sessionTools = without(fresh?.state?.sessionTools, sessionId)
+            sessionPatch.armed = false
+            unset.push('sessionTools')
           } else {
-            patch.sessionTools = { ...(fresh?.state?.sessionTools ?? {}), [sessionId]: [] }
+            set.sessionTools = []
           }
         }
-        injectionDrafts.set(sessionId, entry)
-        const data = await postJson(STATE_ROUTE, patch)
-        setEnvelope(data)
+        injectionDrafts.set(targetSid, entry)
+        const data = await postJson(STATE_ROUTE, { sessionId: targetSid, slim: true, sessionPatch, ...(extra ?? {}) })
+        if (activeSessionRef.current === targetSid) setEnvelope(data)
         notifyStateChanged()
         return data
       }
@@ -9739,20 +12139,24 @@ window.__ModuleLoader__.load({
       const setSystemMode = (mode) => {
         // 先切高亮 / 说明文字（写状态要「读一次 + 写一次」两个往返，服务端还要重挂 + 预热，等它回来再切换会卡 1–2 秒）。
         setSystemModeWant(mode)
-        const run = () => writeSystem(systemText, mode)
+        const run = () => {
+          const running = busyCtl.run('system-mode', () => writeSystem(systemText, mode))
+          return running ?? writeSystem(systemText, mode)
+        }
         const next = systemWriteChain.current.then(run, run)
         systemWriteChain.current = next.catch(() => {})
         void next
           .then(() => {
             // 期间又点了别的模式就别清（让那一次的写入去清）。
             setSystemModeWant((current) => (current === mode ? null : current))
+            reportOk(sessionId, 'system-mode')
             if (mode === 'takeover' && systemText.trim() === '') flash(t('takeoverEmpty'))
             else flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
           })
           .catch((err) => {
             // 写失败：回退到服务端的真实状态，别让高亮停在没生效的选项上。
             setSystemModeWant((current) => (current === mode ? null : current))
-            failed()(err)
+            failed('system-mode', t('errOpSystemMode'))(err)
           })
       }
 
@@ -9766,6 +12170,7 @@ window.__ModuleLoader__.load({
         // 否则 700ms 后旧定时器把旧值整格写回 state，盖掉刚换上的预设。
         clearTimeout(everyTurnTimer.current)
         clearTimeout(wsTimer.current)
+        draftBus.discard(['everyTurn', 'ws', 'lore', 'system', 'items'])
         const { resolved, from } = resolveLayers(card, pack)
         if (compiled) resolved.applied = appliedPrints(compiled)
         // 故事记忆摘要：本会话开着故事记忆（预设带了角色卡）⇒ 写成初始记忆；否则作为一条背景放在开场对话最前面。
@@ -9773,17 +12178,19 @@ window.__ModuleLoader__.load({
         const seed = typeof resolved.memorySeed?.text === 'string' && resolved.memorySeed.text.trim() !== '' ? resolved.memorySeed.text.trim() : ''
         const baseItems = Array.isArray(resolved.items) ? resolved.items : []
         resolved.items = seed !== '' && !memoryOn && !injectMode ? [{ role: 'user', text: memorySeedText(seed) }, ...baseItems] : baseItems
-        const fresh = await postJson(STATE_ROUTE, undefined)
-        const patch = { ...presetPatch(fresh?.state, sessionId, resolved, from, key), ...extraPatch }
+        const patch = { sessionId, slim: true, sessionPatch: presetSessionPatch(sessionId, resolved, from, key), ...extraPatch }
         const overrides = resolved.overrides && typeof resolved.overrides === 'object' ? resolved.overrides : { messages: {}, sections: {}, contexts: {} }
         injectionDrafts.set(sessionId, overrides)
         const text = overrides.sections?.[PERSONA_SECTION]
         systemDirty.current = false
+        setSystemSaveState('idle')
         setSystemDraft(typeof text === 'string' ? text : '')
         setEveryTurnDraft(null)
         clearTimeout(loreTimer.current)
         setLoreDraft(null)
+        setLoreKeyDrafts({})
         setWsDraft(null)
+        reasoningStashRef.current = {}
         // 开场对话整体替换（只改草稿）。首轮锁定之后（issue #19 B）：预设的开场对话不进草稿、不发出去，
         // 列表保持原样（那里是「存为预设」的工作区），返回条数给提示「可以用手动注入补」。
         // 「取消预设」（clearItems）照旧连草稿一起清（开跑后只清草稿，历史不动）。
@@ -9818,18 +12225,22 @@ window.__ModuleLoader__.load({
         // 否则 700ms 后旧定时器把旧值整格写回 state，盖掉刚换上的预设。
         clearTimeout(everyTurnTimer.current)
         clearTimeout(wsTimer.current)
-        const data = await postJson(STATE_ROUTE, { restoreOpening: sessionId })
+        draftBus.discard(['everyTurn', 'ws', 'lore', 'system', 'items'])
+        const data = await postJson(STATE_ROUTE, { restoreOpening: sessionId, slim: true, sessionId })
         if (data?.ok === false) {
           flash(t('lockRestoreFailed'))
           return
         }
         const text = data?.state?.overrides?.[sessionId]?.sections?.[PERSONA_SECTION]
         systemDirty.current = false
+        setSystemSaveState('idle')
         setSystemDraft(typeof text === 'string' ? text : '')
         setEveryTurnDraft(null)
         clearTimeout(loreTimer.current)
         setLoreDraft(null)
+        setLoreKeyDrafts({})
         setWsDraft(null)
+        reasoningStashRef.current = {}
         injectionDrafts.set(sessionId, data?.state?.overrides?.[sessionId] ?? { messages: {}, sections: {}, contexts: {} })
         setEnvelope(data)
         notifyStateChanged()
@@ -9849,21 +12260,21 @@ window.__ModuleLoader__.load({
 
       /** 左栏开关：关 = 停用但保留内容（state.enabled[会话][项] = false）；开 = 删掉这一键。 */
       const writeEnabled = async (key, on) => {
-        const fresh = await postJson(STATE_ROUTE, undefined)
-        const all = { ...(fresh?.state?.enabled ?? {}) }
-        const own = { ...(all[sessionId] ?? {}) }
+        const fresh = await postJson(STATE_ROUTE, { slim: true, sessionId })
+        const own = { ...(fresh?.state?.enabled?.[sessionId] ?? {}) }
         if (on) delete own[key]
         else own[key] = false
-        if (Object.keys(own).length === 0) delete all[sessionId]
-        else all[sessionId] = own
-        const patch = { enabled: all }
+        const set = {}
+        const unset = []
+        if (Object.keys(own).length === 0) unset.push('enabled')
+        else set.enabled = own
         // 每轮注入在 0.11 之前另有一个面板内的「启用」勾选框（写 state.everyTurn[会话].enabled）。
         // 现在开关只剩左栏这一个：打开时把旧值清成 true，否则会出现「开关开着、点也亮着，却一轮都不注入」。
         const ownTurn = fresh?.state?.everyTurn?.[sessionId]
         if (key === 'everyTurn' && on && ownTurn !== null && typeof ownTurn === 'object' && ownTurn.enabled !== true) {
-          patch.everyTurn = { ...(fresh?.state?.everyTurn ?? {}), [sessionId]: { ...ownTurn, enabled: true } }
+          set.everyTurn = { ...ownTurn, enabled: true }
         }
-        const data = await postJson(STATE_ROUTE, patch)
+        const data = await postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch: { target: sessionId, set, unset } })
         setEnvelope(data)
         notifyStateChanged()
         flash(on ? t('featureOnSaved') : t('featureOffSaved'))
@@ -9872,7 +12283,7 @@ window.__ModuleLoader__.load({
 
       /** 取消预设 = 套一个空预设（同一条路径）：全部归位，开场对话草稿也清空；几秒内可撤销。 */
       const clearPreset = async () => {
-        const fresh = await postJson(STATE_ROUTE, undefined)
+        const fresh = await postJson(STATE_ROUTE, { slim: true, sessionId })
         // 先拍快照（含开场对话），几秒内可撤销。本地有没落盘的编辑时以本地为准，否则读 host 上的草稿。
         const hostDraft = dirty.current ? items : ((await postJson(DRAFT_ROUTE, { sessionId }).catch(() => null))?.draft ?? null)
         const snap = presetSnapshot(fresh?.state, sessionId, items, hostDraft)
@@ -9888,19 +12299,22 @@ window.__ModuleLoader__.load({
         // 否则 700ms 后旧定时器把旧值整格写回 state，盖掉刚换上的预设。
         clearTimeout(everyTurnTimer.current)
         clearTimeout(wsTimer.current)
+        draftBus.discard(['everyTurn', 'ws', 'lore', 'system', 'items'])
         setPresetUndo(null)
-        const fresh = await postJson(STATE_ROUTE, undefined)
-        const patch = presetRestorePatch(fresh?.state, sessionId, snap)
+        const patch = { sessionId, slim: true, sessionPatch: presetRestoreSessionPatch(sessionId, snap) }
         dirty.current = true
         setItems(snap.items)
         setExpandedRows(new Set())
         const text = snap.maps.overrides?.sections?.[PERSONA_SECTION]
         systemDirty.current = false
+        setSystemSaveState('idle')
         setSystemDraft(typeof text === 'string' ? text : '')
         setEveryTurnDraft(null)
         clearTimeout(loreTimer.current)
         setLoreDraft(null)
+        setLoreKeyDrafts({})
         setWsDraft(null)
+        reasoningStashRef.current = {}
         injectionDrafts.set(sessionId, snap.maps.overrides ?? { messages: {}, sections: {}, contexts: {} })
         setEnvelope(await postJson(STATE_ROUTE, patch))
         // 只把 host 上本来还没发出的草稿放回去（写状态之后：草稿路由按放回的系统提示预热）。
@@ -9977,7 +12391,7 @@ window.__ModuleLoader__.load({
         // 否则只是改个称呼就会把「纯角色扮演 / 中文思考 / 第一人称 / 自动」静默重置成默认值（#25）。
         const got = await compileCardLayer(ref, parsed.legacy)
         if (got === null) return
-        const fresh = await postJson(STATE_ROUTE, undefined)
+        const fresh = await postJson(STATE_ROUTE, { slim: true, sessionId })
         const st = fresh?.state ?? {}
         const source = st.slotSource?.[sessionId] ?? {}
         const current = { overrides: st.overrides?.[sessionId], gate: st.gate?.[sessionId], tools: st.sessionTools?.[sessionId], everyTurn: st.everyTurn?.[sessionId], items }
@@ -9992,29 +12406,32 @@ window.__ModuleLoader__.load({
         const prints = slotPrints(next)
         const nextSource = { ...source }
         for (const slot of ['system', 'everyTurn', 'items']) if (fromCard(slot)) nextSource[slot] = { from: 'card', fp: prints[slot] }
-        const put = (map, value) => (value === null || value === undefined ? without(map, sessionId) : { ...(map ?? {}), [sessionId]: value })
-        const patch = {
-          cardRef: put(st.cardRef, { ...ref, applied: appliedPrints(got.compiled) }),
-          // 本会话改过的世界书（或来自预设的）不被重新编译盖掉。
-          lore: st.lore?.[sessionId]?.custom === true ? st.lore : put(st.lore, got.layer.lore),
-          memory: put(st.memory, got.layer.memory),
-          slotSource: put(st.slotSource, nextSource),
+        const set = {}
+        const unset = []
+        const assign = (key, value) => {
+          if (value === null || value === undefined) unset.push(key)
+          else set[key] = value
         }
+        assign('cardRef', { ...ref, applied: appliedPrints(got.compiled) })
+        // 本会话改过的世界书（或来自预设的）不被重新编译盖掉。
+        if (st.lore?.[sessionId]?.custom !== true) assign('lore', got.layer.lore)
+        assign('memory', got.layer.memory)
+        assign('slotSource', nextSource)
         if (fromCard('system')) {
-          patch.overrides = put(st.overrides, next.overrides)
-          patch.gate = { ...(st.gate ?? {}), [sessionId]: next.gate }
+          assign('overrides', next.overrides)
+          set.gate = next.gate
           systemDirty.current = false
           setSystemDraft(next.overrides.sections[PERSONA_SECTION])
         }
         if (fromCard('everyTurn')) {
-          patch.everyTurn = put(st.everyTurn, next.everyTurn)
+          assign('everyTurn', next.everyTurn)
           setEveryTurnDraft(null)
         }
         if (fromCard('items')) {
           dirty.current = true
           setItems(next.items)
         }
-        setEnvelope(await postJson(STATE_ROUTE, patch))
+        setEnvelope(await postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch: { target: sessionId, set, unset } }))
         if (fromCard('items')) {
           await postJson(DRAFT_ROUTE, { sessionId, items: next.items })
           dirty.current = false
@@ -10047,15 +12464,14 @@ window.__ModuleLoader__.load({
         setSystemDraft(compiled.systemText)
         await writeSystem(compiled.systemText, compiled.systemMode)
         if (compiled.mode === 'agent' && Array.isArray(compiled.tools)) {
-          const again = await postJson(STATE_ROUTE, undefined)
-          setEnvelope(await postJson(STATE_ROUTE, { sessionTools: { ...(again?.state?.sessionTools ?? {}), [sessionId]: compiled.tools } }))
+          setEnvelope(await postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch: { target: sessionId, set: { sessionTools: compiled.tools } } }))
         }
         flash(injectMode ? t('appliedNextTurn') : t('appliedFirstTurn'))
       }
       const currentOverrides = async () => {
         const fresh = injectionDraftOf(sessionId)
         try {
-          const snapshot = await postJson(STATE_ROUTE, undefined)
+          const snapshot = await postJson(STATE_ROUTE, { slim: true, sessionId })
           const stored = snapshot?.state?.overrides?.[sessionId] ?? {}
           return {
             messages: { ...(stored.messages ?? {}), ...(fresh.messages ?? {}) },
@@ -10068,7 +12484,7 @@ window.__ModuleLoader__.load({
       }
       const currentCardRef = async () => {
         try {
-          const snapshot = await postJson(STATE_ROUTE, undefined)
+          const snapshot = await postJson(STATE_ROUTE, { slim: true, sessionId })
           return snapshot?.state?.cardRef?.[sessionId] ?? null
         } catch {
           return null
@@ -10076,7 +12492,7 @@ window.__ModuleLoader__.load({
       }
       const currentTools = async () => {
         try {
-          const snapshot = await postJson(STATE_ROUTE, undefined)
+          const snapshot = await postJson(STATE_ROUTE, { slim: true, sessionId })
           const stored = snapshot?.state?.sessionTools?.[sessionId]
           return Array.isArray(stored) ? stored : null
         } catch {
@@ -10093,7 +12509,8 @@ window.__ModuleLoader__.load({
         // 保存 = 面板上挂在预设下的**全部**内容：角色卡（引用）、系统提示、每轮注入（只存配置）、开场对话、改写注入内容、工具权限。
         // 「基于角色卡」（0.14，套着卡时默认勾上）：只存和卡不一样的格，其余套用时从卡现编译（卡更新了也跟着变）。
         let layerFrom = null
-        return Promise.all([currentOverrides(), currentTools(), currentCardRef()])
+        return flushAllDrafts(sessionId)
+          .then(() => Promise.all([currentOverrides(), currentTools(), currentCardRef()]))
           .then(async ([overrides, tools, rawCard]) => {
             const parsed = cardRefOf(rawCard)
             const card = parsed?.ref ?? null
@@ -10115,31 +12532,41 @@ window.__ModuleLoader__.load({
             adoptPacks(data)
             flash(`${t('savedAs')}「${name}」`)
             // 存完即视为在用这个预设（头部显示它的名字，「保存」直接覆盖它）。
-            return postJson(STATE_ROUTE, undefined).then((fresh) =>
-              postJson(STATE_ROUTE, {
-                activePreset: { ...(fresh?.state?.activePreset ?? {}), [sessionId]: `pack:${name}` },
+            return postJson(STATE_ROUTE, { slim: true, sessionId }).then((fresh) => {
+              const set = {
+                activePreset: `pack:${name}`,
                 // 来源标签跟着变：存下的格 = 来自预设，没存的（基于角色卡时）= 来自角色卡。
-                slotSource: { ...(fresh?.state?.slotSource ?? {}), [sessionId]: layerFrom ? slotSourceOf(layerFrom.resolved, layerFrom.from) : slotSourceOf({ overrides: fresh?.state?.overrides?.[sessionId], gate: gateMode, tools: fresh?.state?.sessionTools?.[sessionId] ?? null, everyTurn: fresh?.state?.everyTurn?.[sessionId], items, workspaceInstructions: wsPreset }, { overrides: 'preset', gate: 'preset', tools: 'preset', everyTurn: 'preset', items: 'preset', workspaceInstructions: 'preset' }) },
-                // 改过的世界书存进了预设：来源标签改成「来自预设」。
-                ...(fresh?.state?.lore?.[sessionId]?.custom === true
-                  ? { lore: { ...fresh.state.lore, [sessionId]: { ...fresh.state.lore[sessionId], source: 'preset' } } }
-                  : {}),
-              }).then((next) => {
+                slotSource: layerFrom
+                  ? slotSourceOf(layerFrom.resolved, layerFrom.from)
+                  : slotSourceOf(
+                      { overrides: fresh?.state?.overrides?.[sessionId], gate: gateMode, tools: fresh?.state?.sessionTools?.[sessionId] ?? null, everyTurn: fresh?.state?.everyTurn?.[sessionId], items, workspaceInstructions: wsPreset },
+                      { overrides: 'preset', gate: 'preset', tools: 'preset', everyTurn: 'preset', items: 'preset', workspaceInstructions: 'preset' },
+                    ),
+              }
+              // 改过的世界书存进了预设：来源标签改成「来自预设」。
+              if (fresh?.state?.lore?.[sessionId]?.custom === true) {
+                set.lore = { ...fresh.state.lore[sessionId], source: 'preset' }
+              }
+              return postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch: { target: sessionId, set } }).then((next) => {
                 setLoreDraft(null)
                 setEnvelope(next)
                 setPackName(name)
                 setMenu('')
                 setSavedTick((value) => value + 1)
-              }),
-            )
+              })
+            })
           })
       }
       // ── 「从当前会话取」→ 开场对话列表（只改预设的开场对话草稿，不动会话里已经发出的历史）──
       const cutTo = fetchCut !== null && fetchCut.toTurn > 0 ? fetchCut.toTurn : 0
+      const rawFromTurn = Number.parseInt(String(fetchOpts.fromTurn ?? '').trim(), 10)
+      const rawToTurn = Number.parseInt(String(fetchOpts.toTurn ?? '').trim(), 10)
+      const fetchRangeInvalid = Number.isFinite(rawFromTurn) && Number.isFinite(rawToTurn) && rawFromTurn > 0 && rawToTurn > 0 && rawFromTurn > rawToTurn
       const commitFetch = (pending, mode, k) => {
         const before = items
         edit(placeFetched(items, pending.items, mode, k))
         setExpandedRows(new Set())
+        reasoningStashRef.current = {}
         setShownRows(ROW_BATCH)
         setFetchPending(null)
         setFetchCut({ fromTurn: pending.range.fromTurn, toTurn: pending.range.toTurn, lastTurn: pending.lastTurn })
@@ -10153,6 +12580,7 @@ window.__ModuleLoader__.load({
         flash(t('fetchPlaced').replace('{n}', String(pending.items.length)))
       }
       const fetchFromSession = () => {
+        if (fetchRangeInvalid) return
         const range = fetchRange(fetchOpts.fromTurn, fetchOpts.toTurn)
         setFetchBusy(true)
         void packsCall({ op: 'from-session', reasoning: fetchOpts.reasoning === true, fromTurn: range.fromTurn, ...(range.toTurn > 0 ? { toTurn: range.toTurn } : {}) })
@@ -10184,30 +12612,38 @@ window.__ModuleLoader__.load({
         if (undoSnap === null) return
         edit(undoSnap.items)
         setExpandedRows(new Set())
+        reasoningStashRef.current = {}
         setUndoSnap(null)
       }
       // 故事记忆：取本会话的摘要，保存预设时带上（不能晚于开场对话取到的末轮 M）。
       const fetchSeed = () => {
-        void packsCall({ op: 'from-session', ...(cutTo > 0 ? { toTurn: cutTo } : {}) })
-          .then((data) => {
-            const memory = data?.memory ?? null
-            if (memory === null || typeof memory.text !== 'string' || memory.text.trim() === '') {
-              setSeedDraft(null)
-              setSeedNote(t('seedNone'))
-              return
-            }
-            if (!seedAllowed(memory, cutTo)) {
-              setSeedDraft(null)
-              setSeedNote(t('seedLate').replace('{n}', String(memory.throughTurn)).replace('{m}', String(cutTo)))
-              return
-            }
-            setSeedNote('')
-            setSeedDraft({ text: memory.text.trim(), throughTurn: Number(memory.throughTurn) || 0 })
-          })
-          .catch(failed())
+        if (busyCtl.pending('seed-fetch')) return
+        void busyCtl
+          .run('seed-fetch', () =>
+            packsCall({ op: 'from-session', ...(cutTo > 0 ? { toTurn: cutTo } : {}) })
+              .then((data) => {
+                reportOk(sessionId, 'seed-fetch')
+                const memory = data?.memory ?? null
+                if (memory === null || typeof memory.text !== 'string' || memory.text.trim() === '') {
+                  setSeedDraft(null)
+                  setSeedNote(t('seedNone'))
+                  return
+                }
+                if (!seedAllowed(memory, cutTo)) {
+                  setSeedDraft(null)
+                  setSeedNote(t('seedLate').replace('{n}', String(memory.throughTurn)).replace('{m}', String(cutTo)))
+                  return
+                }
+                setSeedNote('')
+                setSeedDraft({ text: memory.text.trim(), throughTurn: Number(memory.throughTurn) || 0 })
+              })
+              .catch(failed('seed-fetch', t('errOpSeed'))),
+          )
+          ?.catch(() => {})
       }
       const exportFile = async () => {
         const name = packName.trim() === '' ? 'prefill' : packName.trim()
+        await flushAllDrafts(sessionId)
         // 导出 = 和「保存为预设」同一套内容：既然「预设 = 面板下面全部东西」，导出文件也要带上
         // 角色卡引用 / 每轮注入配置 / 故事记忆摘要，否则导出再导入会悄悄丢东西。
         const [overrides, tools, card] = await Promise.all([currentOverrides(), currentTools(), currentCardRef()])
@@ -10244,6 +12680,7 @@ window.__ModuleLoader__.load({
         anchor.download = `${name}.prefill.json`
         anchor.click()
         setTimeout(() => URL.revokeObjectURL(url), 4000)
+        flash(t('exportDone').replace('{name}', name))
       }
       const importFile = (event) => {
         const file = event?.target?.files?.[0]
@@ -10311,864 +12748,7 @@ window.__ModuleLoader__.load({
             ? [hoveredCard.name, t('cardPresetDesc'), [hoveredCard.mode === 'pure' ? t('cardModePure') : t('cardModeAgent'), t('cardGreetings').replace('{n}', String(hoveredCard.greetings))].join(' · ')]
             : ['', t('presetsHint'), '']
 
-      // 存预设用：本会话自己那格的配置。开关关着也带 —— 关的状态由 pack.enabled 带走，
-      // 不再看条目里的 enabled（那是旧版勾选框留下的字段）。
-      const ownEveryTurn = state?.everyTurn?.[sessionId]
-      const everyTurnStored =
-        (String(ownEveryTurn?.text ?? '').trim() !== '' || String(ownEveryTurn?.firstText ?? '').trim() !== '')
-          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(Array.isArray(ownEveryTurn.bench) && ownEveryTurn.bench.length > 0 ? { bench: ownEveryTurn.bench, benchTowers: ownEveryTurn.benchTowers ?? {} } : {}), ...(ownEveryTurn.seam === true ? { seam: true } : {}), ...(ownEveryTurn.compactRefirst === false ? { compactRefirst: false } : {}) }
-          : null
-      // 约束承接：取过会话 ⇒ 预设标记 fromSession，带上勾选的约束（服务端编成每轮注入，模式沿用 everyTurn）；
-      // 没取过但本会话本身就是从这种预设开的 ⇒ 标记照样带上。
-      const carryPayload = () =>
-        carryList !== null
-          ? { fromSession: true, carried: carryList.filter((entry) => entry.on === true).map(({ on: _on, checked: _checked, turns: _turns, lastTurn: _last, id: _id, ...rest }) => rest) }
-          : ownEveryTurn?.seam === true
-            ? { fromSession: true }
-            : {}
-      // 预设下拉（头部「当前预设 ▾」点开）：内置 + 我的，点一下即整体套用。
-      const presetsMenu = h(
-        'div',
-        {
-          'data-prefill-section': 'presets',
-          'data-prefill-menu': 'presets',
-          style: { ...V.popover, width: 'min(560px, calc(100% - 24px))' },
-          onMouseLeave: () => setHovered(''),
-        },
-        // 开跑后套预设（issue #19 B）：说清楚哪些下一轮生效、哪些不发；有开局快照时可以一键换回。
-        lock.locked
-          ? h(
-              'div',
-              { style: { ...V.callout('warn'), display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }, 'data-prefill-lock-presets': '' },
-              h('span', { style: { flex: '1 1 260px', minWidth: 0 } }, t('lockPresetsNote')),
-              lock.hasSnapshot
-                ? h(
-                    ConfirmButton,
-                    {
-                      armed: confirming === 'restore-opening',
-                      style: V.btn,
-                      'data-prefill-lock-restore-menu': '',
-                      title: t('lockRestoreTip'),
-                      onClick: () => {
-                        if (!armConfirm('restore-opening')) return
-                        setConfirming('')
-                        setMenu('')
-                        void restoreOpening().catch(failed())
-                      },
-                    },
-                    confirming === 'restore-opening' ? t('lockRestoreConfirm') : t('lockRestore'),
-                  )
-                : null,
-            )
-          : null,
-        h(
-          'div',
-          { style: V.pills },
-          h('span', { style: V.pillGroup }, t('groupBuiltin')),
-          ...builtins.map((preset) =>
-            presetPill(`builtin:${preset.id}`, {
-              icon: preset.icon,
-              emoji: preset.emoji,
-              name: preset.name,
-              active: activePreset === `builtin:${preset.id}`,
-              tip: preset.desc,
-              onHover: () => setHovered(`builtin:${preset.id}`),
-              onClick: () => actApply(`builtin:${preset.id}`, () => applyBuiltin(preset)),
-            }),
-          ),
-        ),
-        packs.length > 0
-          ? h(
-              'div',
-              { style: V.pills },
-              h('span', { style: V.pillGroup }, t('groupMine')),
-              ...packs.map((pack) =>
-                presetPill(`pack:${pack.name}`, {
-                  icon: pack.card ? 'user' : 'folder',
-                  name: pack.name,
-                  tip: pack.card ? t('packOnCard').replace('{name}', cards.find((card) => card.id === pack.card)?.name ?? pack.card) : undefined,
-                  active: activePreset === `pack:${pack.name}`,
-                  onHover: () => setHovered(`pack:${pack.name}`),
-                  onClick: () => actApply(`pack:${pack.name}`, () => applyPack(pack.name)),
-                }),
-              ),
-            )
-          : null,
-        // 角色卡（0.14）：套卡 = 套一个只有角色卡这一层的预设，和上面两组同一条路径、整体替换。
-        cards.length > 0
-          ? h(
-              'div',
-              { style: V.pills, 'data-prefill-preset-group': 'cards' },
-              h('span', { style: V.pillGroup }, t('groupCards')),
-              ...cards.map((card) =>
-                h(
-                  'button',
-                  {
-                    key: `card:${card.id}`,
-                    type: 'button',
-                    title: card.notes || card.name,
-                    style: { ...V.pill(activePreset === `card:${card.id}`), ...(busyCtl.shown(`apply:card:${card.id}`) ? BUSY_LOOK : {}) },
-                    ...busyAttrs(busyCtl, `apply:card:${card.id}`),
-                    onClick: () => actApply(`card:${card.id}`, () => applyCardPreset(card)),
-                    onMouseEnter: () => setHovered(`card:${card.id}`),
-                    onFocus: () => setHovered(`card:${card.id}`),
-                    'data-prefill-preset': `card:${card.id}`,
-                    'aria-pressed': activePreset === `card:${card.id}` ? 'true' : 'false',
-                  },
-                  busyCtl.shown(`apply:card:${card.id}`)
-                    ? h(Spinner, { key: 'spin' })
-                    : avatars[card.id]
-                    ? h('img', { src: avatars[card.id], alt: '', style: { width: 16, height: 16, borderRadius: '50%', objectFit: 'cover', flex: '0 0 auto' } })
-                    : glyph({ icon: card.icon }),
-                  card.name,
-                ),
-              ),
-            )
-          : null,
-        h(
-          'div',
-          { style: { ...V.detail, maxWidth: '68ch' } },
-          detail[0] ? h('span', { style: { fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } }, detail[0]) : null,
-          h('span', null, detail[1]),
-          detail[2] ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, `· ${detail[2]}`) : null,
-          // PR4：删除 / 导入导出搬到左侧栏「库」；卡片只留「套用」「存为」。
-          h(
-            'button',
-            { type: 'button', style: V.btnGhost, 'data-prefill-open-prefill': 'library', onClick: () => openPrefillPanel('library') },
-            t('manageLibrary'),
-          ),
-          // v1：取消预设从头部收进预设下拉底部（高风险动作离开常驻区，挨着「管理库」）。
-          activePreset === ''
-            ? null
-            : h(
-                'button',
-                { type: 'button', style: { ...V.btnGhost, ...(busyCtl.shown('clear') ? BUSY_LOOK : {}) }, 'data-prefill-preset-clear': '', ...busyAttrs(busyCtl, 'clear'), onClick: () => act('clear', t('errOpClear'), clearPreset) },
-                busyCtl.shown('clear') ? h(Spinner, { key: 'spin' }) : null,
-                busyCtl.shown('clear') ? ' ' : null,
-                t('presetClear'),
-              ),
-        ),
-        h('div', { style: { ...V.hint, maxWidth: '68ch' }, 'data-prefill-preset-content': '' }, t('presetContentHint')),
-      )
-
-      // 「另存为…」：起名保存 / 导入导出文件（「从当前会话取」v0.10.1 起挪到开场对话里）。
-      const saveAsPanel = h(
-        'div',
-        { 'data-prefill-section': 'presets', 'data-prefill-menu': 'saveas', style: { ...V.popover, width: 'min(560px, calc(100% - 24px))' } },
-        h('div', { style: { ...V.hint, maxWidth: '68ch' } }, t('saveAsHint')),
-        h(
-          'div',
-          { style: V.row },
-          h('input', {
-            style: { ...V.input, flex: '1 1 180px' },
-            value: packName,
-            placeholder: t('packNamePlaceholder'),
-            spellCheck: false,
-            'data-prefill-pack-name': '',
-            onChange: (event) => setPackName(event.target.value),
-            onKeyDown: (event) => {
-              if (event.key === 'Enter') act('saveas', t('errOpSaveAs'), () => savePack())
-            },
-          }),
-          h(
-            'button',
-            { type: 'button', style: { ...V.btnPrimary, ...(busyCtl.shown('saveas') ? BUSY_LOOK : {}) }, 'data-prefill-save-as-submit': '', ...busyAttrs(busyCtl, 'saveas'), onClick: () => act('saveas', t('errOpSaveAs'), () => savePack()) },
-            busyCtl.shown('saveas') ? h(Spinner, { key: 'spin' }) : null,
-            busyCtl.shown('saveas') ? ' ' : null,
-            t('savePack'),
-          ),
-        ),
-        appliedRef
-          ? h(
-              'label',
-              { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', maxWidth: '68ch' } },
-              h('input', { type: 'checkbox', checked: saveOnCard, 'data-prefill-save-on-card': '', onChange: (event) => setSaveOnCard(event.target.checked) }),
-              t('saveOnCard').replace('{name}', appliedCardName),
-            )
-          : null,
-        h(
-          'div',
-          { style: V.row },
-          h('button', { type: 'button', style: V.btnGhost, onClick: () => void exportFile() }, withIcon('download', t('exportFile'), 12)),
-          h('button', { type: 'button', style: V.btnGhost, onClick: () => fileRef.current?.click() }, withIcon('upload', t('importFile'), 12)),
-        ),
-        h('input', { ref: fileRef, type: 'file', accept: '.json,application/json', style: { display: 'none' }, onChange: importFile }),
-      )
-
-      const pickedCard = cards.find((card) => card.id === cardPick)
-      const memoryBlock =
-        memoryOn
-          ? h(
-              'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-memory': '' },
-              h(
-                'div',
-                { style: V.row },
-                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 600 } }, h(Icon, { name: 'scroll-text', size: 13 }), t('memoryTitle')),
-                h(
-                  'span',
-                  { style: V.sectionMeta, 'data-prefill-memory-status': '' },
-                  [
-                    memoryView?.running ? t('memoryRunning') : '',
-                    typeof memoryView?.memory?.text === 'string' && memoryView.memory.text !== ''
-                      ? t('memoryThrough').replace('{n}', String(memoryView.memory.throughTurn ?? 0))
-                      : memoryView?.running
-                        ? ''
-                        : t('memoryNone').replace('{n}', String(memoryConfig.every ?? 8)),
-                    memoryView?.memory?.edited ? t('memoryEdited') : '',
-                  ]
-                    .filter((part) => part !== '')
-                    .join(' · '),
-                ),
-                typeof memoryView?.memory?.text === 'string' && memoryView.memory.text !== ''
-                  ? h(
-                      'button',
-                      {
-                        type: 'button',
-                        style: V.btnGhost,
-                        'data-prefill-memory-toggle': '',
-                        onClick: () => {
-                          setMemoryOpen(!memoryOpen)
-                          setMemoryDraft(null)
-                        },
-                      },
-                      memoryOpen ? t('memoryHide') : t('memoryShow'),
-                    )
-                  : null,
-              ),
-              memoryOpen && typeof memoryView?.memory?.text === 'string'
-                ? h('textarea', {
-                    style: { ...V.input, minHeight: 140, resize: 'vertical', fontSize: 12, lineHeight: 1.5 },
-                    value: memoryDraft ?? memoryView.memory.text,
-                    'data-prefill-memory-text': '',
-                    onChange: (event) => setMemoryDraft(event.target.value),
-                  })
-                : null,
-              memoryOpen
-                ? h(
-                    'div',
-                    { style: V.row },
-                    h(
-                      'button',
-                      {
-                        type: 'button',
-                        style: V.btn,
-                        disabled: memoryDraft === null,
-                        onClick: () =>
-                          void memoryCall({ op: 'set', text: memoryDraft ?? '' })
-                            .then((data) => {
-                              setMemoryView(data)
-                              setMemoryDraft(null)
-                              flash(t('memorySaved'))
-                            })
-                            .catch(failed()),
-                      },
-                      t('memorySave'),
-                    ),
-                    h(
-                      'button',
-                      {
-                        type: 'button',
-                        style: V.btnGhost,
-                        'data-prefill-memory-clear': '',
-                        onClick: () =>
-                          void memoryCall({ op: 'clear' })
-                            .then((data) => {
-                              setMemoryView(data)
-                              setMemoryDraft(null)
-                              setMemoryOpen(false)
-                              flash(t('memoryCleared'))
-                            })
-                            .catch(failed()),
-                      },
-                      withIcon('eraser', t('memoryClear'), 12),
-                    ),
-                  )
-                : null,
-            )
-          : null
-
-      const cardsSection = h(
-        Section,
-        {
-          id: 'cards',
-          title: t('cardsTitle'),
-          meta: cards.length > 0 ? t('cardsMeta').replace('{n}', String(cards.length)) : '',
-          off: !isOn('card'),
-          offTitle: t('offTitle'),
-          offBody: t('cardOffBody'),
-          // PR4：导入 / 导出 / 删除搬到左侧栏「库」。
-          right: h(
-            'button',
-            { type: 'button', style: V.btnGhost, 'data-prefill-open-prefill': 'library', onClick: () => openPrefillPanel('library') },
-            withIcon('folder', t('manageLibrary'), 12),
-          ),
-        },
-        h('div', { style: V.hint }, cards.length === 0 ? t('cardsEmpty') : t('cardsHint')),
-        appliedCardName !== ''
-          ? h('div', { style: { ...V.row, fontSize: 12.5 }, 'data-prefill-card-current': '' }, h('span', { style: V.sectionMeta }, t('cardCurrent')), h('b', null, appliedCardName), h('span', { style: V.sectionMeta }, appliedCardDesc))
-          : null,
-        // 「我的名字」是卡片自己的设置：套用中的卡改了名字 ⇒ 重新编译，只更新仍是卡原样的格。
-        h(
-          'div',
-          { style: V.row },
-          h('span', { style: V.sectionMeta }, t('cardUserName')),
-          h('input', {
-            style: { ...V.input, flex: '0 1 160px' },
-            value: cardUser,
-            placeholder: t('cardUserNamePlaceholder'),
-            spellCheck: false,
-            'data-prefill-card-user': '',
-            onChange: (event) => setCardUser(event.target.value),
-            onBlur: () => {
-              previewCard(cardPick, cardUser)
-              const was = typeof appliedRef?.opts?.userName === 'string' ? appliedRef.opts.userName : ''
-              if (appliedRef && was.trim() !== cardUser.trim()) void refreshCardLayer(cardUser).catch(failed())
-            },
-          }),
-          h('span', { style: V.hint }, t('cardUserHint')),
-        ),
-        cards.length > 0
-          ? h(
-              'div',
-              { style: V.pills },
-              ...cards.map((card) =>
-                h(
-                  'button',
-                  {
-                    key: card.id,
-                    type: 'button',
-                    title: card.notes || card.name,
-                    style: { ...V.pill(cardPick === card.id || activePreset === `card:${card.id}`), position: 'relative' },
-                    'data-prefill-card': card.id,
-                    'aria-pressed': cardPick === card.id ? 'true' : 'false',
-                    onClick: () => pickCard(card),
-                  },
-                  avatars[card.id]
-                    ? h('img', { src: avatars[card.id], alt: '', style: { width: 16, height: 16, borderRadius: '50%', objectFit: 'cover', flex: '0 0 auto' } })
-                    : glyph({ icon: card.icon }),
-                  card.name,
-                ),
-              ),
-            )
-          : null,
-        pickedCard === undefined
-          ? null
-          : h(
-              'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-              h(
-                'div',
-                { style: { ...V.detail, height: 'auto', maxHeight: 72, alignItems: 'center' } },
-                avatars[pickedCard.id]
-                  ? h('img', { src: avatars[pickedCard.id], alt: pickedCard.name, 'data-prefill-card-avatar': '', style: { width: 36, height: 36, borderRadius: 8, objectFit: 'cover', flex: '0 0 auto' } })
-                  : null,
-                h('span', { style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, pickedCard.name),
-                h(
-                  'span',
-                  null,
-                  [
-                    pickedCard.creator ? `${t('cardBy')} ${pickedCard.creator}` : '',
-                    pickedCard.tags.slice(0, 4).join(' / '),
-                    pickedCard.mode === 'pure' ? t('cardModePure') : t('cardModeAgent'),
-                    t('cardGreetings').replace('{n}', String(pickedCard.greetings)),
-                    pickedCard.lore > 0 ? t('cardLore').replace('{n}', String(pickedCard.lore)) : '',
-                    cardPreview ? `≈${estimateTokens(cardPreview.systemText)} tok` : '',
-                  ]
-                    .filter((part) => part !== '')
-                    .join(' · '),
-                ),
-              ),
-              h('div', { style: V.hint }, activePreset === `card:${pickedCard.id}` ? t('cardInUse') : t('cardApplyHint')),
-            ),
-      )
-
-      // ── 来源标签（0.14）：每格标「来自角色卡 / 来自预设 / 本会话改过」──
-      const slotSrc = state?.slotSource?.[sessionId] ?? null
-      const currentSlots = {
-        overrides: state?.overrides?.[sessionId],
-        gate: gateMode,
-        tools: Array.isArray(state?.sessionTools?.[sessionId]) ? state.sessionTools[sessionId] : null,
-        everyTurn: state?.everyTurn?.[sessionId],
-        items,
-        workspaceInstructions: state?.workspaceInstructions?.[sessionId],
-      }
-      const slotHas = {
-        system: (typeof storedSystem === 'string' && storedSystem.trim() !== '') || gateMode !== 'pass',
-        everyTurn: everyTurnShape(currentSlots.everyTurn) !== null,
-        items: items.length > 0,
-        tools: currentSlots.tools !== null,
-        workspace: wsPreset !== null,
-      }
-      // 会话开跑后开场对话已写进历史、草稿清空：这时不标来源（不是「本会话改过」）。
-      const tagOf = (slot) => (slot === 'items' && injectMode && items.length === 0 ? '' : slotTag(slotSrc, slot, currentSlots, slotHas[slot]))
-      const TAG_COLOR = { card: 'var(--pf-card)', preset: 'var(--pf-system)', session: 'var(--dsw-alias-state-warn-primary)' }
-      // P2-4：这一格的来源和上一次提交时不一样（刚挂上 / 换会话的头几秒除外）⇒ 标签闪一下。
-      const srcSettled = srcSeen.current.sessionId === sessionId && Date.now() - cueSince.current.at >= CUE_SETTLE_MS
-      const sourceTag = (kind, prefix, slot = prefix ?? '') => {
-        const before = srcSeen.current.kinds[slot]
-        srcNow.current[slot] = kind
-        const pulse = srcSettled && before !== undefined && before !== kind && kind !== '' ? `${slot}:${kind}:${Date.now()}` : ''
-        return kind === ''
-          ? null
-          : h(
-              SourceTag,
-              {
-                key: `src-${prefix ?? ''}`,
-                pulse,
-                defer: turnEnded,
-                'data-prefill-source': kind,
-                title: t(`sourceTip_${kind}`),
-                style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', color: `color-mix(in srgb, ${TAG_COLOR[kind]} 75%, var(--dsw-alias-label-primary))`, background: tint(TAG_COLOR[kind], 12) },
-              },
-              h('i', { style: { width: 6, height: 6, borderRadius: '50%', background: TAG_COLOR[kind], display: 'inline-block' } }),
-              prefix ? `${prefix} · ${t(`source_${kind}`)}` : t(`source_${kind}`),
-            )
-      }
-      // 套着角色卡时，系统提示里多一组「带工具（Agent）/ 纯角色扮演」（原来在角色卡面板里）。
-      const cardModeSeg = appliedRef
-        ? h(
-            'div',
-            { style: V.row, 'data-prefill-card-mode-row': '' },
-            h('span', { style: V.sectionMeta }, t('cardModeLabel')),
-            h(
-              'div',
-              { style: V.seg, role: 'radiogroup' },
-              ...[
-                ['agent', t('cardModeAgent'), t('cardModeAgentTip'), 'wrench'],
-                ['pure', t('cardModePure'), t('cardModePureTip'), 'message-circle'],
-              ].map(([key, label, tip, icon]) => {
-                const on = (gateMode === 'pure' ? 'pure' : 'agent') === key
-                return h(
-                  'button',
-                  { key, type: 'button', role: 'radio', title: tip, 'aria-checked': on ? 'true' : 'false', style: V.segBtn(on), 'data-prefill-card-mode': key, onClick: () => (on ? undefined : void setCardMode(key).catch(failed())) },
-                  withIcon(icon, label, 12),
-                )
-              }),
-            ),
-            h('span', { style: V.hint }, t('cardModeHint')),
-          )
-        : null
-
-      const systemSection = h(
-        Section,
-        {
-          id: 'system',
-          tags: sourceTag(tagOf('system'), undefined, 'system'),
-          title: t('systemTitle'),
-          meta: systemMode === 'off' ? t('systemOffMeta') : systemMode === 'append' ? `${t('systemAppendMeta')} · ≈${systemTok} tok` : systemMode === 'replace' ? `${t('systemReplaceMeta')} · ≈${systemTok} tok` : `${t('systemTakeoverMeta')} · ≈${systemTok} tok`,
-          off: !isOn('system') || systemFromCardOff,
-          offTitle: !isOn('system') ? t('offTitle') : t('offByCardTitle'),
-          offBody: !isOn('system') ? t('systemOffBody') : t('offByCardBody'),
-        },
-        cardModeSeg,
-        h(
-          'div',
-          { style: V.row },
-          h(
-            'div',
-            { style: V.seg, role: 'radiogroup' },
-            // 「不改」不再是一种模式：要停用就关左栏开关（正文保留）。
-            ...[
-              ['append', t('modeAppend')],
-              ['replace', t('modeReplace')],
-              ['takeover', t('modeTakeover')],
-            ].map(([key, label]) =>
-              h(
-                'button',
-                {
-                  key,
-                  type: 'button',
-                  role: 'radio',
-                  'aria-checked': (systemMode === 'off' ? 'append' : systemMode) === key ? 'true' : 'false',
-                  style: V.segBtn((systemMode === 'off' ? 'append' : systemMode) === key),
-                  'data-prefill-mode': key,
-                  onClick: () => setSystemMode(key),
-                },
-                label,
-              ),
-            ),
-          ),
-          pending ? h('span', { style: { ...V.sectionMeta, color: 'var(--dsw-alias-state-warn-primary)' } }, t('nextTurnNotice')) : null,
-        ),
-        h('div', { style: V.hint }, systemMode === 'off' ? t('modeAppendHint') : systemMode === 'append' ? t('modeAppendHint') : systemMode === 'replace' ? t('modeReplaceHint') : t('modeTakeoverHint')),
-        h('textarea', {
-          style: { ...V.textarea, minHeight: 120, maxWidth: '90ch', opacity: isOn('system') ? 1 : 0.7 },
-          value: systemText,
-          spellCheck: false,
-          placeholder: t('systemPlaceholder'),
-          'data-prefill-system': '1',
-          onChange: (event) => {
-            systemDirty.current = true
-            setSystemDraft(event.target.value)
-          },
-        }),
-      )
-
-      const itemRow = (item, index) => {
-        const isAssistant = item?.role === 'assistant'
-        const color = isAssistant ? 'var(--pf-ai)' : 'var(--pf-user)'
-        const tok = estimateTokens(item?.text) + estimateTokens(item?.reasoning)
-        const bare = { ...V.textarea, background: 'transparent', border: '1px solid transparent', padding: '4px 6px', minHeight: 44, maxWidth: '90ch', resize: 'vertical' }
-        const long = isLongText(item?.text) || isLongText(item?.reasoning)
-        const collapsed = long && !expandedRows.has(index)
-        const setExpanded = (on) =>
-          setExpandedRows((current) => {
-            const next = new Set(current)
-            if (on) next.add(index)
-            else next.delete(index)
-            return next
-          })
-        // 折叠的长卡片：只画前几行文字（不画 textarea），点「展开全文」才能编辑。
-        const clamp = (lines) => ({ overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: lines, WebkitBoxOrient: 'vertical', whiteSpace: 'pre-wrap', wordBreak: 'break-word' })
-        const body = collapsed
-          ? [
-              isAssistant && String(item?.reasoning ?? '').trim() !== ''
-                ? h('div', { key: 'r', style: { ...clamp(2), fontSize: 12, color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-1)', border: '1px dashed var(--dsw-alias-border-l2)', borderRadius: 8, padding: '4px 6px' } }, item.reasoning)
-                : null,
-              h('div', { key: 't', style: { ...clamp(3), fontSize: 13, padding: '2px 6px', color: 'var(--dsw-alias-label-primary)' } }, item?.text ?? ''),
-              h(
-                'button',
-                { key: 'x', type: 'button', style: { ...V.btnGhost, alignSelf: 'flex-start', fontSize: 12 }, 'data-prefill-item-expand': '', onClick: () => setExpanded(true) },
-                t('rowExpand').replace('{tok}', String(tok)),
-              ),
-            ]
-          : null
-        return h(
-          'div',
-          {
-            key: index,
-            'data-prefill-item': isAssistant ? 'assistant' : 'user',
-            'data-collapsed': collapsed ? 'true' : 'false',
-            style: { maxWidth: '90ch', borderRadius: 10, padding: '6px 8px 8px 10px', borderLeft: `3px solid ${color}`, background: tint(color, 10), display: 'flex', flexDirection: 'column', gap: 4, contentVisibility: 'auto', containIntrinsicSize: 'auto 96px' },
-          },
-          h(
-            'div',
-            { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-            h(
-              'button',
-              {
-                type: 'button',
-                style: { border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, color: `color-mix(in srgb, ${color} 75%, var(--dsw-alias-label-primary))` },
-                title: isAssistant ? t('toUser') : t('toAssistant'),
-                onClick: () => patchAt(index, isAssistant ? { role: 'user', reasoning: undefined } : { role: 'assistant', reasoning: '' }),
-              },
-              isAssistant ? withIcon('bot', t('roleAssistant'), 13) : withIcon('user', t('roleUser'), 13),
-            ),
-            h('span', { style: V.sectionMeta }, `#${index + 1} · ≈${tok} tok`),
-            h('span', { style: { flex: '1 1 auto' } }),
-            long && !collapsed ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5, padding: '0 6px', height: 22 }, 'data-prefill-item-collapse': '', onClick: () => setExpanded(false) }, t('rowCollapse')) : null,
-            h('button', { type: 'button', style: S.dockMini, title: t('moveUp'), onClick: () => move(index, -1) }, '↑'),
-            h('button', { type: 'button', style: S.dockMini, title: t('moveDown'), onClick: () => move(index, 1) }, '↓'),
-            h('button', { type: 'button', style: S.dockMini, title: t('removeItem'), onClick: () => { setExpandedRows(new Set()); edit(items.filter((_unused, at) => at !== index)) } }, h(Icon, { name: 'x', size: 12 })),
-          ),
-          ...(body ?? []),
-          body !== null
-            ? null
-            : isAssistant
-            ? h('textarea', {
-                style: { ...bare, minHeight: 34, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-1)', border: '1px dashed var(--dsw-alias-border-l2)' },
-                value: item?.reasoning ?? '',
-                spellCheck: false,
-                placeholder: t('reasoningPh'),
-                onChange: (event) => patchAt(index, { reasoning: event.target.value }),
-              })
-            : null,
-          body !== null
-            ? null
-            : h('textarea', {
-                style: bare,
-                value: item?.text ?? '',
-                spellCheck: false,
-                placeholder: isAssistant ? t('textAssistantPh') : t('textUserPh'),
-                onChange: (event) => patchAt(index, { text: event.target.value }),
-              }),
-        )
-      }
-
-      // 开场对话头部：「从当前会话取」+ 带上思维链 + 第 N 轮 到 第 M 轮。
-      const numInput = (attr, value, placeholder, onChange) =>
-        h('input', {
-          type: 'number',
-          min: 1,
-          [attr]: '',
-          style: { ...V.input, width: 58, flex: '0 0 auto', padding: '0 6px' },
-          value,
-          placeholder,
-          onChange: (event) => onChange(event.target.value),
-        })
-      const lastKnownTurn = fetchCut?.lastTurn || turns || 0
-      const fetchBar = h(
-        'div',
-        { style: { ...V.row, gap: 10, rowGap: 6 }, 'data-prefill-fetch-bar': '' },
-        h(
-          'button',
-          { type: 'button', style: { ...V.btn, opacity: fetchBusy ? 0.6 : 1 }, disabled: fetchBusy, 'data-prefill-history-open': '', title: t('historyTip'), onClick: fetchFromSession },
-          fetchBusy ? '…' : t('historyOpen'),
-        ),
-        h(
-          'label',
-          { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
-          h('input', { type: 'checkbox', 'data-prefill-history-reasoning': '', checked: fetchOpts.reasoning === true, onChange: (event) => setFetchOpts({ ...fetchOpts, reasoning: event.target.checked }) }),
-          t('historyReasoning'),
-        ),
-        h(
-          'span',
-          { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } },
-          t('rangeFrom'),
-          numInput('data-prefill-history-from', fetchOpts.fromTurn, '1', (value) => setFetchOpts({ ...fetchOpts, fromTurn: value })),
-          t('rangeTo'),
-          numInput('data-prefill-history-to', fetchOpts.toTurn, lastKnownTurn > 0 ? String(lastKnownTurn) : t('rangeEnd'), (value) => setFetchOpts({ ...fetchOpts, toTurn: value })),
-          t('rangeUnit'),
-        ),
-      )
-      const pendingTok = fetchPending?.tok ?? 0
-      // 约束承接：取来的会话里生效过的每轮约束，默认勾上，保存预设时编进每轮注入。
-      const carrySrcKey = { session: 'carrySrcSession', preset: 'carrySrcPreset', card: 'carrySrcCard', default: 'carrySrcDefault', builtin: 'carrySrcBuiltin', history: 'carrySrcHistory' }
-      const carryBox =
-        carryList === null || carryList.length === 0
-          ? null
-          : h(
-              'div',
-              { style: { ...V.callout('brand'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' }, 'data-prefill-carry-list': '' },
-              h('div', null, h('b', null, t('carryTitle'))),
-              h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, t('carryHint')),
-              ...carryList.map((entry, index) =>
-                h(
-                  'label',
-                  { key: entry.id ?? index, 'data-prefill-carry-item': entry.id ?? String(index), style: { display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12 } },
-                  h('input', { type: 'checkbox', checked: entry.on === true, onChange: (event) => setCarryList((list) => (list ?? []).map((item, at) => (at === index ? { ...item, on: event.target.checked } : item))) }),
-                  h(
-                    'span',
-                    { style: { minWidth: 0, flex: '1 1 auto' } },
-                    h('b', null, entry.name || t('carryUnnamed')),
-                    ' ',
-                    h('span', { style: V.sectionMeta }, `${t(carrySrcKey[entry.source] ?? 'carrySrcHistory')} · ${Number(entry.turns) > 0 ? t('carryTurns').replace('{n}', String(entry.turns)) : t('carryNotYet')}`),
-                    h(
-                      'div',
-                      { style: { color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }, title: [entry.first, entry.text].filter((part) => String(part ?? '').trim() !== '').join('\n') },
-                      String(entry.text || entry.first || '').replace(/\s+/g, ' ').slice(0, 160),
-                    ),
-                  ),
-                ),
-              ),
-            )
-      const fetchConfirm =
-        fetchPending === null
-          ? null
-          : h(
-              'div',
-              { style: { ...V.callout(pendingTok > FETCH_WARN_TOK ? 'warn' : 'brand'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' }, 'data-prefill-fetch-confirm': '' },
-              h(
-                'div',
-                { 'data-prefill-history-meta': '' },
-                h('b', null, t('fetchGot')),
-                ' ',
-                t('historyMeta').replace('{turns}', String(fetchPending.turnCount)).replace('{n}', String(fetchPending.items.length)).replace('{tok}', num(pendingTok)),
-                fetchPending.toolCalls > 0 ? t('historyTools').replace('{n}', String(fetchPending.toolCalls)) : '',
-              ),
-              pendingTok > FETCH_WARN_TOK ? h('div', { 'data-prefill-fetch-warn': '' }, t('fetchBig').replace('{tok}', num(pendingTok)).replace('{limit}', num(FETCH_WARN_TOK))) : null,
-              h(
-                'div',
-                { style: { ...V.row, gap: 8 } },
-                items.length > 0 ? h('button', { type: 'button', style: V.btnPrimary, 'data-prefill-fetch-replace': '', onClick: () => commitFetch(fetchPending, 'replace') }, t('fetchReplace')) : null,
-                items.length > 0
-                  ? h(
-                      'span',
-                      { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
-                      h('button', { type: 'button', style: V.btn, 'data-prefill-fetch-insert': '', onClick: () => commitFetch(fetchPending, 'insert', placeAt) }, t('fetchInsert')),
-                      h(
-                        'select',
-                        {
-                          'data-prefill-fetch-at': '',
-                          value: String(placeAt),
-                          style: { ...V.input, width: 'auto', flex: '0 0 auto', padding: '0 4px' },
-                          onChange: (event) => setPlaceAt(Number(event.target.value)),
-                        },
-                        h('option', { key: 0, value: '0' }, t('fetchAtTop')),
-                        ...items.map((_item, index) => h('option', { key: index + 1, value: String(index + 1) }, t('fetchAfterN').replace('{n}', String(index + 1)) + (index + 1 === items.length ? t('fetchAtEnd') : ''))),
-                      ),
-                    )
-                  : h('button', { type: 'button', style: V.btnPrimary, 'data-prefill-fetch-replace': '', onClick: () => commitFetch(fetchPending, 'replace') }, t('fetchPut')),
-                h('button', { type: 'button', style: V.btnGhost, 'data-prefill-fetch-cancel': '', onClick: () => setFetchPending(null) }, t('cancel')),
-              ),
-            )
-      // 开场白（0.14，原来在角色卡面板里）：套着角色卡时放在开场对话最上面。选一句 = 换掉第一条 AI 回答；
-      // 反过来，第一条 AI 回答改了，这里显示「已改过」。只改草稿。
-      const greetingTexts = Array.isArray(appliedCompiled?.greetingTexts) ? appliedCompiled.greetingTexts : []
-      const greetingAt = greetingIndex(items, greetingTexts)
-      const greetingBar =
-        appliedRef && greetingTexts.length > 0
-          ? h(
-              'div',
-              { style: V.row, 'data-prefill-greeting-bar': '' },
-              h('span', { style: V.sectionMeta }, t('cardGreeting')),
-              h(
-                'select',
-                {
-                  style: { ...V.input, flex: '0 1 320px', minWidth: 0 },
-                  value: String(greetingAt),
-                  'data-prefill-card-greeting': '',
-                  onChange: (event) => {
-                    const k = Number(event.target.value)
-                    if (k === -2) return
-                    setExpandedRows(new Set())
-                    edit(withGreeting(items, greetingTexts, k))
-                  },
-                },
-                ...(appliedCompiled?.greetings ?? []).map((text, index) => h('option', { key: index, value: String(index) }, `${index + 1}. ${text}`)),
-                h('option', { key: 'none', value: '-1' }, t('cardNoGreeting')),
-                greetingAt === -2 ? h('option', { key: 'custom', value: '-2' }, t('greetingEdited')) : null,
-              ),
-            )
-          : null
-      // ── 首轮锁定（issue #19 A）：已写进历史的开场对话（只读）+ 恢复开局时的预设（B）──
-      const lockedItems = lock.items
-      const lockBox = lock.locked
-        ? h(
-            'div',
-            { style: { ...V.callout('brand'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' }, 'data-prefill-lock': lock.legacy ? 'legacy' : 'locked' },
-            h(
-              'div',
-              { style: { fontWeight: 700 } },
-              lockedItems.length > 0
-                ? t('lockItemsTitle').replace('{n}', String(lockedItems.length)).replace('{range}', lock.turn > 2 ? `1–${lock.turn - 1}` : '1')
-                : lock.turn > 0
-                  ? t('lockNoItemsTitle').replace('{turn}', String(lock.turn))
-                  : t('lockNoItemsTitleUnknown'),
-            ),
-            h('div', { style: V.hint }, lock.legacy ? t('lockLegacyHint') : t('lockHint')),
-            lockedItems.length > 0
-              ? h(
-                  'details',
-                  { 'data-prefill-lock-items': String(lockedItems.length) },
-                  h('summary', { style: { cursor: 'pointer', fontSize: 12 } }, t('lockShowItems')),
-                  h(
-                    'div',
-                    { style: { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 } },
-                    ...lockedItems.map((item, index) =>
-                      h(
-                        'div',
-                        { key: index, 'data-prefill-lock-item': item.role, style: { fontSize: 12, whiteSpace: 'pre-wrap', padding: '4px 8px', borderRadius: 6, background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-secondary)' } },
-                        h('b', { style: { marginRight: 6 } }, item.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
-                        String(item.text ?? ''),
-                      ),
-                    ),
-                  ),
-                )
-              : null,
-            lock.hasSnapshot
-              ? h(
-                  'div',
-                  { style: V.row },
-                  h(
-                    ConfirmButton,
-                    {
-                      armed: confirming === 'restore-opening',
-                      style: V.btn,
-                      'data-prefill-lock-restore': '',
-                      title: t('lockRestoreTip'),
-                      onClick: () => {
-                        if (!armConfirm('restore-opening')) return
-                        setConfirming('')
-                        void restoreOpening().catch(failed())
-                      },
-                    },
-                    confirming === 'restore-opening' ? t('lockRestoreConfirm') : t('lockRestore'),
-                  ),
-                  h('span', { style: V.hint }, t('lockRestoreHint')),
-                )
-              : null,
-          )
-        : null
-      const itemsSection = h(
-        Section,
-        {
-          id: 'items',
-          tags: sourceTag(tagOf('items'), undefined, 'items'),
-          title: t('itemsTitle'),
-          meta: `${countFilled(items)}${t('countSuffix')}${countFilled(items) < items.length ? t('emptyRowsSkipped').replace('%N', String(items.length - countFilled(items))) : ''} · ≈${itemsTok} tok · ${injectMode ? t('itemsAfterRun') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
-          off: !isOn('items'),
-          offTitle: t('offTitle'),
-          offBody: t('itemsOffBody'),
-          right:
-            items.length === 0
-              ? null
-              : h(
-                  ConfirmButton,
-                  {
-                    armed: confirming === 'clear',
-                    style: V.btnGhost,
-                    'data-prefill-items-clear': '',
-                    onClick: (event) => {
-                      event.stopPropagation()
-                      if (!armConfirm('clear')) return
-                      setConfirming('')
-                      const before = items
-                      edit([])
-                      setUndoSnap({ items: before, mode: 'clear' })
-                    },
-                  },
-                  confirming === 'clear' ? t('confirmYes') : t('dockClear'),
-                ),
-        },
-        greetingBar,
-        fetchBar,
-        fetchPending !== null ? fetchConfirm : null,
-        carryBox,
-        undoSnap !== null
-          ? h(
-              'div',
-              { style: { ...V.row, ...V.callout('brand'), maxWidth: '68ch' }, 'data-prefill-fetch-undo-bar': '' },
-              h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, undoSnap.mode === 'replace' ? t('fetchReplaced') : undoSnap.mode === 'clear' ? t('fetchCleared') : t('fetchInserted')),
-              h('button', { type: 'button', style: V.btn, 'data-prefill-fetch-undo': '', onClick: undoFetch }, t('undo')),
-            )
-          : null,
-        lock.locked
-          ? lockBox
-          : injectMode && (envelope?.materialized?.[sessionId] ?? 0) > 0
-            ? h('div', { style: V.callout('brand') }, t('itemsWrittenHint').replace('{n}', String(envelope.materialized[sessionId])))
-            : null,
-        h('div', { style: V.callout(injectMode ? 'warn' : 'brand') }, injectMode ? t('itemsInjectHint') : t('itemsHistoryHint')),
-        items.length === 0
-          ? h(
-              'div',
-              { style: { ...V.row, color: 'var(--dsw-alias-label-tertiary)', fontSize: 11.5 } },
-              h('span', null, t('itemsEmpty')),
-              h(
-                'button',
-                {
-                  type: 'button',
-                  style: V.btn,
-                  onClick: () =>
-                    edit([
-                      { role: 'user', text: t('exampleUser') },
-                      { role: 'assistant', reasoning: t('exampleReasoning'), text: t('exampleAssistant') },
-                    ]),
-                },
-                t('fillExample'),
-              ),
-            )
-          : null,
-        h(
-          'div',
-          { ref: listRef, style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-items': '', 'data-rendered': String(Math.min(items.length, shownRows)) },
-          // 分批渲染：一次只画 ROW_BATCH 条，之后每帧再加一批（200 条带长思维链也不会一下卡住）。
-          ...items.slice(0, shownRows).map(itemRow),
-          items.length > shownRows ? h('div', { key: 'more', style: V.hint }, t('rowsLoading').replace('{n}', String(items.length - shownRows))) : null,
-        ),
-        h(
-          'div',
-          { style: V.row },
-          h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'user', text: '' }]) }, t('addUser')),
-          h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'assistant', reasoning: '', text: '' }]) }, t('addAssistant')),
-        ),
-        // 手动注入（issue #19「C」）：独立入口，首轮前后都在；只发一次，发出后成为会话历史。
-        h(ManualInject, { t, sessionId }),
-      )
-
-      // ── 每轮注入（state.everyTurn[会话]；勾"新会话默认"时同时写 '*'）──
-      // ── v0.15 积木 / 积木塔 / 工作台 ────────────────────────────────────────
+      // ── v0.15 积木 / 积木塔 / 工作台纯函数（前置声明，确保渲染期 everyTurnEntryOf 调 compileBench 时 CHECK_ORDER/PRIORITY_PREFIX 已初始化，绝不触发 TDZ）──
       // <bench-helpers>
       // 与 blocks.js 同一份纯函数（浏览器模块 import 不了插件自己的文件，
       // 照 everyTurnSwitchOn / fetch-helpers 的先例抄一份；tests/blocks.test.mjs 比对两份一致）。
@@ -11307,6 +12887,1163 @@ window.__ModuleLoader__.load({
         return { bench: [benchBlockOf(custom, key())], benchTowers: {} }
       }
       // </bench-helpers>
+
+      // 存预设用：本会话自己那格的配置（优先合并尚未落盘的 everyTurnDraft）。开关关着也带 —— 关的状态由 pack.enabled 带走，
+      // 不再看条目里的 enabled（那是旧版勾选框留下的字段）。
+      const everyTurnEntryOf = (nextValue, override) => {
+        const auto = {
+          warmup: Math.max(0, Math.floor(Number(nextValue.auto?.warmup) || 0)),
+          streak: Math.max(1, Math.floor(Number(nextValue.auto?.streak) || 3)),
+          probation: Math.max(1, Math.floor(Number(nextValue.auto?.probation) || 2)),
+          ...(override ? { override: { action: override } } : {}),
+        }
+        const hasBench = Array.isArray(nextValue.bench) && nextValue.bench.length > 0
+        const compiled = hasBench ? compileBench(nextValue.bench) : null
+        return {
+          enabled: true,
+          text: compiled !== null ? compiled.text : String(nextValue.text ?? ''),
+          firstText: compiled !== null ? compiled.firstText : String(nextValue.firstText ?? ''),
+          untilTurn: Math.max(0, Math.floor(Number(nextValue.untilTurn) || 0)),
+          mode: nextValue.mode === 'auto' || nextValue.mode === 'until' ? nextValue.mode : 'always',
+          checks: compiled !== null ? compiled.checks : Array.isArray(nextValue.checks) ? nextValue.checks : [],
+          auto,
+          ...(hasBench ? { bench: nextValue.bench, benchTowers: nextValue.benchTowers ?? {} } : {}),
+          ...(nextValue.seam === true ? { seam: true } : {}),
+          ...(nextValue.compactRefirst === false ? { compactRefirst: false } : {}),
+          ...(typeof nextValue.firstOnce === 'boolean' ? { firstOnce: nextValue.firstOnce } : {}),
+        }
+      }
+      const ownEveryTurn = everyTurnDraft !== null ? everyTurnEntryOf(everyTurnDraft) : state?.everyTurn?.[sessionId]
+      const everyTurnStored =
+        (String(ownEveryTurn?.text ?? '').trim() !== '' || String(ownEveryTurn?.firstText ?? '').trim() !== '')
+          ? { enabled: true, text: ownEveryTurn.text ?? '', firstText: ownEveryTurn.firstText ?? '', untilTurn: Number(ownEveryTurn.untilTurn) || 0, mode: ownEveryTurn.mode === 'auto' || ownEveryTurn.mode === 'until' || ownEveryTurn.mode === 'always' ? ownEveryTurn.mode : Number(ownEveryTurn.untilTurn) > 0 ? 'until' : 'always', checks: Array.isArray(ownEveryTurn.checks) ? ownEveryTurn.checks : [], auto: ownEveryTurn.auto ?? {}, ...(Array.isArray(ownEveryTurn.bench) && ownEveryTurn.bench.length > 0 ? { bench: ownEveryTurn.bench, benchTowers: ownEveryTurn.benchTowers ?? {} } : {}), ...(ownEveryTurn.seam === true ? { seam: true } : {}), ...(ownEveryTurn.compactRefirst === false ? { compactRefirst: false } : {}) }
+          : null
+      // 约束承接：取过会话 ⇒ 预设标记 fromSession，带上勾选的约束（服务端编成每轮注入，模式沿用 everyTurn）；
+      // 没取过但本会话本身就是从这种预设开的 ⇒ 标记照样带上。
+      const carryPayload = () =>
+        carryList !== null
+          ? { fromSession: true, carried: carryList.filter((entry) => entry.on === true).map(({ on: _on, checked: _checked, turns: _turns, lastTurn: _last, id: _id, ...rest }) => rest) }
+          : ownEveryTurn?.seam === true
+            ? { fromSession: true }
+            : {}
+      // 同名角色卡区分副标：出现重名时展示 creator / 首标签 / 短 id。
+      const cardNameCounts = new Map()
+      for (const card of cards) cardNameCounts.set(card.name, (cardNameCounts.get(card.name) ?? 0) + 1)
+      const cardSubLabel = (card) => {
+        if ((cardNameCounts.get(card.name) ?? 0) <= 1) return ''
+        if (typeof card.creator === 'string' && card.creator.trim() !== '') return card.creator.trim()
+        if (Array.isArray(card.tags) && card.tags.length > 0 && String(card.tags[0]).trim() !== '') return String(card.tags[0]).trim()
+        return String(card.id ?? '').slice(0, 6)
+      }
+      const presetQueryNorm = presetQuery.trim().toLowerCase()
+      const matchesPresetQuery = (...fields) =>
+        presetQueryNorm === '' || fields.some((field) => String(field ?? '').toLowerCase().includes(presetQueryNorm))
+      const filteredBuiltins = builtins.filter((preset) => matchesPresetQuery(preset.name, preset.desc, preset.id))
+      const filteredPacks = packs.filter((pack) => matchesPresetQuery(pack.name, pack.card, cards.find((c) => c.id === pack.card)?.name))
+      const filteredCards = cards.filter((card) => matchesPresetQuery(card.name, card.creator, card.notes, card.id, ...(Array.isArray(card.tags) ? card.tags : [])))
+      const presetGroupHead = (label, count) =>
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: T.font.xs, fontWeight: 600, color: 'var(--dsw-alias-label-tertiary)', letterSpacing: '0.02em' } },
+          h('span', null, label),
+          h('span', { style: T.layout.num }, String(count)),
+        )
+      // 预设下拉（头部「当前预设 ▾」点开）：三段固定布局（吸顶搜索 + 独立组标题可滚区 + 吸底 footer）。
+      const presetsMenu = h(
+        'div',
+        {
+          ref: menuRef,
+          'data-prefill-section': 'presets',
+          'data-prefill-menu': 'presets',
+          'data-closing': menuClosing ? 'true' : undefined,
+          'aria-hidden': menuClosing ? 'true' : undefined,
+          style: { ...V.popover, width: 'min(560px, calc(100% - 24px))', padding: 0, gap: 0, overflow: 'hidden', maxHeight: 'min(480px, calc(100% - 60px))', ...(menuClosing ? { pointerEvents: 'none' } : {}) },
+          onMouseLeave: () => setHovered(''),
+        },
+        // 段 1：吸顶搜索框（方案 B · 统一 SearchInput）
+        h(
+          'div',
+          { 'data-prefill-preset-search-bar': '', style: { flex: '0 0 auto', padding: '8px 12px', borderBottom: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-base)' } },
+          h(SearchInput, {
+            value: presetQuery,
+            onChange: setPresetQuery,
+            onClear: () => setPresetQuery(''),
+            placeholder: t('presetSearchPlaceholder'),
+            ariaLabel: t('presetSearchPlaceholder'),
+            clearLabel: t('cancel'),
+            inputAttrs: { 'data-prefill-preset-search': '' },
+            clearAttrs: { 'data-prefill-preset-search-clear': '' },
+            touch,
+            style: { width: '100%' },
+          }),
+        ),
+        // 段 2：独立组标题可滚区
+        h(
+          'div',
+          { 'data-prefill-preset-scroll': '', style: { flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 } },
+          // 开跑后套预设（issue #19 B）：说清楚哪些下一轮生效、哪些不发；有开局快照时可以一键换回。
+          lock.locked
+            ? h(
+                'div',
+                { style: V.calloutRow('warn'), 'data-prefill-lock-presets': '' },
+                h('span', { style: V.flexBody }, t('lockPresetsNote')),
+                lock.hasSnapshot
+                  ? h(
+                      ConfirmButton,
+                      {
+                        armed: confirming === 'restore-opening',
+                        style: V.btn,
+                        'data-prefill-lock-restore-menu': '',
+                        title: t('lockRestoreTip'),
+                        onClick: () => {
+                          if (!armConfirm('restore-opening')) return
+                          setConfirming('')
+                          setMenu('')
+                          void restoreOpening().catch(failed())
+                        },
+                      },
+                      confirming === 'restore-opening' ? t('lockRestoreConfirm') : t('lockRestore'),
+                    )
+                  : null,
+              )
+            : null,
+          filteredBuiltins.length > 0
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-preset-group': 'builtin' },
+                presetGroupHead(t('groupBuiltin'), filteredBuiltins.length),
+                h(
+                  'div',
+                  { style: V.pills },
+                  ...filteredBuiltins.map((preset) =>
+                    presetPill(`builtin:${preset.id}`, {
+                      icon: preset.icon,
+                      emoji: preset.emoji,
+                      name: preset.name,
+                      active: activePreset === `builtin:${preset.id}`,
+                      tip: preset.desc,
+                      onHover: () => setHovered(`builtin:${preset.id}`),
+                      onClick: () => actApply(`builtin:${preset.id}`, () => applyBuiltin(preset)),
+                    }),
+                  ),
+                ),
+              )
+            : null,
+          filteredPacks.length > 0
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-preset-group': 'mine' },
+                presetGroupHead(t('groupMine'), filteredPacks.length),
+                h(
+                  'div',
+                  { style: V.pills },
+                  ...filteredPacks.map((pack) =>
+                    presetPill(`pack:${pack.name}`, {
+                      icon: pack.card ? 'user' : 'folder',
+                      name: pack.name,
+                      tip: pack.card ? t('packOnCard').replace('{name}', cards.find((card) => card.id === pack.card)?.name ?? pack.card) : undefined,
+                      active: activePreset === `pack:${pack.name}`,
+                      onHover: () => setHovered(`pack:${pack.name}`),
+                      onClick: () => actApply(`pack:${pack.name}`, () => applyPack(pack.name)),
+                    }),
+                  ),
+                ),
+              )
+            : null,
+          // 角色卡（0.14）：套卡 = 套一个只有角色卡这一层的预设，和上面两组同一条路径、整体替换。
+          filteredCards.length > 0
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-preset-group': 'cards' },
+                presetGroupHead(t('groupCards'), filteredCards.length),
+                h(
+                  'div',
+                  { style: V.pills },
+                  ...filteredCards.map((card) => {
+                    const sub = cardSubLabel(card)
+                    return h(
+                      'button',
+                      {
+                        key: `card:${card.id}`,
+                        type: 'button',
+                        title: card.notes || card.name,
+                        style: { ...V.pill(activePreset === `card:${card.id}`), ...(busyCtl.shown(`apply:card:${card.id}`) ? BUSY_LOOK : {}) },
+                        ...busyAttrs(busyCtl, `apply:card:${card.id}`),
+                        onClick: () => actApply(`card:${card.id}`, () => applyCardPreset(card)),
+                        onMouseEnter: () => setHovered(`card:${card.id}`),
+                        onFocus: () => setHovered(`card:${card.id}`),
+                        'data-prefill-preset': `card:${card.id}`,
+                        'aria-pressed': activePreset === `card:${card.id}` ? 'true' : 'false',
+                      },
+                      busyCtl.shown(`apply:card:${card.id}`)
+                        ? h(Spinner, { key: 'spin' })
+                        : avatars[card.id]
+                        ? h('img', { src: avatars[card.id], alt: '', style: V.avatarSm })
+                        : glyph({ icon: card.icon }),
+                      card.name,
+                      sub !== '' ? h('small', { 'data-prefill-card-sub': card.id, style: V.subXs }, `· ${sub}`) : null,
+                    )
+                  }),
+                ),
+              )
+            : null,
+          filteredBuiltins.length === 0 && filteredPacks.length === 0 && filteredCards.length === 0
+            ? h('div', { style: { ...V.hint, padding: '8px 0', textAlign: 'center' }, 'data-prefill-preset-empty': '' }, t('presetSearchEmpty'))
+            : null,
+        ),
+        // 段 3：吸底 footer（说明 / 管理库 / 取消预设常驻，绝不被裁切）
+        h(
+          'div',
+          { 'data-prefill-preset-footer': '', style: { flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 12px', borderTop: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)' } },
+          h(
+            'div',
+            { 'data-prefill-preset-detail': '', style: { ...V.detail, height: 'auto', minHeight: 44, overflow: 'visible', rowGap: 2, maxWidth: '68ch' } },
+            detail[0] ? h('span', { style: { fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } }, detail[0]) : null,
+            h('span', null, detail[1]),
+            detail[2] ? h('span', { style: V.muted }, `· ${detail[2]}`) : null,
+          ),
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+            h('div', { style: { ...V.sectionMeta, flex: '1 1 200px', minWidth: 0 }, 'data-prefill-preset-content': '' }, t('presetContentHint')),
+            // PR4：删除 / 导入导出搬到左侧栏「库」；卡片只留「套用」「存为」。
+            h(
+              'button',
+              { type: 'button', style: V.btnGhost, 'data-prefill-open-prefill': 'library', onClick: () => openPrefillPanel('library') },
+              t('manageLibrary'),
+            ),
+            // v1：取消预设从头部收进预设下拉底部（高风险动作离开常驻区，挨着「管理库」）。
+            activePreset === ''
+              ? null
+              : h(
+                  'button',
+                  { type: 'button', style: { ...V.btnGhost, ...(busyCtl.shown('clear') ? BUSY_LOOK : {}) }, 'data-prefill-preset-clear': '', ...busyAttrs(busyCtl, 'clear'), onClick: () => act('clear', t('errOpClear'), clearPreset) },
+                  busyCtl.shown('clear') ? h(Spinner, { key: 'spin' }) : null,
+                  busyCtl.shown('clear') ? ' ' : null,
+                  t('presetClear'),
+                ),
+          ),
+        ),
+      )
+
+      // 「另存为…」：起名保存 / 导入导出文件（「从当前会话取」v0.10.1 起挪到开场对话里）。
+      const trimmedPackName = packName.trim()
+      const saveAsNameExists = trimmedPackName !== '' && packs.some((pack) => pack.name === trimmedPackName)
+      const saveAsOverwriteArmed = saveAsNameExists && saveAsOverwrite === trimmedPackName
+      const submitSaveAs = () => {
+        if (trimmedPackName === '') {
+          flash(t('needName'))
+          return
+        }
+        if (saveAsNameExists && saveAsOverwrite !== trimmedPackName) {
+          setSaveAsOverwrite(trimmedPackName)
+          return
+        }
+        setSaveAsOverwrite('')
+        act('saveas', t('errOpSaveAs'), () => savePack())
+      }
+      const saveAsPanel = h(
+        'div',
+        {
+          ref: menuRef,
+          'data-prefill-section': 'presets',
+          'data-prefill-menu': 'saveas',
+          'data-closing': menuClosing ? 'true' : undefined,
+          'aria-hidden': menuClosing ? 'true' : undefined,
+          style: { ...V.popover, width: 'min(560px, calc(100% - 24px))', ...(menuClosing ? { pointerEvents: 'none' } : {}) },
+        },
+        h('div', { style: { ...V.hint, maxWidth: '68ch' } }, t('saveAsHint')),
+        h(
+          'div',
+          { style: V.row },
+          h('input', {
+            ref: saveAsInputRef,
+            style: { ...V.input, flex: '1 1 180px' },
+            value: packName,
+            placeholder: t('packNamePlaceholder'),
+            spellCheck: false,
+            'data-prefill-pack-name': '',
+            onChange: (event) => {
+              setPackName(event.target.value)
+              setSaveAsOverwrite('')
+            },
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') submitSaveAs()
+            },
+          }),
+          h(
+            'button',
+            {
+              type: 'button',
+              style: {
+                ...V.btnPrimary,
+                ...(saveAsOverwriteArmed ? { background: 'var(--dsw-alias-state-warn-primary)', borderColor: 'var(--dsw-alias-state-warn-primary)', color: 'var(--dsw-alias-bg-base)' } : {}),
+                ...(busyCtl.shown('saveas') ? BUSY_LOOK : {}),
+              },
+              'data-prefill-save-as-submit': '',
+              'data-prefill-save-as-overwrite': saveAsOverwriteArmed ? '1' : undefined,
+              ...busyAttrs(busyCtl, 'saveas'),
+              onClick: submitSaveAs,
+            },
+            busyCtl.shown('saveas') ? h(Spinner, { key: 'spin' }) : null,
+            busyCtl.shown('saveas') ? ' ' : null,
+            saveAsOverwriteArmed ? t('saveAsOverwriteConfirm') : t('savePack'),
+          ),
+        ),
+        saveAsNameExists
+          ? h('div', { style: V.callout('warn'), 'data-prefill-save-as-warn': trimmedPackName }, t('saveAsOverwriteWarn').replace('{name}', trimmedPackName))
+          : null,
+        appliedRef
+          ? h(
+              'label',
+              { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', maxWidth: '68ch' } },
+              h('input', { type: 'checkbox', checked: saveOnCard, 'data-prefill-save-on-card': '', onChange: (event) => setSaveOnCard(event.target.checked) }),
+              t('saveOnCard').replace('{name}', appliedCardName),
+            )
+          : null,
+        h(
+          'div',
+          { style: V.row },
+          h('button', { type: 'button', style: V.btnGhost, 'data-prefill-export-file': '', onClick: () => void exportFile().catch(failed('export', t('errOpExport'))) }, withIcon('download', t('exportFile'), 12)),
+          h('button', { type: 'button', style: V.btnGhost, onClick: () => fileRef.current?.click() }, withIcon('upload', t('importFile'), 12)),
+        ),
+        h('input', { ref: fileRef, type: 'file', accept: '.json,application/json', style: { display: 'none' }, onChange: importFile }),
+      )
+
+      const pickedCard = cards.find((card) => card.id === cardPick)
+      const memoryHasText = typeof memoryView?.memory?.text === 'string' && memoryView.memory.text !== ''
+      const memoryDirty = memoryDraft !== null && memoryDraft !== (memoryView?.memory?.text ?? '')
+      const memoryBlock =
+        memoryOn
+          ? h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-memory': '' },
+              h(
+                'div',
+                { style: V.row },
+                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 600 } }, h(Icon, { name: 'scroll-text', size: 13 }), t('memoryTitle')),
+                h(
+                  'span',
+                  { style: V.sectionMeta, 'data-prefill-memory-status': '' },
+                  [
+                    memoryView?.running ? t('memoryRunning') : '',
+                    memoryHasText
+                      ? t('memoryThrough').replace('{n}', String(memoryView.memory.throughTurn ?? 0))
+                      : memoryView?.running
+                        ? ''
+                        : t('memoryNone').replace('{n}', String(memoryConfig.every ?? 8)),
+                    memoryView?.memory?.edited ? t('memoryEdited') : '',
+                  ]
+                    .filter((part) => part !== '')
+                    .join(' · '),
+                ),
+                memoryHasText
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        style: V.btnGhost,
+                        'data-prefill-memory-toggle': '',
+                        'aria-expanded': memoryOpen ? 'true' : 'false',
+                        onClick: () => {
+                          if (memoryOpen && memoryDirty) {
+                            setMemoryCollapseWarn(true)
+                            return
+                          }
+                          setMemoryCollapseWarn(false)
+                          setMemoryOpen(!memoryOpen)
+                          if (!memoryDirty) setMemoryDraft(null)
+                        },
+                      },
+                      memoryOpen ? t('memoryHide') : t('memoryShow'),
+                    )
+                  : null,
+              ),
+              memoryCollapseWarn && memoryOpen
+                ? h(
+                    'div',
+                    { style: V.calloutRow('warn'), 'data-prefill-memory-unsaved': '' },
+                    h('span', { style: { flex: '1 1 200px', minWidth: 0 } }, t('memoryUnsavedWarn')),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        style: V.btn,
+                        'data-prefill-memory-discard': '',
+                        onClick: () => {
+                          setMemoryCollapseWarn(false)
+                          setMemoryOpen(false)
+                          setMemoryDraft(null)
+                        },
+                      },
+                      t('memoryDiscardConfirm'),
+                    ),
+                    h('button', { type: 'button', style: V.btnGhost, onClick: () => setMemoryCollapseWarn(false) }, t('cancel')),
+                  )
+                : null,
+              h(
+                Reveal,
+                { open: memoryOpen && typeof memoryView?.memory?.text === 'string', gap: 6, style: { display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }, 'data-prefill-memory-reveal': '' },
+                (() => {
+                  const memVal = memoryDraft ?? memoryView?.memory?.text ?? ''
+                  return h(EditorShell, {
+                    value: memVal,
+                    minHeight: 140,
+                    expandedHeight: 320,
+                    maxWidth: '90ch',
+                    textareaAttrs: { 'data-prefill-memory-text': '' },
+                    metricsText: t('systemCharsTok').replace('{chars}', num(memVal.length)).replace('{tok}', num(estimateTokens(memVal))),
+                    metricsAttr: 'data-prefill-memory-metrics',
+                    statusNode: memoryDirty
+                      ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-state-warn-primary)' } }, h('i', { 'aria-hidden': 'true', style: { width: 6, height: 6, borderRadius: '50%', background: 'var(--dsw-alias-state-warn-primary)', display: 'inline-block' } }), t('unsaved'))
+                      : null,
+                    expandLabel: t('editorExpand'),
+                    collapseLabel: t('editorCollapse'),
+                    expandTip: t('editorExpandTip'),
+                    collapseTip: t('editorCollapseTip'),
+                    touch,
+                    onChange: (event) => {
+                      setMemoryDraft(event.target.value)
+                      if (memoryCollapseWarn) setMemoryCollapseWarn(false)
+                    },
+                  })
+                })(),
+                h(
+                  'div',
+                  { style: V.row },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: { ...V.btn, ...(busyCtl.shown('memory-save') ? BUSY_LOOK : {}) },
+                      disabled: memoryDraft === null || busyCtl.pending('memory-save'),
+                      ...busyAttrs(busyCtl, 'memory-save'),
+                      onClick: () =>
+                        act('memory-save', t('errOpMemory'), async () => {
+                          const data = await memoryCall({ op: 'set', text: memoryDraft ?? '' })
+                          setMemoryView(data)
+                          setMemoryDraft(null)
+                          setMemoryCollapseWarn(false)
+                          flash(t('memorySaved'))
+                        }),
+                    },
+                    busyCtl.shown('memory-save') ? h(Spinner, { key: 'spin' }) : null,
+                    busyCtl.shown('memory-save') ? ' ' : null,
+                    t('memorySave'),
+                  ),
+                  h(
+                    ConfirmButton,
+                    {
+                      armed: confirming === 'memory-clear',
+                      style: { ...V.btnGhost, ...(busyCtl.shown('memory-clear') ? BUSY_LOOK : {}) },
+                      'data-prefill-memory-clear': '',
+                      ...busyAttrs(busyCtl, 'memory-clear'),
+                      onClick: () => {
+                        if (!armConfirm('memory-clear')) return
+                        setConfirming('')
+                        act('memory-clear', t('errOpMemory'), async () => {
+                          const data = await memoryCall({ op: 'clear' })
+                          setMemoryView(data)
+                          setMemoryDraft(null)
+                          setMemoryCollapseWarn(false)
+                          setMemoryOpen(false)
+                          flash(t('memoryCleared'))
+                        })
+                      },
+                    },
+                    confirming === 'memory-clear' ? t('memoryClearConfirm') : withIcon('eraser', t('memoryClear'), 12),
+                  ),
+                ),
+              ),
+            )
+          : null
+
+      const commitCardUser = () => {
+        previewCard(cardPick, cardUser)
+        const was = typeof appliedRef?.opts?.userName === 'string' ? appliedRef.opts.userName : ''
+        if (appliedRef && was.trim() !== cardUser.trim()) {
+          if (busyCtl.pending('card-user')) return
+          setCardUserBusy(true)
+          void busyCtl
+            .run('card-user', () =>
+              refreshCardLayer(cardUser)
+                .then(() => reportOk(sessionId, 'card-user'))
+                .catch(failed('card-user', t('errOpCardUser')))
+                .finally(() => {
+                  if (activeSessionRef.current === sessionId) setCardUserBusy(false)
+                }),
+            )
+            ?.catch(() => {})
+        }
+      }
+      const cardsSection = h(
+        Section,
+        {
+          id: 'cards',
+          title: t('cardsTitle'),
+          meta: cards.length > 0 ? t('cardsMeta').replace('{n}', String(cards.length)) : '',
+          off: !isOn('card'),
+          offTitle: t('offTitle'),
+          offBody: t('cardOffBody'),
+          // PR4：导入 / 导出 / 删除搬到左侧栏「库」。
+          right: h(
+            'button',
+            { type: 'button', style: V.btnGhost, 'data-prefill-open-prefill': 'library', onClick: () => openPrefillPanel('library') },
+            withIcon('folder', t('manageLibrary'), 12),
+          ),
+        },
+        h('div', { style: V.hint }, cards.length === 0 ? t('cardsEmpty') : t('cardsHint')),
+        appliedCardName !== ''
+          ? h('div', { style: { ...V.row, fontSize: 12.5 }, 'data-prefill-card-current': '' }, h('span', { style: V.sectionMeta }, t('cardCurrent')), h('b', null, appliedCardName), h('span', { style: V.sectionMeta }, appliedCardDesc))
+          : null,
+        // 「我的名字」是卡片自己的设置：套用中的卡改了名字 ⇒ 重新编译，只更新仍是卡原样的格；支持 Enter 提交与编译中 Spinner。
+        h(
+          'div',
+          { style: V.row },
+          h('span', { style: V.sectionMeta }, t('cardUserName')),
+          h('input', {
+            style: { ...V.input, flex: '0 1 160px' },
+            value: cardUser,
+            placeholder: t('cardUserNamePlaceholder'),
+            spellCheck: false,
+            'data-prefill-card-user': '',
+            onChange: (event) => setCardUser(event.target.value),
+            onBlur: commitCardUser,
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                commitCardUser()
+              }
+            },
+          }),
+          cardUserBusy || busyCtl.shown('card-user')
+            ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, ...V.sectionMeta }, 'data-prefill-card-compiling': '1' }, h(Spinner, { size: 11 }), t('cardCompiling'))
+            : null,
+          h('span', { style: V.hint }, t('cardUserHint')),
+        ),
+        cards.length > 0
+          ? h(
+              'div',
+              { style: V.pills },
+              ...cards.map((card) => {
+                const sub = cardSubLabel(card)
+                return h(
+                  'button',
+                  {
+                    key: card.id,
+                    type: 'button',
+                    title: card.notes || card.name,
+                    style: { ...V.pill(cardPick === card.id || activePreset === `card:${card.id}`), position: 'relative' },
+                    'data-prefill-card': card.id,
+                    'aria-pressed': cardPick === card.id ? 'true' : 'false',
+                    onClick: () => pickCard(card),
+                  },
+                  avatars[card.id]
+                    ? h('img', { src: avatars[card.id], alt: '', style: V.avatarSm })
+                    : glyph({ icon: card.icon }),
+                  card.name,
+                  sub !== '' ? h('small', { 'data-prefill-card-sub': card.id, style: V.subXs }, `· ${sub}`) : null,
+                )
+              }),
+            )
+          : null,
+        pickedCard === undefined
+          ? null
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', borderRadius: T.radius.md, border: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)' } },
+              h(
+                'div',
+                { style: { ...V.detail, height: 'auto', maxHeight: 72, alignItems: 'center' } },
+                avatars[pickedCard.id]
+                  ? h('img', { src: avatars[pickedCard.id], alt: pickedCard.name, 'data-prefill-card-avatar': '', style: { width: 36, height: 36, borderRadius: 8, objectFit: 'cover', flex: '0 0 auto' } })
+                  : null,
+                h('span', { style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, pickedCard.name),
+                h(
+                  'span',
+                  null,
+                  [
+                    pickedCard.creator ? `${t('cardBy')} ${pickedCard.creator}` : '',
+                    pickedCard.tags.slice(0, 4).join(' / '),
+                    pickedCard.mode === 'pure' ? t('cardModePure') : t('cardModeAgent'),
+                    t('cardGreetings').replace('{n}', String(pickedCard.greetings)),
+                    pickedCard.lore > 0 ? t('cardLore').replace('{n}', String(pickedCard.lore)) : '',
+                    cardPreview ? `≈${estimateTokens(cardPreview.systemText)} tok` : '',
+                  ]
+                    .filter((part) => part !== '')
+                    .join(' · '),
+                ),
+              ),
+              h(
+                'div',
+                { style: V.row },
+                activePreset === `card:${pickedCard.id}`
+                  ? h('span', { style: { ...V.sectionMeta, color: 'var(--dsw-alias-brand-primary)', fontWeight: 600 } }, t('cardInUse'))
+                  : h(
+                      'button',
+                      {
+                        type: 'button',
+                        style: { ...V.btnPrimary, display: 'inline-flex', alignItems: 'center', gap: 5, ...(busyCtl.shown(`apply:card:${pickedCard.id}`) ? BUSY_LOOK : {}) },
+                        'data-prefill-card-use': pickedCard.id,
+                        ...busyAttrs(busyCtl, `apply:card:${pickedCard.id}`),
+                        onClick: () => actApply(`card:${pickedCard.id}`, () => applyCardPreset(pickedCard)),
+                      },
+                      busyCtl.shown(`apply:card:${pickedCard.id}`) ? h(Spinner, { key: 'spin' }) : null,
+                      t('cardApplyNow'),
+                    ),
+                activePreset === `card:${pickedCard.id}` ? null : h('span', { style: V.hint }, t('cardApplyHint')),
+              ),
+            ),
+      )
+
+      // ── 来源标签（0.14）：每格标「来自角色卡 / 来自预设 / 本会话改过」──
+      const slotSrc = state?.slotSource?.[sessionId] ?? null
+      const currentSlots = {
+        overrides: state?.overrides?.[sessionId],
+        gate: gateMode,
+        tools: Array.isArray(state?.sessionTools?.[sessionId]) ? state.sessionTools[sessionId] : null,
+        everyTurn: state?.everyTurn?.[sessionId],
+        items,
+        workspaceInstructions: state?.workspaceInstructions?.[sessionId],
+      }
+      const slotHas = {
+        system: (typeof storedSystem === 'string' && storedSystem.trim() !== '') || gateMode !== 'pass',
+        everyTurn: everyTurnShape(currentSlots.everyTurn) !== null,
+        items: items.length > 0,
+        tools: currentSlots.tools !== null,
+        workspace: wsPreset !== null,
+      }
+      // 会话开跑后开场对话已写进历史、草稿清空：这时不标来源（不是「本会话改过」）。
+      const tagOf = (slot) => (slot === 'items' && injectMode && items.length === 0 ? '' : slotTag(slotSrc, slot, currentSlots, slotHas[slot]))
+      const TAG_COLOR = { card: 'var(--pf-card)', preset: 'var(--pf-system)', session: 'var(--dsw-alias-state-warn-primary)' }
+      // P2-4：这一格的来源和上一次提交时不一样（刚挂上 / 换会话的头几秒除外）⇒ 标签闪一下。
+      const srcSettled = srcSeen.current.sessionId === sessionId && Date.now() - cueSince.current.at >= CUE_SETTLE_MS
+      const sourceTag = (kind, prefix, slot = prefix ?? '') => {
+        const before = srcSeen.current.kinds[slot]
+        srcNow.current[slot] = kind
+        const pulse = srcSettled && before !== undefined && before !== kind && kind !== '' ? `${slot}:${kind}:${Date.now()}` : ''
+        return kind === ''
+          ? null
+          : h(
+              SourceTag,
+              {
+                key: `src-${prefix ?? ''}`,
+                pulse,
+                defer: turnEnded,
+                'data-prefill-source': kind,
+                title: t(`sourceTip_${kind}`),
+                style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', color: `color-mix(in srgb, ${TAG_COLOR[kind]} 75%, var(--dsw-alias-label-primary))`, background: tint(TAG_COLOR[kind], 12) },
+              },
+              h('i', { style: { width: 6, height: 6, borderRadius: '50%', background: TAG_COLOR[kind], display: 'inline-block' } }),
+              prefix ? `${prefix} · ${t(`source_${kind}`)}` : t(`source_${kind}`),
+            )
+      }
+      // 套着角色卡时，系统提示里多一组「带工具（Agent）/ 纯角色扮演」（原来在角色卡面板里）。
+      const cardModeSeg = appliedRef
+        ? h(
+            'div',
+            { style: V.row, 'data-prefill-card-mode-row': '' },
+            h('span', { style: V.sectionMeta }, t('cardModeLabel')),
+            h(
+              'div',
+              { style: V.seg, role: 'radiogroup' },
+              ...[
+                ['agent', t('cardModeAgent'), t('cardModeAgentTip'), 'wrench'],
+                ['pure', t('cardModePure'), t('cardModePureTip'), 'message-circle'],
+              ].map(([key, label, tip, icon]) => {
+                const on = (gateMode === 'pure' ? 'pure' : 'agent') === key
+                return h(
+                  'button',
+                  { key, type: 'button', role: 'radio', title: tip, 'aria-checked': on ? 'true' : 'false', style: V.segBtn(on), 'data-prefill-card-mode': key, onClick: () => (on ? undefined : void setCardMode(key).catch(failed())) },
+                  withIcon(icon, label, 12),
+                )
+              }),
+            ),
+            h('span', { style: V.hint }, t('cardModeHint')),
+          )
+        : null
+
+      const systemSection = h(
+        Section,
+        {
+          id: 'system',
+          tags: sourceTag(tagOf('system'), undefined, 'system'),
+          title: t('systemTitle'),
+          meta: systemMode === 'off' ? `${t('systemAppendMeta')} · ${t('systemOffMeta')}` : systemMode === 'append' ? `${t('systemAppendMeta')} · ≈${systemTok} tok` : systemMode === 'replace' ? `${t('systemReplaceMeta')} · ≈${systemTok} tok` : `${t('systemTakeoverMeta')} · ≈${systemTok} tok`,
+          off: !isOn('system') || systemFromCardOff,
+          offTitle: !isOn('system') ? t('offTitle') : t('offByCardTitle'),
+          offBody: !isOn('system') ? t('systemOffBody') : t('offByCardBody'),
+        },
+        cardModeSeg,
+        h(
+          'div',
+          { style: V.row },
+          h(SegmentedControl, {
+            // 「不改」不再是一种模式：要停用就关左栏开关（正文保留）。
+            value: systemMode === 'off' ? 'append' : systemMode,
+            onPick: setSystemMode,
+            optionAttr: 'data-prefill-mode',
+            busyValue: busyCtl.shown('system-mode') ? (systemModeWant ?? (systemMode === 'off' ? 'append' : systemMode)) : null,
+            busyShown: busyCtl.shown('system-mode'),
+            options: [
+              { value: 'append', label: t('modeAppend') },
+              { value: 'replace', label: t('modeReplace') },
+              { value: 'takeover', label: t('modeTakeover') },
+            ],
+          }),
+          pending ? h('span', { style: { ...V.sectionMeta, color: 'var(--dsw-alias-state-warn-primary)' } }, t('nextTurnNotice')) : null,
+        ),
+        systemMode === 'takeover'
+          ? h('div', { style: V.callout('warn'), 'data-prefill-system-takeover-warn': '1' }, t('systemTakeoverWarn'))
+          : null,
+        h('div', { style: V.hint }, systemMode === 'off' ? t('modeAppendHint') : systemMode === 'append' ? t('modeAppendHint') : systemMode === 'replace' ? t('modeReplaceHint') : t('modeTakeoverHint')),
+        h(EditorShell, {
+          value: systemText,
+          placeholder: t('systemPlaceholder'),
+          minHeight: 120,
+          expandedHeight: 300,
+          maxWidth: '90ch',
+          shellStyle: { opacity: isOn('system') ? 1 : 0.7 },
+          textareaAttrs: { 'data-prefill-system': '1' },
+          footerLeft: h('span', { 'data-prefill-system-metrics': '' }, t('systemCharsTok').replace('{chars}', num(systemText.length)).replace('{tok}', num(systemTok))),
+          statusNode:
+            systemSaveState !== 'idle'
+              ? h(
+                  'span',
+                  {
+                    'data-prefill-system-save-state': systemSaveState,
+                    style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: systemSaveState === 'saved' ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-label-secondary)' },
+                  },
+                  systemSaveState === 'saving'
+                    ? h(Spinner, { size: 10 })
+                    : h('i', { 'aria-hidden': 'true', style: { width: 6, height: 6, borderRadius: '50%', background: 'var(--dsw-alias-state-success-primary)', display: 'inline-block' } }),
+                  systemSaveState === 'saving' ? t('systemSaving') : t('systemSaved'),
+                )
+              : null,
+          onClear: () => {
+            systemDirty.current = true
+            setSystemSaveState('saving')
+            setSystemDraft('')
+          },
+          clearLabel: t('editorClear'),
+          clearTip: t('editorClearTip'),
+          clearAttr: 'system',
+          expandLabel: t('editorExpand'),
+          collapseLabel: t('editorCollapse'),
+          expandTip: t('editorExpandTip'),
+          collapseTip: t('editorCollapseTip'),
+          touch,
+          onChange: (event) => {
+            systemDirty.current = true
+            setSystemSaveState('saving')
+            setSystemDraft(event.target.value)
+          },
+        }),
+      )
+
+      const itemRow = (item, index) => {
+        const isAssistant = item?.role === 'assistant'
+        const color = isAssistant ? 'var(--pf-ai)' : 'var(--pf-user)'
+        const tok = estimateTokens(item?.text) + estimateTokens(item?.reasoning)
+        const bare = { ...V.textarea, background: 'transparent', border: '1px solid transparent', boxShadow: 'none', padding: '6px 8px', minHeight: 44, maxWidth: '90ch', resize: 'vertical' }
+        const long = isLongText(item?.text) || isLongText(item?.reasoning)
+        const collapsed = long && !expandedRows.has(index)
+        const setExpanded = (on) =>
+          setExpandedRows((current) => {
+            const next = new Set(current)
+            if (on) next.add(index)
+            else next.delete(index)
+            return next
+          })
+        // 折叠的长卡片：只画前几行文字（不画 textarea），点「展开全文」才能编辑。
+        const clamp = (lines) => ({ overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: lines, WebkitBoxOrient: 'vertical', whiteSpace: 'pre-wrap', wordBreak: 'break-word' })
+        const body = collapsed
+          ? [
+              isAssistant && String(item?.reasoning ?? '').trim() !== ''
+                ? h('div', { key: 'r', style: { ...clamp(2), fontSize: 12, color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-1)', border: '1px dashed var(--dsw-alias-border-l2)', borderRadius: 8, padding: '4px 6px' } }, item.reasoning)
+                : null,
+              h('div', { key: 't', style: { ...clamp(3), fontSize: 13, padding: '2px 6px', color: 'var(--dsw-alias-label-primary)' } }, item?.text ?? ''),
+              h(
+                'button',
+                { key: 'x', type: 'button', style: { ...V.btnGhost, alignSelf: 'flex-start', fontSize: 12 }, 'data-prefill-item-expand': '', onClick: () => setExpanded(true) },
+                t('rowExpand').replace('{tok}', String(tok)),
+              ),
+            ]
+          : null
+        const editorFields = [
+          isAssistant
+            ? h('textarea', {
+                key: 'reasoning',
+                style: { ...bare, minHeight: 34, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-1)', border: '1px dashed var(--dsw-alias-border-l2)' },
+                value: item?.reasoning ?? '',
+                spellCheck: false,
+                placeholder: t('reasoningPh'),
+                onChange: (event) => patchAt(index, { reasoning: event.target.value }),
+              })
+            : null,
+          h('textarea', {
+            key: 'text',
+            style: bare,
+            value: item?.text ?? '',
+            spellCheck: false,
+            placeholder: isAssistant ? t('textAssistantPh') : t('textUserPh'),
+            onChange: (event) => patchAt(index, { text: event.target.value }),
+          }),
+        ]
+        const atFirst = index === 0
+        const atLast = index === items.length - 1
+        return h(
+          'div',
+          {
+            key: index,
+            'data-prefill-item': isAssistant ? 'assistant' : 'user',
+            'data-collapsed': collapsed ? 'true' : 'false',
+            style: { width: '100%', maxWidth: '90ch', minWidth: 0, boxSizing: 'border-box', borderRadius: 10, padding: '6px 8px 8px 10px', borderLeft: `3px solid ${color}`, background: tint(color, 10), display: 'flex', flexDirection: 'column', gap: 4, contentVisibility: 'auto', containIntrinsicSize: 'auto 96px' },
+          },
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: { border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, color: `color-mix(in srgb, ${color} 75%, var(--dsw-alias-label-primary))` },
+                title: isAssistant ? t('toUser') : t('toAssistant'),
+                'data-prefill-item-role': String(index),
+                onClick: () => {
+                  if (isAssistant) {
+                    const currentReasoning = String(item?.reasoning ?? '')
+                    if (currentReasoning !== '') reasoningStashRef.current[index] = currentReasoning
+                    patchAt(index, { role: 'user', reasoning: undefined })
+                  } else {
+                    const restored = reasoningStashRef.current[index] ?? ''
+                    delete reasoningStashRef.current[index]
+                    patchAt(index, { role: 'assistant', reasoning: restored })
+                  }
+                },
+              },
+              isAssistant ? withIcon('bot', t('roleAssistant'), 13) : withIcon('user', t('roleUser'), 13),
+            ),
+            h('span', { style: V.sectionMeta }, `#${index + 1} · ≈${tok} tok`),
+            h('span', { style: V.flex1 }),
+            long && !collapsed ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5, padding: '0 6px', height: 22 }, 'data-prefill-item-collapse': '', onClick: () => setExpanded(false) }, t('rowCollapse')) : null,
+            h('button', { type: 'button', disabled: atFirst, style: { ...S.dockMini, opacity: atFirst ? 0.35 : 1, cursor: atFirst ? 'default' : 'pointer' }, 'data-prefill-item-up': String(index), title: t('moveUp'), onClick: () => move(index, -1) }, '↑'),
+            h('button', { type: 'button', disabled: atLast, style: { ...S.dockMini, opacity: atLast ? 0.35 : 1, cursor: atLast ? 'default' : 'pointer' }, 'data-prefill-item-down': String(index), title: t('moveDown'), onClick: () => move(index, 1) }, '↓'),
+            h('button', { type: 'button', style: S.dockMini, 'data-prefill-item-remove': String(index), title: t('removeItem'), onClick: () => removeItemAt(index) }, h(Icon, { name: 'x', size: 12 })),
+          ),
+          ...(body ?? []),
+          long
+            ? h(Reveal, { open: !collapsed, gap: 4, 'data-prefill-item-reveal': String(index), style: { display: 'flex', flexDirection: 'column', gap: 4 } }, ...editorFields)
+            : body !== null
+              ? null
+              : h(React.Fragment, null, ...editorFields),
+        )
+      }
+
+      // 开场对话头部：「从当前会话取」+ 带上思维链 + 第 N 轮 到 第 M 轮。
+      const numInput = (attr, value, placeholder, onChange) =>
+        h('input', {
+          type: 'number',
+          min: 1,
+          [attr]: '',
+          style: { ...V.input, width: 58, flex: '0 0 auto', padding: '0 6px' },
+          value,
+          placeholder,
+          onChange: (event) => onChange(event.target.value),
+        })
+      const lastKnownTurn = fetchCut?.lastTurn || turns || 0
+      const fetchBar = h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 4 }, 'data-prefill-fetch-bar': '' },
+        h(
+          'div',
+          { style: { ...V.row, gap: 10, rowGap: 6 } },
+          h(
+            'button',
+            {
+              type: 'button',
+              style: { ...V.btn, display: 'inline-flex', alignItems: 'center', gap: 5, opacity: fetchBusy || fetchRangeInvalid ? 0.6 : 1 },
+              disabled: fetchBusy || fetchRangeInvalid,
+              'aria-busy': fetchBusy ? 'true' : undefined,
+              'data-prefill-history-open': '',
+              title: fetchRangeInvalid ? t('fetchRangeError') : t('historyTip'),
+              onClick: fetchFromSession,
+            },
+            fetchBusy ? h(Spinner, { key: 'spin', size: 11 }) : null,
+            t('historyOpen'),
+          ),
+          h(
+            'label',
+            { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
+            h('input', { type: 'checkbox', 'data-prefill-history-reasoning': '', checked: fetchOpts.reasoning === true, onChange: (event) => setFetchOpts({ ...fetchOpts, reasoning: event.target.checked }) }),
+            t('historyReasoning'),
+          ),
+          h(
+            'span',
+            { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } },
+            t('rangeFrom'),
+            numInput('data-prefill-history-from', fetchOpts.fromTurn, '1', (value) => setFetchOpts({ ...fetchOpts, fromTurn: value })),
+            t('rangeTo'),
+            numInput('data-prefill-history-to', fetchOpts.toTurn, lastKnownTurn > 0 ? String(lastKnownTurn) : t('rangeEnd'), (value) => setFetchOpts({ ...fetchOpts, toTurn: value })),
+            t('rangeUnit'),
+          ),
+        ),
+        fetchRangeInvalid
+          ? h('div', { style: { fontSize: T.font.xs, color: 'var(--dsw-alias-state-warn-primary)' }, 'data-prefill-fetch-range-error': '1' }, t('fetchRangeError'))
+          : null,
+      )
+      const pendingTok = fetchPending?.tok ?? 0
+      // 约束承接：取来的会话里生效过的每轮约束，默认勾上，保存预设时编进每轮注入。
+      const carrySrcKey = { session: 'carrySrcSession', preset: 'carrySrcPreset', card: 'carrySrcCard', default: 'carrySrcDefault', builtin: 'carrySrcBuiltin', history: 'carrySrcHistory' }
+      const carryBox =
+        carryList === null || carryList.length === 0
+          ? null
+          : h(
+              'div',
+              { style: V.calloutCol('brand'), 'data-prefill-carry-list': '' },
+              h('div', null, h('b', null, t('carryTitle'))),
+              h('div', { style: V.secondarySm }, t('carryHint')),
+              ...carryList.map((entry, index) =>
+                h(
+                  'label',
+                  { key: entry.id ?? index, 'data-prefill-carry-item': entry.id ?? String(index), style: { display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12 } },
+                  h('input', { type: 'checkbox', checked: entry.on === true, onChange: (event) => setCarryList((list) => (list ?? []).map((item, at) => (at === index ? { ...item, on: event.target.checked } : item))) }),
+                  h(
+                    'span',
+                    { style: { minWidth: 0, flex: '1 1 auto' } },
+                    h('b', null, entry.name || t('carryUnnamed')),
+                    ' ',
+                    h('span', { style: V.sectionMeta }, `${t(carrySrcKey[entry.source] ?? 'carrySrcHistory')} · ${Number(entry.turns) > 0 ? t('carryTurns').replace('{n}', String(entry.turns)) : t('carryNotYet')}`),
+                    h(
+                      'div',
+                      { style: { color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }, title: [entry.first, entry.text].filter((part) => String(part ?? '').trim() !== '').join('\n') },
+                      String(entry.text || entry.first || '').replace(/\s+/g, ' ').slice(0, 160),
+                    ),
+                  ),
+                ),
+              ),
+            )
+      const fetchConfirm =
+        fetchPending === null
+          ? null
+          : h(
+              'div',
+              { style: { ...V.callout(pendingTok > FETCH_WARN_TOK ? 'warn' : 'brand'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' }, 'data-prefill-fetch-confirm': '' },
+              h(
+                'div',
+                { 'data-prefill-history-meta': '' },
+                h('b', null, t('fetchGot')),
+                ' ',
+                t('historyMeta').replace('{turns}', String(fetchPending.turnCount)).replace('{n}', String(fetchPending.items.length)).replace('{tok}', num(pendingTok)),
+                fetchPending.toolCalls > 0 ? t('historyTools').replace('{n}', String(fetchPending.toolCalls)) : '',
+              ),
+              pendingTok > FETCH_WARN_TOK ? h('div', { 'data-prefill-fetch-warn': '' }, t('fetchBig').replace('{tok}', num(pendingTok)).replace('{limit}', num(FETCH_WARN_TOK))) : null,
+              h(
+                'div',
+                { style: V.row },
+                items.length > 0 ? h('button', { type: 'button', style: V.btnPrimary, 'data-prefill-fetch-replace': '', onClick: () => commitFetch(fetchPending, 'replace') }, t('fetchReplace')) : null,
+                items.length > 0
+                  ? h(
+                      'span',
+                      { style: V.inlineSm },
+                      h('button', { type: 'button', style: V.btn, 'data-prefill-fetch-insert': '', onClick: () => commitFetch(fetchPending, 'insert', placeAt) }, t('fetchInsert')),
+                      h(
+                        SelectBox,
+                        {
+                          'data-prefill-fetch-at': '',
+                          value: String(placeAt),
+                          touch,
+                          style: { ...V.input, width: 'auto', flex: '0 0 auto' },
+                          onChange: (event) => setPlaceAt(Number(event.target.value)),
+                        },
+                        h('option', { key: 0, value: '0' }, t('fetchAtTop')),
+                        ...items.map((_item, index) => h('option', { key: index + 1, value: String(index + 1) }, t('fetchAfterN').replace('{n}', String(index + 1)) + (index + 1 === items.length ? t('fetchAtEnd') : ''))),
+                      ),
+                    )
+                  : h('button', { type: 'button', style: V.btnPrimary, 'data-prefill-fetch-replace': '', onClick: () => commitFetch(fetchPending, 'replace') }, t('fetchPut')),
+                h('button', { type: 'button', style: V.btnGhost, 'data-prefill-fetch-cancel': '', onClick: () => setFetchPending(null) }, t('cancel')),
+              ),
+            )
+      // 开场白（0.14，原来在角色卡面板里）：套着角色卡时放在开场对话最上面。选一句 = 换掉第一条 AI 回答；
+      // 反过来，第一条 AI 回答改了，这里显示「已改过」。只改草稿。
+      const greetingTexts = Array.isArray(appliedCompiled?.greetingTexts) ? appliedCompiled.greetingTexts : []
+      const greetingAt = greetingIndex(items, greetingTexts)
+      const greetingBar =
+        appliedRef && greetingTexts.length > 0
+          ? h(
+              'div',
+              { style: V.row, 'data-prefill-greeting-bar': '' },
+              h('span', { style: V.sectionMeta }, t('cardGreeting')),
+              h(
+                SelectBox,
+                {
+                  style: { ...V.input, flex: '0 1 320px', minWidth: 0 },
+                  touch,
+                  value: String(greetingAt),
+                  'data-prefill-card-greeting': '',
+                  onChange: (event) => {
+                    const k = Number(event.target.value)
+                    if (k === -2) return
+                    setExpandedRows(new Set())
+                    edit(withGreeting(items, greetingTexts, k))
+                  },
+                },
+                ...(appliedCompiled?.greetings ?? []).map((text, index) => h('option', { key: index, value: String(index) }, `${index + 1}. ${text}`)),
+                h('option', { key: 'none', value: '-1' }, t('cardNoGreeting')),
+                greetingAt === -2 ? h('option', { key: 'custom', value: '-2' }, t('greetingEdited')) : null,
+              ),
+            )
+          : null
+      // ── 首轮锁定（issue #19 A）：已写进历史的开场对话（只读）+ 恢复开局时的预设（B）──
+      const lockedItems = lock.items
+      const lockBox = lock.locked
+        ? h(
+            'div',
+            { style: V.calloutCol('brand'), 'data-prefill-lock': lock.legacy ? 'legacy' : 'locked' },
+            h(
+              'div',
+              { style: V.bold },
+              lockedItems.length > 0
+                ? t('lockItemsTitle').replace('{n}', String(lockedItems.length)).replace('{range}', lock.turn > 2 ? `1–${lock.turn - 1}` : '1')
+                : lock.turn > 0
+                  ? t('lockNoItemsTitle').replace('{turn}', String(lock.turn))
+                  : t('lockNoItemsTitleUnknown'),
+            ),
+            h('div', { style: V.hint }, lock.legacy ? t('lockLegacyHint') : t('lockHint')),
+            lockedItems.length > 0
+              ? h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: { ...V.btnGhost, alignSelf: 'flex-start', fontSize: 12, padding: '0 6px', height: 24 },
+                      'data-prefill-lock-toggle': '',
+                      'aria-expanded': lockDetailsOpen ? 'true' : 'false',
+                      onClick: () => setLockDetailsOpen((v) => !v),
+                    },
+                    h('span', { style: V.caret(lockDetailsOpen) }, '▸'),
+                    ` ${t('lockShowItems')}`,
+                  ),
+                  h(
+                    Reveal,
+                    { open: lockDetailsOpen, gap: 4, 'data-prefill-lock-items': String(lockedItems.length), style: { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2 } },
+                    ...lockedItems.map((item, index) =>
+                      h(
+                        'div',
+                        { key: index, 'data-prefill-lock-item': item.role, style: { fontSize: 12, whiteSpace: 'pre-wrap', padding: '4px 8px', borderRadius: 6, background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-secondary)' } },
+                        h('b', { style: { marginRight: 6 } }, item.role === 'assistant' ? t('manualRoleAssistant') : t('manualRoleUser')),
+                        String(item.text ?? ''),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
+            lock.hasSnapshot
+              ? h(
+                  'div',
+                  { style: V.row },
+                  h(
+                    ConfirmButton,
+                    {
+                      armed: confirming === 'restore-opening',
+                      style: V.btn,
+                      'data-prefill-lock-restore': '',
+                      title: t('lockRestoreTip'),
+                      onClick: () => {
+                        if (!armConfirm('restore-opening')) return
+                        setConfirming('')
+                        void restoreOpening().catch(failed())
+                      },
+                    },
+                    confirming === 'restore-opening' ? t('lockRestoreConfirm') : t('lockRestore'),
+                  ),
+                  h('span', { style: V.hint }, t('lockRestoreHint')),
+                )
+              : null,
+          )
+        : null
+      const itemsSection = h(
+        Section,
+        {
+          id: 'items',
+          tags: sourceTag(tagOf('items'), undefined, 'items'),
+          title: t('itemsTitle'),
+          meta: `${countFilled(items)}${t('countSuffix')}${countFilled(items) < items.length ? t('emptyRowsSkipped').replace('%N', String(items.length - countFilled(items))) : ''} · ≈${itemsTok} tok · ${injectMode ? t('itemsAfterRun') : t('modeHistory')}${statusText === '' ? '' : ` · ${statusText}`}`,
+          off: !isOn('items'),
+          offTitle: t('offTitle'),
+          offBody: t('itemsOffBody'),
+          right:
+            items.length === 0
+              ? null
+              : h(
+                  ConfirmButton,
+                  {
+                    armed: confirming === 'clear',
+                    style: V.btnGhost,
+                    'data-prefill-items-clear': '',
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      if (!armConfirm('clear')) return
+                      setConfirming('')
+                      const before = items
+                      edit([])
+                      setUndoSnap({ items: before, mode: 'clear' })
+                    },
+                  },
+                  confirming === 'clear' ? t('confirmYes') : t('dockClear'),
+                ),
+        },
+        greetingBar,
+        fetchBar,
+        fetchPending !== null ? fetchConfirm : null,
+        carryBox,
+        lock.locked
+          ? lockBox
+          : injectMode && (envelope?.materialized?.[sessionId] ?? 0) > 0
+            ? h('div', { style: V.callout('brand') }, t('itemsWrittenHint').replace('{n}', String(envelope.materialized[sessionId])))
+            : null,
+        h('div', { style: V.callout(injectMode ? 'warn' : 'brand') }, injectMode ? t('itemsInjectHint') : t('itemsHistoryHint')),
+        items.length === 0
+          ? h(
+              'div',
+              { style: { ...V.row, color: 'var(--dsw-alias-label-tertiary)', fontSize: 11.5 } },
+              h('span', null, t('itemsEmpty')),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: V.btn,
+                  onClick: () =>
+                    edit([
+                      { role: 'user', text: t('exampleUser') },
+                      { role: 'assistant', reasoning: t('exampleReasoning'), text: t('exampleAssistant') },
+                    ]),
+                },
+                t('fillExample'),
+              ),
+            )
+          : null,
+        h(
+          'div',
+          { ref: listRef, style: { display: 'flex', flexDirection: 'column', gap: 6 }, 'data-prefill-items': '', 'data-rendered': String(Math.min(items.length, shownRows)) },
+          // 分批渲染：一次只画 ROW_BATCH 条，之后每帧再加一批（200 条带长思维链也不会一下卡住）。
+          ...items.slice(0, shownRows).map(itemRow),
+          items.length > shownRows ? h('div', { key: 'more', style: V.hint }, t('rowsLoading').replace('{n}', String(items.length - shownRows))) : null,
+        ),
+        h(
+          'div',
+          { style: V.row },
+          h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'user', text: '' }]) }, t('addUser')),
+          h('button', { type: 'button', style: V.btn, onClick: () => edit([...items, { role: 'assistant', reasoning: '', text: '' }]) }, t('addAssistant')),
+        ),
+        // 手动注入（issue #19「C」）：独立入口，首轮前后都在；只发一次，发出后成为会话历史。
+        h(ManualInject, { t, sessionId, streaming }),
+      )
+
+      // ── 每轮注入（state.everyTurn[会话]；勾"新会话默认"时同时写 '*'）──
+      // ── v0.15 积木 / 积木塔 / 工作台（纯函数 // <bench-helpers> 已前移至 everyTurnEntryOf 之前）────────
       const benchSeq = { n: 0 }
       const nextBenchKey = () => 'b' + (benchSeq.n += 1).toString(36) + Math.random().toString(36).slice(2, 5)
       // 读取时迁移每次渲染都会重跑：key 必须确定（同一份旧条目每次得到同样的 key），
@@ -11400,66 +14137,56 @@ window.__ModuleLoader__.load({
         // 首轮注入保护（压缩后补发首轮段）：缺 = 开。
         compactRefirst: storedEveryTurn?.compactRefirst !== false,
       }
-      const writeEveryTurn = async (nextValue, override) => {
-        setEveryTurnDraft(nextValue)
-        const fresh = await postJson(STATE_ROUTE, undefined)
-        const map = { ...(fresh?.state?.everyTurn ?? {}) }
-        const auto = {
-          warmup: Math.max(0, Math.floor(Number(nextValue.auto?.warmup) || 0)),
-          streak: Math.max(1, Math.floor(Number(nextValue.auto?.streak) || 3)),
-          probation: Math.max(1, Math.floor(Number(nextValue.auto?.probation) || 2)),
-          // 立即恢复 / 暂停：只给动作，轮号由服务端按「下一轮」盖章；没给就沿用服务端已有的。
-          ...(override ? { override: { action: override } } : {}),
-        }
-        // v0.15：有工作台时，text / firstText / checks 一律由工作台编译得到（gate 只读这三个）。
-        const hasBench = Array.isArray(nextValue.bench) && nextValue.bench.length > 0
-        const compiled = hasBench ? compileBench(nextValue.bench) : null
-        const entry = {
-          // 永远 true：关由左栏开关负责（写 false 会变成「开关开着也不注入」的旧状态）。
-          enabled: true,
-          text: compiled !== null ? compiled.text : String(nextValue.text ?? ''),
-          firstText: compiled !== null ? compiled.firstText : String(nextValue.firstText ?? ''),
-          untilTurn: Math.max(0, Math.floor(Number(nextValue.untilTurn) || 0)),
-          mode: nextValue.mode === 'auto' || nextValue.mode === 'until' ? nextValue.mode : 'always',
-          checks: compiled !== null ? compiled.checks : Array.isArray(nextValue.checks) ? nextValue.checks : [],
-          auto,
-          ...(hasBench ? { bench: nextValue.bench, benchTowers: nextValue.benchTowers ?? {} } : {}),
-          ...(nextValue.seam === true ? { seam: true } : {}),
-          // 首轮注入保护开关：只存关。
-          ...(nextValue.compactRefirst === false ? { compactRefirst: false } : {}),
-          // 「下一轮发一次」首轮段（issue #19 B）：只在勾 / 取消时带，服务端盖成 { atTurn }；没带 = 沿用。
-          ...(typeof nextValue.firstOnce === 'boolean' ? { firstOnce: nextValue.firstOnce } : {}),
-        }
-        map[sessionId] = entry
+      const writeEveryTurnFor = async (targetSid, nextValue, override) => {
+        if (activeSessionRef.current === targetSid) setEveryTurnDraft(nextValue)
+        const entry = everyTurnEntryOf(nextValue, override)
         // PR2：新会话默认（'*'）由左侧栏「预填装」页统一编辑 —— 卡片写本会话配置时不再碰它。
-        const data = await postJson(STATE_ROUTE, { everyTurn: map })
-        setEnvelope(data)
+        const data = await postJson(STATE_ROUTE, { sessionId: targetSid, slim: true, sessionPatch: { target: targetSid, set: { everyTurn: entry } } })
+        if (activeSessionRef.current === targetSid) setEnvelope(data)
         notifyStateChanged()
         return data
       }
+      const writeEveryTurn = async (nextValue, override) => writeEveryTurnFor(sessionId, nextValue, override)
       const editEveryTurn = (patch, immediate) => {
+        const sid = sessionId
         const nextValue = { ...everyTurn, ...patch }
         setEveryTurnDraft(nextValue)
         clearTimeout(everyTurnTimer.current)
-        const run = () =>
-          void writeEveryTurn(nextValue)
-            .then(() => {
-              reportOk(sessionId, 'bench')
-              flash(isOn('everyTurn') && (String(nextValue.text).trim() !== '' || String(nextValue.firstText ?? '').trim() !== '') ? t('everyTurnSaved') : t('everyTurnOffSaved'))
+        const commit = () =>
+          (activeSessionRef.current === sid ? writeEveryTurn(nextValue) : writeEveryTurnFor(sid, nextValue))
+            .then((data) => {
+              if (activeSessionRef.current === sid) {
+                reportOk(sid, 'bench')
+                flash(isOn('everyTurn') && (String(nextValue.text).trim() !== '' || String(nextValue.firstText ?? '').trim() !== '') ? t('everyTurnSaved') : t('everyTurnOffSaved'))
+              }
+              return data
             })
             .catch(failed('bench', t('errOpBench')))
-        if (immediate) run()
-        else everyTurnTimer.current = setTimeout(run, 700)
+        let timer = 0
+        const entry = { sessionId: sid, commit, cancel: () => clearTimeout(timer) }
+        const run = () => {
+          draftBus.clear('everyTurn', entry)
+          void commit()
+        }
+        if (immediate) {
+          draftBus.clear('everyTurn')
+          run()
+        } else {
+          everyTurnTimer.current = setTimeout(run, 700)
+          timer = everyTurnTimer.current
+          draftBus.schedule('everyTurn', entry)
+        }
       }
       // PR B（#45 第 9 条）：本会话有自己的条目时，卡片可以把它（含工作台）复制成新会话默认（'*'）。
       const hasOwnEveryTurn = state?.everyTurn?.[sessionId] !== null && typeof state?.everyTurn?.[sessionId] === 'object'
       const setSessionAsDefault = async () => {
         // 还没落盘的草稿（700ms 防抖里的）先写掉，复制的是用户眼前这份。
         clearTimeout(everyTurnTimer.current)
-        const fresh = everyTurnDraft !== null ? await writeEveryTurn(everyTurn) : await postJson(STATE_ROUTE, undefined)
+        if (typeof draftBus !== 'undefined') draftBus.clear('everyTurn')
+        const fresh = everyTurnDraft !== null ? await writeEveryTurn(everyTurn) : await postJson(STATE_ROUTE, { slim: true, sessionId })
         const entry = defaultEveryTurnOf(fresh?.state?.everyTurn?.[sessionId])
         if (entry === null) return null
-        const data = await postJson(STATE_ROUTE, { everyTurn: { ...(fresh?.state?.everyTurn ?? {}), '*': entry } })
+        const data = await postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch: { target: '*', set: { everyTurn: entry } } })
         setEnvelope(data)
         notifyStateChanged()
         return data
@@ -11902,6 +14629,7 @@ window.__ModuleLoader__.load({
         const grow = long ? { maxHeight: 'none', overflow: 'hidden' } : {}
         const overlaps = benchOverlapsOf(block)
         const other = overlaps.length > 0 ? allBlocks.find((item) => item.id === overlaps[0]) : null
+        const overlapGroupActive = benchHoverOverlap !== '' && (block.ref === benchHoverOverlap || overlaps.includes(benchHoverOverlap))
         const kind = block.ref.startsWith('card:') ? 'card' : block.builtin === true ? 'builtin' : 'mine'
         const color = benchColor(kind)
         return h(
@@ -11910,16 +14638,24 @@ window.__ModuleLoader__.load({
             key: block.key,
             'data-prefill-bench-block': block.key,
             'data-prefill-just-added': justAdded === block.key ? 'true' : undefined,
+            'data-prefill-overlap-highlight': overlapGroupActive ? '1' : undefined,
             'data-ref': block.ref,
             'data-edited': block.edited ? '1' : '0',
+            onMouseEnter: overlaps.length > 0 ? () => setBenchHoverOverlap(block.ref) : undefined,
+            onMouseLeave: overlaps.length > 0 ? () => setBenchHoverOverlap((cur) => (cur === block.ref ? '' : cur)) : undefined,
             style: {
               position: 'relative',
+              width: '100%',
+              maxWidth: '100%',
+              minWidth: 0,
+              boxSizing: 'border-box',
               border: '1px solid var(--dsw-alias-border-secondary)',
               borderLeft: '4px solid ' + color,
               borderTop: '1px solid var(--dsw-alias-border-secondary)',
               borderRadius: 10,
-              background: 'var(--dsw-alias-bg-layer-1)',
-              ...(benchFocus === block.key ? { boxShadow: '0 0 0 3px color-mix(in srgb, var(--pf-turn) 18%, transparent)' } : {}),
+              background: overlapGroupActive ? mix('var(--pf-turn)', 8, 'var(--dsw-alias-bg-layer-1)') : 'var(--dsw-alias-bg-layer-1)',
+              ...(overlapGroupActive ? { boxShadow: '0 0 0 2px color-mix(in srgb, var(--pf-turn) 45%, transparent)' } : {}),
+              ...(benchFocus === block.key ? { borderColor: mix('var(--pf-turn)', 45, 'var(--dsw-alias-border-l2)') } : {}),
               // P0-5 落点占位：被拖的块画在落点上，虚线框 + 内容 30%（子元素透明度见 BENCH_SLOT_CSS）。
               // 用 outline 不用 border：换边框样式会改盒子高度（拿起时整列下移几 px，落点跟着偏）。
               ...(dragKey === block.key ? { outline: '1.5px dashed var(--pf-turn)', outlineOffset: -1, background: 'color-mix(in srgb, var(--pf-turn) 5%, transparent)', boxShadow: 'none' } : {}),
@@ -11934,7 +14670,7 @@ window.__ModuleLoader__.load({
             benchNarrow
               ? null
               : h('span', { style: { cursor: 'grab', color: 'var(--dsw-alias-label-tertiary)', letterSpacing: '-2px', padding: '0 2px', touchAction: 'none' }, 'data-prefill-bench-grip': block.key, onPointerDown: (event) => startDrag(event, block) }, '⋮⋮'),
-            h('span', { style: { fontWeight: 700 } }, block.name),
+            h('span', { style: V.bold }, block.name),
             benchNarrow
               ? null
               : h('span', { style: { ...V.sectionMeta, padding: '0 6px', borderRadius: 999, background: 'color-mix(in srgb, ' + color + ' 14%, transparent)' } }, kind === 'card' ? t('benchFromCard') : block.builtin === true ? t('benchFromBuiltin') : t('benchFromMine')),
@@ -11945,7 +14681,7 @@ window.__ModuleLoader__.load({
               ? null
               : h('span', { style: { ...V.sectionMeta, border: '1px solid var(--dsw-alias-border-secondary)', borderRadius: 999, padding: '0 7px' } }, t('benchFirstTag')),
             overlaps.length > 0
-              ? h(PopBadge, { pop: popIf('narrow:' + block.key + ':' + overlaps[0]), 'data-prefill-overlap-narrow': block.key + ':' + overlaps[0], style: { ...V.sectionMeta, color: 'var(--pf-turn)', border: '1px solid color-mix(in srgb, var(--pf-turn) 50%, var(--dsw-alias-border-secondary))', borderRadius: 999, padding: '0 6px' } }, t('benchOverlapNarrow').replace('{name}', other ? other.name : overlaps[0]))
+              ? h(PopBadge, { pop: popIf('narrow:' + block.key + ':' + overlaps[0]), 'data-prefill-overlap-narrow': block.key + ':' + overlaps[0], title: t('benchOverlapIcon'), onMouseEnter: () => setBenchHoverOverlap(block.ref), onMouseLeave: () => setBenchHoverOverlap((cur) => (cur === block.ref ? '' : cur)), style: { ...V.sectionMeta, fontWeight: 600, color: 'var(--pf-turn)', background: overlapGroupActive ? mix('var(--pf-turn)', 18, 'transparent') : mix('var(--pf-turn)', 10, 'transparent'), border: '1px solid color-mix(in srgb, var(--pf-turn) 50%, var(--dsw-alias-border-secondary))', borderRadius: 999, padding: '0 7px' } }, t('benchOverlapNarrow').replace('{name}', other ? other.name : overlaps[0]))
               : null,
             h(
               'span',
@@ -11975,39 +14711,85 @@ window.__ModuleLoader__.load({
                 h('div', { style: { ...V.sectionMeta, marginTop: 2 } }, t('benchFoldedMeta').replace('{n}', String(String(block.first ?? '').length + String(block.text ?? '').length))),
               )
             : null,
-          !folded && (block.first.trim() !== '' || block.builtin !== true)
-            ? h('textarea', {
-                style: { ...V.textarea, margin: '4px 8px 2px', minHeight: 38, background: 'color-mix(in srgb, var(--pf-turn) 7%, transparent)', ...grow },
-                ...(long ? { ref: benchGrowRef(block.key + ':first'), onInput: (event) => autoGrow(event.target) } : {}),
-                value: block.first,
-                spellCheck: false,
-                placeholder: t('everyTurnFirstPlaceholder'),
-                'data-prefill-bench-first': block.key,
-                onFocus: () => {
-                  setBenchFocus(block.key)
-                  // 正在编辑的块不自动收起（打字打到超过阈值也不会突然折叠）。
-                  setBenchBlockOpen(block.key, true)
+          !folded
+            ? h(
+                'div',
+                {
+                  'data-prefill-bench-body': block.key,
+                  style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 8px 8px', width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' },
                 },
-                onBlur: () => setBenchFocus(''),
-                onChange: (event) => patchBenchBlock(block.key, { first: event.target.value }, false),
-              })
+                block.first.trim() !== '' || block.builtin !== true
+                  ? h(EditorShell, {
+                      key: 'first',
+                      value: block.first,
+                      placeholder: t('everyTurnFirstPlaceholder'),
+                      minHeight: 44,
+                      expandedHeight: 180,
+                      maxHeight: long ? 'none' : '24vh',
+                      textareaRef: long ? benchGrowRef(block.key + ':first') : undefined,
+                      textareaAttrs: { 'data-prefill-bench-first': block.key },
+                      textareaStyle: { padding: '8px 10px', ...grow },
+                      shellStyle: { background: mix('var(--pf-turn)', 6, 'var(--dsw-alias-bg-base)') },
+                      footerLeft: h(
+                        'span',
+                        { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
+                        h('span', { style: { fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, t('editorFirstTag')),
+                        h('span', null, t('systemCharsTok').replace('{chars}', num(block.first.length)).replace('{tok}', num(estimateTokens(block.first)))),
+                      ),
+                      onClear: () => patchBenchBlock(block.key, { first: '' }, false),
+                      clearLabel: t('editorClear'),
+                      clearTip: t('editorClearTip'),
+                      clearAttr: `bench-first:${block.key}`,
+                      expandLabel: t('editorExpand'),
+                      collapseLabel: t('editorCollapse'),
+                      expandTip: t('editorExpandTip'),
+                      collapseTip: t('editorCollapseTip'),
+                      touch,
+                      onInput: long ? (event) => autoGrow(event.target) : undefined,
+                      onFocus: () => {
+                        setBenchFocus(block.key)
+                        // 正在编辑的块不自动收起（打字打到超过阈值也不会突然折叠）。
+                        setBenchBlockOpen(block.key, true)
+                      },
+                      onBlur: () => setBenchFocus(''),
+                      onChange: (event) => patchBenchBlock(block.key, { first: event.target.value }, false),
+                    })
+                  : null,
+                h(EditorShell, {
+                  key: 'text',
+                  value: block.text,
+                  placeholder: t('everyTurnPlaceholder'),
+                  minHeight: 52,
+                  expandedHeight: 200,
+                  maxHeight: long ? 'none' : '24vh',
+                  textareaRef: long ? benchGrowRef(block.key) : undefined,
+                  textareaAttrs: { 'data-prefill-bench-text': block.key },
+                  textareaStyle: { padding: '8px 10px', ...grow },
+                  footerLeft: h(
+                    'span',
+                    { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
+                    h('span', { style: { fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, t('editorTurnTag')),
+                    h('span', null, t('systemCharsTok').replace('{chars}', num(block.text.length)).replace('{tok}', num(estimateTokens(block.text)))),
+                  ),
+                  onClear: () => patchBenchBlock(block.key, { text: '' }, false),
+                  clearLabel: t('editorClear'),
+                  clearTip: t('editorClearTip'),
+                  clearAttr: `bench-text:${block.key}`,
+                  expandLabel: t('editorExpand'),
+                  collapseLabel: t('editorCollapse'),
+                  expandTip: t('editorExpandTip'),
+                  collapseTip: t('editorCollapseTip'),
+                  touch,
+                  onInput: long ? (event) => autoGrow(event.target) : undefined,
+                  onFocus: () => {
+                    setBenchFocus(block.key)
+                    setBenchBlockOpen(block.key, true)
+                  },
+                  onBlur: () => setBenchFocus(''),
+                  onChange: (event) => patchBenchBlock(block.key, { text: event.target.value }, false),
+                }),
+              )
             : null,
-          folded
-            ? null
-            : h('textarea', {
-                style: { ...V.textarea, margin: '4px 8px 8px', minHeight: 46, ...grow },
-                ...(long ? { ref: benchGrowRef(block.key), onInput: (event) => autoGrow(event.target) } : {}),
-                value: block.text,
-            spellCheck: false,
-            placeholder: t('everyTurnPlaceholder'),
-                'data-prefill-bench-text': block.key,
-                onFocus: () => {
-                  setBenchFocus(block.key)
-                  setBenchBlockOpen(block.key, true)
-                },
-            onBlur: () => setBenchFocus(''),
-            onChange: (event) => patchBenchBlock(block.key, { text: event.target.value }, false),
-          }),
           block.builtin !== true
             ? h('label', { style: { ...V.row, gap: 6, fontSize: 11.5, padding: '0 10px 8px' } }, h('input', { type: 'checkbox', checked: block.priority === true, 'data-prefill-bench-priority': block.key, onChange: (event) => patchBenchBlock(block.key, { priority: event.target.checked }, true) }), h('span', null, t('benchPriority')))
             : null,
@@ -12039,7 +14821,7 @@ window.__ModuleLoader__.load({
               {
                 key: 'tf-' + towerKey + '-' + list[0].key,
                 'data-prefill-bench-tower': towerKey,
-                style: { border: '1.5px dashed color-mix(in srgb, ' + color + ' 55%, var(--dsw-alias-border-secondary))', borderRadius: 12, padding: '6px 8px 8px', background: 'color-mix(in srgb, ' + color + ' 4%, transparent)', display: 'flex', flexDirection: 'column', gap: 8 },
+                style: { width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', border: '1.5px dashed color-mix(in srgb, ' + color + ' 55%, var(--dsw-alias-border-secondary))', borderRadius: 12, padding: '6px 8px 8px', background: 'color-mix(in srgb, ' + color + ' 4%, transparent)', display: 'flex', flexDirection: 'column', gap: 8 },
               },
               h(
                 'div',
@@ -12173,15 +14955,22 @@ window.__ModuleLoader__.load({
         setBenchMenu({ kind: 'tower', ref: tower.id, name: tower.name, builtin: tower.builtin === true, x: Math.round(rect.left), y: Math.round(rect.bottom + 4), px: Math.round(event.clientX), py: Math.round(event.clientY) })
       }
       const closeBenchMenu = () => setBenchMenu(null)
+      const openBenchPrompt = ({ title, defaultValue, onConfirm }) => {
+        setBenchDialog({ title, value: String(defaultValue ?? ''), onConfirm })
+      }
       const saveWholeBenchAsTower = () => {
-        const name = (window.prompt(t('benchTowerNameAsk'), t('benchTowerDefaultName')) || '').trim()
-        if (name === '') return
-        saveTower({ id: 'my:' + nextBenchKey(), name, items: bench.map(towerItemOf) })
+        openBenchPrompt({
+          title: t('benchTowerNameAsk'),
+          defaultValue: t('benchTowerDefaultName'),
+          onConfirm: (name) => saveTower({ id: 'my:' + nextBenchKey(), name, items: bench.map(towerItemOf) }),
+        })
       }
       const saveFrameAsTower = (towerKey) => {
-        const name = (window.prompt(t('benchTowerNameAsk'), String(benchTowers[towerKey]?.name ?? '') + t('benchMySuffix')) || '').trim()
-        if (name === '') return
-        saveTower({ id: 'my:' + nextBenchKey(), name, items: bench.filter((block) => block.tower === towerKey).map(towerItemOf) })
+        openBenchPrompt({
+          title: t('benchTowerNameAsk'),
+          defaultValue: String(benchTowers[towerKey]?.name ?? '') + t('benchMySuffix'),
+          onConfirm: (name) => saveTower({ id: 'my:' + nextBenchKey(), name, items: bench.filter((block) => block.tower === towerKey).map(towerItemOf) }),
+        })
       }
       const towerItemOf = (block) => ({
         ref: block.ref,
@@ -12190,27 +14979,35 @@ window.__ModuleLoader__.load({
         snap: { name: block.name, first: block.first, text: block.text, checks: block.checks },
       })
       const renameMyBlock = (def) => {
-        const name = (window.prompt(t('benchRenameAsk'), def.name) || '').trim()
-        if (name === '' || name === def.name) return
-        saveAsMyBlock(def, name)
+        openBenchPrompt({
+          title: t('benchRenameAsk'),
+          defaultValue: def.name,
+          onConfirm: (name) => {
+            if (name !== def.name) saveAsMyBlock(def, name)
+          },
+        })
       }
       const blockMenu = () => {
-        const menu = benchMenu
+        const menu = shownBenchMenu
         if (menu === null) return null
         const benchBlock = menu.kind === 'block' && menu.key !== '' ? bench.find((item) => item.key === menu.key) ?? null : null
-        const def = allBlocks.find((item) => item.id === menu.ref) ?? null
+        const def = menu.kind === 'tower' ? allTowers.find((item) => item.id === menu.ref) ?? null : allBlocks.find((item) => item.id === menu.ref) ?? null
         const source = benchBlock ?? def
         if (source === null) return null
         const isMine = menu.builtin !== true && def !== null && def.builtin !== true
-        const row = (key, label, onClick, sub) =>
+        const row = (key, label, onClick, sub, extra = {}) =>
           h(
             'div',
             {
               key,
-              style: { padding: '6px 10px', borderRadius: 6, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2 },
-              onMouseEnter: (event) => { event.currentTarget.style.background = 'var(--dsw-alias-bg-layer-2)' },
-              onMouseLeave: (event) => { event.currentTarget.style.background = 'transparent' },
-              onClick: () => { closeBenchMenu(); onClick() },
+              style: { padding: '6px 10px', borderRadius: 6, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2, ...(extra.style ?? {}) },
+              ...(extra.attrs ?? {}),
+              onMouseEnter: (event) => { event.currentTarget.style.background = extra.armed ? mix('var(--dsw-alias-state-warn-primary)', 16, 'transparent') : 'var(--dsw-alias-bg-layer-2)' },
+              onMouseLeave: (event) => { event.currentTarget.style.background = extra.armed ? mix('var(--dsw-alias-state-warn-primary)', 10, 'transparent') : 'transparent' },
+              onClick: () => {
+                if (extra.keepOpen !== true) closeBenchMenu()
+                onClick()
+              },
             },
             h('span', null, label),
             sub !== undefined ? h('small', { style: V.sectionMeta }, sub) : null,
@@ -12221,21 +15018,84 @@ window.__ModuleLoader__.load({
           if (benchBlock !== null && benchBlock.tower !== null && benchBlock.tower !== undefined) {
             rows.push(row('toweronly', t('benchMenuTowerOnly'), () => saveTower({ id: benchBlock.tower, name: String(benchTowers[benchBlock.tower]?.name ?? benchBlock.tower), items: bench.filter((item) => item.tower === benchBlock.tower).map(towerItemOf) }), t('benchMenuTowerOnlySub')))
           }
-          rows.push(row('newblock', t('benchMenuSaveNewBlock'), () => {
-            const name = (window.prompt(t('benchNewBlockAsk'), menu.name + t('benchMySuffix')) || '').trim()
-            if (name !== '') saveAsMyBlock({ ...source, ref: 'my:' + nextBenchKey(), builtin: false, id: '' }, name)
-          }))
+          rows.push(
+            row('newblock', t('benchMenuSaveNewBlock'), () => {
+              openBenchPrompt({
+                title: t('benchNewBlockAsk'),
+                defaultValue: menu.name + t('benchMySuffix'),
+                onConfirm: (name) => saveAsMyBlock({ ...source, ref: 'my:' + nextBenchKey(), builtin: false, id: '' }, name),
+              })
+            }),
+          )
           if (benchBlock !== null && benchBlock.tower !== null && benchBlock.tower !== undefined) rows.push(row('saveframe', t('benchMenuSaveFrame'), () => saveFrameAsTower(benchBlock.tower)))
           if (bench.length > 0) rows.push(row('savebench', t('benchMenuSaveBench'), () => saveWholeBenchAsTower()))
           rows.push(h('div', { key: 'sep', style: { height: 1, background: 'var(--dsw-alias-border-secondary)', margin: '4px 2px' } }))
           if (benchBlock !== null && benchBlock.edited) rows.push(row('revert', t('benchMenuRevert'), () => patchBenchBlock(benchBlock.key, revertPatch(benchBlock))))
           if (benchBlock !== null) rows.push(row('drop', t('benchMenuDrop'), () => exitFromBench('block:' + benchBlock.key, isBlockNode(benchBlock.key), () => removeBlockFromBench(benchBlock.key))))
           if (isMine && def !== null) rows.push(row('rename', t('benchMenuRename'), () => renameMyBlock(def)))
-          if (isMine && def !== null) rows.push(row('delblock', t('benchMenuDeleteBlock'), () => deleteMyBlock(def.id)))
+          if (isMine && def !== null) {
+            const armed = benchMenuConfirm === 'delblock'
+            rows.push(
+              row(
+                'delblock',
+                armed ? t('benchDeleteBlockConfirm') : t('benchMenuDeleteBlock'),
+                () => {
+                  if (!armed) {
+                    setBenchMenuConfirm('delblock')
+                    return
+                  }
+                  setBenchMenuConfirm('')
+                  closeBenchMenu()
+                  deleteMyBlock(def.id)
+                },
+                undefined,
+                {
+                  keepOpen: !armed,
+                  armed,
+                  attrs: { 'data-prefill-bench-del-block': def.id, ...(armed ? { 'data-prefill-bench-menu-armed': '1' } : {}) },
+                  style: armed ? { color: 'var(--dsw-alias-state-warn-primary)', fontWeight: 600, background: mix('var(--dsw-alias-state-warn-primary)', 10, 'transparent') } : {},
+                },
+              ),
+            )
+          }
           if (menu.builtin === true) rows.push(row('hide', t('benchMenuHide'), () => hideBuiltin(menu.ref)))
         } else {
-          if (isMine && def !== null) rows.push(row('renametower', t('benchMenuRename'), () => { const name = (window.prompt(t('benchRenameAsk'), menu.name) || '').trim(); if (name !== '') saveTower({ ...def, name }) }))
-          if (isMine) rows.push(row('deltower', t('benchMenuDeleteTower'), () => deleteTower(menu.ref)))
+          if (isMine && def !== null) {
+            rows.push(
+              row('renametower', t('benchMenuRename'), () => {
+                openBenchPrompt({
+                  title: t('benchRenameAsk'),
+                  defaultValue: menu.name,
+                  onConfirm: (name) => saveTower({ ...def, name }),
+                })
+              }),
+            )
+          }
+          if (isMine) {
+            const armed = benchMenuConfirm === 'deltower'
+            rows.push(
+              row(
+                'deltower',
+                armed ? t('benchDeleteTowerConfirm') : t('benchMenuDeleteTower'),
+                () => {
+                  if (!armed) {
+                    setBenchMenuConfirm('deltower')
+                    return
+                  }
+                  setBenchMenuConfirm('')
+                  closeBenchMenu()
+                  deleteTower(menu.ref)
+                },
+                undefined,
+                {
+                  keepOpen: !armed,
+                  armed,
+                  attrs: { 'data-prefill-bench-del-tower': menu.ref, ...(armed ? { 'data-prefill-bench-menu-armed': '1' } : {}) },
+                  style: armed ? { color: 'var(--dsw-alias-state-warn-primary)', fontWeight: 600, background: mix('var(--dsw-alias-state-warn-primary)', 10, 'transparent') } : {},
+                },
+              ),
+            )
+          }
           if (menu.builtin === true) rows.push(row('hidetower', t('benchMenuHide'), () => hideBuiltin(menu.ref)))
           if (menu.ref !== 'card') rows.push(row('removetower', t('benchMenuRemoveTower'), () => removeTowerFromBench(menu.ref)))
         }
@@ -12251,6 +15111,9 @@ window.__ModuleLoader__.load({
             at: menu,
             pointer: { x: menu.px, y: menu.py },
             'data-prefill-block-menu': '',
+            'data-closing': benchMenuClosing ? 'true' : undefined,
+            'aria-hidden': benchMenuClosing ? 'true' : undefined,
+            innerRef: benchMenuExitRef,
             style: {
               position: 'fixed',
               left: benchNarrow ? 10 : menu.x,
@@ -12266,6 +15129,7 @@ window.__ModuleLoader__.load({
               boxShadow: '0 12px 32px rgba(0,0,0,.18)',
               padding: 5,
               fontSize: 12.5,
+              ...(benchMenuClosing ? { pointerEvents: 'none' } : {}),
             },
           },
           ...rows,
@@ -12277,25 +15141,69 @@ window.__ModuleLoader__.load({
         const def = allBlocks.find((block) => block.id === benchBlock.ref)
         return def === undefined ? { edited: false } : { first: def.first, text: def.text, checks: [...def.checks], edited: false }
       }
-      /** 重叠层：左侧留白里画虚线连线 + 「重叠」标；窄屏不画（用块头标签）。 */
-      const overlapLayer = () => {
-        const pairs = benchOverlapPairs()
-        if (benchNarrow || pairs.length === 0) return null
-        const rows = bench.map((block, index) => ({ key: block.key, index }))
-        const at = (ref) => rows.find((row) => row.index === bench.findIndex((block) => block.ref === ref))
-        return h(
-          'svg',
-          { key: 'ov', 'data-prefill-overlap': pairs.map((pair) => pair.a + ':' + pair.b).join(','), style: { position: 'absolute', left: 0, top: 0, width: 34, height: '100%', overflow: 'visible', pointerEvents: 'none' } },
-          ...pairs.map((pair) => {
-            const a = bench.findIndex((block) => block.ref === pair.a)
-            const b = bench.findIndex((block) => block.ref === pair.b)
-            const y1 = a * 72 + 36
-            const y2 = b * 72 + 36
-            return h('path', { key: pair.a + pair.b, d: 'M30 ' + y1 + ' C 8 ' + y1 + ', 8 ' + y2 + ', 30 ' + y2, fill: 'none', stroke: 'var(--pf-turn)', strokeWidth: 2, strokeDasharray: '4 3' })
-          }),
-          pairs.length > 0 ? h('text', { x: 0, y: 12, fill: 'var(--pf-turn)', fontSize: 10 }, t('benchOverlapTag')) : null,
-        )
-      }
+      const benchCompiledNow = compileBench(bench)
+      const benchFirstChars = String(benchCompiledNow.firstText ?? '').length
+      const benchRestChars = String(benchCompiledNow.text ?? '').length
+      const benchFirstEstTok = estimateTokens(benchCompiledNow.firstText)
+      const benchRestEstTok = estimateTokens(benchCompiledNow.text)
+      const benchPromptModal = benchDialog !== null
+        ? h(
+            Modal,
+            {
+              open: true,
+              onClose: () => setBenchDialog(null),
+              label: benchDialog.title,
+              panelProps: { 'data-prefill-bench-prompt': '', style: SBX_DIALOG_PANEL(420) },
+            },
+            h(
+              React.Fragment,
+              null,
+              h('b', { style: { fontSize: T.font.lg } }, benchDialog.title),
+              h('input', {
+                ref: benchDialogInputRef,
+                style: { ...V.input, width: '100%' },
+                value: benchDialog.value,
+                placeholder: t('benchPromptPlaceholder'),
+                spellCheck: false,
+                'data-prefill-bench-prompt-input': '',
+                onChange: (event) => setBenchDialog((cur) => (cur === null ? null : { ...cur, value: event.target.value })),
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    const val = benchDialog.value.trim()
+                    if (val !== '') {
+                      const cb = benchDialog.onConfirm
+                      setBenchDialog(null)
+                      cb(val)
+                    }
+                  }
+                },
+              }),
+              h(
+                'div',
+                { style: V.rowEnd },
+                h('button', { type: 'button', style: V.btnGhost, onClick: () => setBenchDialog(null) }, t('cancel')),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: V.btnPrimary,
+                    disabled: benchDialog.value.trim() === '',
+                    'data-prefill-bench-prompt-ok': '',
+                    onClick: () => {
+                      const val = benchDialog.value.trim()
+                      if (val === '') return
+                      const cb = benchDialog.onConfirm
+                      setBenchDialog(null)
+                      cb(val)
+                    },
+                  },
+                  t('benchPromptConfirm'),
+                ),
+              ),
+            ),
+          )
+        : h(Modal, { open: false })
       // 「开着没」看左栏开关（旧版 entry.enabled 也算关）；有没有内容是另一回事。
       const everyTurnActive = isOn('everyTurn') && (everyTurn.text.trim() !== '' || everyTurn.firstText.trim() !== '')
       // 自动模式的状态文字（来自 every-turn-status；只看本会话自己的判定）。
@@ -12312,7 +15220,7 @@ window.__ModuleLoader__.load({
               : t(`everyTurnState_${autoStatus.state}`)
                   .replace('{streak}', String(autoStatus.streak ?? 0))
                   .replace('{need}', String(autoStatus.need ?? 0))
-      const verdictColor = { pass: '#16a34a', weak: '#d97706', fail: '#dc2626', skip: '#9ca3af' }
+      const verdictColor = { pass: 'var(--dsw-alias-state-success-primary)', weak: 'var(--dsw-alias-state-warn-primary)', fail: 'var(--dsw-alias-state-error-primary)', skip: 'var(--dsw-alias-state-idle-primary)' }
       const verdictTitle = (row) => {
         const parts = [`#${row.turn}`, row.verdict, row.injected ? '⚡' : '']
         const sc = row.scores ?? {}
@@ -12337,17 +15245,21 @@ window.__ModuleLoader__.load({
         else set.delete(id)
         editEveryTurn({ checks: ['zh', 'four', 'noLeak', 'firstPerson'].filter((key) => set.has(key)) }, true)
       }
-      const overrideNow = (action) =>
-        void writeEveryTurn(everyTurn, action)
-          .then(() => flash(t('everyTurnOverrideSaved')))
-          .catch(failed())
-      const radio = (mode, label) =>
-        h(
-          'label',
-          { key: mode, style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
-          h('input', { type: 'radio', name: `prefill-everyturn-mode-${sessionId}`, checked: everyTurn.mode === mode, 'data-prefill-everyturn-mode': mode, onChange: () => setMode(mode) }),
-          label,
-        )
+      const overrideNow = (action) => {
+        if (busyCtl.pending('everyturn-override')) return
+        void busyCtl
+          .run('everyturn-override', () =>
+            writeEveryTurn(everyTurn, action)
+              .then(() => postJson(PACKS_ROUTE, { sessionId, op: 'every-turn-status' }))
+              .then((data) => {
+                setEveryTurnStatus(data?.status ?? null)
+                reportOk(sessionId, 'everyturn-override')
+                flash(t('everyTurnOverrideSaved'))
+              })
+              .catch(failed('everyturn-override', t('errOpOverride'))),
+          )
+          ?.catch(() => {})
+      }
       const numberInput = (key, value, min, attr) =>
         h('input', {
           type: 'number',
@@ -12368,7 +15280,9 @@ window.__ModuleLoader__.load({
             ? autoStatus !== null
               ? t('everyTurnStateMeta').replace('{state}', autoStateText)
               : `≈${estimateTokens(everyTurn.text)} tok/${t('turnsUnit')}${everyTurn.mode === 'until' && everyTurn.untilTurn > 0 ? ` · ≤${everyTurn.untilTurn}` : ''}`
-            : t('everyTurnOffMeta'),
+            : isOn('everyTurn') && !everyTurnFromCardOff
+              ? t('everyTurnEmptyMeta')
+              : t('everyTurnOffMeta'),
           off: !isOn('everyTurn') || everyTurnFromCardOff,
           offTitle: !isOn('everyTurn') ? t('offTitle') : t('offByCardTitle'),
           offBody: !isOn('everyTurn') ? t('everyTurnOffBody') : t('offByCardBody'),
@@ -12378,11 +15292,11 @@ window.__ModuleLoader__.load({
         lock.locked && everyTurn.firstText.trim() !== ''
           ? h(
               'div',
-              { style: { ...V.callout('warn'), display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }, 'data-prefill-first-locked': everyTurnStatus?.first?.once ?? 'none' },
-              h('span', { style: { flex: '1 1 260px', minWidth: 0 } }, everyTurnStatus?.first?.once === 'sent' ? t('lockFirstOnceSent') : t('lockFirstSkipped')),
+              { style: V.calloutRow('warn'), 'data-prefill-first-locked': everyTurnStatus?.first?.once ?? 'none' },
+              h('span', { style: V.flexBody }, everyTurnStatus?.first?.once === 'sent' ? t('lockFirstOnceSent') : t('lockFirstSkipped')),
               h(
                 'label',
-                { style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+                { style: V.inlineSmText },
                 h('input', {
                   type: 'checkbox',
                   'data-prefill-first-once': '',
@@ -12408,7 +15322,7 @@ window.__ModuleLoader__.load({
         everyTurn.firstText.trim() !== ''
           ? h(
               'label',
-              { style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }, title: t('compactRefirstTip'), 'data-prefill-compact-refirst-row': '' },
+              { style: V.inlineSmText, title: t('compactRefirstTip'), 'data-prefill-compact-refirst-row': '' },
               h('input', {
                 type: 'checkbox',
                 'data-prefill-compact-refirst': '',
@@ -12486,7 +15400,15 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: { ...V.row, gap: 8, alignItems: 'center', marginTop: 10, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--dsw-alias-border-l1)', background: 'transparent', fontSize: 12 }, 'data-prefill-bench-cost-row': '' },
-          h('span', { 'data-prefill-bench-cost': '' }, t('benchCost').replace('{first}', String(benchSummaryNow.firstTok)).replace('{rest}', String(benchSummaryNow.restTok))),
+          h(
+            'span',
+            { 'data-prefill-bench-cost': '', style: T.layout.num },
+            t('benchCostUnit')
+              .replace('{firstChars}', num(benchFirstChars))
+              .replace('{firstTok}', num(benchFirstEstTok))
+              .replace('{restChars}', num(benchRestChars))
+              .replace('{restTok}', num(benchRestEstTok)),
+          ),
           benchSummaryNow.checks.length > 0
             ? h('span', { style: V.sectionMeta }, t('benchChecks').replace('{list}', benchSummaryNow.checks.map((id) => t('check_' + id) || id).join('、')))
             : null,
@@ -12513,7 +15435,13 @@ window.__ModuleLoader__.load({
                     'div',
                     { style: { ...V.row, gap: 8, padding: '6px 10px', background: 'var(--dsw-alias-bg-layer-2)', fontSize: 12 } },
                     h('span', { style: { fontWeight: 600 } }, round === 1 ? t('benchPreviewFirst') : t('benchPreviewRest')),
-                    h('span', { style: { ...V.sectionMeta, marginLeft: 'auto' } }, '≈' + String(round === 1 ? benchSummaryNow.firstTok : benchSummaryNow.restTok) + ' tok'),
+                    h(
+                      'span',
+                      { style: { ...V.sectionMeta, marginLeft: 'auto', ...T.layout.num }, 'data-prefill-bench-preview-meta': String(round) },
+                      t('benchPreviewUnit')
+                        .replace('{chars}', num(round === 1 ? benchFirstChars : benchRestChars))
+                        .replace('{tok}', num(round === 1 ? benchFirstEstTok : benchRestEstTok)),
+                    ),
                   ),
                   h('div', { style: { margin: '8px 10px', paddingLeft: 8, borderLeft: '3px solid var(--dsw-alias-border-secondary)', color: 'var(--dsw-alias-label-tertiary)', fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 11.5, whiteSpace: 'pre-wrap' } }, '<background> ' + t('benchPreviewShell')),
                   ...previewSegments(round).map((seg) =>
@@ -12542,8 +15470,7 @@ window.__ModuleLoader__.load({
             ),
         h(
           'div',
-          { ref: benchListRef, style: { position: 'relative', marginTop: 10, paddingLeft: benchNarrow ? 0 : 34, display: 'flex', flexDirection: 'column', gap: 8 }, 'data-prefill-bench': '' },
-          overlapLayer(),
+          { ref: benchListRef, style: { position: 'relative', marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8, width: '100%', minWidth: 0, boxSizing: 'border-box' }, 'data-prefill-bench': '' },
           benchLongKeys.length > 0
             ? h(
                 'button',
@@ -12562,25 +15489,37 @@ window.__ModuleLoader__.load({
           dragKey !== '' ? h('style', { key: 'slot-css' }, BENCH_SLOT_CSS) : null,
           ...benchRowsOf(benchDragView),
           bench.length === 0 ? h('div', { style: V.sectionMeta }, t('benchEmpty')) : null,
-          h(
-            'div',
-            { style: { border: '1px dashed var(--dsw-alias-border-secondary)', borderRadius: 10, padding: '7px 10px', color: 'var(--dsw-alias-label-tertiary)', fontSize: 12.5, textAlign: 'center', cursor: 'pointer' }, 'data-prefill-bench-add-row': '', onClick: () => addBlockToBench(makeBlock({ id: 'my:' + nextBenchKey(), name: t('benchCustom'), icon: 'pencil', text: '', first: '', checks: [] })) },
-            '＋ ' + t('benchCustom'),
-          ),
-          benchMenu !== null ? blockMenu() : null,
+          bench.length > 0
+            ? h(
+                'div',
+                { style: { border: '1px dashed var(--dsw-alias-border-secondary)', borderRadius: 10, padding: '7px 10px', color: 'var(--dsw-alias-label-tertiary)', fontSize: 12.5, textAlign: 'center', cursor: 'pointer' }, 'data-prefill-bench-add-row': '', onClick: () => addBlockToBench(makeBlock({ id: 'my:' + nextBenchKey(), name: t('benchCustom'), icon: 'pencil', text: '', first: '', checks: [] })) },
+                '＋ ' + t('benchCustom'),
+              )
+            : null,
+          shownBenchMenu !== null ? blockMenu() : null,
+          benchPromptModal,
         ),
         h(
           'div',
           { style: { ...V.row, gap: 10, fontSize: 12, flexWrap: 'wrap' } },
           h('span', { style: V.sectionMeta }, t('everyTurnMode')),
-          radio('always', t('everyTurnModeAlways')),
-          radio('until', t('everyTurnModeUntil')),
-          radio('auto', t('everyTurnModeAuto')),
+          h(SegmentedControl, {
+            size: 'small',
+            value: everyTurn.mode,
+            onPick: setMode,
+            optionAttr: 'data-prefill-everyturn-mode',
+            ariaLabel: t('everyTurnMode'),
+            options: [
+              { value: 'always', label: t('everyTurnModeAlways') },
+              { value: 'until', label: t('everyTurnModeUntil') },
+              { value: 'auto', label: t('everyTurnModeAuto') },
+            ],
+          }),
         ),
         everyTurn.mode === 'until'
           ? h(
               'div',
-              { style: { ...V.row, gap: 6, fontSize: 12 } },
+              { style: V.rowSmText },
               h('span', null, t('everyTurnUntil')),
               h('input', {
                 type: 'number',
@@ -12606,7 +15545,7 @@ window.__ModuleLoader__.load({
                 ...['zh', 'four', 'noLeak', 'firstPerson'].map((id) =>
                   h(
                     'label',
-                    { key: id, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+                    { key: id, style: V.inlineSm },
                     h('input', { type: 'checkbox', checked: everyTurn.checks.includes(id), 'data-prefill-everyturn-check': id, onChange: (event) => toggleCheck(id, event.target.checked) }),
                     t(`everyTurnCheck_${id}`),
                   ),
@@ -12656,8 +15595,18 @@ window.__ModuleLoader__.load({
                       ),
                     ),
                     autoStatus.inject
-                      ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-everyturn-pause': '1', onClick: () => overrideNow('pause') }, t('everyTurnPause'))
-                      : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-everyturn-resume': '1', onClick: () => overrideNow('resume') }, t('everyTurnResume')),
+                      ? h(
+                          'button',
+                          { type: 'button', style: { ...V.btnGhost, display: 'inline-flex', alignItems: 'center', gap: 4, ...(busyCtl.shown('everyturn-override') ? BUSY_LOOK : {}) }, 'data-prefill-everyturn-pause': '1', ...busyAttrs(busyCtl, 'everyturn-override'), onClick: () => overrideNow('pause') },
+                          busyCtl.shown('everyturn-override') ? h(Spinner, { size: 10 }) : null,
+                          t('everyTurnPause'),
+                        )
+                      : h(
+                          'button',
+                          { type: 'button', style: { ...V.btnGhost, display: 'inline-flex', alignItems: 'center', gap: 4, ...(busyCtl.shown('everyturn-override') ? BUSY_LOOK : {}) }, 'data-prefill-everyturn-resume': '1', ...busyAttrs(busyCtl, 'everyturn-override'), onClick: () => overrideNow('resume') },
+                          busyCtl.shown('everyturn-override') ? h(Spinner, { size: 10 }) : null,
+                          t('everyTurnResume'),
+                        ),
                   )
                 : null,
             )
@@ -12670,14 +15619,14 @@ window.__ModuleLoader__.load({
           t('cardDefaultLabel') + t('labelColon') + (state?.everyTurn?.['*']?.enabled === true ? t('stateOn') : t('stateOff')) + ' · ' + t('movedToSidebarShort') +
             (hasOwnEveryTurn ? '' : ' · ' + t('everyTurnFollowingDefault')),
           ' ',
-          h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, 'data-prefill-open-prefill': 'default-everyturn', onClick: () => openPrefillPanel('default-everyturn') }, t('openDefault')),
+          h('button', { type: 'button', style: V.btnGhostSm, 'data-prefill-open-prefill': 'default-everyturn', onClick: () => openPrefillPanel('default-everyturn') }, t('openDefault')),
           // PR B（#45 第 9 条）：恢复 0.18 的能力 —— 把本会话（含工作台）整份设成新会话默认；两步确认。
           hasOwnEveryTurn
             ? h(
                 ConfirmButton,
                 {
                   armed: confirming === 'everyturn-default',
-                  style: { ...V.btnGhost, fontSize: 11.5 },
+                  style: V.btnGhostSm,
                   'data-prefill-everyturn-set-default': '',
                   title: t('everyTurnSetDefaultTip'),
                   ...busyAttrs(busyCtl, 'everyturn-default'),
@@ -12702,7 +15651,7 @@ window.__ModuleLoader__.load({
           id: 'inject',
           title: t('injectTitle'),
           meta: t('sbxWas'),
-          tags: [h('span', { key: 'pure', style: { padding: '1px 8px', borderRadius: 6, fontSize: 11.5, background: tint('var(--dsw-alias-state-error-primary, #e5484d)', 14), color: 'var(--dsw-alias-state-error-primary, #e5484d)', fontWeight: 600 } }, t('sbxReplacesPure')), sourceTag(tagOf('tools'), t('toolsTag'), 'tools')],
+          tags: [h('span', { key: 'pure', style: { padding: '1px 8px', borderRadius: 6, fontSize: 11.5, background: tint('var(--dsw-alias-state-error-primary)', 14), color: 'var(--dsw-alias-state-error-primary)', fontWeight: 600 } }, t('sbxReplacesPure')), sourceTag(tagOf('tools'), t('toolsTag'), 'tools')],
           off: !isOn('inject'),
           offTitle: t('offTitle'),
           offBody: t('injectOffBody'),
@@ -12715,7 +15664,7 @@ window.__ModuleLoader__.load({
               'div',
               { 'data-prefill-sbx-disabled': '1', style: { ...V.callout('warn'), display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '68ch' } },
               h('b', null, t('sbxOffTitle')),
-              h('div', { style: { ...V.hint, fontSize: 12 } }, t('sbxOffBody')),
+              h('div', { style: V.hintSm }, t('sbxOffBody')),
             ),
       )
 
@@ -12784,7 +15733,7 @@ window.__ModuleLoader__.load({
         JSON.stringify((Array.isArray(entries) ? entries : []).filter((entry) => entry?.constant === true).map((entry) => [entry.id ?? '', entry.title ?? '', entry.content ?? '']))
       /** 重拼系统提示：把当前常驻条目写回「## 常驻设定」段，并写进 state.overrides（下一轮生效）。 */
       const applyConstantLore = async (entries) => {
-        const fresh = await postJson(STATE_ROUTE, undefined)
+        const fresh = await postJson(STATE_ROUTE, { slim: true, sessionId })
         const st = fresh?.state ?? {}
         const current = st.overrides?.[sessionId]
         const sections = { ...(current?.sections ?? {}) }
@@ -12793,18 +15742,18 @@ window.__ModuleLoader__.load({
         const next = spliceConstantLore(before, constantLoreBlock(entries))
         if (next === before) return
         const overrides = { ...(current ?? { messages: {}, contexts: {} }), sections: { ...sections, [PERSONA_SECTION]: next } }
-        const data = await postJson(STATE_ROUTE, { overrides: { ...(st.overrides ?? {}), [sessionId]: overrides } })
-        setEnvelope(data)
+        const data = await postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch: { target: sessionId, set: { overrides } } })
+        if (activeSessionRef.current === sessionId) setEnvelope(data)
         notifyStateChanged()
-        setSystemDraft(next)
-        flash(t('loreConstSpliced'))
+        if (activeSessionRef.current === sessionId) {
+          setSystemDraft(next)
+          flash(t('loreConstSpliced'))
+        }
       }
       /** 「不再提示」：写全局 state.ui（不进预设），下次改常驻条目不再弹确认。 */
       const rememberLoreConstWarn = async () => {
         try {
-          const fresh = await postJson(STATE_ROUTE, undefined)
-          const ui = fresh?.state?.ui ?? {}
-          setEnvelope(await postJson(STATE_ROUTE, { ui: { ...ui, loreConstWarn: true } }))
+          setEnvelope(await postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch: { global: { ui: { loreConstWarn: true } } } }))
           notifyStateChanged()
         } catch {
           // 写不进去就下次再提示，不影响这次重拼。
@@ -12823,22 +15772,35 @@ window.__ModuleLoader__.load({
         setLoreConstPending(null)
         setLoreDraft(value)
         clearTimeout(loreTimer.current)
-        loreTimer.current = setTimeout(() => {
-          void postJson(STATE_ROUTE, undefined)
-            .then((fresh) => postJson(STATE_ROUTE, { lore: { ...(fresh?.state?.lore ?? {}), [sessionId]: value } }))
+        const sid = sessionId
+        const commit = () =>
+          postJson(STATE_ROUTE, { sessionId: sid, slim: true, sessionPatch: { target: sid, set: { lore: value } } })
             .then(async (data) => {
-              setEnvelope(data)
+              if (activeSessionRef.current === sid) setEnvelope(data)
               notifyStateChanged()
               if (splice) await applyConstantLore(nextEntries)
-              flash(t('loreSaved'))
+              if (activeSessionRef.current === sid) flash(t('loreSaved'))
+              return data
             })
             .catch(failed())
+        let timer = 0
+        const entry = { sessionId: sid, commit, cancel: () => clearTimeout(timer) }
+        loreTimer.current = setTimeout(() => {
+          draftBus.clear('lore', entry)
+          void commit()
         }, 600)
+        timer = loreTimer.current
+        draftBus.schedule('lore', entry)
       }
       const patchLoreEntry = (key, patch) => editLore(loreEntries.map((entry, index) => (loreKeyOf(entry, index) === key ? { ...entry, ...patch } : entry)))
       const deleteLoreEntry = (key) => {
         editLore(loreEntries.filter((entry, index) => loreKeyOf(entry, index) !== key))
         if (loreEditing === key) setLoreEditing('')
+        setLoreKeyDrafts((current) => {
+          if (!Object.hasOwn(current, key)) return current
+          const { [key]: _drop, ...rest } = current
+          return rest
+        })
       }
       const addLoreEntry = () => {
         const id = 'u' + Date.now().toString(36)
@@ -12854,13 +15816,12 @@ window.__ModuleLoader__.load({
         const got = await compileCardLayer(parsed.ref, parsed.legacy)
         if (got === null) return
         clearTimeout(loreTimer.current)
-        const fresh = await postJson(STATE_ROUTE, undefined)
-        const map = { ...(fresh?.state?.lore ?? {}) }
-        if (got.layer.lore) map[sessionId] = got.layer.lore
-        else delete map[sessionId]
+        draftBus.discard(['lore'])
+        const sessionPatch = got.layer.lore ? { target: sessionId, set: { lore: got.layer.lore } } : { target: sessionId, unset: ['lore'] }
         setLoreDraft(null)
         setLoreEditing('')
-        setEnvelope(await postJson(STATE_ROUTE, { lore: map }))
+        setLoreKeyDrafts({})
+        setEnvelope(await postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch }))
         notifyStateChanged()
       }
       const toggleLoreOpen = (key) =>
@@ -12870,17 +15831,30 @@ window.__ModuleLoader__.load({
           else next.add(key)
           return next
         })
+      const loreQueryNorm = loreQuery.trim().toLowerCase()
+      const filteredLore = loreQueryNorm === ''
+        ? loreEntries.map((entry, index) => ({ entry, index }))
+        : loreEntries
+            .map((entry, index) => ({ entry, index }))
+            .filter(({ entry }) => {
+              const title = String(entry?.title ?? '').toLowerCase()
+              const keysText = (Array.isArray(entry?.keys) ? entry.keys : []).join(' ').toLowerCase()
+              const content = String(entry?.content ?? '').toLowerCase()
+              return title.includes(loreQueryNorm) || keysText.includes(loreQueryNorm) || content.includes(loreQueryNorm)
+            })
       const loreCard = (entry, index) => {
         const key = loreKeyOf(entry, index)
         const open = loreOpen.has(key)
         const editing = loreEditing === key
         const keys = Array.isArray(entry.keys) ? entry.keys : []
+        const keysInputValue = Object.hasOwn(loreKeyDrafts, key) ? loreKeyDrafts[key] : keys.join(' / ')
+        const delConfirmKey = `lore-del:${key}`
         // 常驻条目（constant）只做面板展示：内容已经拼进系统提示，这里换一套颜色 + 「常驻」名标，方便区分。
         const constant = entry.constant === true
         const accent = constant ? 'var(--pf-system)' : 'var(--pf-lore)'
         return h(
           'div',
-          { key, 'data-prefill-lore-entry': key, ...(constant ? { 'data-prefill-lore-constant': '' } : {}), style: { maxWidth: '90ch', borderRadius: 10, padding: '6px 10px', borderLeft: '3px solid ' + accent, background: tint(accent, 9), display: 'flex', flexDirection: 'column', gap: 4 } },
+          { key, 'data-prefill-lore-entry': key, ...(constant ? { 'data-prefill-lore-constant': '' } : {}), style: { width: '100%', maxWidth: '90ch', minWidth: 0, boxSizing: 'border-box', borderRadius: 10, padding: '6px 10px', borderLeft: '3px solid ' + accent, background: tint(accent, 9), display: 'flex', flexDirection: 'column', gap: 4 } },
           h(
             'div',
             { style: { display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } },
@@ -12890,22 +15864,67 @@ window.__ModuleLoader__.load({
             h('span', { style: V.sectionMeta, 'data-prefill-lore-keys': key }, constant ? t('loreConstantNote') : keys.length > 0 ? `${t('loreKeys')}：${keys.join(' / ')}` : t('loreNoKeys')),
             h(
               'span',
-              { style: { marginLeft: 'auto', display: 'flex', gap: 2 } },
+              { style: { marginLeft: 'auto', display: 'flex', gap: 2, alignItems: 'center' } },
               editing
                 ? null
                 : h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-toggle': key, onClick: () => toggleLoreOpen(key) }, open ? t('benchCollapse') : t('benchExpand')),
-              h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-edit': key, onClick: () => { setLoreEditing(editing ? '' : key); if (!editing) setLoreOpen((current) => new Set([...current, key])) } }, editing ? t('loreDone') : t('loreEdit')),
-              h('button', { type: 'button', style: V.btnGhost, title: t('loreDelete'), 'data-prefill-lore-delete': key, onClick: () => deleteLoreEntry(key) }, '×'),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  style: V.btnGhost,
+                  'data-prefill-lore-edit': key,
+                  onClick: () => {
+                    if (editing) {
+                      setLoreEditing('')
+                      setLoreKeyDrafts((current) => {
+                        if (!Object.hasOwn(current, key)) return current
+                        const { [key]: _drop, ...rest } = current
+                        return rest
+                      })
+                    } else {
+                      setLoreEditing(key)
+                      setLoreOpen((current) => new Set([...current, key]))
+                      setLoreKeyDrafts((current) => ({ ...current, [key]: keys.join(' / ') }))
+                    }
+                  },
+                },
+                editing ? t('loreDone') : t('loreEdit'),
+              ),
+              h(
+                ConfirmButton,
+                {
+                  armed: confirming === delConfirmKey,
+                  style: V.btnGhost,
+                  title: t('loreDelete'),
+                  'data-prefill-lore-delete': key,
+                  onClick: () => {
+                    if (!armConfirm(delConfirmKey)) return
+                    setConfirming('')
+                    deleteLoreEntry(key)
+                  },
+                },
+                confirming === delConfirmKey ? t('loreDeleteConfirm') : '×',
+              ),
             ),
           ),
           editing
             ? h(
                 'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                { style: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 } },
                 h('label', { style: V.sectionMeta }, t('loreTitleLabel')),
-                h('input', { style: { ...V.textarea, minHeight: 0, maxHeight: 'none' }, value: String(entry.title ?? ''), 'data-prefill-lore-title': key, onChange: (event) => patchLoreEntry(key, { title: event.target.value }) }),
+                h('input', { style: { ...V.input, width: '100%' }, value: String(entry.title ?? ''), 'data-prefill-lore-title': key, onChange: (event) => patchLoreEntry(key, { title: event.target.value }) }),
                 h('label', { style: V.sectionMeta }, t('loreKeysLabel')),
-                h('input', { style: { ...V.textarea, minHeight: 0, maxHeight: 'none' }, defaultValue: keys.join(' / '), 'data-prefill-lore-keys-input': key, onChange: (event) => patchLoreEntry(key, { keys: splitLoreKeys(event.target.value) }) }),
+                h('input', {
+                  style: { ...V.input, width: '100%' },
+                  value: keysInputValue,
+                  'data-prefill-lore-keys-input': key,
+                  onChange: (event) => {
+                    const nextRaw = event.target.value
+                    setLoreKeyDrafts((current) => ({ ...current, [key]: nextRaw }))
+                    patchLoreEntry(key, { keys: splitLoreKeys(nextRaw) })
+                  },
+                }),
                 h('label', { style: V.sectionMeta }, t('loreContentLabel')),
                 h('textarea', { style: { ...V.textarea, maxHeight: 'none', overflow: 'hidden' }, value: String(entry.content ?? ''), spellCheck: false, ref: autoGrow, 'data-prefill-lore-content': key, onInput: (event) => autoGrow(event.target), onChange: (event) => patchLoreEntry(key, { content: event.target.value }) }),
               )
@@ -12944,13 +15963,13 @@ window.__ModuleLoader__.load({
               h('div', null, t('loreConstWarn')),
               h(
                 'label',
-                { style: { ...V.row, gap: 6, fontSize: 12 } },
+                { style: V.rowSmText },
                 h('input', { type: 'checkbox', checked: loreConstNoAsk, 'data-prefill-lore-const-noask': '', onChange: (event) => setLoreConstNoAsk(event.target.checked) }),
                 t('loreConstNoAsk'),
               ),
               h(
                 'div',
-                { style: { ...V.row, gap: 8 } },
+                { style: V.row },
                 h('button', { type: 'button', style: V.btn, 'data-prefill-lore-const-ok': '', onClick: () => { const pending = loreConstPending; setLoreConstPending(null); if (loreConstNoAsk) void rememberLoreConstWarn(); editLore(pending.entries, true) } }, t('loreConstProceed')),
                 h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-const-cancel': '', onClick: () => { setLoreConstPending(null); setLoreDraft(null) } }, t('loreConstCancel')),
               ),
@@ -12961,13 +15980,46 @@ window.__ModuleLoader__.load({
               'div',
               { style: { ...V.row, gap: 8, alignItems: 'center', fontSize: 12 }, 'data-prefill-lore-custom': '' },
               h('span', null, t('loreCustomBar')),
-              h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-revert': '', onClick: () => void revertLore().catch(failed()) }, t('loreRevert')),
+              h(
+                ConfirmButton,
+                {
+                  armed: confirming === 'lore-revert',
+                  style: { ...V.btnGhost, ...(busyCtl.shown('lore-revert') ? BUSY_LOOK : {}) },
+                  'data-prefill-lore-revert': '',
+                  ...busyAttrs(busyCtl, 'lore-revert'),
+                  onClick: () => {
+                    if (!armConfirm('lore-revert')) return
+                    setConfirming('')
+                    void busyCtl.run('lore-revert', () => revertLore().then(() => reportOk(sessionId, 'lore-revert')).catch(failed('lore-revert', t('errOpSync'))))?.catch(() => {})
+                  },
+                },
+                busyCtl.shown('lore-revert') ? h(Spinner, { key: 'spin' }) : null,
+                busyCtl.shown('lore-revert') ? ' ' : null,
+                confirming === 'lore-revert' ? t('loreRevertConfirm') : t('loreRevert'),
+              ),
             )
           : null,
+        loreEntries.length > 0
+          ? h(SearchInput, {
+              value: loreQuery,
+              onChange: setLoreQuery,
+              onClear: () => setLoreQuery(''),
+              placeholder: t('loreSearchPlaceholder'),
+              ariaLabel: t('loreSearchPlaceholder'),
+              clearLabel: t('cancel'),
+              inputAttrs: { 'data-prefill-lore-search': '' },
+              clearAttrs: { 'data-prefill-lore-search-clear': '' },
+              touch,
+              style: { width: '100%', maxWidth: '90ch' },
+            })
+          : null,
         // 全部条目都能看到：一次先显示 40 条，其余点「再显示」（收起的条目只渲染两行，压力不大）。
-        ...loreEntries.slice(0, loreShown).map((entry, index) => loreCard(entry, index)),
-        loreEntries.length > loreShown
-          ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-more': '', onClick: () => setLoreShown((current) => current + 40) }, t('loreMore').replace('{n}', String(Math.min(40, loreEntries.length - loreShown))))
+        ...filteredLore.slice(0, loreShown).map(({ entry, index }) => loreCard(entry, index)),
+        loreQueryNorm !== '' && filteredLore.length === 0
+          ? h('div', { style: V.hint, 'data-prefill-lore-search-empty': '' }, t('loreSearchEmpty'))
+          : null,
+        filteredLore.length > loreShown
+          ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-lore-more': '', onClick: () => setLoreShown((current) => current + 40) }, t('loreMore').replace('{n}', String(Math.min(40, filteredLore.length - loreShown))))
           : null,
         loreEntry !== null
           ? h('button', { type: 'button', style: { ...V.btnGhost, alignSelf: 'flex-start' }, 'data-prefill-lore-add': '', onClick: addLoreEntry }, '＋ ' + t('loreAdd'))
@@ -12989,12 +16041,24 @@ window.__ModuleLoader__.load({
         // 预设带上故事记忆摘要（原来在「另存为 → 从当前会话取」里）：不能晚于开场对话截取的末轮。
         h(
           'div',
-          { style: { ...V.row, gap: 8 }, 'data-prefill-seed': '' },
-          h('button', { type: 'button', style: V.btn, title: t('seedTip'), 'data-prefill-seed-fetch': '', onClick: fetchSeed }, t('seedFetch')),
+          { style: V.row, 'data-prefill-seed': '' },
+          h(
+            'button',
+            {
+              type: 'button',
+              style: { ...V.btn, display: 'inline-flex', alignItems: 'center', gap: 5, ...(busyCtl.shown('seed-fetch') ? BUSY_LOOK : {}) },
+              title: t('seedTip'),
+              'data-prefill-seed-fetch': '',
+              ...busyAttrs(busyCtl, 'seed-fetch'),
+              onClick: fetchSeed,
+            },
+            busyCtl.shown('seed-fetch') ? h(Spinner, { key: 'spin' }) : null,
+            t('seedFetch'),
+          ),
           seedDraft !== null
             ? h(
                 'span',
-                { style: { ...V.sectionMeta, fontSize: 12 }, 'data-prefill-seed-status': 'ready' },
+                { style: V.metaSm, 'data-prefill-seed-status': 'ready' },
                 t('seedReady').replace('{n}', String(seedDraft.throughTurn)).replace('{tok}', num(estimateTokens(seedDraft.text))),
               )
             : seedNote !== ''
@@ -13011,35 +16075,63 @@ window.__ModuleLoader__.load({
       const wsOriginal = envelope?.injections?.sessions?.[sessionId]?.texts?.messages?.['agent-instructions']
       const wsSent = typeof wsOriginal === 'string' && wsOriginal !== ''
       const wsMid = turns > 0 || wsSent
-      const writeWs = async (value) => {
-        const fresh = await postJson(STATE_ROUTE, undefined)
-        const map = { ...(fresh?.state?.workspaceInstructions ?? {}) }
+      const writeWsFor = async (targetSid, value) => {
         // 原样不存（缺 = 原样）；改写时留着正文，切回原样 / 关闭也把正文留在草稿里不丢。
-        if (value.mode === 'off') map[sessionId] = { mode: 'off', ...(String(value.text ?? '') !== '' ? { text: String(value.text) } : {}) }
-        else if (value.mode === 'rewrite') map[sessionId] = { mode: 'rewrite', text: String(value.text ?? '') }
-        else if (String(value.text ?? '') !== '') map[sessionId] = { mode: 'pass', text: String(value.text) }
-        else delete map[sessionId]
-        const data = await postJson(STATE_ROUTE, { workspaceInstructions: map })
-        setEnvelope(data)
+        let entry
+        if (value.mode === 'off') entry = { mode: 'off', ...(String(value.text ?? '') !== '' ? { text: String(value.text) } : {}) }
+        else if (value.mode === 'rewrite') entry = { mode: 'rewrite', text: String(value.text ?? '') }
+        else if (String(value.text ?? '') !== '') entry = { mode: 'pass', text: String(value.text) }
+        const sessionPatch = entry !== undefined ? { target: targetSid, set: { workspaceInstructions: entry } } : { target: targetSid, unset: ['workspaceInstructions'] }
+        const data = await postJson(STATE_ROUTE, { sessionId: targetSid, slim: true, sessionPatch })
+        if (activeSessionRef.current === targetSid) setEnvelope(data)
         notifyStateChanged()
         return data
       }
+      const writeWs = async (value) => writeWsFor(sessionId, value)
       const editWs = (patch, immediate) => {
+        const sid = sessionId
         const value = { ...ws, ...patch }
         if (wsMid) setWsMidChanged(true)
         setWsDraft(value)
         clearTimeout(wsTimer.current)
-        const run = () =>
-          void writeWs(value)
-            .then(() => {
-              setWsDraft(null)
-              flash(t('wsSaved'))
+        const commit = () =>
+          (activeSessionRef.current === sid ? writeWs(value) : writeWsFor(sid, value))
+            .then((data) => {
+              if (activeSessionRef.current === sid) {
+                setWsDraft(null)
+                flash(t('wsSaved'))
+              }
+              return data
             })
             .catch(failed())
-        if (immediate) run()
-        else wsTimer.current = setTimeout(run, 700)
+        let timer = 0
+        const entry = { sessionId: sid, commit, cancel: () => clearTimeout(timer) }
+        const run = () => {
+          draftBus.clear('ws', entry)
+          void commit()
+        }
+        if (immediate) {
+          draftBus.clear('ws')
+          run()
+        } else {
+          wsTimer.current = setTimeout(run, 700)
+          timer = wsTimer.current
+          draftBus.schedule('ws', entry)
+        }
       }
       const wsActive = ws.mode !== 'pass'
+      const wsOriginalLines = wsSent ? wsOriginal.split('\n').length : 0
+      const wsOriginalLong = wsOriginalLines > 8
+      const wsOriginalPre = wsSent
+        ? h(
+            'pre',
+            {
+              'data-prefill-ws-original': '1',
+              style: { margin: 0, maxHeight: 220, overflow: 'auto', padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-secondary)', fontSize: 11.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)', opacity: ws.mode !== 'pass' && isOn('workspace') ? 0.7 : 1, textDecoration: 'none' },
+            },
+            wsOriginal,
+          )
+        : null
       const workspaceSection = h(
         Section,
         {
@@ -13055,29 +16147,16 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: V.row },
-          h(
-            'div',
-            { style: V.seg, role: 'radiogroup' },
-            ...[
-              ['pass', t('wsModePass')],
-              ['off', t('wsModeOff')],
-              ['rewrite', t('wsModeRewrite')],
-            ].map(([key, label]) =>
-              h(
-                'button',
-                {
-                  key,
-                  type: 'button',
-                  role: 'radio',
-                  'aria-checked': ws.mode === key ? 'true' : 'false',
-                  style: V.segBtn(ws.mode === key),
-                  'data-prefill-ws-mode': key,
-                  onClick: () => editWs({ mode: key }, true),
-                },
-                label,
-              ),
-            ),
-          ),
+          h(SegmentedControl, {
+            value: ws.mode,
+            onPick: (key) => editWs({ mode: key }, true),
+            optionAttr: 'data-prefill-ws-mode',
+            options: [
+              { value: 'pass', label: t('wsModePass') },
+              { value: 'off', label: t('wsModeOff') },
+              { value: 'rewrite', label: t('wsModeRewrite') },
+            ],
+          }),
         ),
         h('div', { style: V.hint }, ws.mode === 'off' ? t('wsOffHint') : ws.mode === 'rewrite' ? t('wsRewriteHint') : t('wsPassHint')),
         // 会话已经发过说明 ⇒ 中途切换的提示；还没发 ⇒ 建议在新会话首条消息前设好。
@@ -13087,12 +16166,41 @@ window.__ModuleLoader__.load({
             ? h('div', { style: V.callout(), 'data-prefill-ws-note': 'new-session' }, t('wsNewSessionNote'))
             : null,
         ws.mode === 'rewrite'
-          ? h('textarea', {
-              style: { ...V.textarea, minHeight: 110, maxWidth: '90ch', opacity: isOn('workspace') ? 1 : 0.7 },
+          ? h(EditorShell, {
               value: ws.text,
-              spellCheck: false,
               placeholder: t('wsRewritePlaceholder'),
-              'data-prefill-ws-text': '1',
+              minHeight: 110,
+              expandedHeight: 280,
+              maxWidth: '90ch',
+              shellStyle: { opacity: isOn('workspace') ? 1 : 0.7 },
+              textareaAttrs: { 'data-prefill-ws-text': '1' },
+              metricsText: t('systemCharsTok').replace('{chars}', num(ws.text.length)).replace('{tok}', num(estimateTokens(ws.text))),
+              metricsAttr: 'data-prefill-ws-metrics',
+              statusNode:
+                wsDraft !== null
+                  ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--dsw-alias-label-secondary)' } }, h(Spinner, { size: 10 }), t('systemSaving'))
+                  : null,
+              footerRight: wsSent
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: { ...V.btnGhostSm, height: touch ? 28 : 22, padding: '0 6px' },
+                      'data-prefill-ws-fill-original': '1',
+                      onClick: () => editWs({ text: wsOriginal }, false),
+                    },
+                    t('wsFillOriginal'),
+                  )
+                : null,
+              onClear: () => editWs({ text: '' }, false),
+              clearLabel: t('editorClear'),
+              clearTip: t('editorClearTip'),
+              clearAttr: 'workspace',
+              expandLabel: t('editorExpand'),
+              collapseLabel: t('editorCollapse'),
+              expandTip: t('editorExpandTip'),
+              collapseTip: t('editorCollapseTip'),
+              touch,
               onChange: (event) => editWs({ text: event.target.value }, false),
             })
           : null,
@@ -13102,21 +16210,43 @@ window.__ModuleLoader__.load({
           { style: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, maxWidth: '90ch' } },
           h(
             'div',
-            { style: { ...V.sectionMeta, fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' } },
+            { style: { ...V.sectionMeta, fontSize: 12, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' } },
             h('b', { style: { color: 'var(--dsw-alias-label-secondary)' } }, t('wsOriginal')),
             wsSent ? `≈${num(estimateTokens(wsOriginal))} tok` : null,
             wsSent && isOn('workspace') && ws.mode !== 'pass' ? `· ${ws.mode === 'off' || ws.text.trim() === '' ? t('wsOriginalDropped') : t('wsOriginalReplaced')}` : null,
+            wsOriginalLong
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: { ...V.btnGhost, marginLeft: 'auto', fontSize: T.font.xs },
+                    'data-prefill-ws-original-toggle': '',
+                    'aria-expanded': wsOriginalOpen ? 'true' : 'false',
+                    onClick: () => setWsOriginalOpen((openNow) => !openNow),
+                  },
+                  wsOriginalOpen ? t('wsOriginalHide') : t('wsOriginalShow').replace('{lines}', String(wsOriginalLines)),
+                )
+              : null,
           ),
           wsSent
-            ? h(
-                'pre',
-                {
-                  'data-prefill-ws-original': '1',
-                  style: { margin: 0, maxHeight: 220, overflow: 'auto', padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-secondary)', fontSize: 11.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)', opacity: ws.mode !== 'pass' && isOn('workspace') ? 0.7 : 1, textDecoration: 'none' },
-                },
-                wsOriginal,
-              )
-            : h('div', { style: { ...V.hint, fontSize: 12 }, 'data-prefill-ws-original': 'none' }, t('wsOriginalNone')),
+            ? wsOriginalLong
+              ? [
+                  !wsOriginalOpen
+                    ? h(
+                        'div',
+                        {
+                          key: 'ws-orig-preview',
+                          'data-prefill-ws-original-collapsed': '1',
+                          onClick: () => setWsOriginalOpen(true),
+                          style: { padding: '6px 10px', borderRadius: T.radius.sm, border: '1px dashed var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-tertiary)', fontSize: T.font.xs, lineHeight: 1.5, fontFamily: 'var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', cursor: 'pointer' },
+                        },
+                        wsOriginal,
+                      )
+                    : null,
+                  h(Reveal, { key: 'ws-orig-reveal', open: wsOriginalOpen, gap: 4, 'data-prefill-ws-original-reveal': '' }, wsOriginalPre),
+                ]
+              : wsOriginalPre
+            : h('div', { style: V.hintSm, 'data-prefill-ws-original': 'none' }, t('wsOriginalNone')),
         ),
       )
 
@@ -13143,7 +16273,7 @@ window.__ModuleLoader__.load({
             : [B(systemMode === 'replace' ? t('systemReplaceMeta') : systemMode === 'takeover' ? t('systemTakeoverMeta') : t('systemAppendMeta')), ' · ≈', B(num(systemTok)), ' tok'],
         everyTurn: everyTurnActive
           ? [B(everyTurnModeLabel), autoStatus !== null ? ` · ${autoStateText}` : ` · ≈${num(estimateTokens(everyTurn.text))} tok/${t('turnsUnit')}`]
-          : [t('everyTurnOffMeta')],
+          : [isOn('everyTurn') && !everyTurnFromCardOff ? t('everyTurnEmptyMeta') : t('everyTurnOffMeta')],
         items: [B(String(filledCount)), t('countSuffix'), ' · ≈', B(num(itemsTok)), ' tok · ', injectMode ? t('itemsAfterRun') : t('modeHistory')],
         workspace: [B(ws.mode === 'off' ? t('navWsOff') : ws.mode === 'rewrite' ? t('navWsRewrite') : t('navWsPass')), ws.mode === 'rewrite' && ws.text.trim() !== '' ? ` · ≈${num(estimateTokens(ws.text))} tok` : '', ws.mode === 'pass' ? ' · AGENTS.md' : ''],
         inject: sbxSummary !== null ? [B(sbxLevelLabel(t, sbxSummary.level)), sbxSummary.blocked > 0 ? ` · ${t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked))}` : '', sbxSummary.pending > 0 ? ` · ${t('sbxPendingN').replace('{n}', String(sbxSummary.pending))}` : '', overrideCount > 0 ? ` · ${t('navChanged').replace('{n}', String(overrideCount))}${t('navChangedUnit')}` : ''] : [t('advanced'), overrideCount > 0 ? [' · ', t('navChanged').replace('{n}', '')] : '', overrideCount > 0 ? B(String(overrideCount)) : '', overrideCount > 0 ? t('navChangedUnit') : ''],
@@ -13231,6 +16361,7 @@ window.__ModuleLoader__.load({
 
       const switchEl = (key, color) => {
         const on = isOn(key)
+        const emptyOn = on && hasContent[key] !== true
         const busyKey = `enable:${key}`
         return h('button', {
           type: 'button',
@@ -13239,6 +16370,7 @@ window.__ModuleLoader__.load({
           'aria-label': `${featureTitle[key]} ${on ? t('chipOn') : t('chipOff')}`,
           title: on ? t('switchOffTip') : t('switchOnTip'),
           'data-prefill-enable': key,
+          'data-prefill-switch-empty': emptyOn ? 'true' : undefined,
           ...busyAttrs(busyCtl, busyKey),
           onClick: (event) => {
             event.stopPropagation()
@@ -13270,12 +16402,12 @@ window.__ModuleLoader__.load({
             padding: 0,
             cursor: 'pointer',
             position: 'relative',
-            // v1：开关统一语义色（品牌 on / 灰 off）；分类色只留给左侧 3px 色条。
+            // v1：开关统一语义色（品牌 on / 灰 off）；v2 M2：空会话已开态（on && !filled）柔化降权，减少满屏强对比；零色值 transition。
             background: on ? 'var(--dsw-alias-brand-primary)' : 'var(--pf-off)',
-            transition: motion === 'off' ? 'none' : `background ${MOTION.fast}ms ease`,
+            ...(emptyOn ? { background: mix('var(--dsw-alias-brand-primary)', 42, 'var(--pf-off)') } : {}),
             ...(busyCtl.shown(busyKey) ? BUSY_LOOK : {}),
           },
-        }, h('span', { style: { position: 'absolute', top: 2, left: 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transform: on ? 'translateX(12px)' : 'none', transition: motion === 'full' ? KNOB_TRANSITION : 'none' } }))
+        }, h('span', { style: { position: 'absolute', top: 2, left: 2, width: 12, height: 12, borderRadius: '50%', background: 'var(--dsw-alias-bg-base)', boxShadow: '0 1px 2px rgba(0,0,0,.25)', transform: on ? 'translateX(12px)' : 'none', transition: motion === 'full' ? KNOB_TRANSITION : 'none' } }))
       }
       // P0-4 / P1-9：每个左栏项（窄屏标签）底下垫一层：扫光带 + 底色闪层，平时完全透明、不接收点击。
       const sweepLayer = (key, color, radius) =>
@@ -13287,8 +16419,33 @@ window.__ModuleLoader__.load({
         )
       // P2-1：「当前」高亮是选中项里的一层（不再是项自己的底色）：z-index -1 + 导航容器 isolation ⇒ 画在所有项的文字下面，
       // 换节时这一层从上一项滑过来（NAV_FX.glide），滑动途中也不会盖住别的项。
+      // v2 M2：780px 窄屏药丸标签（radius === 999）增加明确激活柔底 + 细框，宽屏左栏同步补柔和细框。
       const navHighlight = (radius) =>
-        h('span', { key: 'hl', 'aria-hidden': 'true', 'data-prefill-nav-hl': '', style: { position: 'absolute', inset: 0, zIndex: -1, borderRadius: radius, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 1px 3px rgba(0,0,0,.08)', pointerEvents: 'none' } })
+        h('span', { key: 'hl', 'aria-hidden': 'true', 'data-prefill-nav-hl': '', style: { position: 'absolute', inset: 0, zIndex: -1, borderRadius: radius, boxSizing: 'border-box', background: radius === 999 ? mix('var(--dsw-alias-brand-primary)', 9, 'var(--dsw-alias-bg-base)') : 'var(--dsw-alias-bg-base)', border: radius === 999 ? `1px solid ${mix('var(--dsw-alias-brand-primary)', 26, 'var(--dsw-alias-border-l2)')}` : `1px solid ${mix('var(--dsw-alias-brand-primary)', 12, 'var(--dsw-alias-border-l1)')}`, boxShadow: radius === 999 ? '0 1px 2px rgba(0,0,0,.06)' : '0 1px 3px rgba(0,0,0,.08)', pointerEvents: 'none' } })
+      // M2 键盘导航：roving tabIndex + 宽屏 ArrowUp/Down、窄屏 ArrowLeft/Right、Home/End。
+      const onNavKeyDown = (paneId, isNarrow) => (event) => {
+        if (event.target instanceof Element && event.target.closest('[role="switch"]') !== null) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          setPane(paneId)
+          return
+        }
+        const order = [...navList.map(([, id]) => id), 'usage']
+        const idx = order.indexOf(paneId)
+        if (idx < 0 || order.length < 2) return
+        const nextKey = isNarrow ? 'ArrowRight' : 'ArrowDown'
+        const prevKey = isNarrow ? 'ArrowLeft' : 'ArrowUp'
+        let nextIdx = -1
+        if (event.key === nextKey) nextIdx = (idx + 1) % order.length
+        else if (event.key === prevKey) nextIdx = (idx - 1 + order.length) % order.length
+        else if (event.key === 'Home') nextIdx = 0
+        else if (event.key === 'End') nextIdx = order.length - 1
+        if (nextIdx < 0) return
+        event.preventDefault()
+        const nextPane = order[nextIdx]
+        setPane(nextPane)
+        navRef.current?.querySelector?.(`[data-prefill-nav="${nextPane}"]`)?.focus?.({ preventScroll: false })
+      }
       const navItem = (key, paneId, color, parent) => {
         const selected = shownPane === paneId
         const off = key !== 'usage' && key !== 'lab' && (!isOn(key) || offBy[key] === true)
@@ -13299,19 +16456,14 @@ window.__ModuleLoader__.load({
           {
             key: paneId,
             role: 'tab',
-            tabIndex: 0,
+            tabIndex: selected ? 0 : -1,
             'aria-selected': selected ? 'true' : 'false',
             'data-prefill-nav': paneId,
             'data-prefill-nav-box': paneId,
             ...(parent ? { 'data-prefill-nav-parent': parent } : {}),
             'data-off': off ? 'true' : 'false',
             onClick: () => setPane(paneId),
-            onKeyDown: (event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                setPane(paneId)
-              }
-            },
+            onKeyDown: onNavKeyDown(paneId, false),
             style: {
               position: 'relative',
               display: 'block',
@@ -13337,7 +16489,7 @@ window.__ModuleLoader__.load({
               const state = contentState(key)
               return state === ''
                 ? null
-                : h('span', { 'data-prefill-nav-dot': state, 'aria-hidden': 'true', style: { fontWeight: 700, color: state === 'conflict' ? 'var(--dsw-alias-state-warn-primary, #f59e0b)' : state === 'off' ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-secondary)' } }, NAV_GLYPH[state])
+                : h('span', { 'data-prefill-nav-dot': state, 'aria-hidden': 'true', style: { fontWeight: 700, color: state === 'conflict' ? 'var(--dsw-alias-state-warn-primary)' : state === 'off' ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-secondary)' } }, NAV_GLYPH[state])
             })(),
             // P1-9：后台变化（自动模式计数、拦截数、锁定……）时状态行上下滚动切换；用户自己点 / 打字引起的不滚。
             (() => {
@@ -13355,7 +16507,7 @@ window.__ModuleLoader__.load({
           'span',
           { key: paneId, 'data-prefill-nav-box': paneId, style: { position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: touch ? '6px 8px 6px 12px' : '3px 6px 3px 10px', minHeight: touch ? 36 : undefined, boxSizing: 'border-box', borderRadius: 999, fontSize: touch ? 13 : 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', color: off ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)' } },
           selected ? navHighlight(999) : null,
-          h('span', { role: 'tab', 'aria-selected': selected ? 'true' : 'false', 'data-prefill-nav': paneId, ...(parent ? { 'data-prefill-nav-parent': parent } : {}), 'data-off': off ? 'true' : 'false', onClick: () => setPane(paneId), style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
+          h('span', { role: 'tab', tabIndex: selected ? 0 : -1, 'aria-selected': selected ? 'true' : 'false', 'data-prefill-nav': paneId, ...(parent ? { 'data-prefill-nav-parent': parent } : {}), 'data-off': off ? 'true' : 'false', onClick: () => setPane(paneId), onKeyDown: onNavKeyDown(paneId, true), style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
             key === 'usage' || key === 'lab' ? null : sweepLayer(key, color, 999),
             parent ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 } }, '└') : null,
             h('i', { style: { width: 7, height: 7, borderRadius: '50%', display: 'inline-block', background: key === 'usage' ? 'var(--dsw-alias-label-tertiary)' : off ? 'var(--pf-off)' : color } }),
@@ -13436,27 +16588,62 @@ window.__ModuleLoader__.load({
               defer: turnEnded,
               label: `${t('sbxBadge')}${t('labelColon')}${sbxLevelLabel(t, sbxSummary.level)}`,
               countText: sbxSummary.blocked > 0 ? ` · ${t('sbxBlockedN').replace('{n}', String(sbxSummary.blocked))}` : '',
-              countColor: 'var(--dsw-alias-state-error-primary, #e5484d)',
+              countColor: 'var(--dsw-alias-state-error-primary)',
               style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600 },
             }),
         h('span', { 'aria-hidden': 'true', style: { opacity: 0.4 } }, '·'),
         // ③ 缓存命中（原「缓存 —」胶囊的唯一去处）
         h('span', null, `${t('badgeCache')}${t('labelColon')}${cacheHit === null ? '—' : `${cacheHit}%`}`),
-        h('span', { 'aria-hidden': 'true', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.55, transform: menu === 'status' ? 'none' : 'rotate(180deg)' } }, h(Icon, { name: 'chevron-down', size: 12 })),
+        h('span', { 'aria-hidden': 'true', 'data-prefill-status-caret': menu === 'status' ? 'open' : 'closed', style: { display: 'inline-flex', flex: '0 0 auto', opacity: 0.55, transform: menu === 'status' ? 'rotate(180deg)' : 'none', transition: motion === 'full' ? `transform 140ms ${MOTION.ease}` : 'none' } }, h(Icon, { name: 'chevron-down', size: 12 })),
       )
+      const presetDirty =
+        activePreset !== '' &&
+        (['system', 'everyTurn', 'items', 'tools', 'workspace'].some((slot) => tagOf(slot) === 'session') ||
+          (loreCustom && loreEntry?.source === 'session') ||
+          dirty.current ||
+          systemDirty.current ||
+          wsDraft !== null)
+      const hasSessionPresetData =
+        activePreset !== '' ||
+        items.length > 0 ||
+        systemDraft.trim() !== '' ||
+        (Array.isArray(state?.armed) && state.armed.includes(sessionId)) ||
+        PRESET_KEYS.some((key) => {
+          const val = state?.[key]?.[sessionId]
+          if (val === undefined || val === null || val === '') return false
+          if (key === 'gate') return val !== 'pass'
+          if (key === 'overrides') {
+            return (
+              Object.keys(val.messages ?? {}).length > 0 ||
+              Object.keys(val.sections ?? {}).length > 0 ||
+              Object.keys(val.contexts ?? {}).length > 0
+            )
+          }
+          return true
+        })
+      const headerClearDisabled = !hasSessionPresetData || busyCtl.pending('clear')
       const headerLeft = h(
         'div',
-        { 'data-prefill-header-zone': 'left', style: { display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0, flex: '0 1 auto', order: 0 } },
+        { 'data-prefill-header-zone': 'left', style: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, flex: '0 1 auto', order: 0 } },
         h(
           'button',
           {
             type: 'button',
             'data-prefill-preset-select': '',
             'aria-expanded': menu === 'presets' ? 'true' : 'false',
+            title: presetDirty ? t('presetDirtyTip') : undefined,
             onClick: () => setMenu(menu === 'presets' ? '' : 'presets'),
-            style: { display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: touch ? 168 : narrow ? 200 : 280, minHeight: touch ? 34 : undefined, height: touch ? 34 : 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer' },
+            style: { display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: phone ? 118 : touch ? 152 : narrow ? 176 : 240, minHeight: touch ? 34 : undefined, height: touch ? 34 : 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer' },
           },
           h('b', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, activeName || t('presetsNone')),
+          presetDirty
+            ? h('span', {
+                'data-prefill-preset-dirty': '1',
+                title: t('presetDirtyTip'),
+                'aria-label': t('presetDirtyTip'),
+                style: { width: 6, height: 6, borderRadius: '50%', flex: '0 0 auto', background: 'var(--dsw-alias-state-warn-primary)' },
+              })
+            : null,
           h('small', { style: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, whiteSpace: 'nowrap' } }, `${activeKind || t('presetsTitle')} ▾`),
         ),
         h(
@@ -13474,6 +16661,32 @@ window.__ModuleLoader__.load({
           busyCtl.shown('save') ? ' ' : null,
           t('saveShort'),
           h(SaveCheck, { key: 'saved', tick: savedTick }),
+        ),
+        // 保存旁常驻「清空预设」快捷按钮（预设下拉底部的「取消预设」同步保留）；无配置时淡化禁用，有配置一键清空并出撤销条。
+        h(
+          'button',
+          {
+            type: 'button',
+            style: {
+              ...V.btn,
+              ...(phone ? { padding: '0 8px' } : {}),
+              ...(busyCtl.shown('clear') ? BUSY_LOOK : {}),
+              ...(!hasSessionPresetData ? { opacity: 0.45, cursor: 'not-allowed' } : {}),
+            },
+            'data-prefill-preset-clear-header': '',
+            ...busyAttrs(busyCtl, 'clear'),
+            disabled: headerClearDisabled,
+            'aria-disabled': headerClearDisabled ? 'true' : undefined,
+            title: hasSessionPresetData ? t('clearPresetHeaderTip') : t('clearPresetHeaderEmptyTip'),
+            onClick: () => {
+              if (!hasSessionPresetData) return
+              if (menu !== '') setMenu('')
+              act('clear', t('errOpClear'), clearPreset)
+            },
+          },
+          busyCtl.shown('clear') ? h(Spinner, { key: 'spin' }) : null,
+          busyCtl.shown('clear') ? ' ' : null,
+          t('clearPresetHeader'),
         ),
       )
       const headerCenter = h(
@@ -13515,16 +16728,42 @@ window.__ModuleLoader__.load({
         headerCenter,
         headerRight,
       )
-      // 状态胶囊的 popover：首轮 / 每轮 token、首轮状态、拦截档位、工具数、模型（v1 显示 —，v2 接 summary.model）。
+      // 状态胶囊的 popover：首轮 / 每轮 token、首轮状态、拦截档位、工具数、模型（点击顶部缓存/用量行直跳「用量与缓存」节）。
       const statusPopover = h(
         'div',
-        { 'data-prefill-menu': 'status', role: 'dialog', 'aria-label': t('statusTitle'), style: { ...V.popover, top: 44, left: '50%', transform: 'translateX(-50%)', width: 'min(380px, calc(100% - 24px))', gap: 8 } },
+        {
+          ref: menuRef,
+          'data-prefill-menu': 'status',
+          'data-closing': menuClosing ? 'true' : undefined,
+          'aria-hidden': menuClosing ? 'true' : undefined,
+          role: 'dialog',
+          'aria-label': t('statusTitle'),
+          style: { ...V.popover, top: 44, left: 0, right: 0, margin: '0 auto', width: 'min(380px, calc(100% - 24px))', gap: 8, ...(menuClosing ? { pointerEvents: 'none' } : {}) },
+        },
         h(
           'div',
-          { style: { display: 'flex', gap: 14, flexWrap: 'wrap' } },
+          {
+            role: 'button',
+            tabIndex: 0,
+            'data-prefill-status-open': 'usage',
+            title: t('statusOpenUsageTip'),
+            onClick: () => {
+              setMenu('')
+              setPane('usage')
+            },
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                setMenu('')
+                setPane('usage')
+              }
+            },
+            style: { display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', padding: '6px 8px', borderRadius: T.radius.sm, border: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-1)', cursor: 'pointer' },
+          },
           statRow(t('badgeFirst'), ['+', h('b', { style: { fontWeight: 600 } }, badgeValue(num(firstTok))), ' tok']),
           statRow(t('badgeTurn'), ['+', h('b', { style: { fontWeight: 600 } }, badgeValue(num(perTurnTok))), ' tok']),
           statRow(t('badgeCache'), cacheHit === null ? '—' : `${cacheHit}%`),
+          h('span', { 'aria-hidden': 'true', style: { marginLeft: 'auto', fontSize: T.font.xs, color: 'var(--dsw-alias-label-tertiary)' } }, '↗'),
         ),
         statRow(t('statusLock'), lock.locked ? t('lockBadge') : t('lockOpenBadge'), lock.locked ? t('lockBadgeTip') : t('lockOpenTip')),
         statRow(
@@ -13533,34 +16772,52 @@ window.__ModuleLoader__.load({
           sbxSummary === null || sbxSummary.pending === 0 ? '' : t('sbxPendingN').replace('{n}', String(sbxSummary.pending)),
         ),
         statRow(t('statusTools'), toolsCount === null ? '—' : `${toolsCount} ${t('toolsUnit')}`, toolsCount === null ? '' : t('statusToolsHint')),
-        statRow(t('statusModel'), '—', t('statusModelUnknown')),
+        typeof dockLive?.model === 'string' && dockLive.model !== ''
+          ? statRow(t('statusModel'), dockLive.model)
+          : statRow(t('statusModel'), '—', t('statusModelUnknown')),
         h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-status-open': 'inject', onClick: () => { setMenu(''); setPane('inject') } }, t('statusOpenInject'))),
       )
 
       // 错误详情（P0-1）：点 pill 展开；写清哪个操作、原因、时间，界面已回到操作前。
+      const errPanelView = error?.open ? error : shownErrorPanel
       const errorPanel =
-        error === null
+        errPanelView === null
           ? null
           : h(
               'div',
-              { 'data-prefill-error-detail': error.key, role: 'dialog', 'aria-label': t('errPill').replace('{op}', error.op), style: { ...V.popover, width: 'min(400px, calc(100% - 24px))', gap: 6, borderColor: tint(ERROR_TONE, 45) } },
-              h('div', { style: { fontWeight: 700, fontSize: 13, color: ERROR_TONE } }, `⚠ ${t('errPill').replace('{op}', error.op)}${error.count > 1 ? ` ×${error.count}` : ''}`),
+              {
+                ref: errorPanelRef,
+                'data-prefill-error-detail': errPanelView.key,
+                'data-closing': errorPanelClosing ? 'true' : undefined,
+                'aria-hidden': errorPanelClosing ? 'true' : undefined,
+                role: 'dialog',
+                'aria-label': t('errPill').replace('{op}', errPanelView.op),
+                style: { ...V.popover, width: 'min(400px, calc(100% - 24px))', gap: 6, borderColor: tint(ERROR_TONE, 45), ...(errorPanelClosing ? { pointerEvents: 'none' } : {}) },
+              },
+              h('div', { style: { fontWeight: 700, fontSize: 13, color: ERROR_TONE } }, `⚠ ${t('errPill').replace('{op}', errPanelView.op)}${errPanelView.count > 1 ? ` ×${errPanelView.count}` : ''}`),
               h('div', { style: { ...V.hint, fontSize: 12.5 } }, t('errDetailWhat')),
-              h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, `${t('errDetailReason')}：`, h('code', { style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5 } }, error.detail || t('errDetailUnknown'))),
-              h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' } }, `${t('errDetailAt')}：${error.at ? new Date(error.at).toLocaleTimeString() : '—'}`),
-              h('div', { style: { ...V.hint, fontSize: 12 } }, t('errDetailHint')),
+              h('div', { style: V.secondarySm }, `${t('errDetailReason')}：`, h('code', { style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5 } }, errPanelView.detail || t('errDetailUnknown'))),
+              h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' } }, `${t('errDetailAt')}：${errPanelView.at ? new Date(errPanelView.at).toLocaleTimeString() : '—'}`),
+              h('div', { style: V.hintSm }, t('errDetailHint')),
               h('div', { style: V.row }, h('button', { type: 'button', style: V.btnGhost, 'data-prefill-error-detail-dismiss': '', 'aria-label': t('errDismiss'), onClick: () => setError(null) }, t('errDismiss'))),
             )
 
       // PR2：「动效偏好」不再只是一句指路 —— ⋯ 菜单把另存为 / 导出 / 引导 / 动效收进来，头部只留一个入口。
       const moreMenu = h(
         'div',
-        { 'data-prefill-menu': 'more', role: 'menu', style: { ...V.popover, left: 'auto', right: 12, width: 'min(320px, calc(100% - 24px))', gap: 2, padding: 8 } },
+        {
+          ref: menuRef,
+          'data-prefill-menu': 'more',
+          'data-closing': menuClosing ? 'true' : undefined,
+          'aria-hidden': menuClosing ? 'true' : undefined,
+          role: 'menu',
+          style: { ...V.popover, left: 'auto', right: 12, width: 'min(320px, calc(100% - 24px))', gap: 2, padding: 8, ...(menuClosing ? { pointerEvents: 'none' } : {}) },
+        },
         h('div', { style: { padding: '2px 6px 4px', fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-tertiary)' } }, t('moreTitle')),
-        h('button', { type: 'button', style: { ...V.btnGhost, width: '100%', textAlign: 'left' }, 'data-prefill-more-save-as': '', 'data-prefill-save-as': '', onClick: () => setMenu('saveas') }, t('saveAs')),
-        h('button', { type: 'button', style: { ...V.btnGhost, width: '100%', textAlign: 'left' }, 'data-prefill-more-export': '', onClick: () => { setMenu(''); void exportFile().catch(failed()) } }, t('exportFile')),
-        h('button', { type: 'button', style: { ...V.btnGhost, width: '100%', textAlign: 'left' }, 'data-prefill-more-guide': '', 'aria-expanded': open.guide ? 'true' : 'false', onClick: () => { setMenu(''); toggle('guide') } }, t('guideShow')),
-        h('button', { type: 'button', style: { ...V.btnGhost, width: '100%', textAlign: 'left' }, 'data-prefill-more-prefs': '', onClick: () => { setMenu(''); openPrefillPanel('prefs') } }, t('motionTitle')),
+        h('button', { type: 'button', style: V.btnMenu, 'data-prefill-more-save-as': '', 'data-prefill-save-as': '', onClick: () => setMenu('saveas') }, t('saveAs')),
+        h('button', { type: 'button', style: V.btnMenu, 'data-prefill-more-export': '', onClick: () => { setMenu(''); void exportFile().catch(failed('export', t('errOpExport'))) } }, t('exportFile')),
+        h('button', { type: 'button', style: V.btnMenu, 'data-prefill-more-guide': '', 'aria-expanded': open.guide ? 'true' : 'false', onClick: () => { setMenu(''); toggle('guide') } }, t('guideShow')),
+        h('button', { type: 'button', style: V.btnMenu, 'data-prefill-more-prefs': '', onClick: () => { setMenu(''); openPrefillPanel('prefs') } }, t('motionTitle')),
       )
 
       // 世界书 / 故事记忆是角色卡的子项（0.14）：只在套用的卡带了它们时出现在左栏，缩进挂在「角色卡」下面。
@@ -13593,12 +16850,12 @@ window.__ModuleLoader__.load({
 
       const main = h(
         'div',
-        { 'data-prefill-main': '', style: { flex: '1 1 auto', minWidth: 0, minHeight: 0, overflowY: 'auto', padding: touch ? '10px 12px 16px' : narrow ? '12px 14px' : '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 } },
+        { ref: mainRef, 'data-prefill-main': '', style: { flex: '1 1 auto', minWidth: 0, minHeight: 0, overflowY: 'auto', padding: touch ? '10px 12px 16px' : narrow ? '12px 14px' : '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 } },
         conflict
           ? h(
               'div',
               { style: S.conflictBanner },
-              h('span', { style: { fontWeight: 700 } }, `${t('conflictTitle')}：${conflict.kind === 'complete-section' ? t('conflictCompleteSection') : String(conflict.kind ?? '')}`),
+              h('span', { style: V.bold }, `${t('conflictTitle')}：${conflict.kind === 'complete-section' ? t('conflictCompleteSection') : String(conflict.kind ?? '')}`),
               conflict.advice ? h('span', { style: S.dockHint }, String(conflict.advice)) : null,
             )
           : null,
@@ -13666,6 +16923,7 @@ window.__ModuleLoader__.load({
               ...COLOR_VARS,
               // 撤销条（P1-4）叠在卡片底部时，没有触发点的 toast 退到它上面（不然两条叠在一起，实测踩到）。
               '--pf-toast-bottom': presetUndo !== null ? '64px' : '10px',
+              ...(undoSnap !== null ? { '--pf-toast-bottom': '64px' } : {}),
               // 钉住缩成标记时：淡出、不接收点击（下面的对话照常可点）。
               // 档位：off 直接切；简洁只淡出不位移。
               opacity: shrunk ? 0 : 1,
@@ -13677,28 +16935,29 @@ window.__ModuleLoader__.load({
               transition:
                 motion === 'off'
                   ? 'none'
-                  : `opacity 150ms ease${motion === 'full' ? ', transform 150ms ease' : ''}${shrunk ? ', visibility 0s linear 150ms' : ''}`,
+                  : `opacity 130ms ${shrunk ? MOTION.easeOut : MOTION.ease}${motion === 'full' ? `, transform 130ms ${shrunk ? MOTION.easeOut : MOTION.ease}` : ''}${shrunk ? ', visibility 0s linear 130ms' : ''}`,
               position: 'fixed',
               zIndex: 60,
               left: bounds?.left ?? 12,
               bottom: bounds?.bottom ?? 160,
               width: bounds?.width ?? 'min(920px, calc(100vw - 24px))',
               // P1-2：固定高度（不随小节内容变），内容区自己滚动 ⇒ 底部锚定时顶边不跳。
-              height: bounds?.height ?? '60vh',
-              maxHeight: bounds?.maxHeight ?? '60vh',
+              height: bounds?.height ?? 'min(56vh, 540px)',
+              maxHeight: bounds?.maxHeight ?? 'min(56vh, 540px)',
               boxSizing: 'border-box',
               display: 'flex',
               flexDirection: 'column',
               background: 'var(--dsw-alias-bg-base)',
               color: 'var(--dsw-alias-label-primary)',
               border: '1px solid var(--dsw-alias-border-l1)',
-              borderRadius: touch ? 16 : 14,
-              boxShadow: phone ? '0 18px 48px rgba(0,0,0,.2)' : '0 12px 40px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.06)',
+              borderRadius: T.radius.lg,
+              boxShadow: phone ? '0 18px 48px rgba(0,0,0,.2)' : T.surface.float.boxShadow,
               overflow: 'hidden',
-              fontSize: 13,
+              fontSize: T.font.md,
               lineHeight: 1.55,
             },
           },
+          h('style', { key: 'prefill-card-scope', 'data-prefill-scoped-style': 'card' }, SCOPED_STYLE_CARD),
           header,
           h('div', { style: { display: 'flex', flexDirection: narrow ? 'column' : 'row', minHeight: 0, flex: '1 1 auto' } }, nav, main),
           // P1-4：撤销条从底部滑入、叠在内容上（不占文档流 ⇒ 内容不被推开），带倒计时线和剩余秒数。
@@ -13714,8 +16973,24 @@ window.__ModuleLoader__.load({
               t('undo'),
             ),
           }),
-          menu === 'presets' ? presetsMenu : menu === 'saveas' ? saveAsPanel : menu === 'more' ? moreMenu : menu === 'status' ? statusPopover : null,
-          error?.open ? errorPanel : null,
+          // M3：开场对话的替换 / 清空 / 删除单条统一复用 UndoBar（滑入 + 倒计时线，不挤文档流）。
+          h(UndoBar, {
+            token: undoSnap,
+            barAttr: 'data-prefill-fetch-undo-bar',
+            bottomOffset: presetUndo !== null ? 52 : 0,
+            text:
+              undoSnap?.mode === 'replace'
+                ? t('fetchReplaced')
+                : undoSnap?.mode === 'clear'
+                  ? t('fetchCleared')
+                  : undoSnap?.mode === 'delete'
+                    ? t('fetchDeletedItem')
+                    : t('fetchInserted'),
+            secondsLabel: t('undoSecondsLeft'),
+            button: h('button', { type: 'button', style: V.btn, 'data-prefill-fetch-undo': '', onClick: undoFetch }, t('undo')),
+          }),
+          shownMenu === 'presets' ? presetsMenu : shownMenu === 'saveas' ? saveAsPanel : shownMenu === 'more' ? moreMenu : shownMenu === 'status' ? statusPopover : null,
+          errPanelView !== null ? errorPanel : null,
           // P1-8：toast 贴着触发点、不接收点击；读屏念的是下面常驻的 polite 区域。
           h(Toast, { text: toast, place: toastAt }),
           h('div', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true', 'data-prefill-toast-live': '', style: SR_ONLY }, toast),
@@ -13730,7 +17005,18 @@ window.__ModuleLoader__.load({
                 'data-prefill-busy': streaming ? STREAM_BUSY : undefined,
                 title: t('markerTip'),
                 'aria-label': t('markerTip'),
-                onMouseEnter: restoreCard,
+                // M2：悬停加 160ms 防误触延迟（离开清除），点击与键盘聚焦立即展开。
+                onMouseEnter: () => {
+                  clearTimeout(markerHoverTimer.current)
+                  markerHoverTimer.current = setTimeout(() => {
+                    markerHoverTimer.current = 0
+                    restoreCard()
+                  }, 160)
+                },
+                onMouseLeave: () => {
+                  clearTimeout(markerHoverTimer.current)
+                  markerHoverTimer.current = 0
+                },
                 onFocus: restoreCard,
                 onClick: restoreCard,
                 style: {
@@ -13743,22 +17029,28 @@ window.__ModuleLoader__.load({
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 6,
-                  maxWidth: 260,
-                  height: 28,
-                  padding: '0 10px',
-                  borderRadius: 999,
+                  maxWidth: 268,
+                  height: 30,
+                  padding: '0 11px',
+                  borderRadius: T.radius.pill,
                   border: '1px solid var(--dsw-alias-border-l2)',
                   background: 'var(--dsw-alias-bg-base)',
                   color: 'var(--dsw-alias-label-primary)',
-                  boxShadow: '0 4px 14px rgba(0,0,0,.12)',
+                  boxShadow: '0 6px 20px rgba(0,0,0,.12), 0 1px 4px rgba(0,0,0,.06)',
                   fontFamily: 'inherit',
-                  fontSize: 12,
+                  fontSize: T.font.sm,
                   cursor: 'pointer',
-                  animation: motion === 'off' ? 'none' : motion === 'lite' ? 'dsh-prefill-fade 150ms ease' : 'dsh-prefill-pop 150ms ease',
+                  // 卡片 130ms easeOut 收起后滞后 40ms 错峰弹入 marker（完整档用 springSnappy，lite 纯淡入，off 无动画）。
+                  animation:
+                    motion === 'off'
+                      ? 'none'
+                      : motion === 'lite'
+                        ? 'dsh-prefill-fade 130ms ease 40ms both'
+                        : `dsh-prefill-pop ${MOTION.base}ms ${MOTION.springSnappy} 40ms both`,
                 },
               },
-              h('span', { style: { display: 'inline-flex', color: 'var(--pf-system)' } }, h(Icon, { name: 'pin', size: 12, fill: 'currentColor' })),
-              h('b', { style: { fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, activeName || t('presetsNone')),
+              h('span', { style: { display: 'inline-flex', color: 'var(--dsw-alias-label-secondary)' } }, h(Icon, { name: 'pin', size: 12, fill: 'currentColor' })),
+              h('b', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, activeName || t('presetsNone')),
               h(
                 'span',
                 { style: { display: 'inline-flex', alignItems: 'center', gap: 4, flex: '0 0 auto' } },
@@ -13772,22 +17064,23 @@ window.__ModuleLoader__.load({
                     boxSizing: 'border-box',
                     background:
                       summaryTone === 'full'
-                        ? 'var(--dsw-alias-state-success-primary, #22a06b)'
+                        ? 'var(--dsw-alias-state-success-primary)'
                         : summaryTone === 'partial'
                           ? 'var(--dsw-alias-brand-primary)'
                           : summaryTone === 'warn'
-                            ? 'var(--dsw-alias-state-warn-primary, #f59e0b)'
+                            ? 'var(--dsw-alias-state-warn-primary)'
                             : 'var(--pf-off)',
                   },
                 }),
-                h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, `${configuredN}/${FEATURE_NAV.length}`),
+                h('span', { style: { fontSize: T.font.xs, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' } }, `${configuredN}/${FEATURE_NAV.length}`),
+                h('span', { 'data-prefill-marker-chev': '', 'aria-hidden': 'true', style: { display: 'inline-flex', flex: '0 0 auto', color: 'var(--dsw-alias-label-tertiary)', opacity: 0.65 } }, h(Icon, { name: 'chevron-up', size: 12 })),
               ),
             )
           : null,
         // v1.1：keyframes 从 button 里移出来（按钮的 textContent / aria 不再包含 @keyframes）：
         // 挂在锚点容器下、只在缩成标记时存在一次。
         shrunk && motion !== 'off'
-          ? h('style', { key: 'marker-keyframes' }, '@keyframes dsh-prefill-pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}@keyframes dsh-prefill-fade{from{opacity:0}to{opacity:1}}')
+          ? h('style', { key: 'marker-keyframes' }, '@keyframes dsh-prefill-pop{from{opacity:0;transform:translateY(4px) scale(.92)}to{opacity:1;transform:none}}@keyframes dsh-prefill-fade{from{opacity:0}to{opacity:1}}')
           : null,
       )
       // 锚点（零高）留在 slot 里：插件的 slot 座位不变，浮层本体按官方要求挂到 document.body。
@@ -13805,10 +17098,19 @@ window.__ModuleLoader__.load({
     function UsagePanel(props) {
       const t = props.t
       const usage = props.usage
+      const [desc, setDesc] = React.useState(false)
       const rows = Array.isArray(usage?.turns) ? usage.turns : []
+      const orderedRows = desc ? [...rows].reverse() : rows
       const total = usage?.total ?? { input: 0, cacheRead: 0, output: 0 }
       const prompt = total.input + total.cacheRead
       const hit = prompt > 0 ? Math.round((total.cacheRead / prompt) * 100) : null
+      const hitTier = hit === null ? 'none' : hit >= 60 ? 'high' : hit >= 25 ? 'mid' : 'low'
+      const hitColor =
+        hitTier === 'high'
+          ? 'var(--dsw-alias-state-success-primary)'
+          : hitTier === 'mid'
+            ? 'var(--dsw-alias-state-warn-primary)'
+            : 'var(--dsw-alias-state-error-primary)'
       const notes = []
       if (props.gateMode === 'pure') notes.push(props.systemMode === 'takeover' && props.systemTok > 0 ? t('noteTakeover') : t('notePure'))
       else if (props.systemMode === 'append') notes.push(t('noteAppend').replace('{n}', String(props.systemTok)))
@@ -13816,56 +17118,113 @@ window.__ModuleLoader__.load({
       if (props.itemsTok > 0 && (!props.injectMode || props.written)) notes.push(t('noteHistory').replace('{n}', String(props.itemsTok)))
       notes.push(t('noteSwitch'))
       notes.push(t('noteMinCache'))
+      const kpis = [
+        { key: 'input', value: fmt(total.input), label: t('statInput'), muted: total.input === 0 },
+        { key: 'cache', value: fmt(total.cacheRead), label: t('statCache'), muted: total.cacheRead === 0 },
+        { key: 'output', value: fmt(total.output), label: t('statOutput'), muted: total.output === 0 },
+        { key: 'hit', value: hit === null ? '—' : `${hit}%`, label: t('statHit'), muted: hit === null, tone: hit === null ? undefined : hitColor },
+      ]
+      const stickyTh = { ...V.th, position: 'sticky', top: 0, zIndex: 1, background: 'var(--dsw-alias-bg-layer-1)' }
       return h(
         'div',
-        { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+        { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
         h(
           'div',
-          { style: { ...V.row, gap: 18 } },
-          ...[
-            [fmt(total.input), t('statInput')],
-            [fmt(total.cacheRead), t('statCache')],
-            [fmt(total.output), t('statOutput')],
-            [hit === null ? '—' : `${hit}%`, t('statHit')],
-          ].map(([value, label]) => h('div', { key: label, style: V.stat }, h('span', { style: V.statValue }, value), h('span', { style: V.statLabel }, label))),
+          { 'data-prefill-usage-kpi-grid': '1', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(112px, 1fr))', gap: 8 } },
+          ...kpis.map((kpi) =>
+            h(
+              'div',
+              {
+                key: kpi.key,
+                'data-prefill-usage-kpi': kpi.key,
+                style: { ...T.surface.card, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 },
+              },
+              h('span', { style: { fontSize: T.font.xs, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, kpi.label),
+              h(
+                'span',
+                {
+                  style: {
+                    fontSize: T.font.kpi,
+                    fontWeight: 600,
+                    lineHeight: 1.2,
+                    ...T.layout.num,
+                    color: kpi.tone ?? (kpi.muted ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)'),
+                  },
+                },
+                kpi.value,
+              ),
+            ),
+          ),
         ),
         prompt > 0
           ? h(
               'div',
-              { style: V.bar, title: `${t('statCache')} ${fmt(total.cacheRead)} / ${t('statInput')} ${fmt(total.input)}` },
-              h('div', { style: { width: `${(total.cacheRead / prompt) * 100}%`, background: 'var(--dsw-alias-brand-primary)' } }),
+              { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+              h(
+                'div',
+                { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: T.font.xs, color: 'var(--dsw-alias-label-secondary)' } },
+                h('span', null, t('usageCacheBarLabel')),
+                h('span', { 'data-prefill-usage-hit-pct': String(hit), style: { fontWeight: 600, color: hitColor, ...T.layout.num } }, `${hit}%`),
+              ),
+              h(
+                'div',
+                {
+                  style: V.bar,
+                  'data-prefill-usage-cache-bar': hitTier,
+                  title: `${t('statCache')} ${fmt(total.cacheRead)} / ${t('statInput')} ${fmt(total.input)}`,
+                },
+                h('div', { style: { width: `${(total.cacheRead / prompt) * 100}%`, background: hitColor } }),
+              ),
             )
           : null,
         rows.length === 0
           ? h('div', { style: V.hint }, t('usageEmpty'))
           : h(
               'div',
-              { style: { maxHeight: 180, overflowY: 'auto', overflowX: 'auto' }, 'data-prefill-usage-scroll': '' },
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
               h(
-                'table',
-                { style: { ...V.table, minWidth: 560 }, 'data-prefill-usage-table': '' },
+                'div',
+                { style: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end' } },
                 h(
-                  'thead',
-                  null,
-                  h('tr', null, ...[t('colTurn'), t('colInput'), t('colCache'), t('colOutput'), t('colHit'), t('colSystem'), t('colTools')].map((label) => h('th', { key: label, style: V.th }, label))),
+                  'button',
+                  {
+                    type: 'button',
+                    style: { ...V.btnGhost, fontSize: T.font.xs, height: 22, padding: '0 8px' },
+                    'data-prefill-usage-order': desc ? 'desc' : 'asc',
+                    onClick: () => setDesc((value) => !value),
+                  },
+                  desc ? `↓ ${t('usageOrderDesc')}` : `↑ ${t('usageOrderAsc')}`,
                 ),
+              ),
+              h(
+                'div',
+                { style: { maxHeight: 'clamp(220px, 38vh, 420px)', overflowY: 'auto', overflowX: 'auto', borderRadius: T.radius.sm, border: '1px solid var(--dsw-alias-border-l1)' }, 'data-prefill-usage-scroll': '' },
                 h(
-                  'tbody',
-                  null,
-                  ...rows.map((row) => {
-                    const p = row.input + row.cacheRead
-                    return h(
-                      'tr',
-                      { key: row.turn },
-                      h('td', { style: V.td }, row.synthetic && row.steps === 0 ? `${row.turn} · ${t('syntheticTurn')}` : String(row.turn)),
-                      h('td', { style: V.td }, fmt(row.input)),
-                      h('td', { style: V.td }, fmt(row.cacheRead)),
-                      h('td', { style: V.td }, fmt(row.output)),
-                      h('td', { style: V.td }, p > 0 ? `${Math.round((row.cacheRead / p) * 100)}%` : '—'),
-                      h('td', { style: V.td }, row.systemChars === null ? '—' : `${fmt(row.systemChars)} ${t('charsUnit')}`),
-                      h('td', { style: V.td }, row.tools === null ? '—' : String(row.tools)),
-                    )
-                  }),
+                  'table',
+                  { style: { ...V.table, minWidth: 560 }, 'data-prefill-usage-table': '' },
+                  h(
+                    'thead',
+                    null,
+                    h('tr', null, ...[t('colTurn'), t('colInput'), t('colCache'), t('colOutput'), t('colHit'), t('colSystem'), t('colTools')].map((label) => h('th', { key: label, style: stickyTh }, label))),
+                  ),
+                  h(
+                    'tbody',
+                    null,
+                    ...orderedRows.map((row) => {
+                      const p = row.input + row.cacheRead
+                      return h(
+                        'tr',
+                        { key: row.turn },
+                        h('td', { style: V.td }, row.synthetic && row.steps === 0 ? `${row.turn} · ${t('syntheticTurn')}` : String(row.turn)),
+                        h('td', { style: V.td }, fmt(row.input)),
+                        h('td', { style: V.td }, fmt(row.cacheRead)),
+                        h('td', { style: V.td }, fmt(row.output)),
+                        h('td', { style: V.td }, p > 0 ? `${Math.round((row.cacheRead / p) * 100)}%` : '—'),
+                        h('td', { style: V.td }, row.systemChars === null ? '—' : `${fmt(row.systemChars)} ${t('charsUnit')}`),
+                        h('td', { style: V.td }, row.tools === null ? '—' : String(row.tools)),
+                      )
+                    }),
+                  ),
                 ),
               ),
             ),
@@ -13897,7 +17256,8 @@ window.__ModuleLoader__.load({
         sbxLevelControlledSub: '第三方默认拦',
         sbxLevelStrict: '严格',
         sbxLevelStrictSub: '= 旧纯净模式',
-        sbxLevelHint: '档位只决定「没写规则的来源」怎么办；下面每个来源包都能单独改。本会话生效，「⭐ 全局记住」后新会话也照此提前拦。',
+        sbxLevelHint: '档位只决定「没写规则的来源」怎么办；下面每个来源包都能单独改。此处修改仅本会话生效。',
+        sbxGlobalInSidebar: '全局默认请在左侧栏设置页调整 ↗',
         sbxLevelFromGlobal: '跟随全局默认',
         // PR D（#45 第 24 条）：卡片只读行的文案（卡片 t 走 SBX_TEXT，和整页 t 的键保持一致）。
         labelColon: '：',
@@ -13914,8 +17274,8 @@ window.__ModuleLoader__.load({
         sbxAlways: '恒放行',
         sbxDefaultTip: '档位默认（没单独设）',
         sbxReset: '恢复档位默认',
-        sbxRemember: '⭐ 全局记住',
-        sbxForget: '⭐ 已全局记住 · 取消',
+        sbxRemember: '全局记住',
+        sbxForget: '已全局记住 · 取消',
         sbxOriginCore: 'DSH 核心',
         sbxOriginThird: '第三方',
         sbxViaTrace: '溯源 · 你已确认',
@@ -14029,6 +17389,15 @@ window.__ModuleLoader__.load({
         'sbxSurfaceBlocked_empty-user': '还差：这是 user 消息，不能留空，写一句占位',
         sbxSurfaceBlocked_risks: '还差：勾选剩下 {n} 条风险',
         sbxSurfaceGoing: '正在改写…',
+        sbxRewriteSaving: '保存中…',
+        sbxRewriteSaved: '已保存',
+        sbxSurfaceSwitchConfirm: '当前改写内容尚未提交，切换候选将放弃这些改动。',
+        sbxSurfaceSwitchYes: '放弃并切换',
+        sbxSurfaceSwitchStay: '留在当前',
+        errOpSbxPack: '设置来源包规则',
+        errOpSbxItem: '设置单条规则',
+        errOpSbxAttach: '挂载来源包',
+        errOpSbxClear: '清除沙盒设置',
       },
       en: {
         injectTitle: 'Session sandbox',
@@ -14041,7 +17410,8 @@ window.__ModuleLoader__.load({
         sbxLevelControlledSub: 'third-party blocked',
         sbxLevelStrict: 'Strict',
         sbxLevelStrictSub: '= old Pure mode',
-        sbxLevelHint: 'The level only decides sources without a rule; every source pack below can be set on its own. Applies to this session; “⭐ Remember” applies to new sessions too.',
+        sbxLevelHint: 'The level only decides sources without a rule; every source pack below can be set on its own. Changes here apply to this session only.',
+        sbxGlobalInSidebar: 'Adjust global defaults in the left sidebar Settings ↗',
         sbxLevelFromGlobal: 'following the global default',
         // PR D（#45 第 24 条）：卡片只读行的文案（与整页 t 的键保持一致）。
         labelColon: ': ',
@@ -14058,8 +17428,8 @@ window.__ModuleLoader__.load({
         sbxAlways: 'always allowed',
         sbxDefaultTip: 'level default (not set)',
         sbxReset: 'Back to level default',
-        sbxRemember: '⭐ Remember',
-        sbxForget: '⭐ Remembered · undo',
+        sbxRemember: 'Remember globally',
+        sbxForget: 'Remembered · undo',
         sbxOriginCore: 'DSH core',
         sbxOriginThird: 'third-party',
         sbxViaTrace: 'traced · confirmed',
@@ -14179,13 +17549,22 @@ window.__ModuleLoader__.load({
         'sbxSurfaceBlocked_empty-user': 'Still needed: this is a user message and cannot be empty; write a placeholder',
         sbxSurfaceBlocked_risks: 'Still needed: tick the remaining {n} risk(s)',
         sbxSurfaceGoing: 'Rewriting…',
+        sbxRewriteSaving: 'Saving…',
+        sbxRewriteSaved: 'Saved',
+        sbxSurfaceSwitchConfirm: 'Your edits have not been submitted yet. Switching candidate will discard them.',
+        sbxSurfaceSwitchYes: 'Discard & switch',
+        sbxSurfaceSwitchStay: 'Stay here',
+        errOpSbxPack: 'Update pack rule',
+        errOpSbxItem: 'Update item rule',
+        errOpSbxAttach: 'Attach source pack',
+        errOpSbxClear: 'Clear sandbox settings',
       },
     }
 
     const SBX_SURFACE_RISKS = ['log', 'conflict', 'cache', 'internal']
     /** 溯源 / 事后改写弹窗的面板样式（遮罩和入退场在 Modal 里）。 */
     const SBX_DIALOG_PANEL = (width) => ({ width: `min(${width}px, 100%)`, maxHeight: '80vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: 18, borderRadius: 14, background: 'var(--dsw-alias-bg-base)', boxShadow: '0 16px 40px rgba(0,0,0,0.22)', boxSizing: 'border-box' })
-    const SBX_RED = 'var(--dsw-alias-state-error-primary, #e5484d)'
+    const SBX_RED = 'var(--dsw-alias-state-error-primary)'
     const SBX_GREEN = 'var(--pf-ai)'
     const SBX_PURPLE = 'var(--pf-system)'
     const sbxClone = (value) => JSON.parse(JSON.stringify(value ?? {}))
@@ -15213,9 +18592,21 @@ window.__ModuleLoader__.load({
 
     function SbxSegment(props) {
       const { options, value, onPick, size = 'normal', busyValue = null, busyShown = false } = props
+      if (typeof SegmentedControl === 'function') {
+        return h(SegmentedControl, {
+          value,
+          onPick,
+          size,
+          busyValue,
+          busyShown,
+          optionAttr: 'data-prefill-sbx-option',
+          options: (options ?? []).map((option) => ({ ...option, tone: option.tone ?? SBX_PURPLE })),
+        })
+      }
+      // 独立切片单测（sandbox-harness.mjs 仅切沙盒段，作用域不含 SegmentedControl）优雅兜底：保持同构 DOM 与属性。
       return h(
         'span',
-        { style: { display: 'inline-flex', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8, overflow: 'hidden', flex: '0 0 auto', ...(busyShown ? BUSY_LOOK : {}) }, role: 'radiogroup', 'aria-busy': busyShown ? 'true' : undefined, 'aria-disabled': busyValue !== null ? 'true' : undefined },
+        { style: { display: 'inline-flex', padding: 2, gap: 2, border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 10, background: 'var(--dsw-alias-bg-layer-2)', flex: '0 0 auto', ...(busyShown ? BUSY_LOOK : {}) }, role: 'radiogroup', 'data-prefill-segmented': '1', 'aria-busy': busyShown ? 'true' : undefined, 'aria-disabled': busyValue !== null ? 'true' : undefined },
         ...options.map((option) => {
           const active = option.value === value
           const tone = option.tone ?? SBX_PURPLE
@@ -15231,23 +18622,22 @@ window.__ModuleLoader__.load({
               'data-prefill-busy': busyShown && busyValue === option.value ? 'true' : undefined,
               onClick: () => onPick(option.value),
               style: {
-                border: 'none',
-                borderLeft: option === options[0] ? 'none' : '1px solid var(--dsw-alias-border-l2)',
-                padding: size === 'small' ? '3px 10px' : '6px 14px',
+                border: active ? `1px solid ${option.soft ? 'var(--dsw-alias-border-l1)' : tint(tone, 34)}` : '1px solid transparent',
+                borderRadius: 8,
+                padding: size === 'small' ? '3px 9px' : '5px 11px',
                 fontFamily: 'inherit',
-                fontSize: size === 'small' ? 12 : 13,
+                fontSize: 12,
                 cursor: 'pointer',
-                background: active ? tint(tone, option.soft ? 8 : 16) : 'var(--dsw-alias-bg-base)',
-                color: active ? tone : 'var(--dsw-alias-label-primary)',
-                fontWeight: active ? 700 : 400,
-                opacity: active && option.soft ? 0.8 : 1,
-                outline: active && !option.soft ? `1px solid ${tint(tone, 40)}` : 'none',
+                background: active ? tint(tone, option.soft ? 8 : 13) : 'transparent',
+                color: active ? tone : 'var(--dsw-alias-label-secondary)',
+                fontWeight: active ? 600 : 400,
+                opacity: active && option.soft ? 0.85 : 1,
               },
             },
             busyShown && busyValue === option.value ? h(Spinner, { key: 'spin', size: 10 }) : null,
             busyShown && busyValue === option.value ? ' ' : null,
             option.label,
-            option.sub ? h('small', { style: { marginLeft: 6, fontWeight: 400, color: 'var(--dsw-alias-label-tertiary)' } }, option.sub) : null,
+            option.sub ? h('small', { style: { marginLeft: 4, fontWeight: 400, color: 'var(--dsw-alias-label-tertiary)' } }, option.sub) : null,
           )
         }),
       )
@@ -15261,11 +18651,14 @@ window.__ModuleLoader__.load({
     function SandboxSection(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      const [envelope, setEnvelope] = React.useState(null)
+      const sharedEnvelope = props.envelope ?? null
+      const SbxReveal = typeof Reveal === 'function' ? Reveal : ({ open, children, ...rest }) => (open ? h('div', rest, children) : null)
+      const [envelope, setEnvelope] = React.useState(() => sharedEnvelope ?? (typeof getDockEnvelope === 'function' ? getDockEnvelope(sessionId) : null))
       const [status, setStatus] = React.useState('idle')
       const [openPacks, setOpenPacks] = React.useState({})
       const [item, setItem] = React.useState(null)
       const [rewriteDraft, setRewriteDraft] = React.useState('')
+      const [rewriteState, setRewriteState] = React.useState('idle')
       const [advanced, setAdvanced] = React.useState(false)
       const [confirmClear, setConfirmClear] = React.useState(false)
       const [auditAll, setAuditAll] = React.useState(false)
@@ -15274,47 +18667,86 @@ window.__ModuleLoader__.load({
       const [attachFor, setAttachFor] = React.useState(null)
       const [attachPick, setAttachPick] = React.useState('')
       const [attachName, setAttachName] = React.useState('')
-      // 第 5 步：直写会话的事后改写弹窗 { name, busy, list, pick, text, risks, result }
+      // 第 5 步：直写会话的事后改写弹窗 { name, busy, list, pick, text, risks, result, pendingPick }
       const [surface, setSurface] = React.useState(null)
       const dialogAnchor = React.useRef(null)
       const extras = props.extras ?? null
-      // 可见性（动效第 3 步）：失败报给卡片头部的错误 pill；切档位有忙碌态。
+      // 可见性（动效第 3 步）：失败报给卡片头部的错误 pill；切档位 / 来源包 / 单条 / 挂包 / 清空全接忙碌态。
       const busy = useBusy()
       const [levelTarget, setLevelTarget] = React.useState('')
+      const [packBusyTarget, setPackBusyTarget] = React.useState({})
+      const [itemBusyTarget, setItemBusyTarget] = React.useState({})
       const failed = (key = 'sandbox', op = undefined) => (err) => {
         setStatus('error')
         reportError(sessionId, key, op ?? t('errOpSandbox'), err)
       }
 
-      // 沙盒这页要读宿主私有的规则表 / 审计裁决 ⇒ 只有整封 state 里有；卡片这一节开着时才轮询，
-      // 走带 15s 上限的 postJson（挂住的请求不许把下一轮叠上来）。
-      const refresh = React.useCallback(() => postJsonWithTimeout(STATE_ROUTE, undefined).then((data) => setEnvelope(data)), [])
+      // M1 P0-③：不再每 2500ms 独立重复轮询 /state；优先复用 PrefillDock 透传/共享的 envelope，
+      // 独立挂载（如单测 harness）时优雅兜底；仅在写操作后刷新 + 监听 STATE_EVENT（后台跳过）。
+      const refresh = React.useCallback(
+        () =>
+          postJsonWithTimeout(STATE_ROUTE, { slim: true, sessionId }).then((data) => {
+            setEnvelope(data)
+            if (typeof publishDockEnvelope === 'function') publishDockEnvelope(sessionId, data)
+            return data
+          }),
+        [sessionId],
+      )
+      React.useEffect(() => {
+        if (sharedEnvelope !== null) setEnvelope(sharedEnvelope)
+      }, [sharedEnvelope])
       React.useEffect(() => {
         if (sessionId === '') return undefined
-        void refresh().catch(failed())
-        const timer = setInterval(() => void refresh().catch(() => {}), 2500)
-        const onChanged = () => void refresh().catch(() => {})
+        const hasStore = typeof subscribeDockEnvelope === 'function'
+        const dockActive = hasStore && isDockEnvelopeActive(sessionId)
+        const cached = sharedEnvelope ?? (hasStore ? getDockEnvelope(sessionId) : null)
+        if (cached !== null) setEnvelope(cached)
+        else if (!dockActive) void refresh().catch(failed())
+        const unsub = hasStore ? subscribeDockEnvelope(sessionId, (data) => setEnvelope(data)) : () => {}
+        const onChanged = () => {
+          if (hasStore && isDockEnvelopeActive(sessionId)) return
+          if (typeof document !== 'undefined' && document?.hidden === true) return
+          void refresh().catch(() => {})
+        }
         window.addEventListener(STATE_EVENT, onChanged)
         return () => {
-          clearInterval(timer)
+          unsub()
           window.removeEventListener(STATE_EVENT, onChanged)
         }
-      }, [refresh, sessionId])
+      }, [refresh, sessionId, sharedEnvelope])
 
-      /** 改规则表：先取最新状态，改完整张写回 `sandbox`（必要时连带别的字段）。 */
+      /** 改规则表：按会话 slim 读取，改完通过 sessionPatch.scopes 原子写回本会话 / '*'（不碰其他会话）。 */
       const writeSandbox = React.useCallback(
         async (mutate, key = 'sandbox', op = undefined) => {
           setStatus('saving')
           try {
-            const fresh = await postJson(STATE_ROUTE, undefined)
+            const fresh = await postJson(STATE_ROUTE, { slim: true, sessionId })
             const table = sbxClone(fresh?.state?.sandbox)
             const extra = mutate(table, fresh?.state ?? {}) ?? {}
-            for (const [key, scope] of Object.entries(table)) {
-              if (scope === null || typeof scope !== 'object') delete table[key]
-              else if (!Array.isArray(scope.rules)) scope.rules = []
+            const scopes = {}
+            for (const scopeKey of [sessionId, '*']) {
+              const scope = table[scopeKey]
+              if (scope === null || scope === undefined || typeof scope !== 'object') {
+                if (Object.hasOwn(fresh?.state?.sandbox ?? {}, scopeKey)) scopes[scopeKey] = { unset: ['sandbox'] }
+              } else {
+                if (!Array.isArray(scope.rules)) scope.rules = []
+                scopes[scopeKey] = { set: { sandbox: scope } }
+              }
             }
-            const data = await postJson(STATE_ROUTE, { sandbox: table, ...extra })
+            const sessionPatch = { target: sessionId, scopes }
+            if (Object.hasOwn(extra, 'gate')) {
+              const nextGate = extra.gate?.[sessionId]
+              if (nextGate === undefined) sessionPatch.unset = ['gate']
+              else sessionPatch.set = { gate: nextGate }
+              delete extra.gate
+            }
+            if (Object.hasOwn(extra, 'armed')) {
+              sessionPatch.armed = Array.isArray(extra.armed) && extra.armed.includes(sessionId)
+              delete extra.armed
+            }
+            const data = await postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch, ...extra })
             setEnvelope(data)
+            if (typeof publishDockEnvelope === 'function') publishDockEnvelope(sessionId, data)
             setStatus('saved')
             window.dispatchEvent(new CustomEvent(STATE_EVENT))
             reportOk(sessionId, key)
@@ -15367,62 +18799,86 @@ window.__ModuleLoader__.load({
           return extra
         }
 
-      const setPack = (id, scopeKey, action) =>
-        void writeSandbox((table) => {
-          const scope = scopeOf(table, scopeKey)
-          const packs = { ...(scope.packs ?? {}) }
-          if (action === undefined) delete packs[id]
-          else packs[id] = action
-          scope.packs = packs
-        }).catch(() => {})
+      const packBusyKey = (id) => `pack:${id}`
+      const setPack = (id, scopeKey, action) => {
+        const key = packBusyKey(id)
+        if (busy.pending(key)) return
+        setPackBusyTarget((prev) => ({ ...prev, [id]: action ?? 'reset' }))
+        const running = busy.run(key, () =>
+          writeSandbox((table) => {
+            const scope = scopeOf(table, scopeKey)
+            const packs = { ...(scope.packs ?? {}) }
+            if (action === undefined) delete packs[id]
+            else packs[id] = action
+            scope.packs = packs
+          }, key, t('errOpSbxPack')),
+        )
+        if (running !== null) void running.catch(() => {})
+      }
 
       /** 单条另设：本会话一条显式 allow / deny（精确名；工具不在这里设，见 sbxToolsByPack）。 */
-      const setItemRule = (group, name, action) =>
-        void writeSandbox((table) => {
-          const scope = scopeOf(table, sessionId)
-          const key = SBX_TARGET[group]
-          scope.rules = scope.rules.filter((rule) => !((rule.action === 'allow' || rule.action === 'deny') && rule.match?.[key] === name && rule.match?.exact === true))
-          if (action !== undefined) scope.rules.push({ match: { [key]: name, exact: true }, action })
-        }).catch(() => {})
+      const itemBusyKey = (group, name) => `item:${group}:${name}`
+      const setItemRule = (group, name, action) => {
+        const key = itemBusyKey(group, name)
+        if (busy.pending(key)) return
+        setItemBusyTarget((prev) => ({ ...prev, [key]: action ?? 'follow' }))
+        const running = busy.run(key, () =>
+          writeSandbox((table) => {
+            const scope = scopeOf(table, sessionId)
+            const targetKey = SBX_TARGET[group]
+            scope.rules = scope.rules.filter((rule) => !((rule.action === 'allow' || rule.action === 'deny') && rule.match?.[targetKey] === name && rule.match?.exact === true))
+            if (action !== undefined) scope.rules.push({ match: { [targetKey]: name, exact: true }, action })
+          }, key, t('errOpSbxItem')),
+        )
+        if (running !== null) void running.catch(() => {})
+      }
 
       /** 单条改写：和旧「改写注入内容」同一份数据（overrides 兼容视图 → 规则表 rewrite 族，own rewrite）。 */
       const writeRewrite = (group, name, text) => {
         setStatus('saving')
-        void postJson(STATE_ROUTE, undefined)
+        setRewriteState('saving')
+        void postJson(STATE_ROUTE, { slim: true, sessionId })
           .then((fresh) => {
-            const overrides = { ...(fresh?.state?.overrides ?? {}) }
-            const entry = sbxClone(overrides[sessionId] ?? { messages: {}, sections: {}, contexts: {} })
+            const entry = sbxClone(fresh?.state?.overrides?.[sessionId] ?? { messages: {}, sections: {}, contexts: {} })
             entry[group] = { ...(entry[group] ?? {}) }
             if (text === '' || text === (envelope?.injections?.sessions?.[sessionId]?.texts?.[group]?.[name] ?? null)) delete entry[group][name]
             else entry[group][name] = text
-            overrides[sessionId] = entry
-            return postJson(STATE_ROUTE, { overrides })
+            return postJson(STATE_ROUTE, { sessionId, slim: true, sessionPatch: { target: sessionId, set: { overrides: entry } } })
           })
           .then((data) => {
             setEnvelope(data)
+            if (typeof publishDockEnvelope === 'function') publishDockEnvelope(sessionId, data)
             setStatus('saved')
+            setRewriteState('saved')
             window.dispatchEvent(new CustomEvent(STATE_EVENT))
           })
-          .catch(failed())
+          .catch((err) => {
+            setRewriteState('idle')
+            failed()(err)
+          })
       }
 
       const clearSession = () => {
+        if (busy.pending('clear')) return
         if (!confirmClear) {
           setConfirmClear(true)
           setTimeout(() => setConfirmClear(false), CONFIRM_MS)
           return
         }
         setConfirmClear(false)
-        void writeSandbox((table, fresh) => {
-          const scope = table[sessionId]
-          if (scope === undefined) return {}
-          // 系统提示（prefill:* 的改写）和接管带来的严格档不归这一页管：保留。
-          scope.rules = scope.rules.filter((rule) => rule.action === 'rewrite' && String(rule.match?.section ?? rule.match?.context ?? '').startsWith('prefill:'))
-          if (Array.isArray(scope.own)) scope.own = scope.own.filter((family) => family === 'rewrite' && scope.rules.length > 0)
-          delete scope.packs
-          if (scope.level !== 'strict') delete scope.level
-          return {}
-        }).catch(() => {})
+        const running = busy.run('clear', () =>
+          writeSandbox((table) => {
+            const scope = table[sessionId]
+            if (scope === undefined) return {}
+            // 系统提示（prefill:* 的改写）和接管带来的严格档不归这一页管：保留。
+            scope.rules = scope.rules.filter((rule) => rule.action === 'rewrite' && String(rule.match?.section ?? rule.match?.context ?? '').startsWith('prefill:'))
+            if (Array.isArray(scope.own)) scope.own = scope.own.filter((family) => family === 'rewrite' && scope.rules.length > 0)
+            delete scope.packs
+            if (scope.level !== 'strict') delete scope.level
+            return {}
+          }, 'clear', t('errOpSbxClear')),
+        )
+        if (running !== null) void running.catch(() => {})
       }
 
       // ── 溯源 / 挂来源包（第 4 步）──
@@ -15432,23 +18888,28 @@ window.__ModuleLoader__.load({
           .then((result) => setTrace({ group, name, busy: false, ai: ai ? result?.ai ?? { ok: false, reason: 'no-reply' } : null, result }))
           .catch((error) => setTrace({ group, name, busy: false, ai: null, result: { ok: false, reason: String(error?.message ?? error), candidates: [] } }))
       }
-      const attach = (pack) =>
-        void postJson(SANDBOX_ROUTE, { op: 'attach', pack, sessionId })
-          .then((result) => {
-            setStatus(result?.ok ? 'saved' : 'error')
-            setTrace(null)
-            setAttachFor(null)
-            window.dispatchEvent(new CustomEvent(STATE_EVENT))
-            return refresh()
-          })
-          .catch(failed())
+      const attach = (pack, opKey = 'attach') => {
+        if (busy.pending(opKey)) return
+        const running = busy.run(opKey, () =>
+          postJson(SANDBOX_ROUTE, { op: 'attach', pack, sessionId })
+            .then((result) => {
+              setStatus(result?.ok ? 'saved' : 'error')
+              setTrace(null)
+              setAttachFor(null)
+              window.dispatchEvent(new CustomEvent(STATE_EVENT))
+              return refresh()
+            })
+            .catch(failed(opKey, t('errOpSbxAttach'))),
+        )
+        if (running !== null) void running.catch(() => {})
+      }
       const attachManual = () => {
         if (attachFor === null) return
         const member = { [SBX_TARGET[attachFor.group]]: attachFor.name, exact: true }
         const name = attachName.trim()
         if (attachPick === '' && name === '') return
         const id = attachPick !== '' ? attachPick : `user:${name.toLowerCase().replace(/[^a-z0-9@/._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'pack'}`
-        attach({ id, label: attachPick !== '' ? undefined : name, members: [member], source: { via: 'manual' } })
+        attach({ id, label: attachPick !== '' ? undefined : name, members: [member], source: { via: 'manual' } }, 'attach:manual')
       }
 
       // ── 直写会话的事后改写（第 5 步）──
@@ -15468,7 +18929,7 @@ window.__ModuleLoader__.load({
           )
           .catch((error) => setSurface((prev) => ({ ...(prev ?? {}), name, busy: false, list: { ok: false, reason: String(error?.message ?? error), candidates: [] } })))
       const openSurface = (name) => {
-        setSurface({ name, busy: true, list: null, pick: null, text: '', risks: [], result: null })
+        setSurface({ name, busy: true, list: null, pick: null, text: '', risks: [], result: null, pendingPick: null })
         void loadSurface(name)
       }
       // 改写 / 还原走 busy.run（动效第 6 步 P1-7）：进行中重复点击被忽略、过了 150ms 才转圈；两者互斥（同一前缀）。
@@ -15534,16 +18995,32 @@ window.__ModuleLoader__.load({
           level !== 'strict'
             ? h(
                 'div',
-                { style: { ...V.hint, fontSize: 12 }, 'data-prefill-sbx-global-level-readonly': globalScope.level ?? '' },
+                { style: V.hintSm, 'data-prefill-sbx-global-level-readonly': globalScope.level ?? '' },
                 // PR B（#45 第 11 条）：'*' 是 strict 时照实显示「严格」，不再落到「观察」。
                 t('cardDefaultLabel') + t('labelColon') + (globalScope.level ? sbxLevelLabel(t, globalScope.level) : t('defaultNone')) + ' · ' + t('movedToSidebarShort'),
                 ' ',
-                h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, 'data-prefill-open-prefill': 'default-sandbox', onClick: () => openPrefillPanel('default-sandbox') }, t('openDefault')),
+                h('button', { type: 'button', style: V.btnGhostSm, 'data-prefill-open-prefill': 'default-sandbox', onClick: () => openPrefillPanel('default-sandbox') }, t('openDefault')),
               )
             : null,
           statusLine,
         ),
-        h('div', { style: { ...V.hint, fontSize: 12 } }, t('sbxLevelHint')),
+        h(
+          'div',
+          { style: { ...V.hint, fontSize: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 } },
+          h('span', null, t('sbxLevelHint')),
+          h(
+            'button',
+            {
+              type: 'button',
+              style: { ...V.btnGhost, fontSize: 11.5, padding: '0 4px', height: 22, color: 'var(--dsw-alias-brand-primary)' },
+              'data-prefill-sbx-open-settings': 'default-sandbox',
+              onClick: () => {
+                if (typeof openPrefillPanel === 'function') openPrefillPanel('default-sandbox')
+              },
+            },
+            t('sbxGlobalInSidebar'),
+          ),
+        ),
         level === 'strict' ? h('div', { style: V.callout('warn') }, t('sbxStrictNote')) : null,
       )
 
@@ -15556,6 +19033,7 @@ window.__ModuleLoader__.load({
         const rule = sessionRule(group, name)
         const canRewrite = group !== 'tools'
         const original = textsOf(group, name)
+        const iKey = itemBusyKey(group, name)
         return h(
           'div',
           { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-1)' }, 'data-prefill-sbx-item-editor': `${group}:${name}` },
@@ -15565,6 +19043,8 @@ window.__ModuleLoader__.load({
             : h(SbxSegment, {
                 size: 'small',
                 value: rule ?? 'follow',
+                busyValue: busy.shown(iKey) ? itemBusyTarget[iKey] ?? '' : busy.pending(iKey) ? '' : null,
+                busyShown: busy.shown(iKey),
                 onPick: (value) => setItemRule(group, name, value === 'follow' ? undefined : value),
                 options: [
                   { value: 'follow', label: t('sbxFollow') },
@@ -15576,14 +19056,32 @@ window.__ModuleLoader__.load({
             ? h(
                 'div',
                 { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-                h('span', { style: V.sectionMeta }, `${t('sbxRewrite')} · ${t('sbxRewriteHint')}`),
+                h(
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+                  h('span', { style: V.sectionMeta }, `${t('sbxRewrite')} · ${t('sbxRewriteHint')}`),
+                  rewriteState !== 'idle'
+                    ? h(
+                        'span',
+                        {
+                          'data-prefill-sbx-rewrite-state': rewriteState,
+                          style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: rewriteState === 'saved' ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' },
+                        },
+                        rewriteState === 'saving' ? h(Spinner, { size: 10 }) : '✓',
+                        rewriteState === 'saving' ? t('sbxRewriteSaving') : t('sbxRewriteSaved'),
+                      )
+                    : null,
+                ),
                 h('textarea', {
                   style: { ...S.injectBox, minHeight: 64 },
                   value: rewriteDraft,
                   placeholder: original || name,
                   spellCheck: false,
                   'data-prefill-sbx-rewrite': `${group}:${name}`,
-                  onChange: (event) => setRewriteDraft(event.target.value),
+                  onChange: (event) => {
+                    setRewriteState('idle')
+                    setRewriteDraft(event.target.value)
+                  },
                   onBlur: () => {
                     if (rewriteDraft !== (rewriteOf(group, name) ?? '')) writeRewrite(group, name, rewriteDraft)
                   },
@@ -15596,6 +19094,7 @@ window.__ModuleLoader__.load({
         const opened = openPacks[pack.id] === true
         const explicit = pack.setting?.session ?? pack.setting?.global
         const value = pack.effective === 'mixed' ? explicit ?? '' : pack.effective
+        const pKey = packBusyKey(pack.id)
         const seen = new Map((pack.items ?? []).map((entry) => [`${entry.group}:${entry.name}`, entry]))
         const chips = []
         for (const member of pack.members ?? []) {
@@ -15604,7 +19103,6 @@ window.__ModuleLoader__.load({
           chips.push({ group: member.group, name: member.name, seen: seen.get(key), shared: member.shared })
         }
         for (const entry of pack.items ?? []) if (!chips.some((chip) => chip.group === entry.group && chip.name === entry.name)) chips.push({ group: entry.group, name: entry.name, seen: entry, shared: entry.shared })
-        const globalOn = pack.setting?.global !== undefined
         return h(
           'div',
           { key: pack.id, 'data-prefill-sbx-pack': pack.id, style: { display: 'flex', flexDirection: 'column', gap: 6 } },
@@ -15612,14 +19110,20 @@ window.__ModuleLoader__.load({
             'div',
             { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-base)' } },
             pack.locked
-              ? h('span', { style: { width: 14, textAlign: 'center' } }, '🔒')
+              ? h(
+                  'span',
+                  { 'data-prefill-sbx-lock': '1', style: { width: 14, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--dsw-alias-label-tertiary)' } },
+                  typeof Icon === 'function'
+                    ? h(Icon, { name: 'lock', size: 12 })
+                    : h('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' }, h('rect', { width: 18, height: 11, x: 3, y: 11, rx: 2, ry: 2 }), h('path', { d: 'M7 11V7a5 5 0 0 1 10 0v4' })),
+                )
               : h('button', { type: 'button', 'aria-expanded': opened ? 'true' : 'false', style: { ...V.btnGhost, padding: '0 4px' }, onClick: () => setOpenPacks({ ...openPacks, [pack.id]: !opened }) }, h('span', { style: V.caret(opened) }, '▸')),
             h(
               'div',
               { style: { display: 'flex', flexDirection: 'column', minWidth: 0, flex: '1 1 220px' } },
               h(
                 'div',
-                { style: { ...V.row, gap: 6 } },
+                { style: V.rowSm },
                 h('b', { style: { fontSize: 13 } }, sbxLocal(t, `sbxPack_${pack.id}`, pack.label)),
                 pack.source ? sbxChip(viaLabel(pack.source), 'var(--pf-user)') : pack.origin === 'core' ? sbxChip(t('sbxOriginCore'), 'var(--dsw-alias-label-secondary)') : pack.origin === 'third-party' ? sbxChip(t('sbxOriginThird'), 'var(--dsw-alias-label-secondary)') : null,
                 pack.locked ? sbxChip(t('sbxAlways'), 'var(--dsw-alias-label-secondary)') : null,
@@ -15632,6 +19136,8 @@ window.__ModuleLoader__.load({
               : h(SbxSegment, {
                   size: 'small',
                   value,
+                  busyValue: busy.shown(pKey) ? packBusyTarget[pack.id] ?? '' : busy.pending(pKey) ? '' : null,
+                  busyShown: busy.shown(pKey),
                   onPick: (action) => setPack(pack.id, sessionId, action),
                   options: [
                     { value: 'allow', label: t('sbxAllow'), tone: SBX_GREEN, soft: explicit === undefined, title: explicit === undefined ? t('sbxDefaultTip') : '' },
@@ -15640,7 +19146,18 @@ window.__ModuleLoader__.load({
                 }),
             pack.locked || pack.setting?.session === undefined
               ? null
-              : h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, title: t('sbxReset'), onClick: () => setPack(pack.id, sessionId, undefined) }, '↺'),
+              : h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: { ...V.btnGhost, fontSize: 11.5, display: 'inline-flex', alignItems: 'center', gap: 4, ...(busy.shown(pKey) && packBusyTarget[pack.id] === 'reset' ? BUSY_LOOK : {}) },
+                    'data-prefill-sbx-reset': pack.id,
+                    ...busyAttrs(busy, pKey),
+                    title: t('sbxReset'),
+                    onClick: () => setPack(pack.id, sessionId, undefined),
+                  },
+                  busy.shown(pKey) && packBusyTarget[pack.id] === 'reset' ? h(Spinner, { size: 10 }) : '↺',
+                ),
             // PR2：全局记住搬到左侧栏「新会话默认」（一个字段只有一处可编辑）；这里只读显示。
             pack.locked
               ? null
@@ -15650,13 +19167,14 @@ window.__ModuleLoader__.load({
                   t('sbxGlobalLabel') + '：' + (pack.setting?.global === 'allow' ? t('sbxAllow') : pack.setting?.global === 'deny' ? t('sbxDeny') : t('defaultOff')),
                 ),
           ),
-          opened && !pack.locked
-            ? h(
-                'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: 6, marginLeft: 18, paddingLeft: 12, borderLeft: '2px solid var(--dsw-alias-border-l1)' } },
+          pack.locked
+            ? null
+            : h(
+                SbxReveal,
+                { open: opened, gap: 6, 'data-prefill-sbx-pack-reveal': pack.id, style: { display: 'flex', flexDirection: 'column', gap: 6, marginLeft: 18, paddingLeft: 12, borderLeft: '2px solid var(--dsw-alias-border-l1)' } },
                 h(
                   'div',
-                  { style: { ...V.row, gap: 6 } },
+                  { style: V.rowSm },
                   ...chips.map((chip) => {
                     const action = chip.seen?.action
                     const tone = action === 'deny' ? SBX_RED : action === 'allow' || action === 'rewrite' ? SBX_GREEN : 'var(--dsw-alias-label-tertiary)'
@@ -15671,19 +19189,19 @@ window.__ModuleLoader__.load({
                         onClick: () => {
                           setItem(selected ? null : { pack: pack.id, group: chip.group, name: chip.name })
                           setRewriteDraft(rewriteOf(chip.group, chip.name) ?? '')
+                          setRewriteState('idle')
                         },
                         style: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 7, border: `1px solid ${selected ? SBX_PURPLE : 'var(--dsw-alias-border-l1)'}`, background: 'var(--dsw-alias-bg-layer-1)', fontFamily: 'inherit', fontSize: 12, cursor: 'pointer', opacity: chip.seen ? 1 : 0.6 },
                       },
-                      h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, sbxGroupLabel(t, chip.group)),
+                      h('span', { style: V.muted }, sbxGroupLabel(t, chip.group)),
                       h('code', { style: { fontFamily: 'ui-monospace, Menlo, monospace', color: tone } }, chip.name),
-                      chip.shared ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)' } }, '⇄') : null,
+                      chip.shared ? h('span', { style: V.muted }, '⇄') : null,
                     )
                   }),
                   h('span', { style: V.sectionMeta }, t('sbxItemsHint')),
                 ),
                 itemEditor(pack),
-              )
-            : null,
+              ),
         )
       }
 
@@ -15695,30 +19213,47 @@ window.__ModuleLoader__.load({
           : h(
               'div',
               { 'data-prefill-sbx-unassigned': '', style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--dsw-alias-state-warn-primary)', background: tint('var(--dsw-alias-state-warn-primary)', 6) } },
-              h('div', { style: { ...V.row, gap: 6 } }, h('b', null, `? ${t('sbxUnassigned')} · ${unassigned.length}`), h('span', { style: V.sectionMeta }, t('sbxUnassignedSub'))),
+              h('div', { style: V.rowSm }, h('b', null, `? ${t('sbxUnassigned')} · ${unassigned.length}`), h('span', { style: V.sectionMeta }, t('sbxUnassignedSub'))),
               ...unassigned.map((entry) => {
                 const rule = sessionRule(entry.group, entry.name)
                 return h(
                   'div',
-                  { key: `${entry.group}:${entry.name}`, style: { ...V.row, gap: 8 }, title: entry.preview || entry.name, 'data-prefill-sbx-unassigned-row': `${entry.group}:${entry.name}` },
+                  { key: `${entry.group}:${entry.name}`, style: V.row, title: entry.preview || entry.name, 'data-prefill-sbx-unassigned-row': `${entry.group}:${entry.name}` },
                   h('span', { style: V.sectionMeta }, sbxGroupLabel(t, entry.group)),
                   sbxCode(entry.name),
                   sbxChip(`${sbxLevelLabel(t, level)}：${entry.action === 'deny' ? t('sbxDeny') : t('sbxAllow')}`, entry.action === 'deny' ? SBX_RED : SBX_GREEN),
-                  h('span', { style: { flex: '1 1 auto' } }),
-                  ...(entry.claims ?? []).map((claim) =>
-                    h(
+                  h('span', { style: V.flex1 }),
+                  ...(entry.claims ?? []).map((claim) => {
+                    const cKey = `attach:claim:${claim.id}`
+                    return h(
                       'button',
-                      { key: `claim-${claim.id}`, type: 'button', style: { ...V.btn, fontSize: 12 }, title: claim.members.map((member) => sbxMemberText(t, member)).join('、'), 'data-prefill-sbx-claim': claim.id, onClick: () => attach({ id: claim.id, label: claim.label, plugin: claim.plugin, members: claim.members, source: { via: 'claim', plugin: claim.plugin } }) },
+                      {
+                        key: `claim-${claim.id}`,
+                        type: 'button',
+                        style: { ...V.btn, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, ...(busy.shown(cKey) ? BUSY_LOOK : {}) },
+                        title: claim.members.map((member) => sbxMemberText(t, member)).join('、'),
+                        'data-prefill-sbx-claim': claim.id,
+                        ...busyAttrs(busy, cKey),
+                        onClick: () => attach({ id: claim.id, label: claim.label, plugin: claim.plugin, members: claim.members, source: { via: 'claim', plugin: claim.plugin } }, cKey),
+                      },
+                      busy.shown(cKey) ? h(Spinner, { size: 10 }) : null,
                       t('sbxAttachClaim').replace('{pkg}', claim.label).replace('{n}', String(claim.members.length)),
-                    ),
-                  ),
-                  h('button', { type: 'button', style: { ...V.btn, fontSize: 12, background: SBX_PURPLE, color: '#fff', borderColor: SBX_PURPLE }, 'data-prefill-sbx-trace': `${entry.group}:${entry.name}`, onClick: () => openTrace(entry.group, entry.name) }, t('sbxTrace')),
+                    )
+                  }),
+                  h('button', { type: 'button', style: { ...V.btn, fontSize: 12, background: SBX_PURPLE, color: 'var(--dsw-alias-bg-base)', borderColor: SBX_PURPLE }, 'data-prefill-sbx-trace': `${entry.group}:${entry.name}`, onClick: () => openTrace(entry.group, entry.name) }, t('sbxTrace')),
                   h('button', { type: 'button', style: { ...V.btn, fontSize: 12 }, 'data-prefill-sbx-attach-to': `${entry.group}:${entry.name}`, onClick: () => { setAttachFor({ group: entry.group, name: entry.name }); setAttachPick(''); setAttachName('') } }, t('sbxAttachTo')),
                   entry.group === 'tools'
                     ? null
                     : h(
                         'button',
-                        { type: 'button', style: { ...V.btnGhost, fontSize: 12 }, 'data-prefill-sbx-here': `${entry.group}:${entry.name}`, onClick: () => setItemRule(entry.group, entry.name, rule === undefined ? (entry.action === 'deny' ? 'allow' : 'deny') : undefined) },
+                        {
+                          type: 'button',
+                          style: { ...V.btnGhost, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, ...(busy.shown(itemBusyKey(entry.group, entry.name)) ? BUSY_LOOK : {}) },
+                          'data-prefill-sbx-here': `${entry.group}:${entry.name}`,
+                          ...busyAttrs(busy, itemBusyKey(entry.group, entry.name)),
+                          onClick: () => setItemRule(entry.group, entry.name, rule === undefined ? (entry.action === 'deny' ? 'allow' : 'deny') : undefined),
+                        },
+                        busy.shown(itemBusyKey(entry.group, entry.name)) ? h(Spinner, { size: 10 }) : null,
                         rule === undefined ? (entry.action === 'deny' ? t('sbxAllowHere') : t('sbxBlockedHere')) : t('sbxReset'),
                       ),
                 )
@@ -15740,39 +19275,43 @@ window.__ModuleLoader__.load({
         auditHidden > 0 || auditAll
           ? h(
               'div',
-              { style: { ...V.row, gap: 6 } },
+              { style: V.rowSm },
               auditHidden > 0 ? h('span', { style: V.sectionMeta }, t('sbxAuditHidden').replace('{n}', String(auditHidden))) : null,
-              h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5 }, onClick: () => setAuditAll(!auditAll) }, auditAll ? '−' : t('sbxAuditShowAll')),
+              h('button', { type: 'button', style: V.btnGhostSm, onClick: () => setAuditAll(!auditAll) }, auditAll ? '−' : t('sbxAuditShowAll')),
             )
           : null
       const auditTable =
         auditAllRows.length === 0
           ? h('div', { style: V.sectionMeta }, t('sbxAuditEmpty'))
           : h(
-              'table',
-              { style: V.table, 'data-prefill-sbx-audit': '' },
-              h('thead', null, h('tr', null, ...[t('sbxColCount'), t('sbxColSource'), t('sbxColName'), t('sbxColHandling'), ''].map((label, index) => h('th', { key: index, style: { ...cell, color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 } }, label)))),
+              'div',
+              { style: { overflowX: 'auto', width: '100%' }, 'data-prefill-sbx-audit-scroll': '' },
               h(
-                'tbody',
-                null,
-                ...auditRows.map((row) =>
-                  h(
-                    'tr',
-                    { key: `${row.group}:${row.name}`, title: row.preview || row.name, 'data-prefill-sbx-audit-row': `${row.group}:${row.name}` },
-                    h('td', { style: cell }, String(row.count ?? 1)),
-                    h('td', { style: cell }, row.pack ? sbxLocal(t, `sbxPack_${row.pack}`, row.packLabel) : t('sbxUnknownSource')),
-                    h('td', { style: cell }, sbxCode(row.name)),
-                    h('td', { style: cell }, sbxChip(handlingText(row), handlingTone(row))),
+                'table',
+                { style: { ...V.table, minWidth: 480 }, 'data-prefill-sbx-audit': '' },
+                h('thead', null, h('tr', null, ...[t('sbxColCount'), t('sbxColSource'), t('sbxColName'), t('sbxColHandling'), ''].map((label, index) => h('th', { key: index, style: { ...cell, color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 } }, label)))),
+                h(
+                  'tbody',
+                  null,
+                  ...auditRows.map((row) =>
                     h(
-                      'td',
-                      { style: cell },
-                      row.pack === undefined && row.handling !== 'protocol' && row.group !== 'tools'
-                        ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12, color: 'var(--pf-user)' }, 'data-prefill-sbx-audit-trace': `${row.group}:${row.name}`, onClick: () => openTrace(row.group, row.name) }, t('sbxTrace'))
-                        : null,
-                      row.handling === 'direct' && row.group === 'messages'
-                        ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12, color: 'var(--dsw-alias-state-warn-primary)' }, 'data-prefill-sbx-surface-open': row.name, onClick: () => openSurface(row.name) }, t('sbxSurfaceOpen'))
-                        : null,
-                      extras?.auditActions ? extras.auditActions(row) : null,
+                      'tr',
+                      { key: `${row.group}:${row.name}`, title: row.preview || row.name, 'data-prefill-sbx-audit-row': `${row.group}:${row.name}` },
+                      h('td', { style: cell }, String(row.count ?? 1)),
+                      h('td', { style: cell }, row.pack ? sbxLocal(t, `sbxPack_${row.pack}`, row.packLabel) : t('sbxUnknownSource')),
+                      h('td', { style: cell }, sbxCode(row.name)),
+                      h('td', { style: cell }, sbxChip(handlingText(row), handlingTone(row))),
+                      h(
+                        'td',
+                        { style: cell },
+                        row.pack === undefined && row.handling !== 'protocol' && row.group !== 'tools'
+                          ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12, color: 'var(--pf-user)' }, 'data-prefill-sbx-audit-trace': `${row.group}:${row.name}`, onClick: () => openTrace(row.group, row.name) }, t('sbxTrace'))
+                          : null,
+                        row.handling === 'direct' && row.group === 'messages'
+                          ? h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12, color: 'var(--dsw-alias-state-warn-primary)' }, 'data-prefill-sbx-surface-open': row.name, onClick: () => openSurface(row.name) }, t('sbxSurfaceOpen'))
+                          : null,
+                        extras?.auditActions ? extras.auditActions(row) : null,
+                      ),
                     ),
                   ),
                 ),
@@ -15787,13 +19326,18 @@ window.__ModuleLoader__.load({
           h('b', null, t('sbxAttachTo')),
           sbxCode(attachFor.name),
           h(
-            'select',
+            typeof SelectBox === 'function' ? SelectBox : 'select',
             { style: S.dockSelect, value: attachPick, 'data-prefill-sbx-attach-pick': '', onChange: (event) => setAttachPick(event.target.value) },
             h('option', { value: '' }, `— ${t('sbxAttachNew')} —`),
             ...choices.map((pack) => h('option', { key: pack.id, value: pack.id }, sbxLocal(t, `sbxPack_${pack.id}`, pack.label))),
           ),
           attachPick === '' ? h('input', { style: S.dockName, value: attachName, placeholder: t('sbxAttachNew'), 'data-prefill-sbx-attach-name': '', onChange: (event) => setAttachName(event.target.value) }) : null,
-          h('button', { type: 'button', style: V.btn, 'data-prefill-sbx-attach-go': '', onClick: attachManual }, t('sbxAttachGo')),
+          h(
+            'button',
+            { type: 'button', style: { ...V.btn, display: 'inline-flex', alignItems: 'center', gap: 4, ...(busy.shown('attach:manual') ? BUSY_LOOK : {}) }, 'data-prefill-sbx-attach-go': '', ...busyAttrs(busy, 'attach:manual'), onClick: attachManual },
+            busy.shown('attach:manual') ? h(Spinner, { size: 10 }) : null,
+            t('sbxAttachGo'),
+          ),
           h('button', { type: 'button', style: V.btnGhost, onClick: () => setAttachFor(null) }, t('sbxCancel')),
         )
       }
@@ -15821,7 +19365,7 @@ window.__ModuleLoader__.load({
             top
               ? h(
                   'pre',
-                  { 'data-prefill-sbx-trace-code': '', style: { margin: 0, padding: '10px 12px', borderRadius: 10, background: '#1f2128', color: '#e8e8ee', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, Menlo, monospace' } },
+                  { 'data-prefill-sbx-trace-code': '', style: { margin: 0, padding: '10px 12px', borderRadius: 10, background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-primary)', border: '1px solid var(--dsw-alias-border-l1)', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, Menlo, monospace' } },
                   `${top.package}@${top.version}  ${top.file}:${top.line}\n${top.snippet}`,
                 )
               : null,
@@ -15841,12 +19385,24 @@ window.__ModuleLoader__.load({
             h('div', { style: V.sectionMeta }, t('sbxTraceNotice'), rejected > 0 ? ` ${t('sbxTraceRejected').replace('{n}', String(rejected))}` : ''),
             h(
               'div',
-              { style: { ...V.row, justifyContent: 'flex-end', gap: 8 } },
+              { style: V.rowEnd },
               top && ai === null ? h('button', { type: 'button', style: V.btnGhost, 'data-prefill-sbx-trace-ai-go': '', onClick: () => openTrace(trace.group, trace.name, true) }, t('sbxTraceAi')) : null,
               h('button', { type: 'button', style: V.btn, onClick: () => setTrace(null) }, t('sbxIgnore')),
-              single ? h('button', { type: 'button', style: V.btn, 'data-prefill-sbx-attach-one': '', onClick: () => attach({ ...single, source: { ...single.source, via: ai && ai !== 'busy' && ai.ok ? 'ai' : 'trace' } }) }, t('sbxAttachOne')) : null,
+              single
+                ? h(
+                    'button',
+                    { type: 'button', style: { ...V.btn, display: 'inline-flex', alignItems: 'center', gap: 4, ...(busy.shown('attach:one') ? BUSY_LOOK : {}) }, 'data-prefill-sbx-attach-one': '', ...busyAttrs(busy, 'attach:one'), onClick: () => attach({ ...single, source: { ...single.source, via: ai && ai !== 'busy' && ai.ok ? 'ai' : 'trace' } }, 'attach:one') },
+                    busy.shown('attach:one') ? h(Spinner, { size: 10 }) : null,
+                    t('sbxAttachOne'),
+                  )
+                : null,
               pack && pack.members.length > 0
-                ? h('button', { type: 'button', style: { ...V.btn, background: SBX_PURPLE, color: '#fff', borderColor: SBX_PURPLE }, 'data-prefill-sbx-attach-all': '', onClick: () => attach(pack) }, t('sbxAttachAll').replace('{pkg}', pack.label).replace('{n}', String(pack.members.length)))
+                ? h(
+                    'button',
+                    { type: 'button', style: { ...V.btn, display: 'inline-flex', alignItems: 'center', gap: 4, background: SBX_PURPLE, color: 'var(--dsw-alias-bg-base)', borderColor: SBX_PURPLE, ...(busy.shown('attach:all') ? BUSY_LOOK : {}) }, 'data-prefill-sbx-attach-all': '', ...busyAttrs(busy, 'attach:all'), onClick: () => attach(pack, 'attach:all') },
+                    busy.shown('attach:all') ? h(Spinner, { size: 10 }) : null,
+                    t('sbxAttachAll').replace('{pkg}', pack.label).replace('{n}', String(pack.members.length)),
+                  )
                 : null,
             ),
           ),
@@ -15866,6 +19422,15 @@ window.__ModuleLoader__.load({
         const canGo = blocker === null && !working
         const result = surface.result
         const toggleRisk = (risk) => setSurface((prev) => ({ ...prev, risks: (prev.risks ?? []).includes(risk) ? prev.risks.filter((entry) => entry !== risk) : [...(prev.risks ?? []), risk] }))
+        const surfaceDirty = picked !== undefined && String(surface.text ?? '') !== String(picked?.edit?.text ?? '')
+        const requestPick = (entry) => {
+          if (entry.seq === surface.pick) return
+          if (surfaceDirty) {
+            setSurface((prev) => ({ ...prev, pendingPick: entry }))
+            return
+          }
+          setSurface((prev) => ({ ...prev, pick: entry.seq, text: entry.edit?.text ?? '', pendingPick: null, result: null }))
+        }
         const title = surface.name ? t('sbxSurfaceTitle').replace('{name}', surface.name) : t('sbxSurfaceTitleAll')
         return h(
           Modal,
@@ -15882,17 +19447,17 @@ window.__ModuleLoader__.load({
               h(
                 'label',
                 { key: `c-${entry.seq}`, 'data-prefill-sbx-surface-item': String(entry.seq), style: { display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 8px', borderRadius: 8, border: `1px solid ${entry.seq === surface.pick ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-border-l1)'}`, cursor: 'pointer' } },
-                h('input', { type: 'radio', checked: entry.seq === surface.pick, onChange: () => setSurface((prev) => ({ ...prev, pick: entry.seq, text: entry.edit?.text ?? '', result: null })) }),
+                h('input', { type: 'radio', checked: entry.seq === surface.pick, onChange: () => requestPick(entry) }),
                 h(
                   'div',
                   { style: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: '1 1 auto' } },
                   h(
                     'div',
-                    { style: { ...V.row, gap: 6 } },
+                    { style: V.rowSm },
                     sbxCode(entry.name),
                     h('span', { style: V.sectionMeta }, `${entry.turn !== null && entry.turn !== undefined ? t('sbxSurfaceTurn').replace('{n}', String(entry.turn)) : ''} · seq ${entry.seq}`),
                     entry.edit ? sbxChip(entry.edit.pending ? t('sbxSurfacePendingTag') : t('sbxSurfaceEdited'), SBX_PURPLE) : null,
-                    h('span', { style: { flex: '1 1 auto' } }),
+                    h('span', { style: V.flex1 }),
                     entry.edit
                       ? h(
                           'button',
@@ -15916,12 +19481,39 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
+            surface.pendingPick
+              ? h(
+                  'div',
+                  { style: { ...V.callout('warn'), display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }, 'data-prefill-sbx-surface-switch-warn': '' },
+                  h('span', { style: { flex: '1 1 200px' } }, t('sbxSurfaceSwitchConfirm')),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: V.btn,
+                      'data-prefill-sbx-surface-switch-confirm': '',
+                      onClick: () => setSurface((prev) => (prev?.pendingPick ? { ...prev, pick: prev.pendingPick.seq, text: prev.pendingPick.edit?.text ?? '', pendingPick: null, result: null } : prev)),
+                    },
+                    t('sbxSurfaceSwitchYes'),
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      style: V.btnGhost,
+                      'data-prefill-sbx-surface-switch-cancel': '',
+                      onClick: () => setSurface((prev) => (prev ? { ...prev, pendingPick: null } : prev)),
+                    },
+                    t('sbxSurfaceSwitchStay'),
+                  ),
+                )
+              : null,
             picked
               ? h(
                   'div',
                   { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
                   h('b', { style: { fontSize: 12.5 } }, t('sbxSurfaceTo')),
-                  h('textarea', { rows: 3, value: surface.text, 'data-prefill-sbx-surface-text': '', placeholder: userType ? t('sbxSurfaceEmptyUser') : t('sbxSurfaceEmptyHint'), onChange: (event) => setSurface((prev) => ({ ...prev, text: event.target.value })), style: { width: '100%', boxSizing: 'border-box', fontSize: 12.5, padding: 8, borderRadius: 8, border: '1px solid var(--dsw-alias-border-l1)', background: 'transparent', color: 'inherit' } }),
+                  h('textarea', { rows: 3, value: surface.text, 'data-prefill-sbx-surface-text': '', placeholder: userType ? t('sbxSurfaceEmptyUser') : t('sbxSurfaceEmptyHint'), onChange: (event) => setSurface((prev) => ({ ...prev, text: event.target.value, pendingPick: null })), style: { ...V.textarea, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', minHeight: 72 } }),
                   h('span', { style: V.sectionMeta }, userType ? t('sbxSurfaceEmptyUser') : t('sbxSurfaceEmptyHint')),
                 )
               : null,
@@ -15940,7 +19532,7 @@ window.__ModuleLoader__.load({
             result && !result.ok ? h(DialogResult, { reveal: result, style: V.callout('warn'), role: 'alert', 'data-prefill-sbx-surface-result': 'failed' }, t('sbxSurfaceFailed').replace('{r}', surfaceReason(result.reason))) : null,
             h(
               'div',
-              { style: { ...V.row, justifyContent: 'flex-end', gap: 8 } },
+              { style: V.rowEnd },
               // 禁用原因：写明还差什么（读会话中已有「正在读会话…」提示，不重复）。
               blocker !== null && blocker.reason !== 'loading' ? h('span', { 'data-prefill-sbx-surface-blocker': blocker.reason, 'aria-live': 'polite', style: { ...V.sectionMeta, flex: '1 1 auto', minWidth: 0, color: 'var(--dsw-alias-state-warn-primary)' } }, blockerText) : null,
               h('button', { type: 'button', style: V.btn, onClick: () => setSurface(null) }, t('sbxCancel')),
@@ -15953,7 +19545,7 @@ window.__ModuleLoader__.load({
                   'data-prefill-sbx-surface-go': '',
                   ...busyAttrs(busy, 'surface:go'),
                   ...(working && !busy.pending('surface:go') ? { 'aria-disabled': 'true' } : {}),
-                  style: { ...V.btn, display: 'inline-flex', alignItems: 'center', gap: 6, background: blocker === null ? SBX_RED : undefined, color: blocker === null ? '#fff' : undefined, borderColor: SBX_RED, opacity: blocker === null ? 1 : 0.55, ...(going ? BUSY_LOOK : {}) },
+                  style: { ...V.btn, display: 'inline-flex', alignItems: 'center', gap: 6, background: blocker === null ? SBX_RED : undefined, color: blocker === null ? 'var(--dsw-alias-bg-base)' : undefined, borderColor: SBX_RED, opacity: blocker === null ? 1 : 0.55, ...(going ? BUSY_LOOK : {}) },
                   onClick: () => canGo && submitSurface(),
                 },
                 going ? h(Spinner, { size: 11 }) : null,
@@ -15966,7 +19558,7 @@ window.__ModuleLoader__.load({
 
       const surfaceLine = h(
         'div',
-        { style: { ...V.row, gap: 8 } },
+        { style: V.row },
         activeSurfaceEdits.length > 0 ? sbxChip(t('sbxSurfaceActive').replace('{n}', String(activeSurfaceEdits.length)), SBX_PURPLE) : null,
         h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 11.5, color: 'var(--dsw-alias-state-warn-primary)' }, 'data-prefill-sbx-surface-all': '', onClick: () => openSurface('') }, t('sbxSurfaceAll')),
       )
@@ -16003,10 +19595,10 @@ window.__ModuleLoader__.load({
           'div',
           { style: { ...V.row, marginTop: 4 } },
           h('button', { type: 'button', style: { ...V.btnGhost, fontSize: 12 }, 'aria-expanded': advanced ? 'true' : 'false', onClick: () => setAdvanced(!advanced) }, h('span', { style: V.caret(advanced) }, '▸'), ` ${t('sbxAdvanced')}`),
-          h('span', { style: { flex: '1 1 auto' } }),
-          h(ConfirmButton, { armed: confirmClear, style: { ...V.btnGhost, fontSize: 12 }, onClick: clearSession, 'data-prefill-sbx-clear': '' }, confirmClear ? t('confirmYes') : t('sbxClear')),
+          h('span', { style: V.flex1 }),
+          h(ConfirmButton, { armed: confirmClear, 'data-prefill-sbx-clear': '', style: { ...V.btnGhost, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, ...(busy.shown('clear') ? BUSY_LOOK : {}) }, ...busyAttrs(busy, 'clear'), onClick: clearSession }, busy.shown('clear') ? h(Spinner, { size: 10 }) : null, confirmClear ? t('confirmYes') : t('sbxClear')),
         ),
-        advanced ? h(InjectionSection, { t, sessionId, compact: true }) : null,
+        h(SbxReveal, { open: advanced, gap: 6, 'data-prefill-sbx-advanced-reveal': '' }, h(InjectionSection, { t, sessionId, compact: true, envelope })),
       )
     }
 
@@ -16014,7 +19606,8 @@ window.__ModuleLoader__.load({
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
       const onCount = props.onCount
-      const [envelope, setEnvelope] = React.useState(null)
+      const sharedEnvelope = props.envelope ?? null
+      const [envelope, setEnvelope] = React.useState(() => sharedEnvelope ?? (typeof getDockEnvelope === 'function' ? getDockEnvelope(sessionId) : null))
       const [draft, setDraft] = React.useState(null)
       const [status, setStatus] = React.useState('idle')
       const [custom, setCustom] = React.useState({ messages: [], sections: [], contexts: [] })
@@ -16023,6 +19616,7 @@ window.__ModuleLoader__.load({
       // 同上：hooks 必须在提前 return 之前。
       const [confirmClear, setConfirmClear] = React.useState(false)
       const dirty = React.useRef(false)
+      const draftSessionRef = React.useRef('')
 
       const call = React.useCallback(async (body) => {
         const response = await fetch(STATE_ROUTE, {
@@ -16034,19 +19628,41 @@ window.__ModuleLoader__.load({
         return await response.json()
       }, [])
 
+      const seedDraft = React.useCallback(
+        (data) => {
+          const current = data?.state?.overrides?.[sessionId] ?? {}
+          draftSessionRef.current = sessionId
+          setDraft({
+            messages: { ...(current.messages ?? {}) },
+            sections: { ...(current.sections ?? {}) },
+            contexts: { ...(current.contexts ?? {}) },
+          })
+        },
+        [sessionId],
+      )
+
+      // 复用透传的 envelope：只更新 envelope（清单会随卡片刷新同步补齐），不覆盖正在编辑的 draft。
+      React.useEffect(() => {
+        if (sharedEnvelope === null || sessionId === '') return
+        setEnvelope(sharedEnvelope)
+        if (draftSessionRef.current !== sessionId) seedDraft(sharedEnvelope)
+      }, [sharedEnvelope, sessionId, seedDraft])
+
       React.useEffect(() => {
         if (sessionId === '') return undefined
+        const hasStore = typeof subscribeDockEnvelope === 'function'
+        const cached = sharedEnvelope ?? (hasStore ? getDockEnvelope(sessionId) : null)
+        if (cached !== null) {
+          setEnvelope(cached)
+          if (draftSessionRef.current !== sessionId) seedDraft(cached)
+          return undefined
+        }
         let alive = true
-        void call(undefined)
+        void call({ slim: true, sessionId })
           .then((data) => {
             if (!alive) return
             setEnvelope(data)
-            const current = data?.state?.overrides?.[sessionId] ?? {}
-            setDraft({
-              messages: { ...(current.messages ?? {}) },
-              sections: { ...(current.sections ?? {}) },
-              contexts: { ...(current.contexts ?? {}) },
-            })
+            seedDraft(data)
           })
           .catch(() => {
             if (alive) setStatus('error')
@@ -16054,30 +19670,37 @@ window.__ModuleLoader__.load({
         return () => {
           alive = false
         }
-      }, [call, sessionId])
+      }, [call, sessionId, sharedEnvelope, seedDraft])
 
       // 把当前草稿登记到模块级表：预设存/取时要用它（"跟预设绑在一起"）。
       React.useEffect(() => {
         if (sessionId !== '' && draft !== null) injectionDrafts.set(sessionId, draft)
       }, [draft, sessionId])
 
-      // ⚠️ 清单（`injections.catalog` / `tools.catalog`）是**后来才填满**的：工具注册表在
-      // `agent/created` 登记、段/上下文名在装配时才知道。只在挂载时取一次的话，
-      // 用户会看到"工具一个都没有"（实测反馈）。所以定期只刷新 **envelope**、不动 draft。
+      // M1 P0-③：不再每 2500ms 独立重复轮询 /state；优先订阅 PrefillDock 共享 envelope，
+      // 独立挂载时仅响应 STATE_EVENT 且遵守 document.hidden === true 暂停。
       React.useEffect(() => {
+        if (sessionId === '') return undefined
+        const hasStore = typeof subscribeDockEnvelope === 'function'
+        const unsub = hasStore
+          ? subscribeDockEnvelope(sessionId, (data) => {
+              setEnvelope(data)
+              if (draftSessionRef.current !== sessionId) seedDraft(data)
+            })
+          : () => {}
         const refresh = () => {
-          // 轮询走带 15s 上限的 postJson（挂住的请求不许把下一轮叠上来）。
-          void postJsonWithTimeout(STATE_ROUTE, undefined)
+          if (sharedEnvelope !== null || (hasStore && isDockEnvelopeActive(sessionId))) return
+          if (typeof document !== 'undefined' && document?.hidden === true) return
+          void postJsonWithTimeout(STATE_ROUTE, { slim: true, sessionId })
             .then((data) => setEnvelope(data))
             .catch(() => {})
         }
-        const timer = setInterval(refresh, 2500)
         window.addEventListener(STATE_EVENT, refresh)
         return () => {
-          clearInterval(timer)
+          unsub()
           window.removeEventListener(STATE_EVENT, refresh)
         }
-      }, [])
+      }, [sessionId, sharedEnvelope, seedDraft])
 
       // 改完 800ms 落盘（写 state.json 的 overrides）。
       React.useEffect(() => {
@@ -16085,10 +19708,12 @@ window.__ModuleLoader__.load({
         const timer = setTimeout(() => {
           dirty.current = false
           setStatus('saving')
-          void call({ overrides: { ...(envelope?.state?.overrides ?? {}), [sessionId]: draft } })
+          void call({ sessionId, slim: true, sessionPatch: { target: sessionId, set: { overrides: draft } } })
             .then((data) => {
               setEnvelope(data)
+              if (typeof publishDockEnvelope === 'function') publishDockEnvelope(sessionId, data)
               setStatus('saved')
+              window.dispatchEvent(new CustomEvent(STATE_EVENT))
             })
             .catch((err) => {
             setStatus('error')
@@ -16265,7 +19890,7 @@ window.__ModuleLoader__.load({
         { style: S.injectAddRow },
         h('span', { style: S.injectAddLabel }, t('injectAddLabel')),
         h(
-          'select',
+          SelectBox,
           { style: S.dockSelect, value: addGroup, onChange: (event) => setAddGroup(event.target.value) },
           h('option', { value: 'messages' }, t('injectMessages')),
           h('option', { value: 'sections' }, t('injectSections')),
@@ -16312,7 +19937,7 @@ window.__ModuleLoader__.load({
           h('span', { style: S.injectTitleText }, t('injectTitle')),
           h('span', { style: S.label }, `${count}`),
           h('span', { style: S.injectHintText }, t('injectHint')),
-          h('span', { style: { flex: '1 1 auto' } }),
+          h('span', { style: V.flex1 }),
           (envelope?.injections?.catalog?.sections ?? []).some((name) => looksLikeTool(name))
             ? h('span', { style: S.injectHintText }, t('injectToolHint'))
             : null,
@@ -16508,19 +20133,71 @@ window.__ModuleLoader__.load({
     function SessionModeBadge(props) {
       const t = props.t ?? ((key) => key)
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
-      // 轻量摘要（模块级 store，规划 §2.2）：闸门 / 生效会话 / 开发者开关 / 轮次 / 工具数 / 人格段都在里面。
-      // 数据来源 = 全页唯一的那份 summary 轮询（不再是「自己每 2.5s 拉一次整封 envelope」）；
-      // hook 必须在早退之前（React #310）。
+      // 轻量摘要（模块级 store，规划 §2.2）：闸门 / 生效会话 / 开发者开关 / 轮次 / 工具数 / 人格段 / 沙盒 / 待生效都在里面。
+      // 数据来源 = 全页唯一的那份 summary 轮询（零新增请求）；hook 必须在早退之前（React #310）。
       const live = useSummary(sessionId)
-      // 手机窄屏：官方移动端会话头很窄（工具栏与标题抢宽度），这条「预填装 · 拦截档位 · 工具数」徽标
-      // 会被挤到换行/溢出；而相同信息在输入区的「预填装」「纯净」芯片和卡片状态胶囊里都有 ⇒ 手机不渲染。
+      // 手机窄屏：官方移动端会话头很窄（工具栏与标题抢宽度），这条徽标会被挤到换行/溢出；
+      // 相同信息在输入区的「预填装」「纯净」芯片和卡片状态胶囊里都有 ⇒ 手机不渲染。
       const badgeView = useViewport()
       const phone = badgeView.phone
+      const [popoverOpen, setPopoverOpen] = React.useState(false)
+      const [popPos, setPopPos] = React.useState(null)
+      const badgeBtnRef = React.useRef(null)
+      const [popShown, popRef, popClosing] = usePresence(
+        popoverOpen ? 'open' : '',
+        POPOVER_ENTER('top right'),
+        POPOVER_EXIT('top right'),
+        { enterDuration: 150, enterEasing: MOTION.springSnappy, exitDuration: 110, exitEasing: MOTION.easeOut },
+      )
+
+      React.useEffect(() => {
+        setPopoverOpen(false)
+      }, [sessionId])
+
+      // 点击展开右对齐 268px 三段式 Popover（Portal 到 document.body，无 react-dom 回退原位）。
+      React.useLayoutEffect(() => {
+        if (!popoverOpen) return undefined
+        const update = () => {
+          const rect = badgeBtnRef.current?.getBoundingClientRect?.()
+          const vw = typeof window !== 'undefined' ? Number(window.innerWidth) || 1440 : 1440
+          const width = 268
+          if (!rect || !Number.isFinite(rect.bottom)) {
+            setPopPos({ top: 44, left: Math.max(12, vw - width - 12), width })
+            return
+          }
+          const left = Math.round(Math.min(Math.max(12, rect.right - width), Math.max(12, vw - width - 12)))
+          const top = Math.round(Math.max(8, rect.bottom + 8))
+          setPopPos({ top, left, width })
+        }
+        update()
+        window.addEventListener('resize', update)
+        return () => window.removeEventListener('resize', update)
+      }, [popoverOpen])
+
+      React.useEffect(() => {
+        if (!popoverOpen) return undefined
+        const popLayer = dialogLayers.push(() => setPopoverOpen(false))
+        const onDown = (event) => {
+          if (pathHas(event, 'data-prefill-header-popover') || pathHas(event, 'data-prefill-header-badge')) return
+          const target = event.target
+          if (target instanceof Node && (popRef.current?.contains?.(target) || badgeBtnRef.current?.contains?.(target))) return
+          setPopoverOpen(false)
+        }
+        document.addEventListener('pointerdown', onDown, true)
+        document.addEventListener('mousedown', onDown, true)
+        return () => {
+          popLayer()
+          document.removeEventListener('pointerdown', onDown, true)
+          document.removeEventListener('mousedown', onDown, true)
+        }
+      }, [popoverOpen, popRef])
 
       if (sessionId === '') return null
       if (phone) return null
       // 读**当前配置**而不是"上一轮快照"：模式徽标要跟着开关立刻变，
       // 而快照只在跑过一轮之后才更新（Q9 的语义是"本轮生效值"）。
+      const prefillMap = live?.state?.prefill !== null && typeof live?.state?.prefill === 'object' ? live.state.prefill : {}
+      const prefillOn = typeof prefillMap[sessionId] === 'string' && prefillMap[sessionId] !== ''
       const levers = live?.state?.levers ?? {}
       const armedList = Array.isArray(live?.state?.armed) ? live.state.armed : []
       const armed = armedList.includes(sessionId) || armedList.includes('*')
@@ -16533,6 +20210,7 @@ window.__ModuleLoader__.load({
         levers.blockTools === true &&
         levers.blockMessages === true
       const filterOn = armed === true && levers.blockMessages === true
+      const replaceOn = gateMap[sessionId] === 'replace'
       const gate = pureOn ? 'pure' : filterOn ? 'filter' : 'pass'
       const turns = live?.turns?.[sessionId] ?? 0
       const materialized = live?.materialized?.[sessionId] ?? 0
@@ -16546,6 +20224,29 @@ window.__ModuleLoader__.load({
       const toolCount = Array.isArray(tools) ? tools.length : Number.isFinite(tools) ? tools : undefined
       // 「有人格段」：summary 的 persona 布尔（整封 envelope / 服务端可选扩展都会给）。
       const hasPersona = live?.persona === true
+      const pending = Array.isArray(live?.pendingReprime) && live.pendingReprime.includes(sessionId)
+      const sbxInfo = live?.sandbox?.[sessionId] ?? null
+      const sbxLevel = typeof sbxInfo?.level === 'string' && sbxInfo.level !== '' ? sbxInfo.level : 'observe'
+      // 观察档绝不显示「拦 N」（与卡片 / 总览统一口径）。
+      const sbxBlocked = sbxLevel === 'observe' ? 0 : Math.max(0, Number(sbxInfo?.blocked) || 0)
+      const sbxActive = sbxLevel !== 'observe'
+
+      // 7 态之 ① 全默认未开态静默隐匿（防打扰）：无 prefill / 非 pure / 非 replace / 非 filter / 无 persona / 无 pending / 观察档 ⇒ null。
+      if (!prefillOn && !pureOn && !replaceOn && !filterOn && !hasPersona && !pending && !sbxActive) return null
+
+      const statusKey =
+        gate === 'pure'
+          ? hasPersona
+            ? 'takeover'
+            : 'pure'
+          : replaceOn
+            ? 'replace'
+            : hasPersona
+              ? 'append'
+              : started
+                ? 'locked'
+                : 'ready'
+
       const gateText =
         gate === 'pure'
           ? hasPersona
@@ -16554,21 +20255,250 @@ window.__ModuleLoader__.load({
           : gateMap[sessionId] === 'replace'
             ? `${t('systemTitle')}·${t('systemReplaceMeta')}`
             : hasPersona
-            ? `${t('systemTitle')}·${t('systemAppendMeta')}`
-            : gate === 'filter'
-              ? t('stateFilter')
-              : t('statePass')
+              ? `${t('systemTitle')}·${t('systemAppendMeta')}`
+              : gate === 'filter'
+                ? t('stateFilter')
+                : sbxActive && !prefillOn
+                  ? `${t('sbxBadge')}·${sbxLevelLabel(t, sbxLevel)}`
+                  : t('nav')
       const modeText = started ? t('itemsAfterRun') : t('modeHistory')
       const toolsText = toolCount === undefined ? '' : toolCount === 0 ? t('toolsZero') : `${toolCount} ${t('toolsUnit')}`
-      const summary = [gateText, modeText, toolsText].filter((part) => part !== '').join(' · ')
+      const summary = [gateText, modeText, toolsText, pending ? t('headerNextTurn') : ''].filter((part) => part !== '').join(' · ')
+
+      const dotTone =
+        statusKey === 'takeover' || statusKey === 'pure' || pending
+          ? 'var(--dsw-alias-state-warn-primary)'
+          : statusKey === 'locked'
+            ? sbxLevel === 'strict' || filterOn
+              ? 'var(--dsw-alias-state-error-primary)'
+              : 'var(--dsw-alias-state-success-primary)'
+            : 'var(--dsw-alias-brand-primary)'
+      const warmPill = statusKey === 'takeover' || statusKey === 'pure' || pending
+      const pillBg = warmPill
+        ? mix('var(--dsw-alias-state-warn-primary)', 10, 'var(--dsw-alias-bg-layer-1)')
+        : statusKey === 'locked'
+          ? mix('var(--dsw-alias-state-success-primary)', 8, 'var(--dsw-alias-bg-layer-1)')
+          : mix('var(--dsw-alias-brand-primary)', 7, 'var(--dsw-alias-bg-layer-1)')
+      const pillBorder = warmPill
+        ? mix('var(--dsw-alias-state-warn-primary)', 34, 'var(--dsw-alias-border-l1)')
+        : statusKey === 'locked'
+          ? mix('var(--dsw-alias-state-success-primary)', 26, 'var(--dsw-alias-border-l1)')
+          : mix('var(--dsw-alias-brand-primary)', 22, 'var(--dsw-alias-border-l1)')
+
+      const activePresetRaw = typeof live?.state?.activePreset?.[sessionId] === 'string' ? live.state.activePreset[sessionId] : ''
+      const presetLabel =
+        chipSummary.get(sessionId)?.name ||
+        (activePresetRaw.startsWith('pack:')
+          ? activePresetRaw.slice(5)
+          : activePresetRaw.startsWith('builtin:')
+            ? activePresetRaw.slice(8)
+            : activePresetRaw.startsWith('card:')
+              ? activePresetRaw.slice(5)
+              : activePresetRaw) ||
+        t('presetsNone')
+      const sbxText = `${sbxLevelLabel(t, sbxLevel)}${sbxBlocked > 0 ? ` · ${t('sbxBlockedN').replace('{n}', String(sbxBlocked))}` : ''}`
+      const openCardFromHeader = () => {
+        setPopoverOpen(false)
+        if (prefillOn) {
+          setCardOpen(sessionId, true)
+          return
+        }
+        // 未开预填装时先打开本会话预填装再弹卡（写前先读整封 state，避免抹掉其他会话）。
+        void fetch(STATE_ROUTE, { method: 'POST' })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((fresh) => {
+            const base = fresh?.state?.prefill !== null && typeof fresh?.state?.prefill === 'object' ? fresh.state.prefill : {}
+            return fetch(STATE_ROUTE, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ prefill: { ...base, [sessionId]: 'default' }, sessionId }),
+            })
+          })
+          .then((res) => (res && res.ok ? res.json() : null))
+          .then((data) => {
+            if (data) applyEnvelope(data)
+            notifyStateChanged()
+            setCardOpen(sessionId, true)
+          })
+          .catch(() => setCardOpen(sessionId, true))
+      }
+
+      const usePortal = ReactDOM !== null && typeof ReactDOM.createPortal === 'function' && typeof document !== 'undefined'
+      const kvRow = (label, value) =>
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, fontSize: T.font.sm } },
+          h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', flex: '0 0 auto' } }, label),
+          h('span', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 500, fontVariantNumeric: 'tabular-nums', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right' } }, value),
+        )
+      const popoverNode =
+        popShown === null
+          ? null
+          : h(
+              'div',
+              {
+                ref: popRef,
+                role: 'dialog',
+                'aria-label': t('headerPopoverTitle'),
+                'data-prefill-header-popover': '1',
+                'data-closing': popClosing ? 'true' : undefined,
+                'aria-hidden': popClosing ? 'true' : undefined,
+                style: {
+                  ...T.surface.float,
+                  borderRadius: T.radius.lg,
+                  width: 268,
+                  padding: 12,
+                  boxSizing: 'border-box',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                  color: 'var(--dsw-alias-label-primary)',
+                  fontSize: T.font.sm,
+                  lineHeight: 1.5,
+                  pointerEvents: popClosing ? 'none' : 'auto',
+                  ...(usePortal
+                    ? { position: 'fixed', zIndex: 62, top: popPos?.top ?? 44, left: popPos?.left ?? 12 }
+                    : { position: 'absolute', zIndex: 62, top: 32, right: 0 }),
+                },
+              },
+              // ① 模式头 + 冻结说明 + 下轮生效暖条
+              h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+                h(
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                  h('i', { style: { width: 7, height: 7, borderRadius: '50%', background: dotTone, flex: '0 0 auto', display: 'inline-block' } }),
+                  h('span', { style: { fontWeight: 600, fontSize: T.font.md, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, gateText),
+                  h(
+                    'span',
+                    { style: { marginLeft: 'auto', flex: '0 0 auto', padding: '1px 7px', borderRadius: T.radius.pill, background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)', fontSize: T.font.xs } },
+                    started ? t('lockBadge') : t('lockOpenBadge'),
+                  ),
+                ),
+                h('div', { style: { fontSize: T.font.xs, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } }, started ? t('lockBadgeTip') : t('lockOpenTip')),
+                pending
+                  ? h(
+                      'div',
+                      {
+                        'data-prefill-header-popover-pending': '1',
+                        style: {
+                          padding: '6px 8px',
+                          borderRadius: T.radius.sm,
+                          background: mix('var(--dsw-alias-state-warn-primary)', 12, 'var(--dsw-alias-bg-layer-1)'),
+                          border: `1px solid ${mix('var(--dsw-alias-state-warn-primary)', 34, 'var(--dsw-alias-border-l1)')}`,
+                          color: 'var(--dsw-alias-state-warn-primary)',
+                          fontSize: T.font.xs,
+                          lineHeight: 1.45,
+                        },
+                      },
+                      t('headerNextTurnHint'),
+                    )
+                  : null,
+              ),
+              // ② 遥测表（预设 / 拦截档位 / 工具数 / 模型；观察档绝不显示拦 N）
+              h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 0', borderTop: '1px solid var(--dsw-alias-border-l1)', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
+                kvRow(t('presetsTitle'), presetLabel),
+                kvRow(t('sbxBadge'), sbxText),
+                kvRow(t('statusTools'), toolsText || '—'),
+                typeof live?.model === 'string' && live.model !== '' ? kvRow(t('statusModel'), live.model) : null,
+              ),
+              // ③ 快跳按钮
+              h(
+                'div',
+                { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    'data-prefill-header-open-card': '1',
+                    style: { ...V.btn, height: 26, flex: '1 1 auto' },
+                    onClick: openCardFromHeader,
+                  },
+                  t('headerOpenCard'),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    'data-prefill-header-open-settings': '1',
+                    style: { ...V.btnGhost, height: 26, flex: '0 0 auto' },
+                    onClick: () => {
+                      setPopoverOpen(false)
+                      openPrefillPanel('overview')
+                    },
+                  },
+                  t('headerOpenSettings'),
+                ),
+              ),
+            )
+      const popoverPortal = popoverNode === null ? null : usePortal ? ReactDOM.createPortal(popoverNode, document.body) : popoverNode
 
       return h(
         'span',
-        {
-          style: S.headerBadge(gate),
-          title: `${t('nav')}：${summary}`,
-        },
-        `${t('nav')} · ${summary}`,
+        { style: { position: 'relative', display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' } },
+        h(
+          'button',
+          {
+            type: 'button',
+            ref: badgeBtnRef,
+            'data-prefill-header-badge': statusKey,
+            'aria-haspopup': 'dialog',
+            'aria-expanded': popoverOpen ? 'true' : 'false',
+            title: `${t('nav')}：${summary}`,
+            onPointerDown: () => {
+              play(badgeBtnRef.current, PRESS_FX, { duration: 110, easing: MOTION.ease, cue: 'press' })
+            },
+            onClick: () => setPopoverOpen((openNow) => !openNow),
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 24,
+              padding: '0 9px',
+              borderRadius: T.radius.pill,
+              border: `1px solid ${pillBorder}`,
+              background: pillBg,
+              color: 'var(--dsw-alias-label-primary)',
+              fontFamily: 'inherit',
+              fontSize: T.font.sm,
+              lineHeight: 1,
+              whiteSpace: 'nowrap',
+              cursor: 'pointer',
+              boxSizing: 'border-box',
+              ...(popoverOpen ? { boxShadow: `0 0 0 2px ${mix('var(--dsw-alias-brand-primary)', 12)}` } : {}),
+            },
+          },
+          h('i', { style: { width: 6, height: 6, borderRadius: '50%', background: dotTone, flex: '0 0 auto', display: 'inline-block' } }),
+          h('span', { style: { fontWeight: 600, fontSize: T.font.sm, color: 'var(--dsw-alias-label-primary)' } }, gateText),
+          h('span', { style: { fontSize: T.font.xs, fontWeight: 400, color: 'var(--dsw-alias-label-tertiary)' } }, modeText),
+          pending
+            ? h(
+                'span',
+                {
+                  'data-prefill-header-pending': '1',
+                  style: {
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    padding: '0 5px',
+                    height: 16,
+                    borderRadius: T.radius.pill,
+                    background: mix('var(--dsw-alias-state-warn-primary)', 16),
+                    color: 'var(--dsw-alias-state-warn-primary)',
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    flex: '0 0 auto',
+                  },
+                },
+                h('i', { style: { width: 5, height: 5, borderRadius: '50%', background: 'var(--dsw-alias-state-warn-primary)', display: 'inline-block' } }),
+                t('headerNextTurn'),
+              )
+            : null,
+        ),
+        popoverPortal,
       )
     }
 
@@ -16627,11 +20557,9 @@ window.__ModuleLoader__.load({
           ),
         )
         // Q17 的注入改写不再是独立槽位：它是预填装面板里的一节（见 InjectionSection）。
-        // 会话头部：把本插件**实际生效的模式**贴在顶栏（顶上的 agent preset 芯片不归我们
-        // 管，但不能让它一家之言 —— 用户实拍问过"切了模式顶上那颗为什么不跟着变"）。
-        // ⚠️ 这个槽位由 `@deepseek-ai/dsh-client-ui-conversation` 渲染，实测里它没生效
-        // （可能还要更精确的客户端包注入）；所以**再挂一份**到输入框左侧 —— 那里是我们
-        // 自己的座位、一定可见。等"每包一个 preset"（§15 第 ⑥ 项）做完，顶栏芯片会自己变。
+        // 会话头部：把本插件**实际生效的模式**贴在顶栏（DSH 0.2.2-rc.5 实机探针已确认：非空白会话中
+        // `conversation.session.header.utilities` 真实可见，位于顶栏右侧工具区；新建空白会话的 hero 首屏
+        // 按宿主 `hideChrome: blank` 隐藏，因此输入槽左侧胶囊仍为主入口，顶栏徽标作为非空白会话的轻量状态提示与快跳入口）。
         ctx.slots.inject('conversation.session.header.utilities', () =>
           ctx.slots.register(
             {

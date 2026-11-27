@@ -116,7 +116,7 @@ test('服务端：保存 / 导入预设都收 lore，且只在带角色卡时存
 })
 
 test('面板：改「我的名字」重编译时不覆盖改过的世界书', () => {
-  assert.match(src, /lore: st\.lore\?\.\[sessionId\]\?\.custom === true \? st\.lore : put\(st\.lore, got\.layer\.lore\)/)
+  assert.match(src, /if \(st\.lore\?\.\[sessionId\]\?\.custom !== true\) assign\('lore', got\.layer\.lore\)/)
 })
 
 test('工作台长块：超过 240 字或 8 行默认收起；聚焦即展开（正在编辑的不会突然折叠）；展开后输入框自动增高', () => {

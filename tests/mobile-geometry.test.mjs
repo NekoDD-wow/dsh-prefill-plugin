@@ -53,7 +53,7 @@ test('桌面矮窗口（1440×520）：只夹 cardTop ≥ 56，不切窄版式�
   assert.equal(a.phone, false)
   assert.equal(a.bottom, 520 - 300 + 10, '仍贴在输入框上方 10px')
   assert.ok(cardTop(a, 520) >= PHONE_CARD_TOP - 1, `顶边 ${cardTop(a, 520)} ≥ 56`)
-  assert.ok(a.height <= Math.round(520 * 0.7), '高度不超过 70vh')
+  assert.ok(a.height <= Math.round(Math.min(520 * 0.56, 540)), '高度不超过 min(56vh, 540px)')
   // 找不到外框（用 inputTop = vh−160 兜底）
   const b = cardGeometry(1440, 520, null, undefined, false)
   assert.equal(b.short, false)
@@ -75,18 +75,18 @@ test('窄屏矮视口（768×500，非触屏）：保持窄版式，只夹顶边
   assert.ok(cardTop(g, 500) >= PHONE_CARD_TOP - 1, `顶边 ${cardTop(g, 500)} ≥ 56`)
 })
 
-test('常规桌面 / 既有窄屏：公式与改动前一致', () => {
+test('常规桌面 / 既有窄屏：按 min(56vh, 540px) 与剩余空间收敛高度', () => {
   const { cardGeometry } = load()
-  // 桌面 1440×1000：旧公式原样（motion.test.mjs 也钉了同一组值）
+  // 桌面 1400×1000：封顶 540px（motion.test.mjs 也钉了同一组值）
   const wide = cardGeometry(1400, 1000, { top: 820, left: 400, width: 880 }, undefined, false)
   assert.equal(wide.width, 868)
   assert.equal(wide.bottom, 190)
-  assert.equal(wide.height, 700)
+  assert.equal(wide.height, 540)
   assert.equal(wide.narrow, false)
   assert.equal(wide.short, false)
-  // 窄屏 780×900（不矮）：旧窄屏公式
+  // 窄屏 780×900（不矮）：56vh 封顶 540px
   const narrow = cardGeometry(780, 900, { top: 700, left: 20, width: 740 }, undefined, false)
   assert.equal(narrow.narrow, true)
   assert.equal(narrow.short, false)
-  assert.equal(narrow.height, Math.round(Math.min(900 * 0.7, 700 - 20)))
+  assert.equal(narrow.height, Math.round(Math.min(900 * 0.56, 540, 700 - 20)))
 })

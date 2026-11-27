@@ -82,7 +82,7 @@ test('面板：取消后出现撤销条，撤销同时放回草稿', () => {
   // 动效第 3 步：撤销按钮走 act()（忙碌态 + 失败进错误 pill）
   assert.match(src, /'data-prefill-preset-undo': '', \.\.\.busyAttrs\(busyCtl, 'undo'\), onClick: \(\) => act\('undo', t\('errOpUndo'\), undoClearPreset\)/)
   const undo = src.slice(src.indexOf('const undoClearPreset = async () => {'), src.indexOf('/** 按引用现编译一张卡'))
-  assert.match(undo, /presetRestorePatch\(fresh\?\.state, sessionId, snap\)/)
+  assert.match(undo, /presetRestoreSessionPatch\(sessionId, snap\)/)
   // 只把 host 上本来还没发出的草稿放回去；已经写进历史的（pending = null）不能再登记成草稿。
   assert.match(undo, /if \(snap\.pending !== null\) await postJson\(DRAFT_ROUTE, \{ sessionId, items: snap\.pending \}\)/)
   assert.doesNotMatch(undo, /items: snap\.items \}/)

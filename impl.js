@@ -449,6 +449,34 @@ export function noteSessionRouteFromEvent(routes, sessionId, event, at) {
 }
 
 /**
+ * 本会话当前模型 id（v2 M4，只读）：优先读活跃 agent 的 session.requestHeader().config.model / agent.config.model，
+ * 拿不到退回最近一次 request/header 路由记录（latestRouteBySession），都没有回 null。
+ *
+ * @param {any} liveAgent liveAgents.get(sessionId)
+ * @param {{ model?: string }|null|undefined} routed latestRouteBySession.get(sessionId)
+ * @returns {string|null}
+ */
+export function sessionModelOf(liveAgent, routed) {
+  try {
+    const headerCfg = typeof liveAgent?.session?.requestHeader === 'function' ? liveAgent.session.requestHeader()?.config : undefined
+    if (typeof headerCfg?.model === 'string' && headerCfg.model.trim() !== '') return headerCfg.model.trim()
+  } catch {
+    // 宿主 session.requestHeader 偶发不可用时退回其他线索，绝不拖垮 summary。
+  }
+  const fromAgent =
+    typeof liveAgent?.config?.model === 'string' && liveAgent.config.model.trim() !== ''
+      ? liveAgent.config.model.trim()
+      : typeof liveAgent?.model === 'string' && liveAgent.model.trim() !== ''
+        ? liveAgent.model.trim()
+        : typeof liveAgent?.session?.header?.model === 'string' && liveAgent.session.header.model.trim() !== ''
+          ? liveAgent.session.header.model.trim()
+          : ''
+  if (fromAgent !== '') return fromAgent
+  if (typeof routed?.model === 'string' && routed.model.trim() !== '') return routed.model.trim()
+  return null
+}
+
+/**
  * 采样覆盖（P1-5）：只保留合法成员；一个都不合法 ⇒ `null` = 不干预。
  *
  * 口径是「**发给上游的值**」——上游是否尊重 `seed` 本仓库无法验证，所以不叫「实际生效值」。
@@ -3215,6 +3243,180 @@ export function apply(ctx) {
       }
     }
 
+    const SLIM_SESSION_MAPS = new Set([
+      'activePreset',
+      'cardRef',
+      'lore',
+      'memory',
+      'overrides',
+      'gate',
+      'sessionTools',
+      'everyTurn',
+      'enabled',
+      'workspaceInstructions',
+      'slotSource',
+      'sandbox',
+      'prefill',
+      'locked',
+      'sessionAllowKinds',
+      'compactSeen',
+      'injectQueue',
+    ])
+    const SLIM_GLOBAL_KEYS = new Set(['ui', 'noticeSeen', 'levers', 'allowKinds', 'sandboxPacks', 'blocks', 'towers', 'hiddenBuiltins', 'sandboxMirror'])
+
+    /**
+     * 按会话投影的轻量 envelope（docs/规划-开卡瘦身-v2.md）：
+     * 只保留目标会话 `sessionId`（以及 `'*'` 默认格）的状态与 sandboxView，体积从 ~1.25 MB 降到 ~10–25 KB。
+     * 不传 `slim` 的旧调用继续走全量 `envelope()`（设置页总览 / CLI / 旧单测零破坏）。
+     */
+    const envelopeFor = (rawSessionId) => {
+      const sessionId = typeof rawSessionId === 'string' ? rawSessionId : ''
+      if (sessionId === '') return envelope()
+      const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+      const pick = (map, withStar = false) => {
+        if (!isObj(map)) return {}
+        const out = {}
+        if (withStar && Object.hasOwn(map, '*')) out['*'] = map['*']
+        if (Object.hasOwn(map, sessionId)) out[sessionId] = map[sessionId]
+        return out
+      }
+      const state = readState()
+      const legacy = withLegacyView(state)
+      const slimState = {}
+      for (const [k, v] of Object.entries(legacy)) {
+        if (SLIM_SESSION_MAPS.has(k)) slimState[k] = pick(v, true)
+        else if (k === 'armed') slimState[k] = Array.isArray(v) ? v.filter((id) => id === sessionId) : []
+        else slimState[k] = v
+      }
+      const snapshotsAll = typeof gateCache.module?.snapshots === 'function' ? gateCache.module.snapshots() : {}
+      const snapshots = pick(snapshotsAll, false)
+      const injectQueue = isObj(state?.injectQueue) ? state.injectQueue : {}
+      const injectionsAll = typeof gateCache.module?.injections === 'function' ? gateCache.module.injections(rootCtxRef) : {}
+      const toolsAll = typeof gateCache.module?.tools === 'function' ? gateCache.module.tools(rootCtxRef) : { catalog: [], sessions: {} }
+      const auditAll = typeof gateCache.module?.auditSnapshot === 'function' ? gateCache.module.auditSnapshot() : {}
+      const obs = { injections: injectionsAll, tools: toolsAll, audit: auditAll }
+      const sbxView = {}
+      for (const id of [sessionId, '*']) {
+        try {
+          sbxView[id] = sandboxView(legacy, id, obs)
+        } catch {
+          // 单个会话视图失败不拖垮响应。
+        }
+      }
+      const liveAgent = liveAgents.get(sessionId)
+      const draftsAll = typeof gateCache.module?.draftIds === 'function' ? gateCache.module.draftIds() : []
+      const conflictsAll = typeof gateCache.module?.conflicts === 'function' ? gateCache.module.conflicts() : {}
+      const materializedAll = typeof gateCache.module?.materialized === 'function' ? gateCache.module.materialized() : {}
+      return {
+        ok: true,
+        slim: true,
+        slimSessionId: sessionId,
+        plugin: '@local/dsh-prefill',
+        stage: STAGE,
+        gateStage: gateCache.module?.STAGE ?? null,
+        stateFile: STATE_FILE,
+        state: slimState,
+        drafts: Array.isArray(draftsAll) ? draftsAll.filter((id) => id === sessionId) : [],
+        snapshots,
+        turns: Object.hasOwn(snapshots, sessionId) ? { [sessionId]: snapshots[sessionId]?.turn ?? 0 } : {},
+        manualQueued: Object.hasOwn(injectQueue, sessionId) ? { [sessionId]: Array.isArray(injectQueue[sessionId]) ? injectQueue[sessionId].length : 0 } : {},
+        injections: isObj(injectionsAll) ? { ...injectionsAll, sessions: pick(injectionsAll.sessions, false) } : {},
+        audit: pick(auditAll, false),
+        sandboxView: sbxView,
+        sandboxClaims: sandboxClaims(),
+        tools: isObj(toolsAll) ? { ...toolsAll, sessions: pick(toolsAll.sessions, false) } : { catalog: [], sessions: {} },
+        conflicts: pick(conflictsAll, false),
+        pendingReprime: pendingReprime.has(sessionId) ? [sessionId] : [],
+        running: liveAgent !== undefined && isRunning(liveAgent) ? [sessionId] : [],
+        manualInbox: liveAgent !== undefined ? { [sessionId]: pendingInInbox(liveAgent).length } : {},
+        materialized: pick(materializedAll, false),
+        diagnostics: {
+          seen: diagnostics.seen,
+          mounted: diagnostics.mounted,
+          gateLoads: diagnostics.gateLoads,
+          gateError: diagnostics.gateError,
+          issues: diagnostics.last
+            .filter((entry) => {
+              if (entry === null || typeof entry !== 'object') return false
+              return (
+                entry.error !== undefined ||
+                entry.mountError !== undefined ||
+                entry.section_mount_failed !== undefined ||
+                entry.section_missing !== undefined ||
+                entry.override_recovered !== undefined ||
+                entry.remount !== undefined ||
+                entry.prime === 'kept-previous'
+              )
+            })
+            .slice(-8),
+          last: diagnostics.last.slice(-8),
+        },
+      }
+    }
+
+    /**
+     * 按会话原子补丁（docs/规划-开卡瘦身-v2.md）：
+     * 在最新 state 上只修改 target（本会话或 '*'）的槽位，绝不影响其他会话。
+     */
+    const expandSessionPatch = (rawState, sp, fallbackSessionId) => {
+      if (sp === null || typeof sp !== 'object') return {}
+      const target = typeof sp.target === 'string' && sp.target !== '' ? sp.target : fallbackSessionId
+      const legacy = withLegacyView(rawState)
+      const out = {}
+      const baseMapOf = (key) => {
+        if (Object.hasOwn(out, key)) return out[key]
+        const src = key === 'sandbox' ? rawState?.sandbox : legacy?.[key]
+        return src !== null && typeof src === 'object' && !Array.isArray(src) ? { ...src } : {}
+      }
+      if (target !== '' && sp.set !== null && typeof sp.set === 'object') {
+        for (const [key, value] of Object.entries(sp.set)) {
+          if (!SLIM_SESSION_MAPS.has(key) || value === undefined) continue
+          const map = baseMapOf(key)
+          map[target] = value
+          out[key] = map
+        }
+      }
+      if (target !== '' && Array.isArray(sp.unset)) {
+        for (const key of sp.unset) {
+          if (!SLIM_SESSION_MAPS.has(key)) continue
+          const map = baseMapOf(key)
+          delete map[target]
+          out[key] = map
+        }
+      }
+      if (sp.scopes !== null && typeof sp.scopes === 'object') {
+        for (const [scopeKey, entry] of Object.entries(sp.scopes)) {
+          if (scopeKey === '' || entry === null || typeof entry !== 'object') continue
+          if (entry.set !== null && typeof entry.set === 'object') {
+            for (const [key, value] of Object.entries(entry.set)) {
+              if (!SLIM_SESSION_MAPS.has(key) || value === undefined) continue
+              const map = baseMapOf(key)
+              map[scopeKey] = value
+              out[key] = map
+            }
+          }
+          if (Array.isArray(entry.unset)) {
+            for (const key of entry.unset) {
+              if (!SLIM_SESSION_MAPS.has(key)) continue
+              const map = baseMapOf(key)
+              delete map[scopeKey]
+              out[key] = map
+            }
+          }
+        }
+      }
+      if (target !== '' && typeof sp.armed === 'boolean') {
+        const prev = Array.isArray(rawState?.armed) ? rawState.armed : []
+        out.armed = sp.armed ? (prev.includes(target) ? prev : [...prev, target]) : prev.filter((id) => id !== target)
+      }
+      if (sp.global !== null && typeof sp.global === 'object') {
+        for (const [key, value] of Object.entries(sp.global)) {
+          if (SLIM_GLOBAL_KEYS.has(key) && value !== undefined) out[key] = value
+        }
+      }
+      return out
+    }
+
     /**
      * 轻量摘要（规划 §2.1）：只给**目标会话**那几格 + 最小全局字段，序列化 < 10 KB。
      * 常驻轮询（芯片 / 纯净芯片 / 顶栏徽标）只拉它，不再拉整份 envelope —— 本机实测整份响应
@@ -3294,6 +3496,8 @@ export function apply(ctx) {
         // summary-route 的既有测试对 ui 做 deepEqual。null = 本会话还没发过请求 = 未知，
         // 客户端拿到 null 时不得告警、不得染红。
         sessionRoute: sessionId === '' ? null : sessionRouteOf(latestRouteBySession.get(sessionId), reasoningProviderIdOf(state?.ui?.reasoningPrefix, REASONING_DEFAULT.providerId)),
+        // v2 M4：本会话当前模型 id（活跃 agent > 最近路由 > null）；刻意放顶层，绝不改 summary.ui 形状。
+        model: sessionId === '' ? null : sessionModelOf(liveAgents.get(sessionId), latestRouteBySession.get(sessionId)),
         // 闸门模式：'pure'（严格档 / 纯净 / 接管）| 'replace'（替换系统提示）；'pass' 省略 = 默认不改。
         gate: (() => {
           const mode = sessionId !== '' && isObject(legacy?.gate) ? legacy.gate[sessionId] : undefined
@@ -3385,15 +3589,34 @@ export function apply(ctx) {
             }
             // 写状态这一路要落盘 + 重挂 + 预热，任何一步抛都不该把 reject 冒到宿主（那是 500，
             // 面板只看到「网络错误」）。包一层：失败回 `{ ok:false, reason }` 并记一笔。
-            // `sessionId` 只当路由提示（决定回哪份 summary），**不进 state**：状态里有未知会话级 map 才是有意义的键。
+            // `sessionId` 与 `slim` 只当路由提示（决定回哪份 summary 与是否按会话投影），**不进 state**。
+            let querySlim = false
+            let querySession = ''
+            try {
+              if (typeof request?.url === 'string' && request.url.includes('?')) {
+                const params = new URL(request.url, 'http://127.0.0.1').searchParams
+                const sv = params.get('slim')
+                querySlim = sv === '1' || sv === 'true'
+                querySession = params.get('sessionId') ?? ''
+              }
+            } catch {
+              // ignore malformed url
+            }
+            let wantSlim = querySlim
+            if (patch !== null && typeof patch === 'object' && typeof patch.slim === 'boolean') {
+              wantSlim = patch.slim
+              delete patch.slim
+            }
             const summarySession = (() => {
               if (patch !== null && typeof patch === 'object' && typeof patch.sessionId === 'string') {
                 const sid = patch.sessionId
                 delete patch.sessionId
                 return sid
               }
-              return typeof patch?.restoreOpening === 'string' ? patch.restoreOpening : ''
+              if (typeof patch?.restoreOpening === 'string' && patch.restoreOpening !== '') return patch.restoreOpening
+              return querySession
             })()
+            const respondEnvelope = () => (wantSlim && summarySession !== '' ? envelopeFor(summarySession) : envelope())
             try {
               // 「恢复开局时的预设」（issue #19 B）：`{ restoreOpening: 会话 }` ⇒ 用 state.locked[会话] 里的快照换回配置，
               // 下一轮生效，历史不动。补丁由服务端按最新状态现算（别的键一概不收）；每轮注入沿用快照自己的 since。
@@ -3402,7 +3625,7 @@ export function apply(ctx) {
                 const sid = patch.restoreOpening
                 const current = readState()
                 const built = restorePatch(withLegacyView(current), sid, lockOf(current, sid), lastTurnOf(sessionEvents(liveAgents.get(sid), sid)))
-                if (built === undefined) return Response.json({ ...envelope(), ok: false, reason: 'not-locked' }, noStore)
+                if (built === undefined) return Response.json({ ...respondEnvelope(), ok: false, reason: 'not-locked' }, noStore)
                 patchState(built)
                 // 沙盒那一格（受控档 / 包开关 / 单条规则）旧字段表达不了，按快照原样换回；在旧字段吸收之后写，以快照为准。
                 const sandbox = restoreSandbox(readState().sandbox, sid, lockOf(current, sid))
@@ -3411,6 +3634,11 @@ export function apply(ctx) {
                 restored = sid
                 patch = undefined
                 await reprimeAll('restore-opening')
+              }
+              if (patch !== null && typeof patch === 'object' && patch.sessionPatch !== undefined) {
+                const expanded = expandSessionPatch(readState(), patch.sessionPatch, summarySession)
+                delete patch.sessionPatch
+                patch = { ...expanded, ...patch }
               }
               if (patch !== null && typeof patch === 'object' && Object.keys(patch).length > 0) {
                 if (patch.everyTurn !== null && typeof patch.everyTurn === 'object') {
@@ -3444,7 +3672,7 @@ export function apply(ctx) {
                 }
               })()
               return Response.json(
-                { ...envelope(), ...(restored !== undefined ? { restored } : {}), ...(summary === undefined ? {} : { summary }) },
+                { ...respondEnvelope(), ...(restored !== undefined ? { restored } : {}), ...(summary === undefined ? {} : { summary }) },
                 noStore,
               )
             } catch (error) {
@@ -3477,10 +3705,11 @@ export function apply(ctx) {
             const gate = await loadGate()
 
             // 读形态：只给 sessionId ⇒ 回当前草稿（客户端编辑器首次打开时用）。
+            // 不再附 ...envelope()（1.25 MB）：客户端只读 data.draft。
             if (items === undefined) {
               const draft =
                 sessionId !== '' && typeof gate?.readDraft === 'function' ? (gate.readDraft(sessionId) ?? null) : null
-              return Response.json({ ok: true, sessionId, draft, staged: false, ...envelope() }, noStore)
+              return Response.json({ ok: true, sessionId, draft, staged: false }, noStore)
             }
 
             let staged = false
@@ -3501,10 +3730,7 @@ export function apply(ctx) {
               }
             }
             note({ seat: 'draft-route', staged, sessionId, items: items?.length ?? 0, reason })
-            return Response.json(
-              { ok: true, staged, sessionId, items: items?.length ?? 0, reason, ...envelope() },
-              noStore,
-            )
+            return Response.json({ ok: true, staged, sessionId, items: items?.length ?? 0, reason }, noStore)
           },
         }),
       'dsh-prefill: draft route',
@@ -3752,12 +3978,12 @@ export function apply(ctx) {
                 const id = typeof body?.id === 'string' ? body.id : ''
                 const preset = builtinPreset(id)
                 note({ seat: 'packs-route', op, id, hit: preset !== undefined })
-                return Response.json({ ok: true, op, id, pack: preset ?? null, ...envelope() }, noStore)
+                return Response.json({ ok: true, op, id, pack: preset ?? null }, noStore)
               } else if (op === 'get') {
                 const name = typeof body?.name === 'string' ? body.name : ''
                 const found = packs.find((entry) => entry.name === name)
                 note({ seat: 'packs-route', op, name, hit: found !== undefined })
-                return Response.json({ ok: true, op, name, pack: found ?? null, file, ...envelope() }, noStore)
+                return Response.json({ ok: true, op, name, pack: found ?? null, file }, noStore)
               } else if (op === 'from-session') {
                 // 把当前会话已发生的对话转成开场条目（只读，不存）；客户端预览后再走 save。
                 // 范围「第 N 轮 到 第 M 轮」（v0.10.1）：fromTurn 缺省 1，toTurn 缺省 = 到最后；旧调用只给 toTurn 照旧。
@@ -3778,7 +4004,7 @@ export function apply(ctx) {
                 // 截了轮次、而摘要覆盖到截取末轮 M 之后 ⇒ 不许带（摘要里有分支点之后的剧情）。
                 const memoryAllowed = memory !== null && (toTurn === 0 || memory.throughTurn <= toTurn)
                 note({ seat: 'packs-route', op, sessionId, items: result.items.length, turnCount: result.turnCount, lastTurn: result.lastTurn, toolCalls: result.toolCalls, everyTurn: everyTurn?.mode ?? null, memory: memory?.throughTurn ?? null, memoryAllowed })
-                return Response.json({ ok: true, op, ...result, fromTurn: range.from, toTurn: range.to, everyTurn, constraints, memory, memoryAllowed, ...envelope() }, noStore)
+                return Response.json({ ok: true, op, ...result, fromTurn: range.from, toTurn: range.to, everyTurn, constraints, memory, memoryAllowed }, noStore)
               } else if (op === 'every-turn-status') {
                 // 面板状态行：本会话每轮注入的自动判定（只读）。
                 // **只回 {ok, op, status}**：这里以前带 ...envelope()（整份 state 1 MB 级），而这个接口
@@ -3860,7 +4086,6 @@ export function apply(ctx) {
                   reason,
                   ...extra,
                   ...(summary === undefined ? {} : { summary }),
-                  ...envelope(),
                 },
                 noStore,
               )

@@ -80,9 +80,12 @@ function fakeEl() {
 }
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-test('MOTION 常量一处定义（草案数值）', () => {
+test('MOTION 常量一处定义（草案数值 + M1 springSnappy / easeGem）', () => {
   const { M } = load()
-  assert.deepEqual(M.MOTION, { fast: 120, base: 180, slow: 260, ease: 'cubic-bezier(.2,.7,.2,1)', easeOut: 'cubic-bezier(.4,0,1,1)', spring: 'cubic-bezier(.34,1.56,.64,1)', stagger: 30 })
+  const { fast, base, slow, ease, easeOut, spring, stagger, easeGem, springSnappy } = M.MOTION
+  assert.deepEqual({ fast, base, slow, ease, easeOut, spring, stagger }, { fast: 120, base: 180, slow: 260, ease: 'cubic-bezier(.2,.7,.2,1)', easeOut: 'cubic-bezier(.4,0,1,1)', spring: 'cubic-bezier(.34,1.56,.64,1)', stagger: 30 })
+  assert.equal(easeGem, 'cubic-bezier(0.2, 0, 0, 1)')
+  assert.equal(typeof springSnappy, 'string')
   assert.deepEqual(M.MOTION_LEVELS, ['full', 'lite', 'off'])
   // 只在 client.js 顶部定义一次；面板里不再有写死的 170ms / 120ms 位移过渡
   assert.equal(src.match(/const MOTION = \{/g)?.length, 1)
@@ -253,18 +256,20 @@ test('presence：退场动画结束后才卸载；被 cancel 也卸载；没动�
 
 test('卡片几何：高度固定（= 上限），与小节内容无关；窄屏同一套；芯片做 transform-origin', () => {
   const { M } = load()
-  // 宽屏 1400×1000，输入框外框 top 820
+  // 宽屏 1400×1000，输入框外框 top 820（min(1000 * 0.56, 540, 800) = 540）
   const wide = M.cardGeometry(1400, 1000, { top: 820, left: 400, width: 880 }, undefined)
   assert.equal(wide.width, 868)
   assert.equal(wide.left, Math.round(400 + 440 - 434))
   assert.equal(wide.bottom, 190)
-  assert.equal(wide.height, 700)
+  assert.equal(wide.height, 540)
   assert.equal(wide.height, wide.maxHeight)
   assert.equal(wide.narrow, false)
-  // 窄屏 780×900
+  // 2K 屏 2560×1440：仍封顶 540px，不撑满纵深
+  assert.equal(M.cardGeometry(2560, 1440, { top: 1260, left: 600, width: 1000 }, undefined).height, 540)
+  // 窄屏 780×900（min(900 * 0.56, 540, 700 - 10 - 56) = 504）
   const narrow = M.cardGeometry(780, 900, { top: 700, left: 20, width: 740 }, undefined)
   assert.equal(narrow.narrow, true)
-  assert.equal(narrow.height, Math.round(Math.min(900 * 0.7, 700 - 20)))
+  assert.equal(narrow.height, Math.round(Math.min(900 * 0.56, 540, 700 - 20)))
   assert.ok(narrow.width <= 780 - 24)
   // 输入框很靠上：高度按剩余空间、至少 200
   assert.equal(M.cardGeometry(1400, 1000, { top: 150, left: 0, width: 800 }).height, 200)
@@ -272,7 +277,7 @@ test('卡片几何：高度固定（= 上限），与小节内容无关；窄屏
   assert.equal(M.cardGeometry(1000, 800, null, 600).bottom, 210)
   assert.equal(M.cardGeometry(1000, 800, null, undefined).bottom, 170)
   assert.equal(M.sameGeometry(wide, { ...wide }), true)
-  assert.equal(M.sameGeometry(wide, { ...wide, height: 699 }), false)
+  assert.equal(M.sameGeometry(wide, { ...wide, height: 539 }), false)
   assert.equal(M.sameGeometry(null, wide), false)
   // transform-origin：芯片中心相对卡片左上角；x 夹在卡片宽度内
   const cardTop = 1000 - wide.bottom - wide.height
@@ -288,12 +293,12 @@ test('面板接线：绘制前测量、固定高度、presence、档位属性、
   assert.match(geom, /cardGeometry\(vw, vh, box,/)
   assert.match(src, /visibility: shrunk \|\| bounds === null \? 'hidden' : 'visible'/)
   // P1-2：卡片高度固定；主体可滚（窄屏纵向 flex 也要 minHeight 0）
-  assert.match(src, /height: bounds\?\.height \?\? '60vh'/)
+  assert.match(src, /height: bounds\?\.height \?\? 'min\(56vh, 540px\)'/)
   assert.match(src, /'data-prefill-main': '', style: \{ flex: '1 1 auto', minWidth: 0, minHeight: 0, overflowY: 'auto'/)
-  // P1-3：入场在 layout effect 里播；收起 = presence（退场后才卸载）
+  // P1-3：入场在 layout effect 里播（M1 切用临界阻尼弹簧 springSnappy）；收起 = presence（退场后才卸载）
   const enter = src.slice(src.indexOf('// 入场（P1-3）'), src.indexOf('// 入场（P1-3）') + 700)
   assert.match(enter, /React\.useLayoutEffect/)
-  assert.match(enter, /play\(el, CARD_ENTER\(originRef\.current\), \{ duration: MOTION\.base, easing: MOTION\.ease \}\)/)
+  assert.match(enter, /play\(el, CARD_ENTER\(originRef\.current\), \{ duration: MOTION\.base, easing: MOTION\.springSnappy \}\)/)
   assert.match(src, /play\(el, CARD_EXIT\(originRef\.current\), \{ duration: MOTION\.fast, easing: MOTION\.easeOut, fill: 'forwards' \}\)/)
   assert.match(src, /presenceExit\(animation, \(\) => \{\s*exitRef\.current = null\s*setCardMounted\(false\)/)
   assert.match(src, /if \(!cardOpen && !cardMounted\) return h\('div', \{ 'data-prefill-anchor': '1'/)
@@ -308,8 +313,8 @@ test('面板接线：绘制前测量、固定高度、presence、档位属性、
   assert.match(src, /transform: on \? 'translateX\(12px\)' : 'none', transition: motion === 'full' \?/)
   assert.match(src, /transition: motion === 'full' \? `transform \$\{MOTION\.fast\}ms \$\{MOTION\.ease\}` : 'none', transform: cardOpen \? 'none' : 'rotate\(180deg\)'/)
   assert.match(src, /transform: shrunk && motion === 'full' \? 'translateY\(6px\) scale\(0\.98\)' : 'none'/)
-  assert.match(src, /motion === 'off'\s*\? 'none'\s*: `opacity 150ms ease/)
-  assert.match(src, /animation: motion === 'off' \? 'none' : motion === 'lite' \? 'dsh-prefill-fade 150ms ease' : 'dsh-prefill-pop 150ms ease'/)
+  assert.match(src, /motion === 'off'\s*\? 'none'\s*: `opacity 130ms /)
+  assert.match(src, /animation:\s*motion === 'off'\s*\? 'none'\s*: motion === 'lite'\s*\? 'dsh-prefill-fade 130ms ease 40ms both'\s*: `dsh-prefill-pop \$\{MOTION\.base\}ms \$\{MOTION\.springSnappy\} 40ms both`/)
   // 不再在渲染里读一次 matchMedia
   assert.doesNotMatch(src, /reduceMotion/)
   // PR2：动效偏好搬到左侧栏「偏好」；卡片「⋯」菜单只留指路。

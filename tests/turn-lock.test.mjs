@@ -396,7 +396,7 @@ test('面板：锁状态以 state.locked 为准，没有记录时看日志 / 闸
   assert.match(applySrc, /const touchItems = clearItems \|\| applied\.touchItems/, '「取消预设」照旧清草稿')
   assert.match(applySrc, /if \(touchItems\) \{\s+await postJson\(DRAFT_ROUTE/)
   assert.match(client, /const injectMode = turns > 0 \|\| lock\.locked/)
-  assert.match(client, /postJson\(STATE_ROUTE, \{ restoreOpening: sessionId \}\)/)
+  assert.match(client, /postJson\(STATE_ROUTE, \{ restoreOpening: sessionId, slim: true, sessionId \}\)/)
   for (const attr of ['data-prefill-lock-badge', 'data-prefill-lock-restore', 'data-prefill-first-once', 'data-prefill-lock-presets']) assert.ok(client.includes(attr), attr)
   const zh = client.slice(client.indexOf('// ── 首轮锁定 / 开跑后套预设'), client.indexOf('    const S = {'))
   const keys = (block) => [...block.matchAll(/^\s+(lock\w+):/gm)].map((m) => m[1])

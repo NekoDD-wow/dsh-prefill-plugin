@@ -44,7 +44,8 @@ test('卡片 /state 轮询在飞时点了「纯净」：写响应先进 store，
       // summary 首包之后挂起：只看卡片 envelope 与写响应谁说了算
       '/api/dsh-prefill/summary': (body) => (++summaryCalls === 1 ? summaryOf(body.sessionId) : { $defer: true }),
       '/api/dsh-prefill/state': (body) => {
-        if (body === undefined || body === null) {
+        const isRead = body === undefined || body === null || Object.keys(body).every((k) => k === 'slim' || k === 'sessionId')
+        if (isRead) {
           if (deferNextRead) {
             deferNextRead = false
             return { $defer: true, stale: JSON.parse(JSON.stringify(state)) }

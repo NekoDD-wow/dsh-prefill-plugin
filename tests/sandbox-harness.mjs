@@ -40,9 +40,57 @@ export function makeHarness(envelope, { sid: SID, sources, routes = {} }) {
       const reply = routes[body?.op]
       return clone(typeof reply === 'function' ? reply(body) : reply ?? { ok: false })
     }
-    if (body !== undefined) {
-      posts.push(clone(body))
-      const state = { ...current.state, ...clone(body) }
+    const isSlimRead = body !== null && typeof body === 'object' && Object.keys(body).every((k) => k === 'slim' || k === 'sessionId')
+    if (body !== undefined && !isSlimRead) {
+      let patch = clone(body)
+      delete patch.slim
+      delete patch.sessionId
+      if (patch.sessionPatch !== undefined) {
+        const sp = patch.sessionPatch
+        delete patch.sessionPatch
+        const expanded = {}
+        const target = sp.target || SID
+        const baseMap = (key) => (Object.hasOwn(expanded, key) ? expanded[key] : { ...(current.state?.[key] ?? {}) })
+        if (sp.set && typeof sp.set === 'object') {
+          for (const [k, v] of Object.entries(sp.set)) {
+            const m = baseMap(k)
+            m[target] = v
+            expanded[k] = m
+          }
+        }
+        if (Array.isArray(sp.unset)) {
+          for (const k of sp.unset) {
+            const m = baseMap(k)
+            delete m[target]
+            expanded[k] = m
+          }
+        }
+        if (sp.scopes && typeof sp.scopes === 'object') {
+          for (const [sk, entry] of Object.entries(sp.scopes)) {
+            if (entry?.set) {
+              for (const [k, v] of Object.entries(entry.set)) {
+                const m = baseMap(k)
+                m[sk] = v
+                expanded[k] = m
+              }
+            }
+            if (Array.isArray(entry?.unset)) {
+              for (const k of entry.unset) {
+                const m = baseMap(k)
+                delete m[sk]
+                expanded[k] = m
+              }
+            }
+          }
+        }
+        if (typeof sp.armed === 'boolean') {
+          const prev = Array.isArray(current.state?.armed) ? current.state.armed : []
+          expanded.armed = sp.armed ? (prev.includes(target) ? prev : [...prev, target]) : prev.filter((id) => id !== target)
+        }
+        patch = { ...expanded, ...patch }
+      }
+      posts.push(clone(patch))
+      const state = { ...current.state, ...clone(patch) }
       current = { ...current, state, sandboxView: { [SID]: sandboxView(migrateSandbox(state), SID, sources()) } }
     }
     return clone(current)

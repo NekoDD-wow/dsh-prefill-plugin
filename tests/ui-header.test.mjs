@@ -26,20 +26,21 @@ test('三区结构：data-prefill-header + 左中右三个 zone', () => {
   assert.match(headerSrc, /'data-prefill-header-tools': ''/)
 })
 
-test('头部控件预算：可点按钮 ≤ 8（无错误 7 / 有错误 8），且七个业务入口都在', () => {
+test('头部控件预算：可点按钮 ≤ 9（无错误 8 / 有错误 9），八个业务入口都在且清空预设紧邻保存', () => {
   const buttons = (headerSrc.match(/\bh\('button'/g) ?? []).length
-  assert.ok(buttons <= 8, `头部按钮 ${buttons} 个，应 ≤ 8`)
-  for (const hook of ['data-prefill-preset-select', 'data-prefill-save', 'data-prefill-status-pill', 'data-prefill-more', 'data-prefill-pin', 'data-prefill-collapse', 'data-prefill-close']) {
+  assert.ok(buttons <= 9, `头部按钮 ${buttons} 个，应 ≤ 9`)
+  for (const hook of ['data-prefill-preset-select', 'data-prefill-save', 'data-prefill-preset-clear-header', 'data-prefill-status-pill', 'data-prefill-more', 'data-prefill-pin', 'data-prefill-collapse', 'data-prefill-close']) {
     assert.ok(headerSrc.includes(hook), '缺钩子：' + hook)
   }
+  assert.ok(headerSrc.indexOf('data-prefill-save') < headerSrc.indexOf('data-prefill-preset-clear-header'), '清空预设紧跟在保存按钮后面')
 })
 
-test('移除：独立 ? / 3 个 token 胶囊 / 头部另存为与取消预设', () => {
+test('移除：独立 ? / 3 个 token 胶囊 / 头部另存为；预设下拉底部「取消预设」同步保留', () => {
   assert.doesNotMatch(headerSrc, /badge\('var\(--pf-system\)'/, 'token 读数徽标已删')
   assert.doesNotMatch(headerSrc, /'data-prefill-badge': 'first'|'data-prefill-badge': 'turn'|'data-prefill-badge': 'cache'/)
   assert.doesNotMatch(headerSrc, /toggle\('guide'\)/, '独立 ? 按钮已删（引导收进 ⋯ 菜单）')
   assert.doesNotMatch(headerSrc, /'data-prefill-save-as'/, '另存为按钮已移出头部')
-  assert.doesNotMatch(headerSrc, /'data-prefill-preset-clear'/, '取消预设已移出头部')
+  assert.match(src, /'data-prefill-preset-clear': ''/, '预设下拉底部的取消预设按钮保留未删')
 })
 
 test('收起 ≠ 关闭：收起 = 钉住 + 缩成标记；关闭 = closeCard', () => {

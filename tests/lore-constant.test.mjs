@@ -117,7 +117,7 @@ test('提示条：文案 + 不再提示勾选 + 重拼 / 取消；勾了不再�
   assert.match(region, /rememberLoreConstWarn\(\)/)
   assert.match(region, /editLore\(pending\.entries, true\)/)
   const remember = cut2("      const rememberLoreConstWarn = async () => {", "      const editLore = (nextEntries")
-  assert.match(remember, /ui: \{ \.\.\.ui, loreConstWarn: true \}/)
+  assert.match(remember, /global: \{ ui: \{ loreConstWarn: true \} \}/)
   // 全局偏好：sanitizeUi 认得这个键（脏值丢掉）
   assert.deepEqual(sanitizeUi({ motion: 'lite', loreConstWarn: true }), { motion: 'lite', loreConstWarn: true })
   assert.deepEqual(sanitizeUi({ loreConstWarn: 'yes' }), undefined)

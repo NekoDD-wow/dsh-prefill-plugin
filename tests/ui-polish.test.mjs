@@ -81,10 +81,11 @@ test('a11y：错误详情关闭按钮有 aria-label；卡片关闭 / Esc 后焦�
   assert.match(dockSrc, /if \(!pinned\) \{\n\s+closeCard\(\)\n\s+focusChipBack\(\)\n\s+\}/, 'Esc 关闭也还焦点')
 })
 
-test('TOC 当前项：aria-current 之外有可见高亮（左边条 + 字重）', () => {
+test('TOC 当前项：aria-current 之外有可见高亮（平直底边条 + 字重）', () => {
   const activeSrc = cut('      tocLinkActive: {', '      },\n      // v1：总览顶部的 4 个 KPI')
   assert.ok(activeSrc.length > 0, '找不到 tocLinkActive')
-  assert.ok(activeSrc.includes("boxShadow: 'inset 2px 0 0 var(--dsw-alias-brand-primary)'"), '左边条')
+  assert.ok(activeSrc.includes("boxShadow: 'inset 0 -2px 0 var(--dsw-alias-brand-primary)'"), '平直底边条')
+  assert.ok(!activeSrc.includes('inset 2px 0 0'), '不再用弯折成 [ 的左边条')
   assert.ok(activeSrc.includes('fontWeight: 700'), '加粗')
 })
 

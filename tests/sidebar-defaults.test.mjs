@@ -245,9 +245,21 @@ const cardSetDefault = ({ stored, draft = null, sessionId = 'me' }) => {
   const calls = { writes: [], posts: [], envelopes: [], notified: 0, cleared: 0 }
   let current = clone({ state: stored })
   const postJson = async (_path, payload) => {
-    if (payload !== undefined) {
-      calls.posts.push(clone(payload))
-      current = { state: { ...current.state, ...clone(payload) } }
+    const isRead = payload === undefined || payload === null || Object.keys(payload).every((k) => k === 'slim' || k === 'sessionId')
+    if (!isRead) {
+      let patch = clone(payload)
+      delete patch.slim
+      delete patch.sessionId
+      if (patch.sessionPatch !== undefined) {
+        const sp = patch.sessionPatch
+        delete patch.sessionPatch
+        const expanded = {}
+        const target = sp.target || sessionId
+        for (const [k, v] of Object.entries(sp.set ?? {})) expanded[k] = { ...(current.state?.[k] ?? {}), [target]: v }
+        patch = { ...expanded, ...patch }
+      }
+      calls.posts.push(clone(patch))
+      current = { state: { ...current.state, ...clone(patch) } }
     }
     return clone(current)
   }
